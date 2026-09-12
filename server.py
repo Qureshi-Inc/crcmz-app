@@ -65,6 +65,7 @@ _RL_LIMITS = {
     "psn_send": (8, 60.0),      # group messages (soundboard, squad, /v2/send)
     "roast": (5, 60.0),         # roast triggers
     "custom_add": (6, 60.0),    # AI-flavored custom button creation (also Bedrock cost)
+    "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
 }
 
 
@@ -672,7 +673,10 @@ _PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "psn.crcmz.me")
 # Paths that must be reachable before authentication.
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/auth/logout", "/auth/passkey/begin", "/auth/passkey/complete",
-               "/.well-known/webauthn"}
+               "/.well-known/webauthn",
+               # Public key material only — WatchParty fetches this to verify
+               # Watch Tickets. Never contains a private key.
+               "/api/watch/jwks.json"}
 
 
 def _signer() -> _USTS:
@@ -691,6 +695,23 @@ def _get_session(request: Request) -> dict | None:
         return _signer().loads(val, max_age=_SESSION_MAX_AGE)
     except (BadSignature, SignatureExpired):
         return None
+
+
+def _make_session(sub: str, email: str = "", name: str = "",
+                  preferred_username: str = "") -> dict:
+    """Build the signed session payload.
+
+    ``iss`` + ``sub`` is the permanent identity (see watch.py); the name claims
+    are cached here so Watch Party doesn't have to re-query Zitadel on every
+    ticket. Sessions minted before these fields existed still work — the Watch
+    resolver falls back to a Zitadel lookup.
+    """
+    session = {"sub": sub, "email": email, "iss": ZITADEL_ISSUER.rstrip("/")}
+    if name:
+        session["name"] = name
+    if preferred_username:
+        session["preferred_username"] = preferred_username
+    return session
 
 
 def _pkce() -> tuple[str, str]:
@@ -1030,6 +1051,8 @@ async def auth_login_submit(request: Request, next: str = "/"):
         user_f = sr.json().get("session", {}).get("factors", {}).get("user", {})
         sub        = user_f.get("id", "")
         user_email = user_f.get("loginName", email)
+        disp_name  = user_f.get("displayName", "")
+        login_name = user_f.get("loginName", "")
     except Exception as e:
         logger.error("auth: login error: %s", e)
         return HTMLResponse(_login_page(error="Auth service unavailable.", next=next), status_code=503)
@@ -1038,7 +1061,7 @@ async def auth_login_submit(request: Request, next: str = "/"):
         return HTMLResponse(_login_page(error="Invalid email or password.", next=next), status_code=401)
 
     safe_next = next if next.startswith("/") else "/"
-    session = {"sub": sub, "email": user_email}
+    session = _make_session(sub, user_email, name=disp_name, preferred_username=login_name)
     resp = RedirectResponse(url=safe_next, status_code=302)
     resp.set_cookie(_SESSION_COOKIE, _signer().dumps(session), httponly=True,
                     samesite="lax", secure=True, max_age=_SESSION_MAX_AGE, path="/")
@@ -1090,7 +1113,17 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
     next_url = sp.get("next") or "/"
     if not next_url.startswith("/"):
         next_url = "/"
-    session = {"sub": userinfo.get("sub"), "email": userinfo.get("email", "")}
+    # Zitadel's own userinfo response is the authoritative source for the
+    # profile claims. Cache the display-name claims for Watch Party; note
+    # preferred_username is a *login name* (e.g. moiz@crcmz), not a PSN id.
+    session = _make_session(
+        userinfo.get("sub") or "",
+        userinfo.get("email", ""),
+        name=userinfo.get("name", ""),
+        preferred_username=userinfo.get("preferred_username", ""),
+    )
+    if userinfo.get("iss"):
+        session["iss"] = str(userinfo["iss"]).rstrip("/")
 
     resp = RedirectResponse(url=next_url, status_code=302)
     resp.set_cookie(_SESSION_COOKIE, _signer().dumps(session), httponly=True, samesite="lax",
@@ -1198,6 +1231,7 @@ async def passkey_complete(request: Request, next: str = "/"):
         user_f     = sr.json().get("session", {}).get("factors", {}).get("user", {})
         sub        = user_f.get("id", "")
         user_email = user_f.get("loginName", "")
+        disp_name  = user_f.get("displayName", "")
     except Exception as e:
         logger.error("passkey/complete error: %s", e)
         return JSONResponse({"error": "service unavailable"}, status_code=503)
@@ -1206,7 +1240,7 @@ async def passkey_complete(request: Request, next: str = "/"):
         return JSONResponse({"error": "session invalid"}, status_code=401)
 
     safe_next = next if next.startswith("/") else "/"
-    session = {"sub": sub, "email": user_email}
+    session = _make_session(sub, user_email, name=disp_name, preferred_username=user_email)
     resp = JSONResponse({"ok": True, "next": safe_next})
     resp.set_cookie(_SESSION_COOKIE, _signer().dumps(session), httponly=True,
                     samesite="lax", secure=True, max_age=_SESSION_MAX_AGE, path="/")
@@ -1802,6 +1836,252 @@ async def giveaway_admin_reset(request: Request):
         _giveaway.add_past_winner, winner["id"], winner["display"], 1, title, prize
     )
     return JSONResponse({"status": "ok", "seeded_winner": winner, "add_result": result})
+
+
+# ── Watch Party ──────────────────────────────────────────────────────────────
+#
+# This app is the authentication broker for our self-hosted WatchParty fork.
+# The browser never asserts who it is: it asks for a 60-second signed Watch
+# Ticket here, then presents that ticket in the Socket.IO handshake. WatchParty
+# verifies the signature and takes the display name from the ticket.
+#
+# See watch.py for the identity/ticket rules and the WatchParty fork's
+# server/utils/watchTicket.ts for the verifying half.
+
+import watch as watch_mod
+
+# Extra browser origins allowed to POST /api/watch/join (dev only).
+WATCH_EXTRA_ORIGINS = [
+    o.strip().rstrip("/")
+    for o in os.environ.get("WATCH_EXTRA_ORIGINS", "").split(",")
+    if o.strip()
+]
+# Optional gate: only people who linked a PSN account may join.
+WATCH_REQUIRE_PSN_LINK = os.environ.get("WATCH_REQUIRE_PSN_LINK", "").lower() in ("1", "true", "yes")
+
+_ZITADEL_PROFILE_CACHE: dict[str, tuple[float, dict]] = {}
+_ZITADEL_PROFILE_TTL = 300.0
+
+
+async def _zitadel_profile(sub: str) -> dict:
+    """Name claims for a Zitadel user, for sessions that predate caching them.
+
+    We deliberately do not persist user access tokens, so the profile lookup
+    goes through the management API with the service token instead of hitting
+    UserInfo with the user's token. Same claims, no token storage.
+    """
+    if not sub or not ZITADEL_SERVICE_TOKEN:
+        return {}
+    cached = _ZITADEL_PROFILE_CACHE.get(sub)
+    if cached and _time.time() - cached[0] < _ZITADEL_PROFILE_TTL:
+        return cached[1]
+    profile: dict = {}
+    try:
+        import httpx as _hx
+        async with _hx.AsyncClient(timeout=8) as c:
+            r = await c.get(
+                f"{ZITADEL_ISSUER}/v2/users/{sub}",
+                headers={"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"},
+            )
+        if r.status_code == 200:
+            user = r.json().get("user", {}) or {}
+            human = user.get("human", {}) or {}
+            prof = human.get("profile", {}) or {}
+            given = prof.get("givenName", "")
+            family = prof.get("familyName", "")
+            profile = {
+                "name": prof.get("displayName") or " ".join(p for p in (given, family) if p),
+                "preferred_username": user.get("preferredLoginName", ""),
+            }
+        else:
+            logger.warning("watch: zitadel profile lookup %s for %s", r.status_code, sub[:8])
+    except Exception as e:  # noqa: BLE001 — a missing name is not fatal
+        logger.warning("watch: zitadel profile lookup failed: %s", e)
+    if profile:
+        _ZITADEL_PROFILE_CACHE[sub] = (_time.time(), profile)
+    return profile
+
+
+async def _watch_viewer(request: Request) -> dict | None:
+    """Resolve the authenticated viewer, or None when there is no PSN session.
+
+    Returns the internal AuthenticatedViewer shape plus the bits the UI needs.
+    The Zitadel subject stays server-side; only ``viewerId`` leaves this box.
+    """
+    session = _get_session(request)
+    if not session:
+        return None
+    sub = (session.get("sub") or "").strip()
+    if not sub:
+        return None
+    issuer = (session.get("iss") or ZITADEL_ISSUER).rstrip("/")
+
+    name = session.get("name", "")
+    preferred = session.get("preferred_username", "")
+    if not name and not preferred:
+        # Legacy session cookie (sub + email only) — ask Zitadel once.
+        prof = await _zitadel_profile(sub)
+        name = prof.get("name", "")
+        preferred = prof.get("preferred_username", "") or session.get("email", "")
+
+    nickname = await asyncio.to_thread(watch_mod.get_nickname, sub)
+    psn_record = await asyncio.to_thread(portal_mod.find_by_zitadel_id, sub)
+    psn_online_id = (psn_record or {}).get("online_id") or ""
+
+    return {
+        "viewerId": watch_mod.viewer_id(issuer, sub),
+        "zitadelIssuer": issuer,
+        "zitadelSubject": sub,
+        "displayName": watch_mod.resolve_display_name(
+            nickname=nickname,
+            psn_online_id=psn_online_id,
+            zitadel_name=name,
+            preferred_username=preferred,
+        ),
+        "nickname": nickname,
+        "psnOnlineId": psn_online_id,
+    }
+
+
+def _watch_same_origin(request: Request) -> bool:
+    """Stand-in for a CSRF token: the app has no CSRF middleware, and the
+    session cookie is SameSite=Lax, so a cross-site POST can't carry it. We
+    still verify Origin/Referer and only accept JSON.
+    """
+    host = (request.headers.get("host") or "").split(",")[0].strip()
+    allowed = {f"https://{_PUBLIC_HOST}"} | set(WATCH_EXTRA_ORIGINS)
+    if host:
+        allowed |= {f"https://{host}", f"http://{host}"}
+
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if origin:
+        return origin in allowed
+    referer = request.headers.get("referer") or ""
+    return any(referer.startswith(a + "/") or referer == a for a in allowed)
+
+
+@app.get("/api/watch/jwks.json")
+async def watch_jwks():
+    """Public verification key for Watch Tickets (no private material)."""
+    try:
+        keys = await asyncio.to_thread(watch_mod.jwks)
+    except watch_mod.WatchConfigError as e:
+        logger.error("watch: jwks unavailable: %s", e)
+        return JSONResponse({"detail": "watch party not configured"}, status_code=503)
+    return JSONResponse(keys, headers={"Cache-Control": "public, max-age=300"})
+
+
+@app.get("/api/watch/config")
+async def watch_config(request: Request):
+    """Everything the /watch page needs, including the resolved viewer name."""
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    cfg = watch_mod.client_config()
+    cfg["viewer"] = {
+        "id": viewer["viewerId"],
+        "name": viewer["displayName"],
+        "nickname": viewer["nickname"],
+        "psnOnlineId": viewer["psnOnlineId"],
+    }
+    return JSONResponse(cfg, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/watch/join")
+async def watch_join(request: Request):
+    """Mint a short-lived Watch Ticket for the authenticated viewer.
+
+    400 invalid room · 401 not authenticated · 403 not allowed in room ·
+    429 rate limited · 503 signing key missing.
+    """
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"},
+                            status_code=403, headers={"Cache-Control": "no-store"})
+    if "application/json" not in (request.headers.get("content-type") or ""):
+        return JSONResponse({"detail": "JSON body required"}, status_code=400,
+                            headers={"Cache-Control": "no-store"})
+
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401,
+                            headers={"Cache-Control": "no-store"})
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    room = watch_mod.canonical_room((body or {}).get("roomId"))
+    if not room or not watch_mod.is_allowed_room(room):
+        return JSONResponse({"detail": "invalid room"}, status_code=400,
+                            headers={"Cache-Control": "no-store"})
+
+    if WATCH_REQUIRE_PSN_LINK and not viewer["psnOnlineId"]:
+        return JSONResponse({"detail": "link your PSN account to join"}, status_code=403,
+                            headers={"Cache-Control": "no-store"})
+
+    # Scope the limiter per viewer so one person can't starve the room.
+    _rate_limit("watch_join", viewer["viewerId"])
+
+    try:
+        minted = await asyncio.to_thread(
+            watch_mod.mint_ticket,
+            viewer=viewer["viewerId"], room=room, display_name=viewer["displayName"],
+        )
+    except watch_mod.WatchConfigError as e:
+        logger.error("watch: cannot mint ticket: %s", e)
+        return JSONResponse({"detail": "watch party not configured"}, status_code=503,
+                            headers={"Cache-Control": "no-store"})
+
+    # Log-safe: hashed viewer prefix + jti, never the ticket itself.
+    logger.info("watch ticket issued room=%s viewer=%s jti=%s kid=%s",
+                room, watch_mod.short_viewer(viewer["viewerId"]), minted["jti"], minted["kid"])
+
+    return JSONResponse(
+        {
+            "ticket": minted["ticket"],
+            "expiresIn": minted["expires_in"],
+            "room": room,
+            "viewer": {"name": viewer["displayName"]},
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/watch/nickname")
+async def watch_set_nickname(request: Request):
+    """Change the Watch Party display name (the top-priority name source).
+
+    The browser can set its *profile* nickname here — an authenticated,
+    server-side change — but never the identity on a live socket. Callers
+    reconnect afterwards to pick up a ticket with the new name.
+    """
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    stored = await asyncio.to_thread(
+        watch_mod.set_nickname, viewer["zitadelSubject"], (body or {}).get("nickname") or ""
+    )
+    refreshed = await _watch_viewer(request)
+    return JSONResponse(
+        {"nickname": stored, "name": (refreshed or viewer)["displayName"]},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/watch")
+def watch_page():
+    """User-facing entry point — the Watch tab of the existing dashboard.
+
+    Kept as a real URL so /watch can be shared; the auth gate redirects
+    unauthenticated visitors through the normal Zitadel login first.
+    """
+    return RedirectResponse(url="/?p=watch", status_code=302)
 
 
 @app.get("/auth/settings/psn")
@@ -3210,6 +3490,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .nav-item:nth-child(1){--ni:0} .nav-item:nth-child(2){--ni:1}
   .nav-item:nth-child(3){--ni:2} .nav-item:nth-child(4){--ni:3}
   .nav-item:nth-child(5){--ni:4} .nav-item:nth-child(6){--ni:5}
+  .nav-item:nth-child(7){--ni:6} .nav-item:nth-child(8){--ni:7}
 
   /* panel animation */
   .panel { display:none; }
@@ -3632,6 +3913,62 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .psn-token-preview { margin-top:10px; padding:9px 12px; border-radius:10px;
     background:rgba(34,230,255,.07); border:1px solid rgba(34,230,255,.2);
     font-size:12px; line-height:1.6; }
+
+  /* ── Watch Party ────────────────────────────────────────────── */
+  .wp-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    margin:8px 0 10px; }
+  .wp-pill { display:inline-flex; align-items:center; gap:6px; font-size:12px;
+    font-weight:700; padding:6px 12px; border-radius:999px; letter-spacing:.4px;
+    background:rgba(140,255,43,.1); border:1px solid rgba(140,255,43,.35);
+    color:var(--lime); }
+  .wp-pill.off { background:rgba(255,255,255,.05); border-color:rgba(255,255,255,.14);
+    color:var(--dim); }
+  .wp-dot { width:7px; height:7px; border-radius:50%; background:currentColor;
+    box-shadow:0 0 8px currentColor; animation:wpPulse 1.8s ease-in-out infinite; }
+  @keyframes wpPulse { 50% { opacity:.35; } }
+  .wp-viewers { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .wp-viewer { font-size:12px; padding:5px 10px; border-radius:999px;
+    background:rgba(157,92,255,.12); border:1px solid rgba(157,92,255,.3);
+    color:#e4d4ff; max-width:100%; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  .wp-viewer.me { background:rgba(34,230,255,.12); border-color:rgba(34,230,255,.4);
+    color:#c8fbff; }
+  .wp-stage { position:relative; width:100%; aspect-ratio:16/9; border-radius:16px;
+    overflow:hidden; background:#000; border:1px solid var(--line);
+    box-shadow:0 18px 40px rgba(0,0,0,.5); }
+  .wp-stage video, .wp-stage iframe, .wp-stage #wpYt { width:100%; height:100%;
+    display:block; border:0; background:#000; }
+  .wp-empty { position:absolute; inset:0; display:grid; place-items:center;
+    text-align:center; padding:20px; font-size:13px; color:var(--dim);
+    line-height:1.6; }
+  .wp-row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .wp-row .sfield { margin-bottom:0; flex:1; min-width:180px; }
+  .wp-btn { padding:10px 15px; border-radius:12px; cursor:pointer; font-size:13px;
+    font-weight:700; font-family:"Rajdhani",sans-serif; letter-spacing:.4px;
+    background:rgba(255,47,214,.12); border:1px solid rgba(255,47,214,.35);
+    color:var(--neon); flex:none; }
+  .wp-btn:hover { background:rgba(255,47,214,.22); }
+  .wp-btn.ghost { background:rgba(255,255,255,.04);
+    border-color:rgba(255,255,255,.14); color:var(--dim); }
+  .wp-btn:disabled { opacity:.45; cursor:default; }
+  .wp-note { font-size:12px; color:var(--dim); margin:8px 0 0; line-height:1.6; }
+  .wp-chat { margin-top:14px; border:1px solid var(--line); border-radius:16px;
+    background:rgba(255,255,255,.02); overflow:hidden; }
+  .wp-chat-log { max-height:240px; overflow-y:auto; padding:12px 14px;
+    display:flex; flex-direction:column; gap:7px; }
+  .wp-msg { font-size:13px; line-height:1.5; word-break:break-word; }
+  .wp-msg .who { font-weight:700; color:var(--cyan); margin-right:5px; }
+  .wp-msg.sys { color:var(--dim); font-style:italic; font-size:12px; }
+  .wp-chat-in { display:flex; gap:8px; padding:10px 12px;
+    border-top:1px solid var(--line); }
+  .wp-chat-in input { flex:1; background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.12); border-radius:10px; padding:9px 12px;
+    color:#fff; font-size:13.5px; outline:none; }
+  .wp-chat-in input:focus { border-color:rgba(255,47,214,.6); }
+  .wp-err { font-size:13px; border-radius:12px; padding:10px 13px; margin:10px 0 0;
+    background:rgba(255,60,60,.1); border:1px solid rgba(255,60,60,.35);
+    color:#ff8f9f; display:none; }
+  .wp-err.on { display:block; }
 </style></head>
 <body>
 
@@ -3758,6 +4095,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="nav-item" data-p="slap" data-icon="🎵" data-label="Slap" onclick="tab(this);loadSlap()"><span class="nav-i-icon">🎵</span><span>Slap</span></button>
       <button class="nav-item" data-p="wa" data-icon="💬" data-label="WhatsApp" onclick="tab(this);loadWa()"><span class="nav-i-icon">💬</span><span>WhatsApp</span></button>
       <button class="nav-item" data-p="giveaway" data-icon="🎁" data-label="Giveaway" onclick="tab(this);loadGiveaway()"><span class="nav-i-icon">🎁</span><span>Giveaway</span></button>
+      <button class="nav-item" data-p="watch" data-icon="🍿" data-label="Watch" onclick="tab(this);loadWatch()"><span class="nav-i-icon">🍿</span><span>Watch</span></button>
     </div>
   </div>
   <div class="panel" id="p-squad">
@@ -3817,6 +4155,36 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   </div>
   <div class="panel" id="p-giveaway">
     <div id="giveaway-inner"><div class="spin">Loading giveaway…</div></div>
+  </div>
+  <div class="panel" id="p-watch">
+    <div class="wp-head">
+      <div class="pip-title" style="margin:0;flex:1">🍿 Watch Party</div>
+      <span class="wp-pill off" id="wpPresence"><span class="wp-dot"></span><span id="wpPresenceTxt">connecting…</span></span>
+    </div>
+    <div class="wp-viewers" id="wpViewers"></div>
+    <div class="wp-stage" id="wpStage">
+      <video id="wpVideo" playsinline controls style="display:none"></video>
+      <div id="wpYt" style="display:none"></div>
+      <div class="wp-empty" id="wpEmpty">Nothing playing yet.<br>Paste a video link below to start the party.</div>
+    </div>
+    <div class="wp-row">
+      <input class="sfield" id="wpUrl" type="text" autocomplete="off" spellcheck="false"
+        placeholder="https://… video link or YouTube URL"
+        onkeydown="if(event.key==='Enter')wpSetVideo()">
+      <button class="wp-btn" id="wpSetBtn" onclick="wpSetVideo()">▶ Play for everyone</button>
+      <button class="wp-btn ghost" onclick="wpSetVideo('')">Clear</button>
+      <button class="wp-btn ghost" onclick="wpEditNickname()">✏️ Name</button>
+    </div>
+    <div class="wp-err" id="wpErr"></div>
+    <p class="wp-note" id="wpNote">Everyone in this room sees the same thing — play, pause and seek are shared.</p>
+    <div class="wp-chat">
+      <div class="wp-chat-log" id="wpChatLog"></div>
+      <div class="wp-chat-in">
+        <input id="wpChatIn" type="text" maxlength="500" autocomplete="off"
+          placeholder="Say something…" onkeydown="if(event.key==='Enter')wpSendChat()">
+        <button class="wp-btn" onclick="wpSendChat()">➤</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -4114,6 +4482,7 @@ function tab(btn, skipHash){
     if(p==='slap')    loadSlap();
     if(p==='wa')      loadWa();
     if(p==='giveaway') loadGiveaway();
+    if(p==='watch')   loadWatch();
   }
 })();
 function fmtLast(iso){ if(!iso) return 'offline';
@@ -5638,6 +6007,341 @@ async function gwResetAndSeed(){
   else if(d.error==='no_match'){ gwMsg('No member found matching "'+q+'"',false); }
   else gwMsg(d.detail||d.error||'Error',false);
 }
+
+// ── Watch Party ──────────────────────────────────────────────────────────────
+// Identity is never asserted here. We ask the server for a short-lived signed
+// Watch Ticket and hand it to WatchParty in the Socket.IO handshake; the display
+// name and viewer id both come back from the server, never from this page.
+const WP = {
+  cfg:null, sock:null, room:'', clientId:'', names:{}, me:'', myName:'Viewer',
+  video:'', kind:'', yt:null, ytLoading:null, applying:0, tsTimer:null,
+  booted:false, tries:0, reconnectTimer:null, presence:null, chat:[], pendingTS:0,
+};
+const WP_MAX_TRIES = 6;
+
+function wpErr(msg){
+  const e=$('wpErr'); if(!e) return;
+  e.textContent = msg || ''; e.classList.toggle('on', !!msg);
+}
+function wpStatus(txt, live){
+  const p=$('wpPresence'), t=$('wpPresenceTxt');
+  if(t) t.textContent = txt;
+  if(p) p.classList.toggle('off', !live);
+}
+
+// Per-*tab* client id: WatchParty kicks an older socket sharing a clientId, and
+// one person with two tabs is still one viewer (that's the ticket's viewerId).
+function wpClientId(){
+  let id = sessionStorage.getItem('crcmzWatchClientId');
+  if(!id){
+    id = (crypto.randomUUID ? crypto.randomUUID()
+      : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g,c=>
+          (+c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c/4)))).toString(16)));
+    sessionStorage.setItem('crcmzWatchClientId', id);
+  }
+  return id;
+}
+function wpSessionId(){
+  let id = localStorage.getItem('crcmzWatchSessionId');
+  if(!id){ id = wpClientId(); localStorage.setItem('crcmzWatchSessionId', id); }
+  return id;
+}
+
+function wpScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src=src; s.async=true; s.onload=res; s.onerror=()=>rej(new Error('load '+src));
+    document.head.appendChild(s);
+  });
+}
+
+async function loadWatch(){
+  if(WP.booted){
+    if(WP.sock && !WP.sock.connected){ WP.tries=0; wpConnect(); }
+    return;
+  }
+  WP.booted = true;
+  wpStatus('connecting…', false);
+  let cfg;
+  try{
+    const r = await fetch('/api/watch/config', {headers:{'Accept':'application/json'}});
+    if(r.status===401){ location.href='/auth/login?next='+encodeURIComponent('/?p=watch'); return; }
+    if(!r.ok) throw new Error('config '+r.status);
+    cfg = await r.json();
+  }catch(e){
+    WP.booted=false; wpStatus('offline', false);
+    wpErr('Watch Party is not available right now.'); return;
+  }
+  WP.cfg = cfg;
+  WP.room = cfg.defaultRoom || 'crcmz';
+  WP.me = cfg.viewer?.id || '';
+  WP.myName = cfg.viewer?.name || 'Viewer';
+  WP.clientId = wpClientId();
+  if(typeof window.io === 'undefined'){
+    const base = (cfg.origin||'') + (cfg.socketPath||'/socket.io');
+    try{ await wpScript(base + '/socket.io.js'); }
+    catch(e){
+      WP.booted=false; wpStatus('offline', false);
+      wpErr('Could not load the watch party client.'); return;
+    }
+  }
+  wpConnect();
+}
+
+async function wpTicket(){
+  const r = await fetch('/api/watch/join', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({roomId: WP.room}),
+  });
+  if(r.status===401){ location.href='/auth/login?next='+encodeURIComponent('/?p=watch'); return null; }
+  if(!r.ok){
+    let detail=''; try{ detail=(await r.json()).detail||''; }catch(e){}
+    throw new Error(detail || ('join '+r.status));
+  }
+  const d = await r.json();
+  if(d.viewer?.name) WP.myName = d.viewer.name;
+  return d.ticket;
+}
+
+async function wpConnect(){
+  clearTimeout(WP.reconnectTimer); WP.reconnectTimer=null;
+  let ticket;
+  try{ ticket = await wpTicket(); }
+  catch(e){ wpErr(e.message || 'Could not join the watch party.'); wpStatus('offline', false); return; }
+  if(!ticket) return;
+  wpErr('');
+
+  if(WP.sock){ WP.sock.removeAllListeners(); WP.sock.close(); WP.sock=null; }
+  const ns = (WP.cfg.origin||'') + '/' + WP.room;
+  WP.sock = io(ns, {
+    transports:['websocket'],
+    path: WP.cfg.socketPath || '/socket.io',
+    // Ticket goes in the handshake auth payload — never a query param or URL.
+    auth: { watchTicket: ticket, sessionId: wpSessionId() },
+    query: { clientId: WP.clientId, roomId: WP.room, password:'', shard:'' },
+    reconnection: false,   // we re-ticket ourselves, with bounded backoff
+    withCredentials: true,
+  });
+  wpBind(WP.sock);
+}
+
+function wpRetry(reason){
+  if(WP.reconnectTimer) return;
+  if(WP.tries >= WP_MAX_TRIES){
+    wpStatus('disconnected', false);
+    wpErr('Lost the connection to the watch party. ' + (reason||''));
+    wpChatSys('Disconnected. Switch tabs back to Watch to retry.');
+    WP.booted = false;   // next loadWatch() starts over
+    return;
+  }
+  const delay = Math.min(30000, 1000 * Math.pow(2, WP.tries));
+  WP.tries += 1;
+  wpStatus('reconnecting…', false);
+  WP.reconnectTimer = setTimeout(()=>{ WP.reconnectTimer=null; wpConnect(); }, delay);
+}
+
+function wpBind(s){
+  s.on('connect', ()=>{
+    WP.tries = 0; wpErr('');
+    wpStatus('connected', true);
+    s.emit('watch:presence:get');
+    s.emit('CMD:askHost');
+    if(WP.tsTimer) clearInterval(WP.tsTimer);
+    WP.tsTimer = setInterval(()=>{
+      if(!s.connected) return;
+      const t = wpTime(); if(t !== null) s.emit('CMD:ts', t);
+    }, 1000);
+  });
+  s.on('connect_error', (err)=>{
+    const code = String(err?.message||'');
+    if(code==='AUTH_REQUIRED' || code==='INVALID_WATCH_TICKET' || code==='WRONG_ROOM'){
+      // Ticket problem, not a network problem: a fresh one may work once.
+      wpErr('Watch pass rejected — refreshing your sign-in.');
+      wpRetry('');
+      return;
+    }
+    wpRetry(code);
+  });
+  s.on('disconnect', ()=>{
+    if(WP.tsTimer){ clearInterval(WP.tsTimer); WP.tsTimer=null; }
+    wpStatus('reconnecting…', false);
+    wpRetry('');
+  });
+  s.on('errorMessage', m => wpErr(String(m||'')));
+  s.on('watch:presence', d => { WP.presence = d; wpRenderPresence(); });
+  s.on('REC:nameMap', m => { WP.names = m||{}; wpRenderChat(); });
+  s.on('REC:host', h => wpApplyHost(h||{}));
+  s.on('REC:play', url => { if(url && url!==WP.video) wpMount(url); wpRemote(()=>wpPlay()); });
+  s.on('REC:pause', () => wpRemote(()=>wpPause()));
+  s.on('REC:seek', ts => wpRemote(()=>wpSeek(Number(ts))));
+  s.on('REC:playbackRate', r => { const v=$('wpVideo'); if(v && Number(r)) v.playbackRate=Number(r); });
+  s.on('chatinit', arr => { WP.chat = Array.isArray(arr)?arr.slice(-60):[]; wpRenderChat(); });
+  s.on('REC:chat', m => { WP.chat.push(m); WP.chat=WP.chat.slice(-60); wpRenderChat(); });
+}
+
+// ── presence ────────────────────────────────────────────────────────────────
+function wpRenderPresence(){
+  const d = WP.presence || {count:0, viewers:[]};
+  wpStatus(d.count===1 ? '1 watching' : d.count+' watching', d.count>0);
+  const box=$('wpViewers'); if(!box) return;
+  box.innerHTML = (d.viewers||[]).map(v=>{
+    const mine = v.name===WP.myName;
+    return '<span class="wp-viewer'+(mine?' me':'')+'">'+esc(v.name)+'</span>';
+  }).join('');
+}
+
+// ── chat ────────────────────────────────────────────────────────────────────
+function wpChatSys(msg){
+  WP.chat.push({id:'', msg, cmd:'sys'}); wpRenderChat();
+}
+function wpRenderChat(){
+  const log=$('wpChatLog'); if(!log) return;
+  log.innerHTML = WP.chat.map(m=>{
+    if(m.cmd==='sys') return '<div class="wp-msg sys">'+esc(m.msg||'')+'</div>';
+    if(m.cmd==='host') return '<div class="wp-msg sys">'+esc(WP.names[m.id]||'Someone')+' started a video</div>';
+    if(m.cmd) return '';
+    const who = m.id===WP.clientId ? 'You' : (WP.names[m.id] || 'Viewer');
+    return '<div class="wp-msg"><span class="who">'+esc(who)+'</span>'+esc(m.msg||'')+'</div>';
+  }).join('');
+  log.scrollTop = log.scrollHeight;
+}
+function wpSendChat(){
+  const i=$('wpChatIn'); if(!i) return;
+  const msg=i.value.trim(); if(!msg) return;
+  if(!WP.sock || !WP.sock.connected){ wpErr('Not connected.'); return; }
+  WP.sock.emit('CMD:chatV2', {msg});
+  i.value='';
+}
+
+// ── player ──────────────────────────────────────────────────────────────────
+const wpYtId = url => {
+  const m = String(url).match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/);
+  return m ? m[1] : '';
+};
+function wpRemote(fn){ WP.applying++; try{ fn(); } finally { setTimeout(()=>{ WP.applying=Math.max(0,WP.applying-1); }, 400); } }
+
+function wpTime(){
+  if(WP.kind==='file'){ const v=$('wpVideo'); return v && !isNaN(v.currentTime) ? v.currentTime : null; }
+  if(WP.kind==='yt' && WP.yt && WP.yt.getCurrentTime) { try{ return WP.yt.getCurrentTime(); }catch(e){} }
+  return null;
+}
+function wpPlay(){
+  if(WP.kind==='file'){ const v=$('wpVideo'); v && v.play().catch(()=>{}); }
+  else if(WP.kind==='yt' && WP.yt?.playVideo) WP.yt.playVideo();
+}
+function wpPause(){
+  if(WP.kind==='file'){ const v=$('wpVideo'); v && v.pause(); }
+  else if(WP.kind==='yt' && WP.yt?.pauseVideo) WP.yt.pauseVideo();
+}
+function wpSeek(ts){
+  if(!isFinite(ts)) return;
+  if(WP.kind==='file'){ const v=$('wpVideo'); if(v) v.currentTime=ts; }
+  else if(WP.kind==='yt' && WP.yt?.seekTo) WP.yt.seekTo(ts, true);
+}
+
+function wpApplyHost(h){
+  const url = h.video || '';
+  if(url !== WP.video) wpMount(url);
+  if(!url) return;
+  const ts = Number(h.videoTS)||0;
+  const cur = wpTime();
+  if(cur !== null && Math.abs(cur - ts) > 2) wpRemote(()=>wpSeek(ts));
+  else if(cur === null) WP.pendingTS = ts;
+  wpRemote(()=> h.paused ? wpPause() : wpPlay());
+}
+
+function wpMount(url){
+  WP.video = url || '';
+  const vid=$('wpVideo'), ytBox=$('wpYt'), empty=$('wpEmpty');
+  const urlIn=$('wpUrl'); if(urlIn && document.activeElement!==urlIn) urlIn.value = WP.video;
+  // tear down
+  if(WP.yt && WP.yt.destroy){ try{ WP.yt.destroy(); }catch(e){} }
+  WP.yt=null;
+  if(vid){ vid.pause(); vid.removeAttribute('src'); vid.load(); vid.style.display='none'; }
+  if(ytBox){ ytBox.style.display='none'; ytBox.innerHTML=''; }
+  WP.kind='';
+  if(!WP.video){ if(empty){ empty.style.display='grid'; empty.innerHTML='Nothing playing yet.<br>Paste a video link below to start the party.'; } return; }
+  if(empty) empty.style.display='none';
+
+  const ytId = wpYtId(WP.video);
+  if(ytId){ WP.kind='yt'; wpMountYt(ytId); return; }
+  if(/^https?:\/\//i.test(WP.video)){
+    WP.kind='file'; vid.style.display='block'; vid.src=WP.video;
+    if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
+      vid.addEventListener('loadedmetadata', ()=>{ vid.currentTime=t; }, {once:true}); }
+    return;
+  }
+  if(empty){ empty.style.display='grid';
+    empty.innerHTML='This link type isn\'t supported here yet.<br>Direct video links and YouTube work.'; }
+}
+
+function wpMountYt(id){
+  const box=$('wpYt'); if(!box) return;
+  box.style.display='block';
+  // YT.Player *replaces* its target element, so give it a throwaway child and
+  // keep #wpYt itself as a stable container we can clear on the next mount.
+  box.innerHTML = '<div id="wpYtTarget" style="width:100%;height:100%"></div>';
+  const build = ()=>{
+    if(!$('wpYtTarget')) return;
+    WP.yt = new YT.Player('wpYtTarget', {
+      videoId:id, width:'100%', height:'100%',
+      playerVars:{ playsinline:1, rel:0, modestbranding:1, origin:location.origin },
+      events:{
+        onReady:()=>{ if(WP.pendingTS){ WP.yt.seekTo(WP.pendingTS,true); WP.pendingTS=0; } },
+        onStateChange:(e)=>{
+          if(WP.applying) return;
+          if(e.data===YT.PlayerState.PLAYING) WP.sock?.emit('CMD:play');
+          if(e.data===YT.PlayerState.PAUSED)  WP.sock?.emit('CMD:pause');
+        },
+      },
+    });
+  };
+  if(window.YT && window.YT.Player) return build();
+  if(!WP.ytLoading){
+    WP.ytLoading = new Promise((res)=>{
+      window.onYouTubeIframeAPIReady = ()=>res();
+      wpScript('https://www.youtube.com/iframe_api').catch(()=>res());
+    });
+  }
+  WP.ytLoading.then(()=>{ if(window.YT && window.YT.Player) build(); });
+}
+
+function wpSetVideo(forced){
+  const i=$('wpUrl');
+  const url = forced !== undefined ? forced : (i ? i.value.trim() : '');
+  if(!WP.sock || !WP.sock.connected){ wpErr('Not connected to the watch party yet.'); return; }
+  if(url && !/^https?:\/\//i.test(url)){ wpErr('Only http(s) video links are supported.'); return; }
+  wpErr('');
+  WP.sock.emit('CMD:host', url);
+  if(forced==='' && i) i.value='';
+}
+
+async function wpEditNickname(){
+  const cur = WP.cfg?.viewer?.nickname || '';
+  const next = prompt('Watch Party display name (blank = use your PSN name):', cur);
+  if(next === null) return;
+  try{
+    const r = await fetch('/api/watch/nickname', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({nickname: next}),
+    });
+    if(!r.ok) throw new Error('nickname '+r.status);
+    const d = await r.json();
+    if(WP.cfg?.viewer){ WP.cfg.viewer.nickname = d.nickname; WP.cfg.viewer.name = d.name; }
+    WP.myName = d.name;
+    toast('Name: '+d.name);
+    // The name lives in the ticket, so reconnect to publish it.
+    WP.tries = 0; wpConnect();
+  }catch(e){ wpErr('Could not save that name.'); }
+}
+
+// Local player -> everyone. Bound once; the element survives remounts.
+(function wpBindVideoEl(){
+  const v=$('wpVideo'); if(!v) return;
+  v.addEventListener('play',   ()=>{ if(!WP.applying) WP.sock?.emit('CMD:play'); });
+  v.addEventListener('pause',  ()=>{ if(!WP.applying) WP.sock?.emit('CMD:pause'); });
+  v.addEventListener('seeked', ()=>{ if(!WP.applying) WP.sock?.emit('CMD:seek', v.currentTime); });
+})();
 
 </script>
 </body></html>"""

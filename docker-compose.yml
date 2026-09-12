@@ -25,6 +25,17 @@ services:
       - WA_NAME_ALIASES=${WA_NAME_ALIASES:-}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
       - DISCORD_CLIPS_CHANNEL_ID=${DISCORD_CLIPS_CHANNEL_ID:-}
+      # Watch Party — this app brokers identity for the self-hosted WatchParty
+      # fork. The PRIVATE key stays here; WatchParty only ever gets the public
+      # half. Leave the key unset to auto-generate one into /data/watch.
+      - WATCH_AUTH_MODE=${WATCH_AUTH_MODE:-zitadel-ticket}
+      - WATCH_TICKET_ISSUER=${WATCH_TICKET_ISSUER:-https://psn.crcmz.me}
+      - WATCH_TICKET_AUDIENCE=${WATCH_TICKET_AUDIENCE:-crcmz-watchparty}
+      - WATCH_TICKET_PRIVATE_KEY_B64=${WATCH_TICKET_PRIVATE_KEY_B64:-}
+      - WATCH_TICKET_TTL_SECONDS=${WATCH_TICKET_TTL_SECONDS:-60}
+      - WATCH_ROOMS=${WATCH_ROOMS:-crcmz}
+      - WATCHPARTY_ORIGIN=${WATCHPARTY_ORIGIN:-}
+      - WATCH_SOCKET_PATH=${WATCH_SOCKET_PATH:-/wp/socket.io}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 psn_tokens.json
 data/
+psn_tokens.backup.json
