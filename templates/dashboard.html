@@ -1529,7 +1529,7 @@ async function loadSlap(){
       <div class="rank">${medal}</div>
       <div class="who" style="flex:1">
         <div class="name" style="color:${e.color||'var(--txt)'}">${esc(slapName(e.username))}</div>
-        <div class="bar"><i style="width:${bar}%;background:${e.color||'var(--neon)'}"></i></div>
+        <div class="bar"><i style="width:${bar}%;background:${e.color||'var(--purple)'}"></i></div>
       </div>
       <div style="font-family:'Orbitron',sans-serif;font-size:13px;color:${e.color||'var(--cyan)'};min-width:36px;text-align:right">${e.song_count}</div>
     </div>`;
@@ -1542,7 +1542,7 @@ async function loadSlap(){
     // 4. Streak Tracker
     if(streaks.length){
       const stRows = streaks.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(255,255,255,.04)">
-      <div style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Orbitron',sans-serif;font-size:11px;font-weight:700;background:${s.color||'var(--neon)'}22;color:${s.color||'var(--neon)'};">${s.longest_streak||0}</div>
+      <div style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Orbitron',sans-serif;font-size:11px;font-weight:700;background:${s.color||'var(--purple)'}22;color:${s.color||'var(--purple)'};">${s.longest_streak||0}</div>
       <div style="flex:1">
         <div style="font-size:13px;font-weight:600;color:${s.color||'var(--txt)'}">${esc(slapName(s.username))}</div>
         <div style="font-size:10px;color:var(--dim)">Best: ${s.longest_streak||0}d${s.is_active?' · 🔥 Active: '+(s.current_streak||0)+'d':''}</div>
@@ -1584,7 +1584,7 @@ async function loadSlap(){
       const tlBars = timeline.map(t=>{
         const h = Math.round((t.count/tlMax)*60);
         return `<div title="${esc(t.date)}: ${t.count}" style="display:flex;flex-direction:column;align-items:center;gap:2px;cursor:default">
-        <div style="width:14px;background:linear-gradient(to top,var(--violet),var(--neon));border-radius:3px 3px 0 0;height:${h}px;min-height:${t.count?2:0}px;opacity:.85"></div>
+        <div style="width:14px;background:linear-gradient(to top,var(--violet),var(--purple));border-radius:3px 3px 0 0;height:${h}px;min-height:${t.count?2:0}px;opacity:.85"></div>
         <div style="font-size:8px;color:var(--dim);writing-mode:vertical-rl;transform:rotate(180deg);max-height:30px;overflow:hidden">${esc((t.date||'').slice(5))}</div>
       </div>`;
       }).join('');
@@ -1599,7 +1599,7 @@ async function loadSlap(){
     // 8. Platform Breakdown
     if(genres.length){
       const gMax = Math.max(...genres.map(g=>g.count),1);
-      const gClrs = ['var(--neon)','var(--cyan)','var(--violet)','var(--gold)','var(--lime)','#ec4899','#ef4444','#10b981'];
+      const gClrs = ['var(--purple)','var(--cyan)','var(--violet)','var(--gold)','var(--lime)','#ec4899','#ef4444','#10b981'];
       const gRows = genres.map((g,i)=>`<div style="margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>${esc(g.name)}</span><span style="color:var(--dim)">${g.count}</span></div>
       <div style="background:rgba(255,255,255,.06);border-radius:4px;height:6px;overflow:hidden"><div style="height:100%;width:${Math.round((g.count/gMax)*100)}%;background:${gClrs[i%gClrs.length]};border-radius:4px"></div></div>
@@ -1688,7 +1688,7 @@ async function loadSlap(){
 
     // 13. Personality Cards
     if(persons.length){
-      const pCards = persons.map(p=>`<div style="border-radius:10px;padding:12px;border:1px solid ${p.color||'var(--neon)'}33;background:linear-gradient(135deg,${p.color||'var(--neon)'}11,transparent)">
+      const pCards = persons.map(p=>`<div style="border-radius:10px;padding:12px;border:1px solid ${p.color||'var(--purple)'}33;background:linear-gradient(135deg,${p.color||'var(--purple)'}11,transparent)">
       <div style="font-size:12px;font-weight:700;color:${p.color||'var(--txt)'};margin-bottom:4px">${esc(slapName(p.username))}</div>
       <div style="font-size:13px;font-weight:600">${esc(p.personality||'')}</div>
       <div style="font-size:11px;color:var(--dim);margin-top:4px">${esc(p.description||'')}</div>
@@ -1721,7 +1721,7 @@ async function loadSlap(){
         <div style="font-size:10px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.artist||'')}${t.album?' · '+esc(t.album):''}</div>
       </div>
       <div style="text-align:right;flex-shrink:0">
-        <span style="font-size:10px;padding:2px 6px;border-radius:10px;background:${t.color||'var(--neon)'}22;color:${t.color||'var(--neon)'}">${esc(slapName(t.username||''))}</span>
+        <span style="font-size:10px;padding:2px 6px;border-radius:10px;background:${t.color||'var(--purple)'}22;color:${t.color||'var(--purple)'}">${esc(slapName(t.username||''))}</span>
         <div style="font-size:9px;color:var(--dim);margin-top:2px">${slapAgo(t.created_at)}</div>
       </div>
     </div>`).join('') : '<div class="empty" style="padding:12px">No recent tracks</div>';
@@ -1740,7 +1740,7 @@ async function loadSlap(){
       if(d.vibe&&!d.vibe.includes('unavailable')){
         const el=$('slap-vibe');
         el.style.display='block';
-        el.innerHTML=`<span style="font-size:18px">${d.mood_emoji||'✨'}</span> <strong style="color:var(--neon)">${esc(d.vibe)}</strong>`+
+        el.innerHTML=`<span style="font-size:18px">${d.mood_emoji||'✨'}</span> <strong style="color:var(--purple)">${esc(d.vibe)}</strong>`+
           (d.description?`<div style="margin-top:4px;font-size:12px">${esc(d.description)}</div>`:'');
       }
     }).catch(()=>{});
@@ -1787,8 +1787,8 @@ async function slapH2H(){
     const tot=Math.max((d.user1_songs||0)+(d.user2_songs||0),1);
     const p1=Math.round((d.user1_songs||0)/tot*100);
     const shared=(d.shared_artists||[]).slice(0,6).map(a=>`<span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;background:rgba(157,92,255,.1);color:var(--violet);border:1px solid rgba(157,92,255,.2);margin:2px">${esc(a)}</span>`).join('');
-    let out=`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:${d.user1_color||'var(--neon)'}">${esc(slapName(u1))} — ${d.user1_songs||0}</span><span style="color:${d.user2_color||'var(--cyan)'}">${d.user2_songs||0} — ${esc(slapName(u2))}</span></div><div style="height:8px;border-radius:4px;overflow:hidden;display:flex"><div style="height:100%;width:${p1}%;background:${d.user1_color||'var(--neon)'}"></div><div style="height:100%;width:${100-p1}%;background:${d.user2_color||'var(--cyan)'}"></div></div></div>${shared?`<div style="margin-bottom:8px"><div style="font-size:10px;color:var(--dim);margin-bottom:4px">🧬 ${(d.shared_artists||[]).length} artists in common:</div>${shared}</div>`:''}`;
-    if(ai&&ai.analysis) out+=`<div style="background:rgba(157,92,255,.08);border:1px solid rgba(157,92,255,.2);border-radius:10px;padding:12px;margin-top:8px"><div style="font-size:10px;color:var(--violet);margin-bottom:6px">🤖 AI Taste Analysis</div><div style="font-size:12px;line-height:1.5">${esc(ai.analysis)}</div>${ai.compatibility_score!=null?`<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:10px;color:var(--dim)">Compatibility:</span><div style="flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden"><div style="height:100%;width:${ai.compatibility_score}%;background:linear-gradient(90deg,var(--violet),var(--neon));border-radius:3px"></div></div><span style="font-size:12px;font-family:'Orbitron',sans-serif;color:var(--violet)">${ai.compatibility_score}%</span></div>`:''}</div>`;
+    let out=`<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:${d.user1_color||'var(--purple)'}">${esc(slapName(u1))} — ${d.user1_songs||0}</span><span style="color:${d.user2_color||'var(--cyan)'}">${d.user2_songs||0} — ${esc(slapName(u2))}</span></div><div style="height:8px;border-radius:4px;overflow:hidden;display:flex"><div style="height:100%;width:${p1}%;background:${d.user1_color||'var(--purple)'}"></div><div style="height:100%;width:${100-p1}%;background:${d.user2_color||'var(--cyan)'}"></div></div></div>${shared?`<div style="margin-bottom:8px"><div style="font-size:10px;color:var(--dim);margin-bottom:4px">🧬 ${(d.shared_artists||[]).length} artists in common:</div>${shared}</div>`:''}`;
+    if(ai&&ai.analysis) out+=`<div style="background:rgba(157,92,255,.08);border:1px solid rgba(157,92,255,.2);border-radius:10px;padding:12px;margin-top:8px"><div style="font-size:10px;color:var(--violet);margin-bottom:6px">🤖 AI Taste Analysis</div><div style="font-size:12px;line-height:1.5">${esc(ai.analysis)}</div>${ai.compatibility_score!=null?`<div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="font-size:10px;color:var(--dim)">Compatibility:</span><div style="flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden"><div style="height:100%;width:${ai.compatibility_score}%;background:linear-gradient(90deg,var(--violet),var(--purple));border-radius:3px"></div></div><span style="font-size:12px;font-family:'Orbitron',sans-serif;color:var(--violet)">${ai.compatibility_score}%</span></div>`:''}</div>`;
     el.innerHTML=out;
   } catch(err){ el.innerHTML='<span style="color:var(--dim)">Could not load comparison.</span>'; }
 }
@@ -2225,7 +2225,7 @@ async function loadWa(){
       const bars = daily.map(d=>{
         const h = Math.max(2, Math.round((d.count/dMax)*60));
         return `<div title="${esc(d.date)}: ${d.count}" style="display:flex;flex-direction:column;align-items:center;gap:2px">
-          <div style="width:7px;background:linear-gradient(to top,var(--cyan),var(--neon));border-radius:2px 2px 0 0;height:${h}px;opacity:.8"></div>
+          <div style="width:7px;background:linear-gradient(to top,var(--cyan),var(--purple));border-radius:2px 2px 0 0;height:${h}px;opacity:.8"></div>
         </div>`;
       }).join('');
       const labels = daily.filter((_,i)=>i%10===0).map(d=>`<span style="font-size:8px;color:var(--dim)">${d.date.slice(5)}</span>`).join('');
@@ -2244,7 +2244,7 @@ async function loadWa(){
       const mBars = monthly.map(m=>{
         const h = Math.max(2, Math.round((m.count/mMax)*60));
         return `<div title="${esc(m.month)}: ${m.count}" style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:0">
-          <div style="width:100%;background:linear-gradient(to top,var(--violet),var(--neon));border-radius:3px 3px 0 0;height:${h}px;opacity:.85"></div>
+          <div style="width:100%;background:linear-gradient(to top,var(--violet),var(--purple));border-radius:3px 3px 0 0;height:${h}px;opacity:.85"></div>
           <div style="font-size:8px;color:var(--dim);writing-mode:vertical-rl;transform:rotate(180deg);max-height:28px;overflow:hidden">${esc(m.month.slice(2))}</div>
         </div>`;
       }).join('');
@@ -2332,7 +2332,7 @@ async function loadWa(){
           <div style="flex:1;min-width:0">
             <div style="font-size:13.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.name)}</div>
             <div style="height:4px;background:rgba(255,255,255,.06);border-radius:2px;margin-top:4px;overflow:hidden">
-              <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--cyan),var(--neon));border-radius:2px"></div>
+              <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,var(--cyan),var(--purple));border-radius:2px"></div>
             </div>
             <div style="font-size:10px;color:var(--dim);margin-top:2px">${m.total_words} words · ${m.avg_words_per_msg} avg/msg</div>
           </div>
@@ -2393,7 +2393,7 @@ async function loadWa(){
       const cloud = topWords.slice(0,50).map(w=>{
         const sz = Math.round(10 + (w.count/cloudMax)*16);
         const op = (0.4 + (w.count/cloudMax)*0.6).toFixed(2);
-        const colors = ['var(--cyan)','var(--neon)','var(--violet)','var(--lime)','var(--gold)'];
+        const colors = ['var(--cyan)','var(--purple)','var(--violet)','var(--lime)','var(--gold)'];
         const col = colors[w.word.charCodeAt(0)%colors.length];
         return `<span style="font-size:${sz}px;opacity:${op};color:${col};cursor:default" title="${w.count}">${esc(w.word)}</span>`;
       }).join(' ');
@@ -2424,7 +2424,7 @@ async function loadWa(){
       const distBars = distData.map(d=>{
         const h = Math.max(2, Math.round((d.count/distMax)*50));
         return `<div title="${esc(d.label)}: ${d.count}" style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">
-          <div style="width:100%;background:linear-gradient(to top,var(--violet),var(--neon));border-radius:3px 3px 0 0;height:${h}px"></div>
+          <div style="width:100%;background:linear-gradient(to top,var(--violet),var(--purple));border-radius:3px 3px 0 0;height:${h}px"></div>
           <div style="font-size:9px;color:var(--dim);white-space:nowrap">${esc(d.label)}</div>
         </div>`;
       }).join('');
@@ -2441,7 +2441,7 @@ async function loadWa(){
 
     // ── Export button ────────────────────────────────────────────────────────
     html += `<div class="pip-section">
-  <a href="/api/whatsapp/export${_waQs()}" download style="display:block;text-align:center;padding:11px;border-radius:12px;background:rgba(255,47,214,.1);border:1px solid rgba(255,47,214,.3);color:var(--neon);font-size:13.5px;font-weight:700;text-decoration:none">📊 Export as Excel</a>
+  <a href="/api/whatsapp/export${_waQs()}" download style="display:block;text-align:center;padding:11px;border-radius:12px;background:rgba(157,92,255,.1);border:1px solid rgba(157,92,255,.3);color:var(--purple);font-size:13.5px;font-weight:700;text-decoration:none">📊 Export as Excel</a>
 </div>`;
 
     $('wa-inner').innerHTML = html;
@@ -2644,7 +2644,7 @@ function gwConfetti(durationMs){
   document.body.appendChild(canvas);
   const ctx=canvas.getContext('2d');
   canvas.width=window.innerWidth; canvas.height=window.innerHeight;
-  const colors=['#ff2fd6','#9d5cff','#22e6ff','#ffd700','#ff6b6b','#51cf66'];
+  const colors=['#9d5cff','#9d5cff','#22e6ff','#ffd700','#ff6b6b','#51cf66'];
   const particles=Array.from({length:160},()=>({
     x:Math.random()*canvas.width, y:Math.random()*canvas.height-canvas.height,
     r:5+Math.random()*7, spd:1.5+Math.random()*3,
@@ -2673,7 +2673,7 @@ function gwConfetti(durationMs){
 
 async function gwMsg(msg,ok=true){
   const el=$('gwMsg'); if(!el)return;
-  el.style.color=ok?'var(--neon)':'#ff8080'; el.textContent=msg;
+  el.style.color=ok?'var(--purple)':'#ff8080'; el.textContent=msg;
   setTimeout(()=>{ if(el) el.textContent=''; },3500);
 }
 function _gwReload(){ _gwLoaded=false; $('giveaway-inner').innerHTML='<div class="spin">Loading...</div>'; loadGiveaway(); }
