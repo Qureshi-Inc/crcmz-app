@@ -19,10 +19,10 @@ os.environ.setdefault("SESSION_SECRET", "test-secret-for-watch-tests")
 # The app refuses to import without these; nothing in these tests talks to PSN.
 os.environ.setdefault("NPSSO_TOKEN", "test-npsso")
 os.environ.setdefault("GROUP_ID", "test-group")
-os.environ.setdefault("PORTAL_PUBLIC_HOST", "psn.crcmz.me")
+os.environ.setdefault("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 os.environ.setdefault("WATCH_ROOMS", "crcmz,movies")
 os.environ.setdefault("WATCH_AUTH_MODE", "zitadel-ticket")
-os.environ.setdefault("WATCH_TICKET_ISSUER", "https://psn.crcmz.me")
+os.environ.setdefault("WATCH_TICKET_ISSUER", "https://app.crcmz.me")
 os.environ.setdefault("WATCH_TICKET_AUDIENCE", "crcmz-watchparty")
 os.environ.setdefault("WATCH_DATA_DIR", "/tmp/watch-test-data")
 
@@ -130,7 +130,7 @@ def t_ticket_claims():
     assert header["kid"] == out["kid"]
     claims = pyjwt.decode(
         out["ticket"], watch.public_key_pem(), algorithms=["ES256"],
-        audience="crcmz-watchparty", issuer="https://psn.crcmz.me",
+        audience="crcmz-watchparty", issuer="https://app.crcmz.me",
     )
     assert claims["sub"] == viewer
     assert claims["room"] == "crcmz"
@@ -179,7 +179,7 @@ def t_ticket_tamper_detected():
               "." + sig)
     try:
         pyjwt.decode(forged, watch.public_key_pem(), algorithms=["ES256"],
-                     audience="crcmz-watchparty", issuer="https://psn.crcmz.me")
+                     audience="crcmz-watchparty", issuer="https://app.crcmz.me")
     except Exception:
         return
     raise AssertionError("tampered ticket verified")
@@ -219,8 +219,8 @@ def http_tests():
     from fastapi.testclient import TestClient
     import server
 
-    client = TestClient(server.app, base_url="https://psn.crcmz.me")
-    HDR = {"Origin": "https://psn.crcmz.me", "Content-Type": "application/json"}
+    client = TestClient(server.app, base_url="https://app.crcmz.me")
+    HDR = {"Origin": "https://app.crcmz.me", "Content-Type": "application/json"}
 
     def session_cookie(sub="zit-user-1", **extra):
         data = {"sub": sub, "iss": "https://auth.crcmz.me", **extra}
@@ -255,7 +255,7 @@ def http_tests():
             assert body["viewer"]["name"] == "Zed Name"
             claims = pyjwt.decode(body["ticket"], watch.public_key_pem(),
                                   algorithms=["ES256"], audience="crcmz-watchparty",
-                                  issuer="https://psn.crcmz.me")
+                                  issuer="https://app.crcmz.me")
             assert claims["sub"] == watch.viewer_id("https://auth.crcmz.me", "zit-user-1")
             assert "zit-user-1" not in json.dumps(claims), "raw Zitadel sub leaked"
         finally:
@@ -284,7 +284,7 @@ def http_tests():
         client.cookies.set(COOKIE, session_cookie(name="Zed"))
         try:
             r = client.post("/api/watch/join", data="roomId=crcmz",
-                            headers={"Origin": "https://psn.crcmz.me",
+                            headers={"Origin": "https://app.crcmz.me",
                                      "Content-Type": "application/x-www-form-urlencoded"})
             assert r.status_code == 400, r.status_code
         finally:

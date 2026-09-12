@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "psn.crcmz.me")
+PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 
 # "zitadel-ticket" (ours) or "firebase" (upstream WatchParty behaviour). Sent to
 # the browser so the UI can explain itself; WatchParty has the same flag.

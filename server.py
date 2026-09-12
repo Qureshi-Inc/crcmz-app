@@ -647,7 +647,7 @@ def _portal_page(error: str = "", ok: str = "") -> str:
 #
 # Authorization-code + PKCE flow. No client secret needed.
 # Required env vars: ZITADEL_CLIENT_ID, SESSION_SECRET
-# Redirect URI to register in Zitadel: https://psn.crcmz.me/auth/callback
+# Redirect URI to register in Zitadel: https://app.crcmz.me/auth/callback
 
 import hashlib as _hashlib, base64 as _base64, secrets as _secrets
 from urllib.parse import urlencode as _urlencode
@@ -669,7 +669,7 @@ _SESSION_MAX_AGE   = 60 * 60 * 24 * 30  # 30 days
 _OIDC_CONFIG_CACHE: dict = {}
 
 # The only public hostname; bare IPs from the tailnet/LAN bypass auth.
-_PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "psn.crcmz.me")
+_PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 # Paths that must be reachable before authentication.
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/auth/logout", "/auth/passkey/begin", "/auth/passkey/complete",
@@ -2200,7 +2200,7 @@ def portal_users():
     return {"users": portal_mod.list_users()}
 
 
-# === Squad Dashboard (psn.crcmz.me home) ===
+# === Squad Dashboard (app.crcmz.me home) ===
 #
 # Live view of everyone linked via the portal: who's online, what they're
 # playing, plus one-tap actions (Squad Up, Game Time, Roast) wired to the
