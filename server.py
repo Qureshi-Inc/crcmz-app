@@ -2053,6 +2053,12 @@ _BROWSER_EXTRACT_URL = os.environ.get("BROWSER_EXTRACT_URL", "http://crcmz-brows
 _BROWSER_EXTRACT_KEY = os.environ.get("BROWSER_EXTRACT_API_KEY", "")
 
 
+# How much of a quota-limited Drive file to pull per upstream request.  Big
+# enough that the player is not making constant round trips, small enough that
+# one request is not holding a huge window open.
+_DRIVE_WINDOW = 8 * 1024 * 1024
+
+
 def _drive_file_id(url: str) -> str:
     """Return the Google Drive file id in `url`, or "" if it isn't a Drive file.
 
@@ -2257,6 +2263,18 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
     if range_hdr:
         req_headers["Range"] = range_hdr
 
+    # Once a Drive file is over its download quota, open-ended reads stop
+    # returning video: no Range, or "bytes=0-", yields a 2 KB "Quota exceeded"
+    # HTML page that a <video> element can only fail on.  A *bounded* range
+    # still serves real bytes, so convert the player's open-ended read into a
+    # window and let it walk the file with follow-up ranges (which is what it
+    # does for seeking anyway).
+    if "drive.usercontent.google.com" in url:
+        m = _re.match(r"bytes=(\d*)-(\d*)$", (range_hdr or "").strip())
+        if not m or not m.group(2):
+            start = int(m.group(1)) if (m and m.group(1)) else 0
+            req_headers["Range"] = f"bytes={start}-{start + _DRIVE_WINDOW - 1}"
+
     # Redirects are followed by hand so every hop can be re-checked: a public
     # URL is free to redirect somewhere internal, which would defeat the guard.
     client = _hx.AsyncClient(timeout=60.0, follow_redirects=False)
@@ -2323,6 +2341,26 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
             content="\n".join(lines),
             media_type="application/vnd.apple.mpegurl",
             headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"},
+        )
+
+    # HTML in answer to a media request is always a failure page, never video.
+    # Handing it to a <video> element only produces a silent retry loop, so
+    # surface it — Drive's quota page in particular took far too long to spot.
+    if "text/html" in ct:
+        raw = (await r.aread())[:4096]
+        await r.aclose()
+        await client.aclose()
+        text = " ".join(_re.sub(r"<[^>]+>", " ", raw.decode("utf-8", "replace")).split())
+        quota = "Quota exceeded" in text
+        logger.warning(
+            "watch_proxy: got HTML not media (quota=%s) from %.70s: %.120s", quota, target, text
+        )
+        return JSONResponse(
+            {"detail": (
+                "Google Drive has hit its download limit for this file. Make a copy "
+                "in your own Drive and share that, or try again in a few hours."
+            ) if quota else "that link returned a web page instead of a video"},
+            status_code=502,
         )
 
     # Stream segments / direct video files — forward Range/Content-Range so seeking works.
