@@ -2145,12 +2145,14 @@ def _proxy_url(video_url: str, referer: str) -> str:
 async def watch_proxy(request: Request, url: str = "", ref: str = ""):
     """Proxy a media URL through the server, injecting a Referer header.
 
-    Required for HLS streams from sites that set Referer-based access
-    control (cinejoy, vidsrc, etc.).  The manifest is rewritten so all
-    segment/key/playlist URLs also go through this proxy.
+    Required for HLS streams (Referer-locked CDNs) and for direct video
+    files like Google Drive where the browser can't access the extracted
+    URL directly.  Manifests are rewritten; all other content is streamed
+    with Range-request support so the player can seek.
     """
     from urllib.parse import urljoin, quote as _q
     from fastapi.responses import StreamingResponse
+    import httpx as _hx
 
     viewer = await _watch_viewer(request)
     if not viewer:
@@ -2158,38 +2160,51 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
     if not _re.match(r"^https?://", url):
         return Response(status_code=400)
 
-    headers = {
+    req_headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         ),
     }
     if ref:
-        headers["Referer"] = ref
+        req_headers["Referer"] = ref
         try:
             from urllib.parse import urlparse as _up
             p = _up(ref)
-            headers["Origin"] = f"{p.scheme}://{p.netloc}"
+            req_headers["Origin"] = f"{p.scheme}://{p.netloc}"
         except Exception:
             pass
+    # Forward Range header so the player can seek in direct video files.
+    range_hdr = request.headers.get("range")
+    if range_hdr:
+        req_headers["Range"] = range_hdr
 
+    ct_peek = ""
     try:
-        import httpx as _hx
-        async with _hx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            r = await client.get(url, headers=headers)
+        # Use streaming so we never buffer a full video file in memory.
+        client = _hx.AsyncClient(timeout=60.0, follow_redirects=True)
+        r = await client.send(
+            client.build_request("GET", url, headers=req_headers),
+            stream=True,
+        )
     except Exception as exc:
         logger.warning("watch_proxy: fetch failed %s: %s", url[:80], exc)
         return Response(status_code=502)
 
-    if not r.is_success:
+    if not r.is_success and r.status_code not in (206,):
+        await r.aclose()
+        await client.aclose()
         return Response(status_code=r.status_code)
 
     ct = r.headers.get("content-type", "")
     is_manifest = "mpegurl" in ct or url.split("?")[0].lower().endswith(".m3u8")
 
     if is_manifest:
-        # Rewrite all URIs in the manifest to route through this proxy.
-        text = r.text
+        # Need full text to rewrite segment URIs — safe to buffer (manifests are small).
+        text_bytes = await r.aread()
+        await r.aclose()
+        await client.aclose()
+        text = text_bytes.decode("utf-8", errors="replace")
         lines: list[str] = []
         for line in text.splitlines():
             stripped = line.strip()
@@ -2197,13 +2212,11 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
                 lines.append(line)
                 continue
             if stripped.startswith("#"):
-                # Rewrite URI="..." attributes (EXT-X-KEY, EXT-X-MEDIA, etc.)
                 def _rewrite_attr(m: "_re.Match") -> str:
                     abs_u = urljoin(url, m.group(1))
                     return f'URI="{_proxy_url(abs_u, ref)}"'
                 lines.append(_re.sub(r'URI="([^"]+)"', _rewrite_attr, line))
             else:
-                # Segment / child-playlist URI
                 abs_u = urljoin(url, stripped)
                 lines.append(_proxy_url(abs_u, ref))
         return Response(
@@ -2212,11 +2225,26 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
             headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"},
         )
 
-    # Non-manifest (segments, keys, MP4 ranges): stream back.
-    return Response(
-        content=r.content,
-        media_type=ct or "application/octet-stream",
-        headers={"Cache-Control": "max-age=3600", "Access-Control-Allow-Origin": "*"},
+    # Stream segments / direct video files — forward Range/Content-Range so seeking works.
+    resp_headers: dict[str, str] = {"Access-Control-Allow-Origin": "*"}
+    for h in ("content-type", "content-length", "content-range", "accept-ranges"):
+        if h in r.headers:
+            resp_headers[h] = r.headers[h]
+    if "content-type" not in resp_headers:
+        resp_headers["content-type"] = "application/octet-stream"
+
+    async def _body():
+        try:
+            async for chunk in r.aiter_bytes(65536):
+                yield chunk
+        finally:
+            await r.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        _body(),
+        status_code=r.status_code,
+        headers=resp_headers,
     )
 
 
@@ -2251,9 +2279,13 @@ async def watch_extract(request: Request):
     # 1. Try yt-dlp.
     try:
         result = await asyncio.to_thread(_run_ytdlp, url)
+        # Always proxy through the server: the extracted URL may be IP-tied
+        # (Google Drive CDN), require cookies, or not support CORS from the
+        # browser.  The server fetched the URL so it has the right context.
+        result["url"] = _proxy_url(result["url"], url)
         logger.info(
-            "watch_extract(ytdlp): resolved %.80s -> kind=%s url=%.120s viewer=%s",
-            url, result["kind"], result.get("url",""), watch_mod.short_viewer(viewer["viewerId"]),
+            "watch_extract(ytdlp): resolved %.80s -> kind=%s viewer=%s",
+            url, result["kind"], watch_mod.short_viewer(viewer["viewerId"]),
         )
         return JSONResponse(result)
     except ValueError:
@@ -6498,10 +6530,10 @@ function wpMount(url){
 
   const ytId = wpYtId(WP.video);
   if(ytId){ WP.kind='yt'; wpMountYt(ytId); return; }
-  if(/\.m3u8(\?|#|$)/i.test(WP.video) || /^\/api\/watch\/proxy\?/.test(WP.video)){
+  if(/\.m3u8/i.test(WP.video)){
     WP.kind='file'; vid.style.display='block'; wpMountHls(WP.video); return;
   }
-  if(/^https?:\/\//i.test(WP.video)){
+  if(/^\/api\/watch\/proxy\?/.test(WP.video) || /^https?:\/\//i.test(WP.video)){
     WP.kind='file'; vid.style.display='block'; vid.src=WP.video;
     if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
       vid.addEventListener('loadedmetadata', ()=>{ vid.currentTime=t; }, {once:true}); }
