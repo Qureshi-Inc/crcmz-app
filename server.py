@@ -6406,7 +6406,7 @@ async function gwResetAndSeed(){
 // Watch Ticket and hand it to WatchParty in the Socket.IO handshake; the display
 // name and viewer id both come back from the server, never from this page.
 const WP = {
-  cfg:null, sock:null, room:'', clientId:'', names:{}, me:'', myName:'Viewer',
+  cfg:null, sock:null, room:'', clientId:'', names:{}, roster:[], me:'', myName:'Viewer',
   video:'', kind:'', yt:null, ytLoading:null, hls:null, hlsLoading:null, applying:0, tsTimer:null,
   booted:false, tries:0, reconnectTimer:null, presence:null, chat:[], pendingTS:0,
 };
@@ -6559,14 +6559,18 @@ function wpBind(s){
     if(WP.tsTimer){ clearInterval(WP.tsTimer); WP.tsTimer=null; }
     // Peer connections are addressed by socket id server-side, so they're all
     // dead now. Our own camera stays on and re-announces once we're back.
+    WP.roster = [];
     wpDropAllPeers();
     wpStatus('reconnecting…', false);
     wpRetry('');
   });
   s.on('errorMessage', m => wpErr(String(m||'')));
   s.on('watch:presence', d => { WP.presence = d; wpRenderPresence(); });
-  s.on('REC:nameMap', m => {
-    WP.names = m||{}; wpRenderChat();
+  // nameMap only supplies display names — it is never pruned, so it must not
+  // decide who is in the room. `roster` is the live list.
+  s.on('REC:nameMap', m => { WP.names = m||{}; wpRenderChat(); wpRenderOrbs(); });
+  s.on('roster', arr => {
+    WP.roster = Array.isArray(arr) ? arr : [];
     wpReconcilePeers(); wpRenderOrbs();
   });
   // WebRTC handshake for the camera orbs, relayed by clientId.
@@ -6614,10 +6618,21 @@ const WP_CAM_BITRATE = 260000;
 function wpSignal(to, msg){
   if(WP.sock && WP.sock.connected) WP.sock.emit('signal', {to, msg});
 }
+
+// Live peers, excluding ourselves.
+//
+// This MUST come from `roster`, which the server adds to on connect and splices
+// on disconnect. `REC:nameMap` looks similar but is chat attribution: it is
+// never pruned and is even persisted across restarts, so it lists everyone who
+// has *ever* been in the room.
+function wpLive(){
+  return (WP.roster||[])
+    .map(u => u && u.id)
+    .filter(id => id && id !== WP.clientId);
+}
+
 function wpAnnounceCam(on){
-  Object.keys(WP.names||{}).forEach(id=>{
-    if(id !== WP.clientId) wpSignal(id, {t:'cam', on:!!on});
-  });
+  wpLive().forEach(id=> wpSignal(id, {t:'cam', on:!!on}));
 }
 
 // ── local camera ────────────────────────────────────────────────────────────
@@ -6659,7 +6674,7 @@ async function wpToggleCam(){
 
     wpMeter('me', stream);
     wpAnnounceCam(true);
-    Object.keys(WP.names||{}).forEach(id=>{ if(id!==WP.clientId) wpPeer(id, true); });
+    wpLive().forEach(id=> wpPeer(id, true));
     Object.keys(WPC.peers).forEach(id=> wpSyncTracks(WPC.peers[id]));
     wpCamSync();
   } finally { WPC.busy = false; }
@@ -6843,12 +6858,13 @@ async function wpOnSignal(from, msg){
 
 // Roster changed: drop people who left, greet people who arrived.
 function wpReconcilePeers(){
-  const names = WP.names || {};
-  Object.keys(WPC.peers).forEach(id=>{ if(!(id in names)) wpDropPeer(id); });
-  Object.keys(WPC.remoteCam).forEach(id=>{ if(!(id in names)) delete WPC.remoteCam[id]; });
+  const alive = {};
+  wpLive().forEach(id=>{ alive[id] = 1; });
+  Object.keys(WPC.peers).forEach(id=>{ if(!alive[id]) wpDropPeer(id); });
+  Object.keys(WPC.remoteCam).forEach(id=>{ if(!alive[id]) delete WPC.remoteCam[id]; });
   if(!WPC.on) return;
-  Object.keys(names).forEach(id=>{
-    if(id===WP.clientId || WPC.peers[id]) return;
+  Object.keys(alive).forEach(id=>{
+    if(WPC.peers[id]) return;
     wpSignal(id, {t:'cam', on:true});
     wpPeer(id, true);
   });
@@ -6913,8 +6929,7 @@ function wpTint(seed){
 function wpOrbRoster(){
   const names = WP.names || {};
   const out = [{k:'me', id:WP.clientId, name:WP.myName||'You', me:true}];
-  Object.keys(names).forEach(id=>{
-    if(id===WP.clientId) return;
+  wpLive().forEach(id=>{
     out.push({k:id, id, name:names[id]||'Viewer', me:false});
   });
   return out;
