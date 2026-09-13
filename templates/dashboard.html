@@ -2749,7 +2749,7 @@ async function gwResetAndSeed(){
 // name and viewer id both come back from the server, never from this page.
 const WP = {
   cfg:null, sock:null, room:'', clientId:'', names:{}, me:'', myName:'Viewer',
-  video:'', kind:'', yt:null, ytLoading:null, applying:0, tsTimer:null,
+  video:'', kind:'', yt:null, ytLoading:null, hls:null, hlsLoading:null, applying:0, tsTimer:null,
   booted:false, tries:0, reconnectTimer:null, presence:null, chat:[], pendingTS:0,
 };
 const WP_MAX_TRIES = 6;
@@ -2992,6 +2992,7 @@ function wpMount(url){
   // tear down
   if(WP.yt && WP.yt.destroy){ try{ WP.yt.destroy(); }catch(e){} }
   WP.yt=null;
+  if(WP.hls){ try{ WP.hls.destroy(); }catch(e){} WP.hls=null; }
   if(vid){ vid.pause(); vid.removeAttribute('src'); vid.load(); vid.style.display='none'; }
   if(ytBox){ ytBox.style.display='none'; ytBox.innerHTML=''; }
   WP.kind='';
@@ -3000,6 +3001,9 @@ function wpMount(url){
 
   const ytId = wpYtId(WP.video);
   if(ytId){ WP.kind='yt'; wpMountYt(ytId); return; }
+  if(/\.m3u8(\?|#|$)/i.test(WP.video)){
+    WP.kind='file'; vid.style.display='block'; wpMountHls(WP.video); return;
+  }
   if(/^https?:\/\//i.test(WP.video)){
     WP.kind='file'; vid.style.display='block'; vid.src=WP.video;
     if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
@@ -3008,6 +3012,32 @@ function wpMount(url){
   }
   if(empty){ empty.style.display='grid';
     empty.innerHTML='This link type isn\'t supported here yet.<br>Direct video links and YouTube work.'; }
+}
+
+function wpLoadHlsJs(){
+  if(window.Hls) return Promise.resolve(window.Hls);
+  if(WP.hlsLoading) return WP.hlsLoading;
+  WP.hlsLoading = wpScript('https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js')
+    .then(()=>window.Hls).catch(()=>null);
+  return WP.hlsLoading;
+}
+
+function wpMountHls(url){
+  const vid=$('wpVideo'); if(!vid) return;
+  if(vid.canPlayType('application/vnd.apple.mpegurl')){
+    // Safari: native HLS
+    vid.src=url;
+    if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
+      vid.addEventListener('loadedmetadata',()=>{ vid.currentTime=t; },{once:true}); }
+    return;
+  }
+  wpLoadHlsJs().then(Hls=>{
+    if(!Hls || !Hls.isSupported()){ vid.src=url; return; }
+    const hls=new Hls(); WP.hls=hls;
+    hls.loadSource(url); hls.attachMedia(vid);
+    if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
+      hls.once(Hls.Events.MANIFEST_PARSED,()=>{ vid.currentTime=t; }); }
+  });
 }
 
 function wpMountYt(id){
@@ -3041,14 +3071,39 @@ function wpMountYt(id){
   WP.ytLoading.then(()=>{ if(window.YT && window.YT.Player) build(); });
 }
 
-function wpSetVideo(forced){
+async function wpSetVideo(forced){
   const i=$('wpUrl');
   const url = forced !== undefined ? forced : (i ? i.value.trim() : '');
   if(!WP.sock || !WP.sock.connected){ wpErr('Not connected to the watch party yet.'); return; }
-  if(url && !/^https?:\/\//i.test(url)){ wpErr('Only http(s) video links are supported.'); return; }
-  wpErr('');
-  WP.sock.emit('CMD:host', url);
-  if(forced==='' && i) i.value='';
+  if(forced===''){ wpErr(''); WP.sock.emit('CMD:host',''); if(i) i.value=''; return; }
+  if(!url) return;
+  if(!/^https?:\/\//i.test(url)){ wpErr('Only http(s) links are supported.'); return; }
+
+  // YouTube and bare video files: send straight to the room.
+  const isYt = !!wpYtId(url);
+  const isDirect = /\.(mp4|webm|ogg|mov|mkv|m3u8|mpd)(\?|#|$)/i.test(url);
+  if(isYt || isDirect){ wpErr(''); WP.sock.emit('CMD:host', url); return; }
+
+  // Everything else: ask the server to resolve via yt-dlp.
+  const btn=$('wpSetBtn');
+  wpErr('Resolving video…');
+  if(btn) btn.disabled=true;
+  try{
+    const r = await fetch('/api/watch/extract',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({url}),
+    });
+    if(r.status===429){ wpErr('Too many extractions — wait a moment.'); return; }
+    if(!r.ok){
+      let det=''; try{ det=(await r.json()).detail||''; }catch(e){}
+      wpErr(det || 'Could not extract a video from that link.');
+      return;
+    }
+    const d = await r.json();
+    wpErr('');
+    WP.sock.emit('CMD:host', d.url);
+  }catch(e){ wpErr('Could not extract a video from that link.'); }
+  finally{ if(btn) btn.disabled=false; }
 }
 
 async function wpEditNickname(){

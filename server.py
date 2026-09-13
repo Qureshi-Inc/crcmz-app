@@ -66,6 +66,7 @@ _RL_LIMITS = {
     "roast": (5, 60.0),         # roast triggers
     "custom_add": (6, 60.0),    # AI-flavored custom button creation (also Bedrock cost)
     "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
+    "watch_extract": (5, 60.0),  # yt-dlp URL extraction (subprocess, keep tight)
 }
 
 
@@ -2045,6 +2046,88 @@ async def watch_join(request: Request):
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+def _run_ytdlp(url: str) -> dict:
+    """Resolve a page URL to a direct video URL via yt-dlp.
+
+    Returns {"url": str, "kind": "hls"|"dash"|"direct", "title": str}.
+    Prefers the HLS master manifest (adaptive bitrate, audio+video) over
+    individual format streams.  Raises RuntimeError on failure.
+    """
+    import subprocess as _sp
+    import json as _json
+
+    r = _sp.run(
+        ["yt-dlp", "--no-download", "--no-playlist", "--dump-json", "--no-warnings", "--", url],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        stderr = (r.stderr or "").strip()
+        raise RuntimeError(stderr[-300:] if stderr else "yt-dlp error")
+
+    try:
+        data = _json.loads(r.stdout.strip())
+    except Exception as exc:
+        raise RuntimeError(f"could not parse yt-dlp output: {exc}") from exc
+
+    title = data.get("title", "")
+    formats = data.get("formats", [])
+
+    # HLS master manifest is adaptive (includes all quality tiers + audio).
+    manifest = next((f.get("manifest_url") for f in formats if f.get("manifest_url")), None)
+    if manifest:
+        return {"url": manifest, "kind": "hls", "title": title}
+
+    # Fall back to best direct video format.
+    best = next(
+        (f for f in reversed(formats)
+         if f.get("vcodec", "none") != "none" and f.get("url", "").startswith("http")),
+        None,
+    ) or next(
+        (f for f in reversed(formats) if f.get("url", "").startswith("http")),
+        None,
+    )
+    if not best:
+        raise RuntimeError("no playable URL found")
+
+    furl = best["url"]
+    kind = "hls" if ".m3u8" in furl else "dash" if ".mpd" in furl else "direct"
+    return {"url": furl, "kind": kind, "title": title}
+
+
+@app.post("/api/watch/extract")
+async def watch_extract(request: Request):
+    """Resolve a page URL to a direct video URL using yt-dlp."""
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "forbidden"}, status_code=403)
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "not authenticated"}, status_code=401)
+
+    body = None
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    url = str((body or {}).get("url", "")).strip()
+    if not re.match(r"^https?://", url):
+        return JSONResponse({"detail": "a http(s) URL is required"}, status_code=400)
+
+    _rate_limit("watch_extract", viewer["viewerId"])
+
+    try:
+        result = await asyncio.to_thread(_run_ytdlp, url)
+    except Exception as exc:
+        logger.warning("watch_extract: failed for %.80s: %s", url, str(exc)[:200])
+        return JSONResponse({"detail": "could not extract a video from that URL"}, status_code=422)
+
+    logger.info(
+        "watch_extract: resolved %.80s -> kind=%s viewer=%s",
+        url, result["kind"], watch_mod.short_viewer(viewer["viewerId"]),
+    )
+    return JSONResponse(result)
 
 
 @app.post("/api/watch/nickname")
