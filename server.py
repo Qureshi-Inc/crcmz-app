@@ -66,6 +66,7 @@ _RL_LIMITS = {
     "roast": (5, 60.0),         # roast triggers
     "custom_add": (6, 60.0),    # AI-flavored custom button creation (also Bedrock cost)
     "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
+    "watch_extract": (5, 60.0),  # yt-dlp URL extraction (subprocess, keep tight)
 }
 
 
@@ -2045,6 +2046,88 @@ async def watch_join(request: Request):
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+def _run_ytdlp(url: str) -> dict:
+    """Resolve a page URL to a direct video URL via yt-dlp.
+
+    Returns {"url": str, "kind": "hls"|"dash"|"direct", "title": str}.
+    Prefers the HLS master manifest (adaptive bitrate, audio+video) over
+    individual format streams.  Raises RuntimeError on failure.
+    """
+    import subprocess as _sp
+    import json as _json
+
+    r = _sp.run(
+        ["yt-dlp", "--no-download", "--no-playlist", "--dump-json", "--no-warnings", "--", url],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        stderr = (r.stderr or "").strip()
+        raise RuntimeError(stderr[-300:] if stderr else "yt-dlp error")
+
+    try:
+        data = _json.loads(r.stdout.strip())
+    except Exception as exc:
+        raise RuntimeError(f"could not parse yt-dlp output: {exc}") from exc
+
+    title = data.get("title", "")
+    formats = data.get("formats", [])
+
+    # HLS master manifest is adaptive (includes all quality tiers + audio).
+    manifest = next((f.get("manifest_url") for f in formats if f.get("manifest_url")), None)
+    if manifest:
+        return {"url": manifest, "kind": "hls", "title": title}
+
+    # Fall back to best direct video format.
+    best = next(
+        (f for f in reversed(formats)
+         if f.get("vcodec", "none") != "none" and f.get("url", "").startswith("http")),
+        None,
+    ) or next(
+        (f for f in reversed(formats) if f.get("url", "").startswith("http")),
+        None,
+    )
+    if not best:
+        raise RuntimeError("no playable URL found")
+
+    furl = best["url"]
+    kind = "hls" if ".m3u8" in furl else "dash" if ".mpd" in furl else "direct"
+    return {"url": furl, "kind": kind, "title": title}
+
+
+@app.post("/api/watch/extract")
+async def watch_extract(request: Request):
+    """Resolve a page URL to a direct video URL using yt-dlp."""
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "forbidden"}, status_code=403)
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "not authenticated"}, status_code=401)
+
+    body = None
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    url = str((body or {}).get("url", "")).strip()
+    if not re.match(r"^https?://", url):
+        return JSONResponse({"detail": "a http(s) URL is required"}, status_code=400)
+
+    _rate_limit("watch_extract", viewer["viewerId"])
+
+    try:
+        result = await asyncio.to_thread(_run_ytdlp, url)
+    except Exception as exc:
+        logger.warning("watch_extract: failed for %.80s: %s", url, str(exc)[:200])
+        return JSONResponse({"detail": "could not extract a video from that URL"}, status_code=422)
+
+    logger.info(
+        "watch_extract: resolved %.80s -> kind=%s viewer=%s",
+        url, result["kind"], watch_mod.short_viewer(viewer["viewerId"]),
+    )
+    return JSONResponse(result)
 
 
 @app.post("/api/watch/nickname")
@@ -6014,7 +6097,7 @@ async function gwResetAndSeed(){
 // name and viewer id both come back from the server, never from this page.
 const WP = {
   cfg:null, sock:null, room:'', clientId:'', names:{}, me:'', myName:'Viewer',
-  video:'', kind:'', yt:null, ytLoading:null, applying:0, tsTimer:null,
+  video:'', kind:'', yt:null, ytLoading:null, hls:null, hlsLoading:null, applying:0, tsTimer:null,
   booted:false, tries:0, reconnectTimer:null, presence:null, chat:[], pendingTS:0,
 };
 const WP_MAX_TRIES = 6;
@@ -6257,6 +6340,7 @@ function wpMount(url){
   // tear down
   if(WP.yt && WP.yt.destroy){ try{ WP.yt.destroy(); }catch(e){} }
   WP.yt=null;
+  if(WP.hls){ try{ WP.hls.destroy(); }catch(e){} WP.hls=null; }
   if(vid){ vid.pause(); vid.removeAttribute('src'); vid.load(); vid.style.display='none'; }
   if(ytBox){ ytBox.style.display='none'; ytBox.innerHTML=''; }
   WP.kind='';
@@ -6265,6 +6349,9 @@ function wpMount(url){
 
   const ytId = wpYtId(WP.video);
   if(ytId){ WP.kind='yt'; wpMountYt(ytId); return; }
+  if(/\.m3u8(\?|#|$)/i.test(WP.video)){
+    WP.kind='file'; vid.style.display='block'; wpMountHls(WP.video); return;
+  }
   if(/^https?:\/\//i.test(WP.video)){
     WP.kind='file'; vid.style.display='block'; vid.src=WP.video;
     if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
@@ -6273,6 +6360,31 @@ function wpMount(url){
   }
   if(empty){ empty.style.display='grid';
     empty.innerHTML='This link type isn\'t supported here yet.<br>Direct video links and YouTube work.'; }
+}
+
+function wpLoadHlsJs(){
+  if(window.Hls) return Promise.resolve(window.Hls);
+  if(WP.hlsLoading) return WP.hlsLoading;
+  WP.hlsLoading = wpScript('https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js')
+    .then(()=>window.Hls).catch(()=>null);
+  return WP.hlsLoading;
+}
+
+function wpMountHls(url){
+  const vid=$('wpVideo'); if(!vid) return;
+  if(vid.canPlayType('application/vnd.apple.mpegurl')){
+    vid.src=url;
+    if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
+      vid.addEventListener('loadedmetadata',()=>{ vid.currentTime=t; },{once:true}); }
+    return;
+  }
+  wpLoadHlsJs().then(Hls=>{
+    if(!Hls || !Hls.isSupported()){ vid.src=url; return; }
+    const hls=new Hls(); WP.hls=hls;
+    hls.loadSource(url); hls.attachMedia(vid);
+    if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
+      hls.once(Hls.Events.MANIFEST_PARSED,()=>{ vid.currentTime=t; }); }
+  });
 }
 
 function wpMountYt(id){
@@ -6306,14 +6418,39 @@ function wpMountYt(id){
   WP.ytLoading.then(()=>{ if(window.YT && window.YT.Player) build(); });
 }
 
-function wpSetVideo(forced){
+async function wpSetVideo(forced){
   const i=$('wpUrl');
   const url = forced !== undefined ? forced : (i ? i.value.trim() : '');
   if(!WP.sock || !WP.sock.connected){ wpErr('Not connected to the watch party yet.'); return; }
-  if(url && !/^https?:\/\//i.test(url)){ wpErr('Only http(s) video links are supported.'); return; }
-  wpErr('');
-  WP.sock.emit('CMD:host', url);
-  if(forced==='' && i) i.value='';
+  if(forced===''){ wpErr(''); WP.sock.emit('CMD:host',''); if(i) i.value=''; return; }
+  if(!url) return;
+  if(!/^https?:\/\//i.test(url)){ wpErr('Only http(s) links are supported.'); return; }
+
+  // YouTube and bare video files: send straight to the room.
+  const isYt = !!wpYtId(url);
+  const isDirect = /\.(mp4|webm|ogg|mov|mkv|m3u8|mpd)(\?|#|$)/i.test(url);
+  if(isYt || isDirect){ wpErr(''); WP.sock.emit('CMD:host', url); return; }
+
+  // Everything else: ask the server to resolve via yt-dlp.
+  const btn=$('wpSetBtn');
+  wpErr('Resolving video…');
+  if(btn) btn.disabled=true;
+  try{
+    const r = await fetch('/api/watch/extract',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({url}),
+    });
+    if(r.status===429){ wpErr('Too many extractions — wait a moment.'); return; }
+    if(!r.ok){
+      let det=''; try{ det=(await r.json()).detail||''; }catch(e){}
+      wpErr(det || 'Could not extract a video from that link.');
+      return;
+    }
+    const d = await r.json();
+    wpErr('');
+    WP.sock.emit('CMD:host', d.url);
+  }catch(e){ wpErr('Could not extract a video from that link.'); }
+  finally{ if(btn) btn.disabled=false; }
 }
 
 async function wpEditNickname(){
