@@ -4190,13 +4190,74 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-dot { width:7px; height:7px; border-radius:50%; background:currentColor;
     box-shadow:0 0 8px currentColor; animation:wpPulse 1.8s ease-in-out infinite; }
   @keyframes wpPulse { 50% { opacity:.35; } }
-  .wp-viewers { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
-  .wp-viewer { font-size:12px; padding:5px 10px; border-radius:999px;
-    background:rgba(157,92,255,.12); border:1px solid rgba(157,92,255,.3);
-    color:#e4d4ff; max-width:100%; overflow:hidden; text-overflow:ellipsis;
+  /* presence orbs: name chip that becomes a live circular camera feed */
+  .wp-orbs { display:flex; align-items:flex-start; gap:10px; margin-bottom:10px;
+    padding:6px 2px 10px; overflow-x:auto; overflow-y:hidden;
+    scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch;
+    scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.18) transparent; }
+  .wp-orbs::-webkit-scrollbar { height:5px; }
+  .wp-orbs::-webkit-scrollbar-track { background:transparent; }
+  .wp-orbs::-webkit-scrollbar-thumb { background:rgba(255,255,255,.16);
+    border-radius:3px; }
+  .wp-orbs:empty { display:none; }
+  .wp-orb { flex:0 0 auto; width:74px; scroll-snap-align:start; cursor:pointer;
+    transition:width .26s cubic-bezier(.3,.8,.3,1); }
+  .wp-orb-ring { position:relative; width:66px; height:66px; margin:0 auto 6px;
+    box-sizing:border-box; padding:2.5px; border-radius:50%;
+    background:conic-gradient(from 210deg, rgba(157,92,255,.85),
+      rgba(34,230,255,.45), rgba(157,92,255,.85));
+    transition:width .26s cubic-bezier(.3,.8,.3,1),
+      height .26s cubic-bezier(.3,.8,.3,1), box-shadow .22s ease,
+      background .22s ease, transform .18s ease; }
+  .wp-orb.me .wp-orb-ring { background:conic-gradient(from 210deg,
+    rgba(34,230,255,.95), rgba(255,47,214,.5), rgba(34,230,255,.95)); }
+  .wp-orb:hover .wp-orb-ring { transform:translateY(-2px); }
+  .wp-orb.talking .wp-orb-ring {
+    background:conic-gradient(from 210deg, var(--lime), rgba(140,255,43,.3), var(--lime));
+    box-shadow:0 0 0 3px rgba(140,255,43,.15), 0 0 18px rgba(140,255,43,.45);
+    animation:wpTalk 1.15s ease-in-out infinite; }
+  @keyframes wpTalk { 50% { box-shadow:0 0 0 6px rgba(140,255,43,.08),
+    0 0 26px rgba(140,255,43,.62); } }
+  .wp-orb-inner { position:relative; width:100%; height:100%; border-radius:50%;
+    overflow:hidden; display:grid; place-items:center; background:#12121c; }
+  .wp-orb-inner video { position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; display:block; background:#000; }
+  /* mirror our own preview so it reads like a mirror, not a stranger */
+  .wp-orb.me .wp-orb-inner video { transform:scaleX(-1); }
+  .wp-orb-ini { font-family:"Rajdhani",sans-serif; font-weight:700; font-size:22px;
+    letter-spacing:.5px; color:rgba(255,255,255,.9); user-select:none;
+    transition:font-size .26s ease; }
+  .wp-orb-badge { position:absolute; right:-1px; bottom:-1px; min-width:21px;
+    height:21px; padding:0 3px; box-sizing:border-box; border-radius:999px;
+    display:grid; place-items:center; font-size:10px; line-height:1;
+    background:#15151f; border:2px solid #0b0b12; color:var(--dim); }
+  .wp-orb.talking .wp-orb-badge { color:var(--lime);
+    border-color:rgba(140,255,43,.35); }
+  .wp-orb-name { font-size:11px; line-height:1.35; color:var(--dim);
+    text-align:center; overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap; }
-  .wp-viewer.me { background:rgba(34,230,255,.12); border-color:rgba(34,230,255,.4);
-    color:#c8fbff; }
+  .wp-orb.me .wp-orb-name { color:#c8fbff; font-weight:700; }
+  .wp-orb.big { width:154px; }
+  .wp-orb.big .wp-orb-ring { width:146px; height:146px; }
+  .wp-orb.big .wp-orb-ini { font-size:46px; }
+  @media (max-width:560px){
+    .wp-orb { width:60px; }
+    .wp-orb-ring { width:54px; height:54px; }
+    .wp-orb-ini { font-size:18px; }
+    .wp-orb-badge { min-width:18px; height:18px; font-size:9px; }
+    .wp-orb.big { width:124px; }
+    .wp-orb.big .wp-orb-ring { width:118px; height:118px; }
+    .wp-orb.big .wp-orb-ini { font-size:38px; }
+  }
+  .wp-cam-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    margin-bottom:10px; }
+  /* touch-action:none keeps a press-and-hold from scrolling the page */
+  .wp-ptt { touch-action:none; user-select:none; -webkit-user-select:none;
+    -webkit-touch-callout:none; }
+  .wp-ptt.hot { background:rgba(140,255,43,.2);
+    border-color:rgba(140,255,43,.55); color:var(--lime);
+    box-shadow:0 0 16px rgba(140,255,43,.3); }
+  .wp-cam-note { font-size:12px; color:var(--dim); line-height:1.5; }
   .wp-stage { position:relative; width:100%; aspect-ratio:16/9; border-radius:16px;
     overflow:hidden; background:#000; border:1px solid var(--line);
     box-shadow:0 18px 40px rgba(0,0,0,.5); }
@@ -4425,7 +4486,12 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <div class="pip-title" style="margin:0;flex:1">🍿 Watch Party</div>
       <span class="wp-pill off" id="wpPresence"><span class="wp-dot"></span><span id="wpPresenceTxt">connecting…</span></span>
     </div>
-    <div class="wp-viewers" id="wpViewers"></div>
+    <div class="wp-orbs" id="wpOrbs"></div>
+    <div class="wp-cam-bar">
+      <button class="wp-btn ghost" id="wpCamBtn" onclick="wpToggleCam()">📷 Turn on camera</button>
+      <button class="wp-btn ghost wp-ptt" id="wpPttBtn" style="display:none">🎤 Hold to talk</button>
+      <span class="wp-cam-note" id="wpCamNote"></span>
+    </div>
     <div class="wp-stage" id="wpStage">
       <video id="wpVideo" playsinline controls style="display:none"></video>
       <div id="wpYt" style="display:none"></div>
@@ -6428,12 +6494,20 @@ function wpBind(s){
   });
   s.on('disconnect', ()=>{
     if(WP.tsTimer){ clearInterval(WP.tsTimer); WP.tsTimer=null; }
+    // Peer connections are addressed by socket id server-side, so they're all
+    // dead now. Our own camera stays on and re-announces once we're back.
+    wpDropAllPeers();
     wpStatus('reconnecting…', false);
     wpRetry('');
   });
   s.on('errorMessage', m => wpErr(String(m||'')));
   s.on('watch:presence', d => { WP.presence = d; wpRenderPresence(); });
-  s.on('REC:nameMap', m => { WP.names = m||{}; wpRenderChat(); });
+  s.on('REC:nameMap', m => {
+    WP.names = m||{}; wpRenderChat();
+    wpReconcilePeers(); wpRenderOrbs();
+  });
+  // WebRTC handshake for the camera orbs, relayed by clientId.
+  s.on('signal', d => wpOnSignal(d && d.from, d && d.msg));
   s.on('REC:host', h => wpApplyHost(h||{}));
   s.on('REC:play', url => { if(url && url!==WP.video) wpMount(url); wpRemote(()=>wpPlay()); });
   s.on('REC:pause', () => wpRemote(()=>wpPause()));
@@ -6447,12 +6521,466 @@ function wpBind(s){
 function wpRenderPresence(){
   const d = WP.presence || {count:0, viewers:[]};
   wpStatus(d.count===1 ? '1 watching' : d.count+' watching', d.count>0);
-  const box=$('wpViewers'); if(!box) return;
-  box.innerHTML = (d.viewers||[]).map(v=>{
-    const mine = v.name===WP.myName;
-    return '<span class="wp-viewer'+(mine?' me':'')+'">'+esc(v.name)+'</span>';
-  }).join('');
+  wpRenderOrbs();
 }
+
+// ── camera orbs ─────────────────────────────────────────────────────────────
+// Peer-to-peer video between viewers, meshed. WatchParty already relays a
+// `signal` event between clientIds, so this needs no server-side change; we
+// just define our own message types on top of it. Mesh (rather than an SFU)
+// is the right call for a watch party: everyone uploads to everyone, which is
+// fine at party scale and needs no media server.
+const WPC = {
+  stream:null,      // our local MediaStream (video + an initially-disabled mic)
+  on:false,         // are we publishing
+  talking:false,    // is push-to-talk currently held
+  peers:{},         // clientId -> {pc, polite, makingOffer, ignoreOffer, stream}
+  remoteCam:{},     // clientId -> did they announce a camera
+  levels:{},        // 'me'|clientId -> {ctx, an, data, loud}  (speaking detection)
+  timer:0,
+  busy:false,
+  gesture:false,
+};
+const WP_ICE = [{ urls:[
+  'stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302',
+]}];
+// The orbs are ~66px, so a tiny stream looks identical to a big one and keeps
+// the mesh affordable on phone uplinks.
+const WP_CAM_BITRATE = 260000;
+
+function wpSignal(to, msg){
+  if(WP.sock && WP.sock.connected) WP.sock.emit('signal', {to, msg});
+}
+function wpAnnounceCam(on){
+  Object.keys(WP.names||{}).forEach(id=>{
+    if(id !== WP.clientId) wpSignal(id, {t:'cam', on:!!on});
+  });
+}
+
+// ── local camera ────────────────────────────────────────────────────────────
+async function wpToggleCam(){
+  if(WPC.busy) return;
+  WPC.busy = true;
+  try{
+    if(WPC.on){ wpCamStop(); return; }
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia
+       || !window.RTCPeerConnection){
+      wpCamNote('This browser can\'t share a camera.'); return;
+    }
+    wpCamNote('Asking for camera permission…');
+    let stream;
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        video:{ width:{ideal:320}, height:{ideal:320},
+                frameRate:{ideal:15,max:20}, facingMode:'user' },
+        audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+      });
+    }catch(e){
+      const n = (e && e.name) || '';
+      wpCamNote(
+        n==='NotAllowedError' ? 'Camera blocked — allow it in your browser settings.' :
+        n==='NotFoundError'   ? 'No camera found on this device.' :
+        n==='NotReadableError'? 'Your camera is in use by another app.' :
+                                'Could not start the camera.');
+      return;
+    }
+    // Mic joins muted: this is push-to-talk, so the movie audio in the room
+    // never leaks back out through anyone's microphone.
+    stream.getAudioTracks().forEach(t=>{ t.enabled = false; });
+    WPC.stream = stream; WPC.on = true;
+
+    // A camera can be revoked from the OS/browser mid-call.
+    stream.getVideoTracks().forEach(t=>{
+      t.addEventListener('ended', ()=>{ if(WPC.on) wpCamStop(); });
+    });
+
+    wpMeter('me', stream);
+    wpAnnounceCam(true);
+    Object.keys(WP.names||{}).forEach(id=>{ if(id!==WP.clientId) wpPeer(id, true); });
+    Object.keys(WPC.peers).forEach(id=> wpSyncTracks(WPC.peers[id]));
+    wpCamSync();
+  } finally { WPC.busy = false; }
+}
+
+function wpCamStop(){
+  WPC.on = false;
+  wpPtt(false);
+  wpAnnounceCam(false);
+  Object.keys(WPC.peers).forEach(id=>{
+    // Keep the connection if they're still sending us video; otherwise there's
+    // nothing left to exchange, so drop it entirely.
+    if(WPC.remoteCam[id]) wpSyncTracks(WPC.peers[id]);
+    else wpDropPeer(id);
+  });
+  if(WPC.stream){ WPC.stream.getTracks().forEach(t=>t.stop()); WPC.stream = null; }
+  wpMeterStop('me');
+  wpCamSync();
+}
+
+function wpCamSync(){
+  const b=$('wpCamBtn'), p=$('wpPttBtn');
+  if(b) b.textContent = WPC.on ? '📷 Turn off camera' : '📷 Turn on camera';
+  if(p){ p.style.display = WPC.on ? '' : 'none'; if(WPC.on) wpPttWire(); }
+  wpCamNote('');
+  wpRenderOrbs();
+}
+function wpCamNote(msg){
+  const n=$('wpCamNote'); if(!n) return;
+  n.textContent = msg !== '' ? msg
+    : (WPC.on ? 'Hold the mic button — or the T key — to talk.' : '');
+}
+
+// ── push-to-talk ────────────────────────────────────────────────────────────
+function wpPtt(on){
+  const live = !!(on && WPC.on && WPC.stream);
+  if(live === WPC.talking) return;
+  WPC.talking = live;
+  if(WPC.stream) WPC.stream.getAudioTracks().forEach(t=>{ t.enabled = live; });
+  const b=$('wpPttBtn'); if(b) b.classList.toggle('hot', live);
+  wpOrbState();
+}
+function wpPttWire(){
+  const b=$('wpPttBtn');
+  if(!b || b.dataset.wired) return;
+  b.dataset.wired = '1';
+  const down=(e)=>{ e.preventDefault(); wpPtt(true); };
+  const up  =(e)=>{ e.preventDefault(); wpPtt(false); };
+  b.addEventListener('pointerdown', down);
+  b.addEventListener('pointerup', up);
+  b.addEventListener('pointercancel', up);
+  b.addEventListener('pointerleave', up);
+  addEventListener('keydown', e=>{
+    if(e.repeat || String(e.key).toLowerCase()!=='t') return;
+    const t=e.target; if(t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    wpPtt(true);
+  });
+  addEventListener('keyup', e=>{
+    if(String(e.key).toLowerCase()==='t') wpPtt(false);
+  });
+  addEventListener('blur', ()=> wpPtt(false));
+}
+
+// ── peer connections (perfect negotiation) ──────────────────────────────────
+function wpPeer(id, create){
+  let p = WPC.peers[id];
+  if(p) return p;
+  if(!create || !id || id===WP.clientId) return null;
+
+  const pc = new RTCPeerConnection({ iceServers:WP_ICE, bundlePolicy:'max-bundle' });
+  // "Polite" peer yields on an offer collision. Comparing clientIds gives both
+  // sides the same answer without another round trip.
+  p = { pc, polite: WP.clientId > id, makingOffer:false, ignoreOffer:false, stream:null };
+  WPC.peers[id] = p;
+
+  pc.onnegotiationneeded = async ()=>{
+    try{
+      p.makingOffer = true;
+      await pc.setLocalDescription();
+      wpSignal(id, {t:'sdp', sdp:pc.localDescription});
+    }catch(e){}
+    finally{ p.makingOffer = false; }
+  };
+  pc.onicecandidate = (ev)=>{
+    if(ev.candidate) wpSignal(id, {t:'ice', ice:ev.candidate});
+  };
+  pc.ontrack = (ev)=>{
+    p.stream = ev.streams[0] || p.stream;
+    // A remote track arrives muted and unmutes once media actually flows, so
+    // the orb has to re-render then or it would sit on the initials forever.
+    ['unmute','mute','ended'].forEach(n=>
+      ev.track.addEventListener(n, ()=> wpRenderOrbs()));
+    if(p.stream){ wpMeter(id, p.stream); wpRenderOrbs(); }
+  };
+  pc.onconnectionstatechange = ()=>{
+    if(pc.connectionState==='failed'){ wpDropPeer(id); }
+    wpRenderOrbs();
+  };
+  wpSyncTracks(p);
+  return p;
+}
+
+// Idempotent: makes the peer's published tracks match what we're sending now.
+// Adding or removing fires onnegotiationneeded, so this is the only thing that
+// needs to be called when our camera turns on or off.
+function wpSyncTracks(p){
+  if(!p) return;
+  const want = (WPC.on && WPC.stream) ? WPC.stream.getTracks() : [];
+  p.pc.getSenders().forEach(s=>{
+    if(s.track && want.indexOf(s.track) === -1){
+      try{ p.pc.removeTrack(s); }catch(e){}
+    }
+  });
+  want.forEach(t=>{
+    const already = p.pc.getSenders().some(s=> s.track === t);
+    if(already) return;
+    try{
+      const sender = p.pc.addTrack(t, WPC.stream);
+      if(t.kind==='video') wpCapBitrate(sender);
+    }catch(e){}
+  });
+}
+
+async function wpCapBitrate(sender){
+  try{
+    const prm = sender.getParameters();
+    prm.encodings = (prm.encodings && prm.encodings.length) ? prm.encodings : [{}];
+    prm.encodings[0].maxBitrate = WP_CAM_BITRATE;
+    prm.encodings[0].maxFramerate = 20;
+    await sender.setParameters(prm);
+  }catch(e){}
+}
+
+function wpDropPeer(id){
+  const p = WPC.peers[id]; if(!p) return;
+  try{
+    p.pc.onnegotiationneeded=null; p.pc.onicecandidate=null;
+    p.pc.ontrack=null; p.pc.onconnectionstatechange=null;
+    p.pc.close();
+  }catch(e){}
+  delete WPC.peers[id];
+  wpMeterStop(id);
+}
+function wpDropAllPeers(){
+  Object.keys(WPC.peers).forEach(wpDropPeer);
+  WPC.remoteCam = {};
+  wpRenderOrbs();
+}
+
+async function wpOnSignal(from, msg){
+  if(!from || from===WP.clientId || !msg) return;
+
+  if(msg.t==='cam'){
+    WPC.remoteCam[from] = !!msg.on;
+    if(msg.on) wpPeer(from, true);
+    else if(!WPC.on) wpDropPeer(from);
+    wpRenderOrbs();
+    return;
+  }
+  // Only negotiate with peers one of us actually wants media from.
+  const p = wpPeer(from, WPC.on || !!WPC.remoteCam[from]);
+  if(!p) return;
+  const pc = p.pc;
+  try{
+    if(msg.t==='sdp' && msg.sdp){
+      const collision = msg.sdp.type==='offer' &&
+        (p.makingOffer || pc.signalingState!=='stable');
+      p.ignoreOffer = !p.polite && collision;
+      if(p.ignoreOffer) return;
+      await pc.setRemoteDescription(msg.sdp);
+      if(msg.sdp.type==='offer'){
+        await pc.setLocalDescription();
+        wpSignal(from, {t:'sdp', sdp:pc.localDescription});
+      }
+    } else if(msg.t==='ice' && msg.ice){
+      try{ await pc.addIceCandidate(msg.ice); }
+      catch(e){ if(!p.ignoreOffer) throw e; }
+    }
+  }catch(e){}
+}
+
+// Roster changed: drop people who left, greet people who arrived.
+function wpReconcilePeers(){
+  const names = WP.names || {};
+  Object.keys(WPC.peers).forEach(id=>{ if(!(id in names)) wpDropPeer(id); });
+  Object.keys(WPC.remoteCam).forEach(id=>{ if(!(id in names)) delete WPC.remoteCam[id]; });
+  if(!WPC.on) return;
+  Object.keys(names).forEach(id=>{
+    if(id===WP.clientId || WPC.peers[id]) return;
+    wpSignal(id, {t:'cam', on:true});
+    wpPeer(id, true);
+  });
+}
+
+// ── speaking detection ──────────────────────────────────────────────────────
+function wpMeter(key, stream){
+  if(!stream || !stream.getAudioTracks().length) return;
+  const cur = WPC.levels[key];
+  if(cur && cur.stream === stream) return;   // ontrack fires per track; only meter once
+  wpMeterStop(key);
+  try{
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if(!Ctx) return;
+    const ctx = new Ctx();
+    // A context created outside a user gesture can start suspended.
+    if(ctx.state === 'suspended') ctx.resume().catch(()=>{});
+    const an = ctx.createAnalyser();
+    an.fftSize = 512; an.smoothingTimeConstant = .6;
+    ctx.createMediaStreamSource(stream).connect(an);
+    WPC.levels[key] = { ctx, an, stream,
+      data:new Uint8Array(an.frequencyBinCount), loud:false };
+    wpMeterRun();
+  }catch(e){}
+}
+function wpMeterStop(key){
+  const m = WPC.levels[key]; if(!m) return;
+  try{ m.ctx.close(); }catch(e){}
+  delete WPC.levels[key];
+}
+function wpMeterRun(){
+  if(WPC.timer) return;
+  // 8 Hz is plenty to drive a glow and costs far less than requestAnimationFrame.
+  WPC.timer = setInterval(()=>{
+    const keys = Object.keys(WPC.levels);
+    if(!keys.length){ clearInterval(WPC.timer); WPC.timer=0; return; }
+    let changed = false;
+    keys.forEach(k=>{
+      const m = WPC.levels[k];
+      m.an.getByteFrequencyData(m.data);
+      let sum=0; for(let i=0;i<m.data.length;i++) sum += m.data[i];
+      const loud = (sum / m.data.length) > 18;
+      if(loud !== m.loud){ m.loud = loud; changed = true; }
+    });
+    if(changed) wpOrbState();
+  }, 120);
+}
+
+// ── orb rendering ───────────────────────────────────────────────────────────
+function wpInitials(name){
+  const parts = String(name||'').trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return '?';
+  if(parts.length===1) return parts[0].slice(0,2).toUpperCase();
+  return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+}
+function wpTint(seed){
+  let h=0; const s=String(seed||'');
+  for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+  const a = h % 360;
+  return 'linear-gradient(145deg, hsl('+a+' 60% 27%), hsl('+((a+58)%360)+' 55% 15%))';
+}
+function wpOrbRoster(){
+  const names = WP.names || {};
+  const out = [{k:'me', id:WP.clientId, name:WP.myName||'You', me:true}];
+  Object.keys(names).forEach(id=>{
+    if(id===WP.clientId) return;
+    out.push({k:id, id, name:names[id]||'Viewer', me:false});
+  });
+  return out;
+}
+function wpOrbBadge(v){
+  if(v.me) return WPC.on ? (WPC.talking ? '🎤' : '📷') : '';
+  const p = WPC.peers[v.id];
+  if(!p) return '';
+  if(p.pc.connectionState==='connected') return p.stream ? '📷' : '';
+  if(p.pc.connectionState==='failed') return '⚠️';
+  return (WPC.remoteCam[v.id] || WPC.on) ? '⋯' : '';
+}
+
+// Reconciling render: <video> elements are reused in place, because replacing
+// one drops its stream and makes the feed flicker on every roster update.
+function wpRenderOrbs(){
+  const box=$('wpOrbs'); if(!box) return;
+  const roster = wpOrbRoster();
+  const existing = {};
+  Array.from(box.children).forEach(el=>{
+    if(el.dataset && el.dataset.k) existing[el.dataset.k] = el;
+  });
+
+  roster.forEach((v,i)=>{
+    let el = existing[v.k];
+    if(!el){
+      el = document.createElement('div');
+      el.className = 'wp-orb';
+      el.dataset.k = v.k;
+      el.innerHTML =
+        '<div class="wp-orb-ring"><div class="wp-orb-inner">' +
+        '<span class="wp-orb-ini"></span></div>' +
+        '<span class="wp-orb-badge"></span></div>' +
+        '<div class="wp-orb-name"></div>';
+      el.addEventListener('click', ()=> el.classList.toggle('big'));
+      existing[v.k] = el;
+    }
+    if(box.children[i] !== el) box.insertBefore(el, box.children[i] || null);
+    el.classList.toggle('me', v.me);
+
+    const label = v.me ? (v.name + ' (you)') : v.name;
+    const nameEl = el.querySelector('.wp-orb-name');
+    if(nameEl.textContent !== label){ nameEl.textContent = label; el.title = label; }
+
+    const inner = el.querySelector('.wp-orb-inner');
+    const ini = el.querySelector('.wp-orb-ini');
+    const initials = wpInitials(v.name);
+    if(ini.textContent !== initials){
+      ini.textContent = initials;
+      inner.style.background = wpTint(v.name);
+    }
+
+    const stream = v.me ? (WPC.on ? WPC.stream : null)
+                        : ((WPC.peers[v.id] && WPC.peers[v.id].stream) || null);
+    const hasVideo = !!(stream && stream.getVideoTracks()
+      .some(t=> t.readyState==='live' && !t.muted));
+    let vid = inner.querySelector('video');
+    if(hasVideo){
+      if(!vid){
+        vid = document.createElement('video');
+        vid.autoplay = true; vid.playsInline = true;
+        vid.setAttribute('playsinline','');
+        inner.insertBefore(vid, inner.firstChild);
+      }
+      vid.muted = v.me;   // never play our own mic back at us
+      if(vid.srcObject !== stream){
+        vid.srcObject = stream;
+        const pr = vid.play();
+        if(pr && pr.catch) pr.catch(()=> wpNeedGesture());
+      }
+      ini.style.display = 'none';
+    } else {
+      if(vid){ vid.srcObject = null; vid.remove(); }
+      ini.style.display = '';
+    }
+    el.classList.toggle('live', hasVideo);
+
+    const badge = el.querySelector('.wp-orb-badge');
+    const txt = wpOrbBadge(v);
+    if(badge.textContent !== txt) badge.textContent = txt;
+    badge.style.display = txt ? '' : 'none';
+  });
+
+  const keep = {}; roster.forEach(v=>{ keep[v.k]=1; });
+  Array.from(box.children).forEach(el=>{
+    const k = el.dataset && el.dataset.k;
+    if(k && !keep[k]){
+      const v = el.querySelector('video'); if(v) v.srcObject = null;
+      el.remove();
+    }
+  });
+  wpOrbState();
+}
+
+// Cheap pass for state that changes often — never rebuilds the video elements.
+function wpOrbState(){
+  const box=$('wpOrbs'); if(!box) return;
+  Array.from(box.children).forEach(el=>{
+    const k = el.dataset && el.dataset.k; if(!k) return;
+    const m = WPC.levels[k];
+    const talking = !!(m && m.loud) && (k!=='me' || WPC.talking);
+    el.classList.toggle('talking', talking);
+    if(k==='me'){
+      const badge = el.querySelector('.wp-orb-badge');
+      const txt = WPC.on ? (WPC.talking ? '🎤' : '📷') : '';
+      if(badge && badge.textContent !== txt){
+        badge.textContent = txt;
+        badge.style.display = txt ? '' : 'none';
+      }
+    }
+  });
+}
+
+// Browsers refuse to autoplay audio without user activation; if that bites,
+// take the next tap anywhere as the gesture.
+function wpNeedGesture(){
+  if(WPC.gesture) return;
+  WPC.gesture = true;
+  wpCamNote('Tap anywhere to hear everyone.');
+  const go = ()=>{
+    removeEventListener('click', go); removeEventListener('touchend', go);
+    WPC.gesture = false;
+    document.querySelectorAll('#wpOrbs video').forEach(v=> v.play().catch(()=>{}));
+    wpCamNote('');
+  };
+  addEventListener('click', go); addEventListener('touchend', go);
+}
+
+addEventListener('pagehide', ()=>{ if(WPC.on) wpCamStop(); });
 
 // ── chat ────────────────────────────────────────────────────────────────────
 function wpChatSys(msg){
