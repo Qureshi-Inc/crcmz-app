@@ -2053,6 +2053,35 @@ _BROWSER_EXTRACT_URL = os.environ.get("BROWSER_EXTRACT_URL", "http://crcmz-brows
 _BROWSER_EXTRACT_KEY = os.environ.get("BROWSER_EXTRACT_API_KEY", "")
 
 
+def _drive_file_id(url: str) -> str:
+    """Return the Google Drive file id in `url`, or "" if it isn't a Drive file.
+
+    Folder links deliberately do not match: they hold no single video.
+    """
+    for pat in (
+        r"drive\.google\.com/file/d/([A-Za-z0-9_-]{10,})",
+        r"drive\.google\.com/(?:open|uc)\?(?:[^#]*&)?id=([A-Za-z0-9_-]{10,})",
+        r"drive\.usercontent\.google\.com/download\?(?:[^#]*&)?id=([A-Za-z0-9_-]{10,})",
+    ):
+        m = _re.search(pat, url)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _drive_download_url(file_id: str) -> str:
+    """The one Drive URL that streams reliably for us.
+
+    `confirm=t` skips the virus-scan interstitial that large files otherwise
+    get.  Unlike the rr*.c.drive.google.com/videoplayback URLs, this endpoint
+    needs no cookies and honours Range.
+    """
+    return (
+        "https://drive.usercontent.google.com/download"
+        f"?id={file_id}&export=download&confirm=t"
+    )
+
+
 def _run_ytdlp(url: str) -> dict:
     """Resolve a page URL to a direct video URL via yt-dlp.
 
@@ -2082,14 +2111,22 @@ def _run_ytdlp(url: str) -> dict:
     title = data.get("title", "")
     formats = data.get("formats", [])
 
+    # Drive: pin the download endpoint rather than trusting yt-dlp's pick.
+    # When Drive has a transcode ready, "best" is an
+    # rr*.c.drive.google.com/videoplayback URL tied to the Drive web session
+    # (source=webdrive&app=explorer) that 403s for any cookie-less fetch — so
+    # the same link played fine one minute and died the next depending purely
+    # on whether that transcode happened to exist.  Only take the title here.
+    drive_id = _drive_file_id(url)
+    if drive_id:
+        return {"url": _drive_download_url(drive_id), "kind": "direct", "title": title}
+
     # HLS master manifest is adaptive (includes all quality tiers + audio).
     manifest = next((f.get("manifest_url") for f in formats if f.get("manifest_url")), None)
     if manifest:
         return {"url": manifest, "kind": "hls", "title": title}
 
-    # Use yt-dlp's own best-format selection (top-level "url" key).  For
-    # Google Drive this is drive.usercontent.google.com/download?... which is
-    # NOT IP-locked, unlike the streaming CDN URLs in the formats list.
+    # Otherwise trust yt-dlp's own best-format selection (top-level "url").
     top_url = data.get("url", "")
     if top_url.startswith("http"):
         kind = "hls" if ".m3u8" in top_url else "dash" if ".mpd" in top_url else "direct"
@@ -2337,6 +2374,14 @@ async def watch_extract(request: Request):
     if not _re.match(r"^https?://", url):
         return JSONResponse({"detail": "a http(s) URL is required"}, status_code=400)
 
+    # A folder holds no single video; yt-dlp fails on it with an opaque
+    # "expected string or bytes-like object, got 'bool'", so say it plainly.
+    if _re.search(r"drive\.google\.com/drive/(?:u/\d+/)?folders/", url):
+        return JSONResponse(
+            {"detail": "that's a Drive folder — open the video inside it and paste its link"},
+            status_code=400,
+        )
+
     _rate_limit("watch_extract", viewer["viewerId"])
 
     # 1. Try yt-dlp.
@@ -2355,6 +2400,19 @@ async def watch_extract(request: Request):
         pass  # yt-dlp said "Unsupported URL" — fall through to browser
     except Exception as exc:
         logger.warning("watch_extract(ytdlp): failed for %.80s: %s", url, str(exc)[:200])
+        # For Drive we can build the streaming URL from the file id alone, so a
+        # yt-dlp hiccup only costs us the title, not the video.
+        drive_id = _drive_file_id(url)
+        if drive_id:
+            logger.info(
+                "watch_extract(drive): yt-dlp failed, using download endpoint viewer=%s",
+                watch_mod.short_viewer(viewer["viewerId"]),
+            )
+            return JSONResponse({
+                "url": _proxy_url(_drive_download_url(drive_id), url),
+                "kind": "direct",
+                "title": "",
+            })
         return JSONResponse({"detail": "could not extract a video from that URL"}, status_code=422)
 
     # 2. Fall back to headless browser.
