@@ -2141,6 +2141,47 @@ def _proxy_url(video_url: str, referer: str) -> str:
     return f"/api/watch/proxy?url={_q(video_url, safe='')}&ref={_q(referer, safe='')}"
 
 
+def _public_http_target(target: str) -> bool:
+    """True only if `target` is http(s) on a publicly-routable address.
+
+    /api/watch/proxy fetches a caller-supplied URL, so without this it is an
+    SSRF pivot: any signed-in viewer could read our internal services on the
+    coolify network (browser-extract, the watchparty container) or cloud
+    metadata endpoints.  Blocking by resolved IP rather than hostname also
+    stops names that deliberately resolve into private space.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        p = urlparse(target)
+    except Exception:
+        return False
+    if p.scheme not in ("http", "https") or not p.hostname:
+        return False
+    try:
+        port = p.port or (443 if p.scheme == "https" else 80)
+    except ValueError:
+        return False
+    try:
+        infos = socket.getaddrinfo(p.hostname, port, proto=socket.IPPROTO_TCP)
+    except Exception:
+        return False
+    if not infos:
+        return False
+    # Every A/AAAA answer must be public — one private hit is enough to abuse.
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
+            return False
+    return True
+
+
 @app.get("/api/watch/proxy")
 async def watch_proxy(request: Request, url: str = "", ref: str = ""):
     """Proxy a media URL through the server, injecting a Referer header.
@@ -2150,7 +2191,7 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
     URL directly.  Manifests are rewritten; all other content is streamed
     with Range-request support so the player can seek.
     """
-    from urllib.parse import urljoin, quote as _q
+    from urllib.parse import urljoin
     from fastapi.responses import StreamingResponse
     import httpx as _hx
 
@@ -2179,25 +2220,45 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
     if range_hdr:
         req_headers["Range"] = range_hdr
 
-    ct_peek = ""
+    # Redirects are followed by hand so every hop can be re-checked: a public
+    # URL is free to redirect somewhere internal, which would defeat the guard.
+    client = _hx.AsyncClient(timeout=60.0, follow_redirects=False)
+    target = url
+    r = None
     try:
-        # Use streaming so we never buffer a full video file in memory.
-        client = _hx.AsyncClient(timeout=60.0, follow_redirects=True)
-        r = await client.send(
-            client.build_request("GET", url, headers=req_headers),
-            stream=True,
-        )
+        for _hop in range(6):
+            if not await asyncio.to_thread(_public_http_target, target):
+                await client.aclose()
+                logger.warning("watch_proxy: blocked non-public target %.80s", target)
+                return Response(status_code=400)
+            r = await client.send(
+                client.build_request("GET", target, headers=req_headers),
+                stream=True,
+            )
+            loc = r.headers.get("location", "")
+            if r.status_code in (301, 302, 303, 307, 308) and loc:
+                await r.aclose()
+                r = None
+                target = urljoin(target, loc)
+                continue
+            break
+        else:
+            await client.aclose()
+            return Response(status_code=502)
     except Exception as exc:
-        logger.warning("watch_proxy: fetch failed %s: %s", url[:80], exc)
+        if r is not None:
+            await r.aclose()
+        await client.aclose()
+        logger.warning("watch_proxy: fetch failed %.80s: %s", url, exc)
         return Response(status_code=502)
 
-    if not r.is_success and r.status_code not in (206,):
+    if not r.is_success and r.status_code != 206:
         await r.aclose()
         await client.aclose()
         return Response(status_code=r.status_code)
 
     ct = r.headers.get("content-type", "")
-    is_manifest = "mpegurl" in ct or url.split("?")[0].lower().endswith(".m3u8")
+    is_manifest = "mpegurl" in ct or target.split("?")[0].lower().endswith(".m3u8")
 
     if is_manifest:
         # Need full text to rewrite segment URIs — safe to buffer (manifests are small).
@@ -2212,12 +2273,14 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
                 lines.append(line)
                 continue
             if stripped.startswith("#"):
+                # Relative URIs resolve against the *final* URL, not the one we
+                # were handed, or they break whenever the CDN redirects.
                 def _rewrite_attr(m: "_re.Match") -> str:
-                    abs_u = urljoin(url, m.group(1))
+                    abs_u = urljoin(target, m.group(1))
                     return f'URI="{_proxy_url(abs_u, ref)}"'
                 lines.append(_re.sub(r'URI="([^"]+)"', _rewrite_attr, line))
             else:
-                abs_u = urljoin(url, stripped)
+                abs_u = urljoin(target, stripped)
                 lines.append(_proxy_url(abs_u, ref))
         return Response(
             content="\n".join(lines),
