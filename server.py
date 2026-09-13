@@ -2087,7 +2087,15 @@ def _run_ytdlp(url: str) -> dict:
     if manifest:
         return {"url": manifest, "kind": "hls", "title": title}
 
-    # Fall back to best direct video format.
+    # Use yt-dlp's own best-format selection (top-level "url" key).  For
+    # Google Drive this is drive.usercontent.google.com/download?... which is
+    # NOT IP-locked, unlike the streaming CDN URLs in the formats list.
+    top_url = data.get("url", "")
+    if top_url.startswith("http"):
+        kind = "hls" if ".m3u8" in top_url else "dash" if ".mpd" in top_url else "direct"
+        return {"url": top_url, "kind": kind, "title": title}
+
+    # Last resort: pick best format manually.
     best = next(
         (f for f in reversed(formats)
          if f.get("vcodec", "none") != "none" and f.get("url", "").startswith("http")),
@@ -2104,12 +2112,12 @@ def _run_ytdlp(url: str) -> dict:
     return {"url": furl, "kind": kind, "title": title}
 
 
-async def _browser_extract(url: str) -> dict:
+async def _browser_extract(page_url: str) -> dict:
     """Fall back to the headless-browser service for JS-rendered players.
 
-    Returns {"url": str, "kind": str} or raises RuntimeError.
+    Returns {"url": str, "kind": str, "referer": str} or raises RuntimeError.
     """
-    payload = {"url": url, "timeout_s": 25}
+    payload = {"url": page_url, "timeout_s": 25}
     if _BROWSER_EXTRACT_KEY:
         payload["api_key"] = _BROWSER_EXTRACT_KEY
     try:
@@ -2121,7 +2129,93 @@ async def _browser_extract(url: str) -> dict:
         raise RuntimeError("no video found on that page")
     if not r.is_success:
         raise RuntimeError(f"browser-extract error {r.status_code}")
-    return r.json()
+    data = r.json()
+    data["referer"] = page_url   # used by the proxy to set the Referer header
+    return data
+
+
+def _proxy_url(video_url: str, referer: str) -> str:
+    """Build a /api/watch/proxy URL so the browser never fetches direct."""
+    from urllib.parse import quote as _q
+    return f"/api/watch/proxy?url={_q(video_url, safe='')}&ref={_q(referer, safe='')}"
+
+
+@app.get("/api/watch/proxy")
+async def watch_proxy(request: Request, url: str = "", ref: str = ""):
+    """Proxy a media URL through the server, injecting a Referer header.
+
+    Required for HLS streams from sites that set Referer-based access
+    control (cinejoy, vidsrc, etc.).  The manifest is rewritten so all
+    segment/key/playlist URLs also go through this proxy.
+    """
+    from urllib.parse import urljoin, quote as _q
+    from fastapi.responses import StreamingResponse
+
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return Response(status_code=401)
+    if not _re.match(r"^https?://", url):
+        return Response(status_code=400)
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+    }
+    if ref:
+        headers["Referer"] = ref
+        try:
+            from urllib.parse import urlparse as _up
+            p = _up(ref)
+            headers["Origin"] = f"{p.scheme}://{p.netloc}"
+        except Exception:
+            pass
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            r = await client.get(url, headers=headers)
+    except Exception as exc:
+        logger.warning("watch_proxy: fetch failed %s: %s", url[:80], exc)
+        return Response(status_code=502)
+
+    if not r.is_success:
+        return Response(status_code=r.status_code)
+
+    ct = r.headers.get("content-type", "")
+    is_manifest = "mpegurl" in ct or url.split("?")[0].lower().endswith(".m3u8")
+
+    if is_manifest:
+        # Rewrite all URIs in the manifest to route through this proxy.
+        text = r.text
+        lines: list[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                lines.append(line)
+                continue
+            if stripped.startswith("#"):
+                # Rewrite URI="..." attributes (EXT-X-KEY, EXT-X-MEDIA, etc.)
+                def _rewrite_attr(m: "_re.Match") -> str:
+                    abs_u = urljoin(url, m.group(1))
+                    return f'URI="{_proxy_url(abs_u, ref)}"'
+                lines.append(_re.sub(r'URI="([^"]+)"', _rewrite_attr, line))
+            else:
+                # Segment / child-playlist URI
+                abs_u = urljoin(url, stripped)
+                lines.append(_proxy_url(abs_u, ref))
+        return Response(
+            content="\n".join(lines),
+            media_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"},
+        )
+
+    # Non-manifest (segments, keys, MP4 ranges): stream back.
+    return Response(
+        content=r.content,
+        media_type=ct or "application/octet-stream",
+        headers={"Cache-Control": "max-age=3600", "Access-Control-Allow-Origin": "*"},
+    )
 
 
 @app.post("/api/watch/extract")
@@ -2130,7 +2224,9 @@ async def watch_extract(request: Request):
 
     Tries yt-dlp first (fast, 1000+ sites).  If yt-dlp says the URL is
     unsupported, falls back to the headless browser service which can handle
-    JS-rendered players (cinejoy, vidsrc, etc.).
+    JS-rendered players (cinejoy, vidsrc, etc.).  Browser-extracted HLS
+    streams are served through /api/watch/proxy to inject the required
+    Referer header that the CDN checks.
     """
     if not _watch_same_origin(request):
         return JSONResponse({"detail": "forbidden"}, status_code=403)
@@ -2151,7 +2247,6 @@ async def watch_extract(request: Request):
     _rate_limit("watch_extract", viewer["viewerId"])
 
     # 1. Try yt-dlp.
-    ytdlp_unsupported = False
     try:
         result = await asyncio.to_thread(_run_ytdlp, url)
         logger.info(
@@ -2160,8 +2255,7 @@ async def watch_extract(request: Request):
         )
         return JSONResponse(result)
     except ValueError:
-        # yt-dlp said "Unsupported URL" — try the browser service.
-        ytdlp_unsupported = True
+        pass  # yt-dlp said "Unsupported URL" — fall through to browser
     except Exception as exc:
         logger.warning("watch_extract(ytdlp): failed for %.80s: %s", url, str(exc)[:200])
         return JSONResponse({"detail": "could not extract a video from that URL"}, status_code=422)
@@ -2169,6 +2263,10 @@ async def watch_extract(request: Request):
     # 2. Fall back to headless browser.
     try:
         result = await _browser_extract(url)
+        # Wrap HLS through our proxy so the browser never needs to send a Referer
+        # directly — the CDN would block it otherwise.
+        if result.get("kind") == "hls":
+            result["url"] = _proxy_url(result["url"], result.get("referer", url))
         logger.info(
             "watch_extract(browser): resolved %.80s -> kind=%s viewer=%s",
             url, result["kind"], watch_mod.short_viewer(viewer["viewerId"]),
@@ -6398,7 +6496,7 @@ function wpMount(url){
 
   const ytId = wpYtId(WP.video);
   if(ytId){ WP.kind='yt'; wpMountYt(ytId); return; }
-  if(/\.m3u8(\?|#|$)/i.test(WP.video)){
+  if(/\.m3u8(\?|#|$)/i.test(WP.video) || /^\/api\/watch\/proxy\?/.test(WP.video)){
     WP.kind='file'; vid.style.display='block'; wpMountHls(WP.video); return;
   }
   if(/^https?:\/\//i.test(WP.video)){
