@@ -9,3 +9,5 @@ openpyxl==3.1.5
 # Watch Party tickets: ES256-signed JWTs (dedicated P-256 key, see watch.py)
 PyJWT==2.10.1
 cryptography==44.0.0
+# Video URL extraction (watch party)
+yt-dlp==2026.7.4

@@ -2048,12 +2048,18 @@ async def watch_join(request: Request):
     )
 
 
+# Internal browser-extract service (crcmz-browser-extract container, same coolify network).
+_BROWSER_EXTRACT_URL = os.environ.get("BROWSER_EXTRACT_URL", "http://crcmz-browser-extract:8091")
+_BROWSER_EXTRACT_KEY = os.environ.get("BROWSER_EXTRACT_API_KEY", "")
+
+
 def _run_ytdlp(url: str) -> dict:
     """Resolve a page URL to a direct video URL via yt-dlp.
 
     Returns {"url": str, "kind": "hls"|"dash"|"direct", "title": str}.
-    Prefers the HLS master manifest (adaptive bitrate, audio+video) over
-    individual format streams.  Raises RuntimeError on failure.
+    Raises RuntimeError on failure; raises ValueError("unsupported") when
+    yt-dlp explicitly says the URL is unsupported (caller may fall back to
+    the browser extractor).
     """
     import subprocess as _sp
     import json as _json
@@ -2064,6 +2070,8 @@ def _run_ytdlp(url: str) -> dict:
     )
     if r.returncode != 0:
         stderr = (r.stderr or "").strip()
+        if "Unsupported URL" in stderr or "unsupported url" in stderr.lower():
+            raise ValueError("unsupported")
         raise RuntimeError(stderr[-300:] if stderr else "yt-dlp error")
 
     try:
@@ -2096,9 +2104,34 @@ def _run_ytdlp(url: str) -> dict:
     return {"url": furl, "kind": kind, "title": title}
 
 
+async def _browser_extract(url: str) -> dict:
+    """Fall back to the headless-browser service for JS-rendered players.
+
+    Returns {"url": str, "kind": str} or raises RuntimeError.
+    """
+    payload = {"url": url, "timeout_s": 25}
+    if _BROWSER_EXTRACT_KEY:
+        payload["api_key"] = _BROWSER_EXTRACT_KEY
+    try:
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            r = await client.post(f"{_BROWSER_EXTRACT_URL}/extract", json=payload)
+    except Exception as exc:
+        raise RuntimeError(f"browser-extract unreachable: {exc}") from exc
+    if r.status_code == 422:
+        raise RuntimeError("no video found on that page")
+    if not r.is_success:
+        raise RuntimeError(f"browser-extract error {r.status_code}")
+    return r.json()
+
+
 @app.post("/api/watch/extract")
 async def watch_extract(request: Request):
-    """Resolve a page URL to a direct video URL using yt-dlp."""
+    """Resolve a page URL to a direct video URL.
+
+    Tries yt-dlp first (fast, 1000+ sites).  If yt-dlp says the URL is
+    unsupported, falls back to the headless browser service which can handle
+    JS-rendered players (cinejoy, vidsrc, etc.).
+    """
     if not _watch_same_origin(request):
         return JSONResponse({"detail": "forbidden"}, status_code=403)
     viewer = await _watch_viewer(request)
@@ -2117,17 +2150,33 @@ async def watch_extract(request: Request):
 
     _rate_limit("watch_extract", viewer["viewerId"])
 
+    # 1. Try yt-dlp.
+    ytdlp_unsupported = False
     try:
         result = await asyncio.to_thread(_run_ytdlp, url)
+        logger.info(
+            "watch_extract(ytdlp): resolved %.80s -> kind=%s viewer=%s",
+            url, result["kind"], watch_mod.short_viewer(viewer["viewerId"]),
+        )
+        return JSONResponse(result)
+    except ValueError:
+        # yt-dlp said "Unsupported URL" — try the browser service.
+        ytdlp_unsupported = True
     except Exception as exc:
-        logger.warning("watch_extract: failed for %.80s: %s", url, str(exc)[:200])
+        logger.warning("watch_extract(ytdlp): failed for %.80s: %s", url, str(exc)[:200])
         return JSONResponse({"detail": "could not extract a video from that URL"}, status_code=422)
 
-    logger.info(
-        "watch_extract: resolved %.80s -> kind=%s viewer=%s",
-        url, result["kind"], watch_mod.short_viewer(viewer["viewerId"]),
-    )
-    return JSONResponse(result)
+    # 2. Fall back to headless browser.
+    try:
+        result = await _browser_extract(url)
+        logger.info(
+            "watch_extract(browser): resolved %.80s -> kind=%s viewer=%s",
+            url, result["kind"], watch_mod.short_viewer(viewer["viewerId"]),
+        )
+        return JSONResponse(result)
+    except Exception as exc:
+        logger.warning("watch_extract(browser): failed for %.80s: %s", url, str(exc)[:200])
+        return JSONResponse({"detail": "could not extract a video from that URL"}, status_code=422)
 
 
 @app.post("/api/watch/nickname")
