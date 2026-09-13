@@ -2112,7 +2112,7 @@ async def watch_extract(request: Request):
         pass
 
     url = str((body or {}).get("url", "")).strip()
-    if not re.match(r"^https?://", url):
+    if not _re.match(r"^https?://", url):
         return JSONResponse({"detail": "a http(s) URL is required"}, status_code=400)
 
     _rate_limit("watch_extract", viewer["viewerId"])
