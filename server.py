@@ -2121,7 +2121,8 @@ async def _browser_extract(page_url: str) -> dict:
     if _BROWSER_EXTRACT_KEY:
         payload["api_key"] = _BROWSER_EXTRACT_KEY
     try:
-        async with httpx.AsyncClient(timeout=35.0) as client:
+        import httpx as _hx
+        async with _hx.AsyncClient(timeout=35.0) as client:
             r = await client.post(f"{_BROWSER_EXTRACT_URL}/extract", json=payload)
     except Exception as exc:
         raise RuntimeError(f"browser-extract unreachable: {exc}") from exc
@@ -2173,7 +2174,8 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
             pass
 
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        import httpx as _hx
+        async with _hx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             r = await client.get(url, headers=headers)
     except Exception as exc:
         logger.warning("watch_proxy: fetch failed %s: %s", url[:80], exc)
@@ -2250,8 +2252,8 @@ async def watch_extract(request: Request):
     try:
         result = await asyncio.to_thread(_run_ytdlp, url)
         logger.info(
-            "watch_extract(ytdlp): resolved %.80s -> kind=%s viewer=%s",
-            url, result["kind"], watch_mod.short_viewer(viewer["viewerId"]),
+            "watch_extract(ytdlp): resolved %.80s -> kind=%s url=%.120s viewer=%s",
+            url, result["kind"], result.get("url",""), watch_mod.short_viewer(viewer["viewerId"]),
         )
         return JSONResponse(result)
     except ValueError:
