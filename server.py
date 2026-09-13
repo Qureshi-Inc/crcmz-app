@@ -2343,25 +2343,36 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
             headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"},
         )
 
-    # HTML in answer to a media request is always a failure page, never video.
-    # Handing it to a <video> element only produces a silent retry loop, so
-    # surface it — Drive's quota page in particular took far too long to spot.
+    # An HTML *error page* answering a media request leaves the player retrying
+    # blindly, so surface it (Drive's quota page took far too long to spot).
+    # Sniff the body rather than trusting content-type: cinejoy's CDN serves
+    # real HLS segments as "text/html" from .html URLs, so rejecting on the
+    # header alone breaks every one of them.  Markup starts with "<"; MPEG-TS
+    # starts with 0x47 and fMP4 with a box header, so neither is mistaken.
+    body_iter = r.aiter_bytes(65536)
+    head = b""
     if "text/html" in ct:
-        raw = (await r.aread())[:4096]
-        await r.aclose()
-        await client.aclose()
-        text = " ".join(_re.sub(r"<[^>]+>", " ", raw.decode("utf-8", "replace")).split())
-        quota = "Quota exceeded" in text
-        logger.warning(
-            "watch_proxy: got HTML not media (quota=%s) from %.70s: %.120s", quota, target, text
-        )
-        return JSONResponse(
-            {"detail": (
-                "Google Drive has hit its download limit for this file. Make a copy "
-                "in your own Drive and share that, or try again in a few hours."
-            ) if quota else "that link returned a web page instead of a video"},
-            status_code=502,
-        )
+        async for _first in body_iter:
+            head = _first
+            break
+        if head.lstrip()[:1] == b"<":
+            await r.aclose()
+            await client.aclose()
+            text = " ".join(
+                _re.sub(r"<[^>]+>", " ", head[:4096].decode("utf-8", "replace")).split()
+            )
+            quota = "Quota exceeded" in text
+            logger.warning(
+                "watch_proxy: HTML error page instead of media (quota=%s) from %.70s: %.120s",
+                quota, target, text,
+            )
+            return JSONResponse(
+                {"detail": (
+                    "Google Drive has hit its download limit for this file. Make a copy "
+                    "in your own Drive and share that, or try again in a few hours."
+                ) if quota else "that link returned a web page instead of a video"},
+                status_code=502,
+            )
 
     # Stream segments / direct video files — forward Range/Content-Range so seeking works.
     resp_headers: dict[str, str] = {"Access-Control-Allow-Origin": "*"}
@@ -2373,7 +2384,9 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
 
     async def _body():
         try:
-            async for chunk in r.aiter_bytes(65536):
+            if head:
+                yield head          # already pulled off body_iter while sniffing
+            async for chunk in body_iter:
                 yield chunk
         finally:
             await r.aclose()
