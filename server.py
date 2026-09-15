@@ -4412,6 +4412,9 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-orb.big { width:154px; }
   .wp-orb.big .wp-orb-ring { width:146px; height:146px; }
   .wp-orb.big .wp-orb-ini { font-size:46px; }
+  .wp-orb.speaking { width:154px; }
+  .wp-orb.speaking .wp-orb-ring { width:146px; height:146px; }
+  .wp-orb.speaking .wp-orb-ini { font-size:46px; }
   @media (max-width:560px){
     .wp-orb { width:60px; }
     .wp-orb-ring { width:54px; height:54px; }
@@ -4420,15 +4423,16 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     .wp-orb.big { width:124px; }
     .wp-orb.big .wp-orb-ring { width:118px; height:118px; }
     .wp-orb.big .wp-orb-ini { font-size:38px; }
+    .wp-orb.speaking { width:124px; }
+    .wp-orb.speaking .wp-orb-ring { width:118px; height:118px; }
+    .wp-orb.speaking .wp-orb-ini { font-size:38px; }
   }
   .wp-cam-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin-bottom:10px; }
-  /* touch-action:none keeps a press-and-hold from scrolling the page */
-  .wp-ptt { touch-action:none; user-select:none; -webkit-user-select:none;
-    -webkit-touch-callout:none; }
-  .wp-ptt.hot { background:rgba(140,255,43,.2);
-    border-color:rgba(140,255,43,.55); color:var(--lime);
-    box-shadow:0 0 16px rgba(140,255,43,.3); }
+  .wp-ptt { user-select:none; -webkit-user-select:none; }
+  .wp-ptt.hot { background:rgba(255,60,60,.18);
+    border-color:rgba(255,80,80,.55); color:#ff6060;
+    box-shadow:0 0 16px rgba(255,60,60,.25); }
   .wp-cam-note { font-size:12px; color:var(--dim); line-height:1.5; }
   .wp-stage { position:relative; width:100%; aspect-ratio:16/9; border-radius:16px;
     overflow:hidden; background:#000; border:1px solid var(--line);
@@ -4661,7 +4665,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div class="wp-orbs" id="wpOrbs"></div>
     <div class="wp-cam-bar">
       <button class="wp-btn ghost" id="wpCamBtn" onclick="wpToggleCam()">📷 Turn on camera</button>
-      <button class="wp-btn ghost wp-ptt" id="wpPttBtn" style="display:none">🎤 Hold to talk</button>
+      <button class="wp-btn ghost wp-ptt" id="wpPttBtn" style="display:none">🎤 Mute</button>
       <span class="wp-cam-note" id="wpCamNote"></span>
     </div>
     <div class="wp-stage" id="wpStage">
@@ -6707,9 +6711,9 @@ function wpRenderPresence(){
 // is the right call for a watch party: everyone uploads to everyone, which is
 // fine at party scale and needs no media server.
 const WPC = {
-  stream:null,      // our local MediaStream (video + an initially-disabled mic)
+  stream:null,      // our local MediaStream (video + mic)
   on:false,         // are we publishing
-  talking:false,    // is push-to-talk currently held
+  muted:false,      // is our mic muted
   peers:{},         // clientId -> {pc, polite, makingOffer, ignoreOffer, stream}
   remoteCam:{},     // clientId -> did they announce a camera
   levels:{},        // 'me'|clientId -> {ctx, an, data, loud}  (speaking detection)
@@ -6771,9 +6775,7 @@ async function wpToggleCam(){
                                 'Could not start the camera.');
       return;
     }
-    // Mic joins muted: this is push-to-talk, so the movie audio in the room
-    // never leaks back out through anyone's microphone.
-    stream.getAudioTracks().forEach(t=>{ t.enabled = false; });
+    WPC.muted = false;
     WPC.stream = stream; WPC.on = true;
 
     // A camera can be revoked from the OS/browser mid-call.
@@ -6791,7 +6793,7 @@ async function wpToggleCam(){
 
 function wpCamStop(){
   WPC.on = false;
-  wpPtt(false);
+  WPC.muted = false;
   wpAnnounceCam(false);
   Object.keys(WPC.peers).forEach(id=>{
     // Keep the connection if they're still sending us video; otherwise there's
@@ -6807,44 +6809,39 @@ function wpCamStop(){
 function wpCamSync(){
   const b=$('wpCamBtn'), p=$('wpPttBtn');
   if(b) b.textContent = WPC.on ? '📷 Turn off camera' : '📷 Turn on camera';
-  if(p){ p.style.display = WPC.on ? '' : 'none'; if(WPC.on) wpPttWire(); }
+  if(p){
+    p.style.display = WPC.on ? '' : 'none';
+    p.textContent = WPC.muted ? '🔇 Unmute' : '🎤 Mute';
+    p.classList.toggle('hot', WPC.muted);
+    if(WPC.on) wpMuteWire();
+  }
   wpCamNote('');
   wpRenderOrbs();
 }
 function wpCamNote(msg){
   const n=$('wpCamNote'); if(!n) return;
   n.textContent = msg !== '' ? msg
-    : (WPC.on ? 'Hold the mic button — or the T key — to talk.' : '');
+    : (WPC.on ? (WPC.muted ? 'Mic muted — tap 🔇 to unmute.' : 'Mic live — tap 🎤 to mute.') : '');
 }
 
-// ── push-to-talk ────────────────────────────────────────────────────────────
-function wpPtt(on){
-  const live = !!(on && WPC.on && WPC.stream);
-  if(live === WPC.talking) return;
-  WPC.talking = live;
-  if(WPC.stream) WPC.stream.getAudioTracks().forEach(t=>{ t.enabled = live; });
-  const b=$('wpPttBtn'); if(b) b.classList.toggle('hot', live);
+// ── mute toggle ─────────────────────────────────────────────────────────────
+function wpToggleMute(){
+  if(!WPC.on || !WPC.stream) return;
+  WPC.muted = !WPC.muted;
+  WPC.stream.getAudioTracks().forEach(t=>{ t.enabled = !WPC.muted; });
+  wpCamSync();
   wpOrbState();
 }
-function wpPttWire(){
+function wpMuteWire(){
   const b=$('wpPttBtn');
   if(!b || b.dataset.wired) return;
   b.dataset.wired = '1';
-  const down=(e)=>{ e.preventDefault(); wpPtt(true); };
-  const up  =(e)=>{ e.preventDefault(); wpPtt(false); };
-  b.addEventListener('pointerdown', down);
-  b.addEventListener('pointerup', up);
-  b.addEventListener('pointercancel', up);
-  b.addEventListener('pointerleave', up);
+  b.addEventListener('click', ()=> wpToggleMute());
   addEventListener('keydown', e=>{
-    if(e.repeat || String(e.key).toLowerCase()!=='t') return;
+    if(e.repeat || String(e.key).toLowerCase()!=='m') return;
     const t=e.target; if(t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-    wpPtt(true);
+    wpToggleMute();
   });
-  addEventListener('keyup', e=>{
-    if(String(e.key).toLowerCase()==='t') wpPtt(false);
-  });
-  addEventListener('blur', ()=> wpPtt(false));
 }
 
 // ── peer connections (perfect negotiation) ──────────────────────────────────
@@ -7044,7 +7041,7 @@ function wpOrbRoster(){
   return out;
 }
 function wpOrbBadge(v){
-  if(v.me) return WPC.on ? (WPC.talking ? '🎤' : '📷') : '';
+  if(v.me) return WPC.on ? (WPC.muted ? '🔇' : '🎤') : '';
   const p = WPC.peers[v.id];
   if(!p) return '';
   if(p.pc.connectionState==='connected') return p.stream ? '📷' : '';
@@ -7139,11 +7136,12 @@ function wpOrbState(){
   Array.from(box.children).forEach(el=>{
     const k = el.dataset && el.dataset.k; if(!k) return;
     const m = WPC.levels[k];
-    const talking = !!(m && m.loud) && (k!=='me' || WPC.talking);
+    const talking = !!(m && m.loud) && (k!=='me' || !WPC.muted);
     el.classList.toggle('talking', talking);
+    el.classList.toggle('speaking', talking);
     if(k==='me'){
       const badge = el.querySelector('.wp-orb-badge');
-      const txt = WPC.on ? (WPC.talking ? '🎤' : '📷') : '';
+      const txt = WPC.on ? (WPC.muted ? '🔇' : '🎤') : '';
       if(badge && badge.textContent !== txt){
         badge.textContent = txt;
         badge.style.display = txt ? '' : 'none';
