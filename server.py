@@ -8538,67 +8538,54 @@ async function huddleAiSend(){
 }
 function huddleToggleTranscript(){
   const btn=$('huddleTranscriptBtn');
-  if(HUDDLE.transcribing){
+  function _stopT(msg){
     HUDDLE.transcribing=false;
     if(HUDDLE.recog){try{HUDDLE.recog.abort();}catch(_){} HUDDLE.recog=null;}
+    clearTimeout(HUDDLE._silenceTimer);
     if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
-    _huddleAiMsg('sys','🎙 Transcription stopped.');
-    return;
+    if(msg)_huddleAiMsg('sys',msg);
   }
+  if(HUDDLE.transcribing){_stopT('🎙 Transcription stopped.');return;}
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){_huddleAiMsg('sys','🎙 Speech recognition not supported in this browser.');return;}
   if($('huddleAiPanel').style.display==='none')huddleToggleAi();
-  let restarts=0,gotResult=false;
+  let restarts=0;
   function _mkRecog(){
     const r=new SR();r.continuous=true;r.interimResults=true;r.lang='en-US';
-    r.onaudiostart=()=>_huddleAiMsg('sys','🎙 [audio input detected]');
-    r.onsoundstart=()=>_huddleAiMsg('sys','🎙 [sound detected]');
-    r.onspeechstart=()=>_huddleAiMsg('sys','🎙 [speech detected — waiting for final result]');
-    r.onspeechend=()=>_huddleAiMsg('sys','🎙 [speech ended]');
+    r.onaudiostart=()=>{
+      clearTimeout(HUDDLE._silenceTimer);
+      HUDDLE._silenceTimer=setTimeout(()=>{
+        _stopT('🎙 Mic stream is silent — this browser gave Speech API a dead mic (likely because LiveKit already owns the mic hardware). Transcript works on desktop Chrome. On mobile, type context into the chat instead.');
+      },4000);
+    };
+    r.onsoundstart=()=>clearTimeout(HUDDLE._silenceTimer);
     r.onresult=ev=>{
-      gotResult=true;restarts=0;
+      clearTimeout(HUDDLE._silenceTimer);restarts=0;
       for(let i=ev.resultIndex;i<ev.results.length;i++){
         const text=ev.results[i][0].transcript.trim();
         if(ev.results[i].isFinal){
           if(text){HUDDLE.transcript.push({text,ts:Date.now()});_huddleAiMsg('transcript','🎙 '+text);}
-        } else if(text){
-          const st=$('huddleAiStatus');if(st)st.textContent='🎙 '+text.slice(0,40)+'…';
-        }
+        } else if(text){const s=$('huddleAiStatus');if(s)s.textContent='🎙 '+text.slice(0,40)+'…';}
       }
     };
     r.onerror=e=>{
-      if(e.error==='not-allowed'||e.error==='audio-capture'){
-        _huddleAiMsg('sys','🎙 Mic blocked: '+e.error+'. Mic may be in use exclusively by the call — try a different browser.');
-        HUDDLE.transcribing=false;HUDDLE.recog=null;
-        if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
-      } else if(e.error!=='no-speech'&&e.error!=='aborted'){
-        _huddleAiMsg('sys','🎙 Recognition error: '+e.error);
-      }
+      clearTimeout(HUDDLE._silenceTimer);
+      if(e.error==='not-allowed'||e.error==='audio-capture')
+        _stopT('🎙 Mic blocked ('+e.error+'). Mic may be in exclusive use by the call.');
+      else if(e.error!=='no-speech'&&e.error!=='aborted')
+        _huddleAiMsg('sys','🎙 Error: '+e.error);
     };
     r.onend=()=>{
       if(!HUDDLE.transcribing)return;
-      restarts++;
-      if(restarts>15){
-        _huddleAiMsg('sys','🎙 Browser kept closing recognition. Try speaking — or refresh the page if mic is blocked.');
-        HUDDLE.transcribing=false;HUDDLE.recog=null;
-        if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
-        return;
-      }
-      setTimeout(()=>{
-        if(!HUDDLE.transcribing)return;
-        try{const nr=_mkRecog();HUDDLE.recog=nr;nr.start();}catch(e){
-          _huddleAiMsg('sys','🎙 Restart failed: '+e.message);
-          HUDDLE.transcribing=false;HUDDLE.recog=null;
-          if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
-        }
-      },600);
+      if(++restarts>15){_stopT('🎙 Recognition kept stopping — transcript not supported in this context.');return;}
+      setTimeout(()=>{if(!HUDDLE.transcribing)return;try{const nr=_mkRecog();HUDDLE.recog=nr;nr.start();}catch(e){_stopT('🎙 Restart failed: '+e.message);}},600);
     };
     return r;
   }
   try{
     const r=_mkRecog();r.start();HUDDLE.recog=r;HUDDLE.transcribing=true;
     if(btn){btn.textContent='🔴 Stop Transcript';btn.style.color='rgba(255,120,120,1)';}
-    _huddleAiMsg('sys','🎙 Transcription active — speak and your words will appear here. (Only captures your mic, not remote audio.)');
+    _huddleAiMsg('sys','🎙 Listening… speak and your words will appear here.');
   }catch(e){_huddleAiMsg('sys','🎙 Could not start: '+e.message);}
 }
 async function huddleMeetingNotes(){
