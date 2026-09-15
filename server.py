@@ -2703,10 +2703,13 @@ async def huddle_ai(request: Request):
     else:
         endpoint = f"{base}/api/chat"
         payload = {"model": model, "messages": messages, "stream": False}
+    headers = {}
+    if OLLAMA_API_KEY:
+        headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
     import httpx as _hx
     try:
         async with _hx.AsyncClient(timeout=60) as c:
-            r = await c.post(endpoint, json=payload)
+            r = await c.post(endpoint, json=payload, headers=headers)
         data = r.json()
         # Normalise OpenAI format → Ollama-style so the JS always reads d.message.content
         if 'choices' in data and data['choices']:
@@ -2918,6 +2921,7 @@ LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "")
 # Ollama on the local Mac — e.g. http://192.168.5.xxx:11434
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "")
 OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL", "llama3.2")
+OLLAMA_API_KEY  = os.environ.get("OLLAMA_API_KEY", "")
 
 # Resolve WA bridge host — host.docker.internal may not exist in Coolify
 if WA_BRIDGE_URL:
