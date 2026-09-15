@@ -4680,6 +4680,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="wp-btn" id="wpSetBtn" onclick="wpSetVideo()">▶ Play for everyone</button>
       <button class="wp-btn ghost" onclick="wpSetVideo('')">Clear</button>
       <button class="wp-btn ghost" onclick="wpEditNickname()">✏️ Name</button>
+      <button class="wp-btn ghost" id="wpRallyBtn" onclick="wpRally()">📣 Rally</button>
     </div>
     <div class="wp-err" id="wpErr"></div>
     <p class="wp-note" id="wpNote">Everyone in this room sees the same thing — play, pause and seek are shared.</p>
@@ -7381,6 +7382,43 @@ async function wpEditNickname(){
     // The name lives in the ticket, so reconnect to publish it.
     WP.tries = 0; wpConnect();
   }catch(e){ wpErr('Could not save that name.'); }
+}
+
+// ── rally ────────────────────────────────────────────────────────────────────
+async function wpRally(){
+  const btn=$('wpRallyBtn'); if(btn){ btn.disabled=true; btn.textContent='📣 Sending…'; }
+  try{
+    // Who's watching
+    const viewers = (WP.presence?.viewers||[]).map(v=>v.name).filter(Boolean);
+    const names = viewers.length ? viewers.join(', ') : 'We';
+
+    // Video title: try YT player first, then parse the URL
+    let videoLabel = '';
+    if(WP.video){
+      const ytId = wpYtId(WP.video);
+      if(ytId && WP.yt?.getVideoData){
+        try{ videoLabel = WP.yt.getVideoData().title || ''; }catch(e){}
+      }
+      if(!videoLabel){
+        try{
+          const u = new URL(WP.video, location.origin);
+          const raw = u.searchParams.get('url') || u.pathname;
+          videoLabel = decodeURIComponent(raw.split('/').pop().split('?')[0])
+                         .replace(/\.[a-z0-9]+$/i,'') || '';
+        }catch(e){}
+      }
+    }
+    const watchingStr = videoLabel ? 'watching '+videoLabel : 'in the watch party';
+    const link = location.origin+'/watch';
+    const msg = '@everyone! '+names+' are on CRCMZ app '+watchingStr+'. Join now fuckers! '+link;
+
+    const r = await fetch('/v2/squad', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg})});
+    toast(r.ok ? '📣 Rallied!' : 'Failed to send');
+  }catch(e){ toast('Network error'); }
+  finally{
+    if(btn){ btn.disabled=false; btn.textContent='📣 Rally'; }
+  }
 }
 
 // Local player -> everyone. Bound once; the element survives remounts.
