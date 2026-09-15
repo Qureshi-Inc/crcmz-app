@@ -2750,7 +2750,10 @@ async def huddle_transcribe(request: Request):
                 files={"file": ("audio.webm", audio_data, content_type)},
                 data={"model": WHISPER_MODEL, "response_format": "json"},
             )
-        r.raise_for_status()
+        if not r.is_success:
+            body = r.text[:500]
+            logger.warning("huddle transcribe lmstudio %s: %s", r.status_code, body)
+            return JSONResponse({"error": f"LM Studio {r.status_code}: {body}"}, status_code=502)
         return JSONResponse(r.json())
     except Exception as exc:
         logger.warning("huddle transcribe error: %s", exc)
@@ -8605,12 +8608,13 @@ function huddleToggleTranscript(){
         const fd=new FormData();fd.append('file',blob,'audio.webm');
         const r=await fetch('/api/huddle/transcribe',{method:'POST',body:fd});
         const d=await r.json();
+        if(!r.ok){_huddleAiMsg('sys','🎙 Whisper error: '+(d.error||r.status));return;}
         if(d.text?.trim()){
           const text=d.text.trim();
           HUDDLE.transcript.push({text,ts:Date.now()});
           _huddleAiMsg('transcript','🎙 '+text);
         }
-      }catch(_){}
+      }catch(e){_huddleAiMsg('sys','🎙 Transcribe failed: '+e.message);}
       if(st)st.textContent='';
     }
     // start next chunk immediately
