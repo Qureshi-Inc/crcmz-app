@@ -2510,6 +2510,41 @@ async def watch_set_nickname(request: Request):
     )
 
 
+@app.post("/api/watch/rally")
+async def watch_rally(request: Request):
+    """Send a 'Join us!' text to the WhatsApp group via the baily bridge.
+
+    Proxies to WA_BRIDGE_URL/send with mentionAll=true so @everyone is tagged.
+    """
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    if not WA_BRIDGE_URL:
+        return JSONResponse({"detail": "WhatsApp bridge not configured"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    message = str((body or {}).get("message", "")).strip()
+    if not message:
+        return JSONResponse({"detail": "message required"}, status_code=400)
+    import httpx as _httpx
+    try:
+        async with _httpx.AsyncClient(timeout=15) as c:
+            r = await c.post(f"{WA_BRIDGE_URL}/send", json={
+                "message": message,
+                "mentionAll": True,
+                **({"groupJid": WA_GOOPERS_JID} if WA_GOOPERS_JID else {}),
+            })
+        r.raise_for_status()
+        return JSONResponse({"status": "sent"}, headers={"Cache-Control": "no-store"})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("watch rally send failed: %s", exc)
+        return JSONResponse({"detail": "failed to send"}, status_code=502)
+
+
 @app.get("/watch")
 def watch_page():
     """User-facing entry point — the Watch tab of the existing dashboard.
@@ -7412,9 +7447,9 @@ async function wpRally(){
     const link = location.origin+'/watch';
     const msg = '@everyone! '+names+' are on CRCMZ app '+watchingStr+'. Join now fuckers! '+link;
 
-    const r = await fetch('/v2/squad', {method:'POST',
+    const r = await fetch('/api/watch/rally', {method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg})});
-    toast(r.ok ? '📣 Rallied!' : 'Failed to send');
+    toast(r.ok ? '📣 Rallied!' : (r.status===503 ? 'WhatsApp not configured' : 'Failed to send'));
   }catch(e){ toast('Network error'); }
   finally{
     if(btn){ btn.disabled=false; btn.textContent='📣 Rally'; }
