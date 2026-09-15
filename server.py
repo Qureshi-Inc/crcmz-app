@@ -1415,6 +1415,88 @@ async def settings_change_password(request: Request):
         return JSONResponse({"error": "service unavailable"}, status_code=503)
 
 
+@app.get("/api/admin/users")
+async def admin_list_users(request: Request):
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not await _is_iam_admin(session.get("sub", "")):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    if not ZITADEL_SERVICE_TOKEN:
+        return JSONResponse({"error": "not configured"}, status_code=503)
+    import httpx as _hx
+    try:
+        async with _hx.AsyncClient(timeout=10) as c:
+            r = await c.post(
+                f"{ZITADEL_ISSUER}/management/v1/users/_search",
+                json={"queries": [{"typeQuery": {"type": "TYPE_HUMAN"}}], "pageSize": 200},
+                headers={"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"},
+            )
+        if r.status_code != 200:
+            logger.warning("admin/users list: %s %s", r.status_code, r.text[:200])
+            return JSONResponse({"error": "upstream error"}, status_code=502)
+        raw = r.json().get("result", [])
+        users = []
+        for u in raw:
+            human = u.get("human") or {}
+            profile = human.get("profile") or {}
+            email_obj = human.get("email") or {}
+            display = (
+                profile.get("displayName")
+                or f"{profile.get('firstName','')} {profile.get('lastName','')}".strip()
+                or u.get("userName", "")
+            )
+            users.append({
+                "userId": u.get("userId", ""),
+                "userName": u.get("userName", ""),
+                "displayName": display,
+                "email": email_obj.get("email", ""),
+                "state": u.get("state", ""),
+            })
+        return JSONResponse({"users": users})
+    except Exception as e:
+        logger.error("admin/users list error: %s", e)
+        return JSONResponse({"error": "service unavailable"}, status_code=503)
+
+
+@app.post("/api/admin/users/{user_id}/reset-password")
+async def admin_reset_password(user_id: str, request: Request):
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not await _is_iam_admin(session.get("sub", "")):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    if not ZITADEL_SERVICE_TOKEN:
+        return JSONResponse({"error": "not configured"}, status_code=503)
+    body = await request.json()
+    new_pw = (body.get("newPassword") or "").strip()
+    if len(new_pw) < 8:
+        return JSONResponse({"error": "Password must be at least 8 characters."}, status_code=400)
+    import httpx as _hx
+    try:
+        async with _hx.AsyncClient(timeout=10) as c:
+            r = await c.post(
+                f"{ZITADEL_ISSUER}/zitadel.user.v2.UserService/SetPassword",
+                json={
+                    "userId": user_id,
+                    "newPassword": {"password": new_pw, "changeRequired": True},
+                },
+                headers={
+                    "Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}",
+                    "Connect-Protocol-Version": "1",
+                },
+            )
+        if r.status_code not in (200, 201):
+            d = r.json()
+            msg = d.get("message", "") or "Failed to reset password."
+            logger.warning("admin/reset-password: %s %s", r.status_code, r.text[:200])
+            return JSONResponse({"error": msg}, status_code=400)
+        return JSONResponse({"ok": True})
+    except Exception as e:
+        logger.error("admin/reset-password error: %s", e)
+        return JSONResponse({"error": "service unavailable"}, status_code=503)
+
+
 _admin_cache: dict[str, tuple[bool, float]] = {}  # user_id → (is_admin, expires_ts)
 
 
@@ -4516,9 +4598,10 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="smodal-close" onclick="closeSettings()">✕</button>
     </div>
     <div class="stabs">
-      <button class="stab active" onclick="switchTab('passkeys')">🔑 Passkeys</button>
-      <button class="stab" onclick="switchTab('security')">🔒 Security</button>
-      <button class="stab" onclick="switchTab('psn')">🎮 PSN</button>
+      <button class="stab active" data-tab="passkeys" onclick="switchTab('passkeys')">🔑 Passkeys</button>
+      <button class="stab" data-tab="security" onclick="switchTab('security')">🔒 Security</button>
+      <button class="stab" data-tab="psn" onclick="switchTab('psn')">🎮 PSN</button>
+      <button class="stab" data-tab="users" id="tabUsersBtn" onclick="switchTab('users')" style="display:none">👥 Users</button>
     </div>
 
     <!-- Passkeys tab -->
@@ -4603,6 +4686,14 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       </div>
 
       <button id="psnRelinkBtn" class="smodal-btn" style="display:none;background:none;border:1px solid rgba(255,255,255,.12);color:var(--dim);margin-top:4px" onclick="togglePsnRelink()">Re-link PSN account</button>
+    </div>
+
+    <!-- Users tab (admin only) -->
+    <div class="spanel" id="tab-users">
+      <div class="smodal-sect">
+        <p class="smodal-sect-title">User management</p>
+        <div id="adminUsersList"><span style="color:var(--dim)">Loading…</span></div>
+      </div>
     </div>
   </div>
 </div>
@@ -5682,14 +5773,14 @@ function openSettings(){
 function closeSettings(){ $('settingsOverlay').classList.remove('open'); }
 
 function switchTab(name){
-  document.querySelectorAll('.stab').forEach((t,i)=>{
-    const names=['passkeys','security','psn'];
-    t.classList.toggle('active', names[i]===name);
+  document.querySelectorAll('.stab').forEach(t=>{
+    t.classList.toggle('active', t.dataset.tab===name);
   });
   document.querySelectorAll('.spanel').forEach(p=>{
     p.classList.toggle('active', p.id==='tab-'+name);
   });
   if(name==='psn') loadPsnStatus();
+  if(name==='users') loadAdminUsers();
 }
 
 async function loadPsnStatus(){
@@ -5720,9 +5811,10 @@ async function loadPsnStatus(){
           </span>
         </div>
         ${expired?'<div style="font-size:12.5px;color:#ff9060;margin-bottom:10px">⚠️ Token expired — re-link to refresh.</div>':''}`;
-      // Admin: also show all accounts below
-      if(d.admin && d.users && d.users.length){
-        html += _adminUsersHtml(d.users);
+      // Admin: also show all accounts below + reveal Users tab
+      if(d.admin){
+        const tb=$('tabUsersBtn'); if(tb) tb.style.display='';
+        if(d.users && d.users.length) html += _adminUsersHtml(d.users);
       }
       el.innerHTML = html;
       // Show re-link button, hide inline flow
@@ -5754,7 +5846,10 @@ async function loadPsnStatus(){
     } else {
       html = '<span style="color:var(--dim);font-size:13.5px">No unassigned accounts found.<br>Use the button below to link a new one.</span>';
     }
-    // Admin: also show full list below the claim section
+    // Admin: also show full list below the claim section + reveal Users tab
+    if(d.admin){
+      const tb=$('tabUsersBtn'); if(tb) tb.style.display='';
+    }
     if(d.admin && d.users && d.users.length){
       html += _adminUsersHtml(d.users);
     }
@@ -5784,6 +5879,74 @@ function _adminUsersHtml(users){
         </span>
       </div>`;
     }).join('') + `</div>`;
+}
+
+// ── Admin: user management ────────────────────────────────────────────────────
+async function loadAdminUsers(){
+  const el=$('adminUsersList');
+  if(!el) return;
+  el.innerHTML='<span style="color:var(--dim)">Loading…</span>';
+  try{
+    const r=await fetch('/api/admin/users');
+    if(r.status===403){ el.innerHTML='<span style="color:#ff7070">Not authorised.</span>'; return; }
+    const d=await r.json();
+    const users=d.users||[];
+    if(!users.length){ el.innerHTML='<span style="color:var(--dim)">No users found.</span>'; return; }
+    el.innerHTML=users.map(u=>`
+      <div class="pk-row" style="margin-bottom:10px;align-items:flex-start;gap:8px">
+        <div class="pk-info" style="flex:1;min-width:0">
+          <span class="pk-name" style="display:block">${esc(u.displayName||u.userName||u.userId)}</span>
+          <span class="pk-date">${esc(u.email||'')}${u.state&&u.state!=='USER_STATE_ACTIVE'?' · '+u.state.replace('USER_STATE_','').toLowerCase():''}</span>
+        </div>
+        <button class="smodal-btn" style="width:auto;margin:0;padding:6px 13px;font-size:12px;flex-shrink:0"
+          onclick="adminResetPassword('${esc(u.userId)}','${esc(u.displayName||u.userName||'')}')">🔑 Reset pw</button>
+      </div>`).join('');
+  }catch(e){ el.innerHTML='<span style="color:#ff7070">Could not load users.</span>'; }
+}
+
+let _adminResetTarget=null;
+function adminResetPassword(userId,displayName){
+  _adminResetTarget={userId,displayName};
+  const el=$('adminUsersList');
+  const existing=$('adminResetForm');
+  if(existing) existing.remove();
+  const form=document.createElement('div');
+  form.id='adminResetForm';
+  form.style.cssText='margin-top:14px;padding:14px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,47,214,.2)';
+  form.innerHTML=`
+    <p style="font-size:12px;color:var(--dim);margin:0 0 10px">Reset password for <strong style="color:#fff">${esc(displayName||userId)}</strong></p>
+    <div id="adminResetMsg" class="smsg" style="display:none;margin-bottom:8px"></div>
+    <label class="sfield-label">New password</label>
+    <input class="sfield" type="password" id="adminPwNew" autocomplete="new-password" placeholder="••••••••">
+    <label class="sfield-label" style="margin-top:8px">Confirm</label>
+    <input class="sfield" type="password" id="adminPwConf" autocomplete="new-password" placeholder="••••••••">
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="smodal-btn" style="flex:1" onclick="adminResetSubmit()">Set password</button>
+      <button class="smodal-btn" style="flex:0 0 auto;background:none;border:1px solid rgba(255,255,255,.12);color:var(--dim)" onclick="this.closest('#adminResetForm').remove()">Cancel</button>
+    </div>`;
+  el.after(form);
+  $('adminPwNew').focus();
+}
+
+async function adminResetSubmit(){
+  if(!_adminResetTarget) return;
+  const pw=($('adminPwNew')||{}).value||'';
+  const conf=($('adminPwConf')||{}).value||'';
+  const msg=$('adminResetMsg');
+  const showMsg=(txt,err)=>{ msg.style.display='block'; msg.className='smsg'+(err?' error':''); msg.textContent=txt; };
+  if(!pw){ showMsg('Enter a new password.',true); return; }
+  if(pw.length<8){ showMsg('Password must be at least 8 characters.',true); return; }
+  if(pw!==conf){ showMsg('Passwords do not match.',true); return; }
+  try{
+    const r=await fetch(`/api/admin/users/${encodeURIComponent(_adminResetTarget.userId)}/reset-password`,{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({newPassword:pw})
+    });
+    const d=await r.json();
+    if(!r.ok){ showMsg(d.error||'Failed.',true); return; }
+    showMsg('Password reset. User will be prompted to change it on next login.', false);
+    setTimeout(()=>{ $('adminResetForm')?.remove(); },2500);
+  }catch(e){ showMsg('Request failed.',true); }
 }
 
 // ── PSN inline link flow ─────────────────────────────────────────────────────
