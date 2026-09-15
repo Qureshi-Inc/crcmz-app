@@ -36,6 +36,13 @@ services:
       - WATCH_ROOMS=${WATCH_ROOMS:-crcmz}
       - WATCHPARTY_ORIGIN=${WATCHPARTY_ORIGIN:-}
       - WATCH_SOCKET_PATH=${WATCH_SOCKET_PATH:-/wp/socket.io}
+      # Huddle — LiveKit video chat
+      - LIVEKIT_URL=${LIVEKIT_URL:-wss://huddle.crcmz.me}
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-}
+      # Ollama on the local Mac (server reaches it directly over LAN)
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

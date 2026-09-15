@@ -2636,6 +2636,78 @@ async def watch_rally(request: Request):
         return JSONResponse({"detail": "failed to send"}, status_code=502)
 
 
+# ── Huddle API (LiveKit token + Ollama proxy) ──────────────────────────────────
+
+def _mk_livekit_token(identity: str, name: str, room: str) -> str:
+    import jwt as _pyjwt, uuid as _uuid
+    now = int(_time.time())
+    payload = {
+        "exp": now + 21600,
+        "iss": LIVEKIT_API_KEY,
+        "nbf": now,
+        "sub": identity,
+        "name": name,
+        "video": {
+            "roomJoin": True,
+            "room": room,
+            "canPublish": True,
+            "canSubscribe": True,
+            "canPublishData": True,
+        },
+        "jti": str(_uuid.uuid4()),
+    }
+    token = _pyjwt.encode(payload, LIVEKIT_API_SECRET, algorithm="HS256")
+    return token if isinstance(token, str) else token.decode()
+
+
+@app.post("/api/huddle/token")
+async def huddle_token(request: Request):
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        return JSONResponse({"error": "Huddle not configured on this server"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    room = str((body or {}).get("room", "crcmz")).strip() or "crcmz"
+    # sanitise: only alphanumeric + hyphens
+    import re as _re
+    room = _re.sub(r"[^a-z0-9\-]", "", room.lower())[:64] or "crcmz"
+    identity = session.get("sub", "anon")
+    name = session.get("name") or session.get("preferred_username") or identity
+    token = _mk_livekit_token(identity, name, room)
+    ws_url = LIVEKIT_URL
+    return JSONResponse({"token": token, "url": ws_url, "room": room})
+
+
+@app.post("/api/huddle/ai")
+async def huddle_ai(request: Request):
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not OLLAMA_BASE_URL:
+        return JSONResponse({"error": "AI not configured — set OLLAMA_BASE_URL"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    messages = body.get("messages", [])
+    model = body.get("model") or OLLAMA_MODEL
+    import httpx as _hx
+    try:
+        async with _hx.AsyncClient(timeout=60) as c:
+            r = await c.post(
+                f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
+                json={"model": model, "messages": messages, "stream": False},
+            )
+        return JSONResponse(r.json())
+    except Exception as exc:
+        logger.warning("huddle ollama proxy error: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 @app.get("/watch")
 def watch_page():
     """User-facing entry point — the Watch tab of the existing dashboard.
@@ -2828,6 +2900,14 @@ WA_BRIDGE_URL  = os.environ.get("WA_BRIDGE_URL", "")
 WA_GOOPERS_JID = os.environ.get("WA_GOOPERS_JID", "")
 DISCORD_BOT_TOKEN       = os.environ.get("DISCORD_BOT_TOKEN", "")
 DISCORD_CLIPS_CHANNEL_ID = os.environ.get("DISCORD_CLIPS_CHANNEL_ID", "")
+
+# ── Huddle (LiveKit video chat) ────────────────────────────────────────────────
+LIVEKIT_URL        = os.environ.get("LIVEKIT_URL", "wss://huddle.crcmz.me")
+LIVEKIT_API_KEY    = os.environ.get("LIVEKIT_API_KEY", "")
+LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "")
+# Ollama on the local Mac — e.g. http://192.168.5.xxx:11434
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "")
+OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL", "llama3.2")
 
 # Resolve WA bridge host — host.docker.internal may not exist in Coolify
 if WA_BRIDGE_URL:
@@ -4662,6 +4742,69 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     background:rgba(255,60,60,.1); border:1px solid rgba(255,60,60,.35);
     color:#ff8f9f; display:none; }
   .wp-err.on { display:block; }
+
+  /* ── Huddle ─────────────────────────────────────────────────────────────── */
+  #p-huddle { padding:0 !important; overflow:hidden; display:flex; flex-direction:column; }
+  #huddlePre, #huddleStage { height:100%; }
+  .huddle-join { display:flex; flex-direction:column; align-items:center; justify-content:center;
+    height:100%; padding:20px; text-align:center; }
+  #huddleStage { display:flex; flex-direction:column; }
+  .huddle-header { display:flex; align-items:center; justify-content:space-between;
+    padding:10px 14px; border-bottom:1px solid rgba(255,255,255,.06); flex-shrink:0; }
+  .huddle-room-label { font-size:14px; font-weight:700; color:#fff;
+    font-family:"Orbitron",sans-serif; letter-spacing:.5px; }
+  .huddle-main { flex:1; display:flex; overflow:hidden; min-height:0; }
+  .huddle-grid { flex:1; display:grid; gap:8px; padding:10px; align-content:start;
+    overflow-y:auto; min-width:0; }
+  .huddle-tile { position:relative; background:#0c0c1a; border-radius:14px; overflow:hidden;
+    aspect-ratio:4/3; transition:outline .15s; }
+  .huddle-tile video { width:100%; height:100%; object-fit:cover; display:block; background:#111; }
+  .huddle-tile.me video { transform:scaleX(-1); }
+  .huddle-tile.speaking { outline:2px solid rgba(140,255,43,.75); outline-offset:1px; }
+  .huddle-tile-info { position:absolute; bottom:0; left:0; right:0;
+    padding:22px 10px 8px;
+    background:linear-gradient(0deg,rgba(0,0,0,.7) 0%,rgba(0,0,0,0) 100%);
+    display:flex; align-items:flex-end; gap:6px; pointer-events:none; }
+  .huddle-tile-name { font-size:12px; font-weight:700; color:#fff; flex:1;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .huddle-tile-badges { font-size:14px; flex-shrink:0; }
+  .huddle-controls { display:flex; align-items:center; justify-content:center; gap:8px;
+    padding:10px 14px; border-top:1px solid rgba(255,255,255,.06); flex-shrink:0; flex-wrap:wrap; }
+  .huddle-ctrl { padding:10px 16px; border-radius:12px; border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.05); color:#fff; font-size:12.5px; font-weight:700;
+    font-family:"Rajdhani",sans-serif; letter-spacing:.3px; cursor:pointer;
+    transition:background .15s, border-color .15s; white-space:nowrap; }
+  .huddle-ctrl:hover { background:rgba(255,255,255,.1); }
+  .huddle-ctrl.on { background:rgba(34,230,255,.12); border-color:rgba(34,230,255,.4); color:var(--cyan); }
+  .huddle-ctrl.off { background:rgba(255,50,50,.1); border-color:rgba(255,50,50,.3); color:#ff6666; }
+  .huddle-ctrl.danger { background:rgba(255,40,40,.12); border-color:rgba(255,40,40,.35); color:#ff5555; }
+  .huddle-ctrl.danger:hover { background:rgba(255,40,40,.22); }
+  /* AI sidebar */
+  .huddle-ai { width:270px; flex-shrink:0; display:flex; flex-direction:column;
+    border-left:1px solid rgba(255,255,255,.07); overflow:hidden; }
+  .huddle-ai-head { padding:10px 14px; border-bottom:1px solid rgba(255,255,255,.05); flex-shrink:0; }
+  .huddle-ai-log { flex:1; overflow-y:auto; padding:10px; display:flex;
+    flex-direction:column; gap:8px; min-height:0; }
+  .huddle-ai-msg { padding:8px 10px; border-radius:10px; font-size:12.5px; line-height:1.5;
+    white-space:pre-wrap; word-break:break-word; }
+  .huddle-ai-msg.user { background:rgba(34,230,255,.1); border:1px solid rgba(34,230,255,.2);
+    align-self:flex-end; max-width:90%; }
+  .huddle-ai-msg.assistant { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1);
+    align-self:flex-start; max-width:100%; }
+  .huddle-ai-msg.sys { color:var(--dim); font-size:11px; text-align:center;
+    background:none; border:none; padding:2px 0; }
+  .huddle-ai-in { display:flex; gap:6px; padding:8px;
+    border-top:1px solid rgba(255,255,255,.05); flex-shrink:0; }
+  .huddle-transcript-box { padding:8px 14px; flex-shrink:0;
+    border-top:1px solid rgba(255,255,255,.05);
+    border-bottom:1px solid rgba(255,255,255,.05);
+    background:rgba(255,255,255,.02); }
+  @media (max-width:560px) {
+    .huddle-ai { width:100%; border-left:none; border-top:1px solid rgba(255,255,255,.07); }
+    .huddle-main { flex-direction:column; }
+    #huddleAiPanel { max-height:200px; }
+    .huddle-ctrl { padding:8px 10px; font-size:11px; }
+  }
 </style></head>
 <body>
 
@@ -4798,6 +4941,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="nav-item" data-p="wa" data-icon="💬" data-label="WhatsApp" onclick="tab(this);loadWa()"><span class="nav-i-icon">💬</span><span>WhatsApp</span></button>
       <button class="nav-item" data-p="giveaway" data-icon="🎁" data-label="Giveaway" onclick="tab(this);loadGiveaway()"><span class="nav-i-icon">🎁</span><span>Giveaway</span></button>
       <button class="nav-item" data-p="watch" data-icon="🍿" data-label="Watch" onclick="tab(this);loadWatch()"><span class="nav-i-icon">🍿</span><span>Watch</span></button>
+      <button class="nav-item" data-p="huddle" data-icon="🎥" data-label="Huddle" onclick="tab(this);loadHuddle()"><span class="nav-i-icon">🎥</span><span>Huddle</span></button>
     </div>
   </div>
   <div class="panel" id="p-squad">
@@ -4892,6 +5036,63 @@ _DASHBOARD_TMPL = r"""<!doctype html>
         <input id="wpChatIn" type="text" maxlength="500" autocomplete="off"
           placeholder="Say something…" onkeydown="if(event.key==='Enter')wpSendChat()">
         <button class="wp-btn" onclick="wpSendChat()">➤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Huddle panel ── -->
+  <div class="panel" id="p-huddle">
+    <!-- Pre-join screen -->
+    <div id="huddlePre" style="height:100%;display:flex;flex-direction:column">
+      <div class="huddle-join">
+        <div style="font-size:52px;margin-bottom:10px">🎥</div>
+        <h2 style="font-size:22px;font-weight:800;color:#fff;margin:0 0 6px;font-family:'Orbitron',sans-serif;letter-spacing:1px">Huddle</h2>
+        <p style="font-size:13px;color:var(--dim);margin:0 0 28px">Video calls with your squad &amp; AI</p>
+        <div style="width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px">
+          <input class="sfield" id="huddleRoom" value="crcmz" placeholder="Room name" style="text-align:center;font-size:16px">
+          <button class="wp-btn" onclick="huddleJoin()">🎥 Join Huddle</button>
+          <div id="huddleJoinMsg" style="font-size:12px;color:var(--dim);text-align:center;min-height:18px"></div>
+        </div>
+      </div>
+    </div>
+    <!-- In-call screen -->
+    <div id="huddleStage" style="display:none;flex-direction:column;height:100%">
+      <div class="huddle-header">
+        <span class="huddle-room-label">🎥 <span id="huddleRoomName">crcmz</span></span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="huddleCount" style="font-size:12px;color:var(--dim)">1 connected</span>
+          <button class="wp-btn ghost" onclick="huddleToggleAi()" id="huddleAiToggle" style="padding:6px 12px;font-size:12px">💬 AI</button>
+        </div>
+      </div>
+      <div class="huddle-main" id="huddleMain">
+        <div class="huddle-grid" id="huddleGrid"></div>
+        <div class="huddle-ai" id="huddleAiPanel" style="display:none">
+          <div class="huddle-ai-head">
+            <span style="font-size:13px;font-weight:700;color:#fff">💬 AI Assistant</span>
+            <div id="huddleAiStatus" style="font-size:11px;color:var(--dim);margin-top:2px"></div>
+          </div>
+          <div class="huddle-ai-log" id="huddleAiLog"></div>
+          <div class="huddle-transcript-box" id="huddleTranscriptBox" style="display:none">
+            <div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Live Transcript</div>
+            <div id="huddleTranscriptText" style="font-size:12px;color:rgba(255,255,255,.7);max-height:72px;overflow-y:auto"></div>
+          </div>
+          <div class="huddle-ai-in">
+            <input class="sfield" id="huddleAiInput" placeholder="Ask AI anything…"
+              onkeydown="if(event.key==='Enter')huddleAiSend()" style="margin:0;flex:1">
+            <button class="wp-btn ghost" onclick="huddleAiSend()" style="flex-shrink:0;padding:10px 14px">➤</button>
+          </div>
+          <div style="display:flex;gap:6px;padding:0 8px 8px">
+            <button class="wp-btn ghost" onclick="huddleToggleTranscript()" style="flex:1;font-size:12px;padding:8px">🎙 Transcript</button>
+            <button class="wp-btn ghost" onclick="huddleMeetingNotes()" style="flex:1;font-size:12px;padding:8px">📋 Notes</button>
+          </div>
+        </div>
+      </div>
+      <div class="huddle-controls">
+        <button class="huddle-ctrl on" id="huddleMicBtn" onclick="huddleToggleMic()">🎤 Mic</button>
+        <button class="huddle-ctrl on" id="huddleCamBtn" onclick="huddleToggleCam()">📷 Cam</button>
+        <button class="huddle-ctrl" id="huddleShareBtn" onclick="huddleToggleShare()">🖥 Share</button>
+        <button class="huddle-ctrl" id="huddleBlurBtn" onclick="huddleToggleBlur()">🌫 Blur</button>
+        <button class="huddle-ctrl danger" onclick="huddleLeave()">🔴 Leave</button>
       </div>
     </div>
   </div>
@@ -7903,6 +8104,338 @@ async function wpRally(){
   v.addEventListener('pause',  ()=>{ if(!WP.applying) WP.sock?.emit('CMD:pause'); });
   v.addEventListener('seeked', ()=>{ if(!WP.applying) WP.sock?.emit('CMD:seek', v.currentTime); });
 })();
+
+// ── Huddle (LiveKit video chat) ───────────────────────────────────────────────
+const HUDDLE = {
+  room: null,
+  loading: false,
+  blurEnabled: false,
+  blurCtx: null,   // { srcVideo, canvas, active, stop() }
+  blurAnim: null,
+  transcript: [],
+  transcribing: false,
+  recog: null,
+  aiLoading: false,
+};
+
+let _livekitLoaded = false;
+async function _loadLivekit() {
+  if(_livekitLoaded || window.LivekitClient) { _livekitLoaded = true; return; }
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js';
+    s.onload = () => { _livekitLoaded = true; res(); };
+    s.onerror = () => rej(new Error('Failed to load LiveKit SDK'));
+    document.head.appendChild(s);
+  });
+}
+
+function loadHuddle() {
+  // Just ensure pre-join is visible if not currently in a call
+  if(!HUDDLE.room) {
+    const pre = $('huddlePre'); if(pre) pre.style.display = '';
+    const stage = $('huddleStage'); if(stage) stage.style.display = 'none';
+  }
+}
+
+async function huddleJoin() {
+  if(HUDDLE.loading) return;
+  const roomEl = $('huddleRoom');
+  const room = (roomEl && roomEl.value.trim()) || 'crcmz';
+  const msgEl = $('huddleJoinMsg');
+  function setMsg(t, err) {
+    if(!msgEl) return;
+    msgEl.textContent = t;
+    msgEl.style.color = err ? '#ff6060' : 'var(--dim)';
+  }
+  setMsg('Loading SDK…', false);
+  HUDDLE.loading = true;
+  try {
+    await _loadLivekit();
+    setMsg('Getting token…', false);
+    const r = await fetch('/api/huddle/token', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ room }),
+    });
+    const d = await r.json();
+    if(!r.ok) { setMsg(d.error || 'Failed to get token', true); return; }
+    const { token, url } = d;
+    setMsg('Connecting…', false);
+    HUDDLE.room = new LivekitClient.Room({
+      adaptiveStream: true,
+      dynacast: true,
+    });
+    HUDDLE.room
+      .on(LivekitClient.RoomEvent.TrackSubscribed,      (track, pub, p) => huddleOnTrack(track, pub, p, true))
+      .on(LivekitClient.RoomEvent.TrackUnsubscribed,    (track) => { track.detach(); huddleRenderGrid(); })
+      .on(LivekitClient.RoomEvent.ParticipantConnected,    () => huddleRenderGrid())
+      .on(LivekitClient.RoomEvent.ParticipantDisconnected, () => huddleRenderGrid())
+      .on(LivekitClient.RoomEvent.ActiveSpeakersChanged,   sp => huddleActiveSpeakers(sp))
+      .on(LivekitClient.RoomEvent.LocalTrackPublished,     () => huddleRenderGrid())
+      .on(LivekitClient.RoomEvent.TrackMuted,              () => huddleRenderGrid())
+      .on(LivekitClient.RoomEvent.TrackUnmuted,            () => huddleRenderGrid())
+      .on(LivekitClient.RoomEvent.Disconnected, reason => {
+        if(reason !== LivekitClient.DisconnectReason?.CLIENT_INITIATED) {
+          $('huddleStage').style.display = 'none';
+          $('huddlePre').style.display = '';
+          setMsg('Disconnected' + (reason ? ': ' + reason : ''), true);
+        }
+      });
+    await HUDDLE.room.connect(url, token);
+    await HUDDLE.room.localParticipant.setMicrophoneEnabled(true);
+    await HUDDLE.room.localParticipant.setCameraEnabled(true);
+    $('huddleRoomName').textContent = room;
+    $('huddlePre').style.display = 'none';
+    const stage = $('huddleStage'); stage.style.display = 'flex';
+    setMsg('', false);
+    huddleRenderGrid();
+    huddleSyncControls();
+  } catch(e) {
+    setMsg('Could not connect: ' + (e.message || e), true);
+    if(HUDDLE.room) { try{ await HUDDLE.room.disconnect(); }catch(_){} HUDDLE.room = null; }
+  } finally {
+    HUDDLE.loading = false;
+  }
+}
+
+async function huddleLeave() {
+  if(HUDDLE.room) { await HUDDLE.room.disconnect(); HUDDLE.room = null; }
+  _huddleBlurStop();
+  if(HUDDLE.recog) { try{ HUDDLE.recog.stop(); }catch(_){} HUDDLE.recog = null; }
+  HUDDLE.transcript = [];
+  HUDDLE.transcribing = false;
+  const grid = $('huddleGrid'); if(grid) grid.innerHTML = '';
+  $('huddleStage').style.display = 'none';
+  $('huddlePre').style.display = '';
+  const tb = $('huddleTranscriptBox'); if(tb) tb.style.display = 'none';
+}
+
+function huddleOnTrack(track, pub, participant) {
+  // Re-render the grid and attach the track to the matching element
+  huddleRenderGrid();
+  const tileId = 'ht-' + participant.identity;
+  const tile = document.getElementById(tileId);
+  if(!tile) return;
+  if(track.kind === 'video') { const v = tile.querySelector('video'); if(v) track.attach(v); }
+  if(track.kind === 'audio') { const a = tile.querySelector('audio'); if(a) track.attach(a); }
+}
+
+function huddleRenderGrid() {
+  const grid = $('huddleGrid'); if(!grid || !HUDDLE.room) return;
+  const lp = HUDDLE.room.localParticipant;
+  const remotes = [...HUDDLE.room.remoteParticipants.values()];
+  const all = [{ p: lp, local: true }, ...remotes.map(p => ({ p, local: false }))];
+  const n = all.length;
+  grid.style.gridTemplateColumns = n === 1 ? '1fr' : n <= 4 ? 'repeat(2,1fr)' : n <= 9 ? 'repeat(3,1fr)' : 'repeat(4,1fr)';
+  const countEl = $('huddleCount');
+  if(countEl) countEl.textContent = n + (n === 1 ? ' connected' : ' connected');
+  // Remove tiles for departed participants
+  const ids = new Set(all.map(({p}) => p.identity));
+  Array.from(grid.querySelectorAll('.huddle-tile[data-id]')).forEach(t => {
+    if(!ids.has(t.dataset.id)) t.remove();
+  });
+  all.forEach(({p, local}) => {
+    const tid = 'ht-' + p.identity;
+    let tile = document.getElementById(tid);
+    if(!tile) {
+      tile = document.createElement('div');
+      tile.className = 'huddle-tile' + (local ? ' me' : '');
+      tile.id = tid; tile.dataset.id = p.identity;
+      tile.innerHTML =
+        `<video autoplay playsinline ${local ? 'muted' : ''}></video>` +
+        `<audio autoplay style="display:none"></audio>` +
+        `<div class="huddle-tile-info">` +
+          `<span class="huddle-tile-name">${esc(p.name || p.identity)}${local?' (you)':''}</span>` +
+          `<span class="huddle-tile-badges" id="htb-${p.identity}"></span>` +
+        `</div>`;
+      grid.appendChild(tile);
+    }
+    const vid = tile.querySelector('video');
+    const aud = tile.querySelector('audio');
+    if(local) {
+      const cp = p.getTrackPublication(LivekitClient.Track?.Source?.Camera || 'camera');
+      if(cp?.track && vid) { try{ cp.track.attach(vid); }catch(_){} }
+    } else {
+      p.trackPublications.forEach(pub => {
+        if(!pub.isSubscribed || !pub.track) return;
+        try {
+          if(pub.kind === 'video' && vid) pub.track.attach(vid);
+          if(pub.kind === 'audio' && aud) pub.track.attach(aud);
+        } catch(_) {}
+      });
+    }
+    const badges = document.getElementById('htb-' + p.identity);
+    if(badges) {
+      const mic = p.getTrackPublication(LivekitClient.Track?.Source?.Microphone || 'microphone');
+      badges.textContent = (!mic || mic.isMuted) ? '🔇' : '';
+    }
+  });
+}
+
+function huddleActiveSpeakers(speakers) {
+  document.querySelectorAll('.huddle-tile').forEach(t => t.classList.remove('speaking'));
+  (speakers || []).forEach(p => {
+    const t = document.getElementById('ht-' + p.identity);
+    if(t) t.classList.add('speaking');
+  });
+}
+
+async function huddleToggleMic() {
+  if(!HUDDLE.room) return;
+  await HUDDLE.room.localParticipant.setMicrophoneEnabled(!HUDDLE.room.localParticipant.isMicrophoneEnabled);
+  huddleSyncControls();
+}
+async function huddleToggleCam() {
+  if(!HUDDLE.room) return;
+  await HUDDLE.room.localParticipant.setCameraEnabled(!HUDDLE.room.localParticipant.isCameraEnabled);
+  huddleSyncControls(); huddleRenderGrid();
+}
+async function huddleToggleShare() {
+  if(!HUDDLE.room) return;
+  try {
+    await HUDDLE.room.localParticipant.setScreenShareEnabled(!HUDDLE.room.localParticipant.isScreenShareEnabled);
+    huddleSyncControls();
+  } catch(e) { toast && toast('Screen share: ' + e.message); }
+}
+
+async function huddleToggleBlur() {
+  if(!HUDDLE.room) return;
+  const Source = LivekitClient.Track?.Source;
+  const camPub = HUDDLE.room.localParticipant.getTrackPublication(Source?.Camera || 'camera');
+  if(!camPub?.track) { toast && toast('Enable camera first'); return; }
+  if(!HUDDLE.blurEnabled) {
+    const origTrack = camPub.track.mediaStreamTrack;
+    const srcVid = document.createElement('video');
+    srcVid.srcObject = new MediaStream([origTrack]); srcVid.muted = true; srcVid.autoplay = true;
+    await srcVid.play().catch(()=>{});
+    const canvas = document.createElement('canvas');
+    canvas.width = 640; canvas.height = 360;
+    const ctx = canvas.getContext('2d');
+    let active = true;
+    function frame() {
+      if(!active) return;
+      ctx.filter = 'blur(8px)';
+      ctx.drawImage(srcVid, -10, -10, 660, 380); // overshoot so edges don't look harsh
+      ctx.filter = 'none';
+      HUDDLE.blurAnim = requestAnimationFrame(frame);
+    }
+    frame();
+    const blurTrack = canvas.captureStream(30).getVideoTracks()[0];
+    // Republish with the blurred track
+    try { await HUDDLE.room.localParticipant.unpublishTrack(camPub.track); } catch(_) {}
+    await HUDDLE.room.localParticipant.publishTrack(blurTrack, { source: Source?.Camera || 'camera' });
+    HUDDLE.blurCtx = { srcVid, canvas, origTrack, blurTrack, stop() { active=false; srcVid.srcObject=null; } };
+    HUDDLE.blurEnabled = true;
+  } else {
+    _huddleBlurStop();
+    await HUDDLE.room.localParticipant.setCameraEnabled(false);
+    await HUDDLE.room.localParticipant.setCameraEnabled(true);
+  }
+  huddleSyncControls();
+}
+
+function _huddleBlurStop() {
+  if(HUDDLE.blurCtx) { HUDDLE.blurCtx.stop(); HUDDLE.blurCtx = null; }
+  if(HUDDLE.blurAnim) { cancelAnimationFrame(HUDDLE.blurAnim); HUDDLE.blurAnim = null; }
+  HUDDLE.blurEnabled = false;
+}
+
+function huddleSyncControls() {
+  if(!HUDDLE.room) return;
+  const p = HUDDLE.room.localParticipant;
+  const mic = $('huddleMicBtn'), cam = $('huddleCamBtn'), share = $('huddleShareBtn'), blur = $('huddleBlurBtn');
+  if(mic) { const on=p.isMicrophoneEnabled; mic.textContent=on?'🎤 Mic':'🔇 Unmute'; mic.className='huddle-ctrl '+(on?'on':'off'); }
+  if(cam) { const on=p.isCameraEnabled; cam.textContent=on?'📷 Cam':'📷 Off'; cam.className='huddle-ctrl '+(on?'on':''); }
+  if(share) { const on=p.isScreenShareEnabled; share.textContent=on?'🖥 Sharing':'🖥 Share'; share.className='huddle-ctrl '+(on?'on':''); }
+  if(blur) { blur.textContent=HUDDLE.blurEnabled?'🌫 Blur On':'🌫 Blur'; blur.className='huddle-ctrl '+(HUDDLE.blurEnabled?'on':''); }
+}
+
+// AI sidebar
+function huddleToggleAi() {
+  const panel = $('huddleAiPanel'); if(!panel) return;
+  const show = panel.style.display === 'none' || !panel.style.display;
+  panel.style.display = show ? 'flex' : 'none';
+  const btn = $('huddleAiToggle'); if(btn) btn.classList.toggle('on', show);
+  if(show && !$('huddleAiLog').children.length)
+    _huddleAiMsg('sys', 'Ask me anything during the call. I can help summarise, answer questions, and more.');
+}
+function _huddleAiMsg(role, text) {
+  const log = $('huddleAiLog'); if(!log) return;
+  const d = document.createElement('div');
+  d.className = 'huddle-ai-msg ' + role; d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+async function huddleAiSend() {
+  if(HUDDLE.aiLoading) return;
+  const inp = $('huddleAiInput'); if(!inp) return;
+  const text = inp.value.trim(); if(!text) return;
+  inp.value = '';
+  _huddleAiMsg('user', text);
+  HUDDLE.aiLoading = true;
+  const status = $('huddleAiStatus'); if(status) status.textContent = 'thinking…';
+  const ctx = HUDDLE.transcript.slice(-20).map(t => t.text).join(' ');
+  const sysMsg = 'You are a helpful AI assistant in a video call. Be concise.' + (ctx ? '\n\nMeeting so far:\n' + ctx : '');
+  try {
+    const r = await fetch('/api/huddle/ai', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ messages: [
+        { role: 'system', content: sysMsg },
+        { role: 'user', content: text },
+      ]}),
+    });
+    const d = await r.json();
+    if(!r.ok) { _huddleAiMsg('sys', 'Error: ' + (d.error||'Failed')); return; }
+    _huddleAiMsg('assistant', d.message?.content || d.response || JSON.stringify(d));
+  } catch(e) { _huddleAiMsg('sys', 'Could not reach AI: ' + e.message); }
+  finally { HUDDLE.aiLoading = false; if(status) status.textContent = ''; }
+}
+
+// Web Speech API transcript
+function huddleToggleTranscript() {
+  const box = $('huddleTranscriptBox'); if(!box) return;
+  if(HUDDLE.transcribing) {
+    if(HUDDLE.recog) { try{ HUDDLE.recog.stop(); }catch(_){} HUDDLE.recog = null; }
+    HUDDLE.transcribing = false; box.style.display = 'none'; return;
+  }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR) { toast && toast('Speech recognition not supported in this browser'); return; }
+  HUDDLE.recog = new SR();
+  HUDDLE.recog.continuous = true; HUDDLE.recog.interimResults = true; HUDDLE.recog.lang = 'en-US';
+  HUDDLE.recog.onresult = ev => {
+    for(let i = ev.resultIndex; i < ev.results.length; i++) {
+      if(ev.results[i].isFinal) HUDDLE.transcript.push({ text: ev.results[i][0].transcript, ts: Date.now() });
+    }
+    const el = $('huddleTranscriptText');
+    if(el) el.textContent = HUDDLE.transcript.slice(-5).map(t => t.text).join(' ');
+  };
+  HUDDLE.recog.onerror = e => { if(e.error !== 'no-speech') toast && toast('Transcript: ' + e.error); };
+  HUDDLE.recog.start(); HUDDLE.transcribing = true; box.style.display = '';
+}
+
+async function huddleMeetingNotes() {
+  if(!HUDDLE.transcript.length) {
+    if($('huddleAiPanel').style.display === 'none') huddleToggleAi();
+    _huddleAiMsg('sys', 'No transcript yet — enable 🎙 Transcript first then come back.');
+    return;
+  }
+  if($('huddleAiPanel').style.display === 'none') huddleToggleAi();
+  _huddleAiMsg('sys', 'Generating meeting notes…');
+  HUDDLE.aiLoading = true;
+  try {
+    const r = await fetch('/api/huddle/ai', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ messages: [
+        { role: 'system', content: 'Create clean, organised meeting notes from this transcript.' },
+        { role: 'user', content: 'Transcript:\n\n' + HUDDLE.transcript.map(t => t.text).join('\n') },
+      ]}),
+    });
+    const d = await r.json();
+    _huddleAiMsg('assistant', d.message?.content || d.response || JSON.stringify(d));
+  } catch(e) { _huddleAiMsg('sys', 'Could not reach AI: ' + e.message); }
+  finally { HUDDLE.aiLoading = false; const s=$('huddleAiStatus'); if(s) s.textContent=''; }
+}
+// ── end Huddle ─────────────────────────────────────────────────────────────────
 
 </script>
 </body></html>"""
