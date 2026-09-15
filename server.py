@@ -4556,21 +4556,38 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   /* back-camera has no mirror */
   .wp-orb.me.no-mirror .wp-orb-inner video { transform:none !important; }
   /* fullscreen camera grid overlay */
-  .wp-cam-fs { position:fixed; inset:0; z-index:9999; background:rgba(5,4,16,.97);
+  .wp-cam-fs { position:fixed; inset:0; z-index:9999; background:#06041a;
     display:none; flex-direction:column; }
   .wp-cam-fs.open { display:flex; }
   .wp-cam-fs-head { display:flex; align-items:center; gap:8px; padding:12px 16px;
     border-bottom:1px solid rgba(255,255,255,.07); flex-shrink:0; }
   .wp-cam-fs-title { font-size:14px; font-weight:700; color:#fff; flex:1; }
-  .wp-orbs-grid { flex:1; overflow-y:auto; display:grid; gap:16px; padding:16px;
-    grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); align-content:start; }
-  .wp-orbs-grid .wp-orb { width:auto; cursor:pointer; }
-  .wp-orbs-grid .wp-orb-ring { width:clamp(110px,calc(100% - 16px),160px) !important;
-    height:clamp(110px,calc(100% - 16px),160px) !important; }
-  .wp-orbs-grid .wp-orb-ini { font-size:46px !important; }
-  .wp-orbs-grid .wp-orb-badge { min-width:24px !important; height:24px !important;
-    font-size:12px !important; }
-  .wp-orbs-grid .wp-orb-name { font-size:13px !important; margin-top:2px; }
+  /* Grid tiles — rectangular video panels, not circles */
+  .wp-orbs-grid { flex:1; overflow-y:auto; display:grid; gap:10px; padding:12px;
+    grid-template-columns:repeat(auto-fill,minmax(min(160px,45%),1fr));
+    align-content:start; }
+  .wp-orbs-grid .wp-orb { width:100%; }
+  /* Make ring a square rounded-rect instead of a circle */
+  .wp-orbs-grid .wp-orb-ring {
+    width:100% !important; height:auto !important; aspect-ratio:1 !important;
+    border-radius:14px !important; padding:3px !important;
+    margin:0 0 6px !important; }
+  /* Inner fills the ring using absolute positioning — avoids height:100% on auto parent */
+  .wp-orbs-grid .wp-orb-inner {
+    position:absolute !important; inset:3px !important;
+    width:auto !important; height:auto !important;
+    border-radius:11px !important; }
+  .wp-orbs-grid .wp-orb-ini { font-size:clamp(32px,12vw,72px) !important; }
+  /* Badge floats over the tile bottom-right */
+  .wp-orbs-grid .wp-orb-badge {
+    right:8px !important; bottom:8px !important;
+    min-width:26px !important; height:26px !important; font-size:13px !important;
+    background:rgba(0,0,0,.7) !important; border-color:transparent !important; }
+  .wp-orbs-grid .wp-orb-name { font-size:13px !important; text-align:center; padding:0 4px; }
+  /* Speaking glow works on rectangular tiles too */
+  .wp-orbs-grid .wp-orb.talking .wp-orb-ring,
+  .wp-orbs-grid .wp-orb.speaking .wp-orb-ring {
+    box-shadow:0 0 0 3px rgba(140,255,43,.4),0 0 20px rgba(140,255,43,.25) !important; }
   .wp-cam-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin-bottom:10px; }
   .wp-ptt { user-select:none; -webkit-user-select:none; }
