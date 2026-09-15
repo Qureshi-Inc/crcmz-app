@@ -4744,7 +4744,9 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-err.on { display:block; }
 
   /* ── Huddle (revamped) ──────────────────────────────────────────────────── */
-  #p-huddle { padding:0 !important; overflow:hidden; display:flex; flex-direction:column; }
+  /* NOTE: do NOT set display here — .panel{display:none} must win when not active */
+  #p-huddle { padding:0 !important; overflow:hidden; }
+  #p-huddle.on { display:flex !important; flex-direction:column; }
   #huddlePre { height:100%; display:flex; align-items:center; justify-content:center; padding:16px; overflow-y:auto; }
   .hpj { display:flex; gap:20px; width:100%; max-width:620px; align-items:center; }
   .hpj-cam { flex:1; position:relative; background:#0a0a1a; border-radius:16px; overflow:hidden;
