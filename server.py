@@ -4832,23 +4832,28 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     font-weight:700; font-family:"Rajdhani",sans-serif; letter-spacing:.3px;
     background:rgba(255,40,40,.15); border-color:rgba(255,40,40,.4); color:#ff5555; }
   .hs-ctrl.danger:hover { background:rgba(255,40,40,.28); transform:none; }
-  .hs-ai { width:260px; flex-shrink:0; display:flex; flex-direction:column;
+  .hs-ai { width:300px; flex-shrink:0; display:flex; flex-direction:column;
     border-left:1px solid rgba(255,255,255,.07); overflow:hidden; }
   .hs-ai-head { display:flex; align-items:center; justify-content:space-between;
     padding:8px 12px; border-bottom:1px solid rgba(255,255,255,.05);
     font-size:13px; font-weight:700; color:#fff; flex-shrink:0; }
-  .hs-ai-log { flex:1; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:6px; min-height:0; }
-  .hs-ai-msg { padding:7px 9px; border-radius:10px; font-size:12px; line-height:1.5;
-    white-space:pre-wrap; word-break:break-word; }
-  .hs-ai-msg.user { background:rgba(34,230,255,.1); border:1px solid rgba(34,230,255,.2);
-    align-self:flex-end; max-width:90%; }
-  .hs-ai-msg.assistant { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); }
-  .hs-ai-msg.sys { color:var(--dim); font-size:11px; text-align:center; background:none; border:none; padding:2px 0; }
+  .hs-ai-log { flex:1; overflow-y:auto; padding:10px 8px; display:flex; flex-direction:column; gap:8px; min-height:0; }
+  .hs-ai-log::-webkit-scrollbar { width:3px; }
+  .hs-ai-log::-webkit-scrollbar-thumb { background:rgba(255,255,255,.15); border-radius:2px; }
+  .hs-ai-msg { padding:8px 11px; border-radius:14px; font-size:13px; line-height:1.55;
+    white-space:pre-wrap; word-break:break-word; max-width:93%; }
+  .hs-ai-msg.user { background:rgba(34,230,255,.12); border:1px solid rgba(34,230,255,.25);
+    align-self:flex-end; }
+  .hs-ai-msg.assistant { background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.1); align-self:flex-start; }
+  .hs-ai-msg.sys { color:var(--dim); font-size:11px; text-align:center; background:none; border:none; padding:2px 0; max-width:100%; align-self:center; }
+  .hs-ai-msg.transcript { color:rgba(255,255,255,.45); font-size:11px; font-style:italic;
+    background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.06);
+    align-self:stretch; max-width:100%; padding:5px 9px; border-radius:8px; }
   .hs-ai-in { display:flex; gap:6px; padding:8px; border-top:1px solid rgba(255,255,255,.05); flex-shrink:0; }
   @media (max-width:600px) {
     .hpj { flex-direction:column; }
     .hpj-cam { width:100%; max-width:260px; align-self:center; }
-    .hs-ai { width:100%; border-left:none; border-top:1px solid rgba(255,255,255,.07); max-height:180px; }
+    .hs-ai { width:100%; border-left:none; border-top:1px solid rgba(255,255,255,.07); height:270px; flex-shrink:0; }
     .hs-main { flex-direction:column; }
     .hs-ctrl { width:40px; height:40px; font-size:16px; }
     .hs-strip { height:70px; }
@@ -5147,12 +5152,8 @@ _DASHBOARD_TMPL = r"""<!doctype html>
             <span id="huddleAiStatus" style="font-size:11px;color:var(--dim)"></span>
           </div>
           <div class="hs-ai-log" id="huddleAiLog"></div>
-          <div class="huddle-transcript-box" id="huddleTranscriptBox" style="display:none">
-            <div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Live Transcript</div>
-            <div id="huddleTranscriptText" style="font-size:12px;color:rgba(255,255,255,.7);max-height:60px;overflow-y:auto"></div>
-          </div>
           <div style="display:flex;gap:6px;padding:6px 8px;border-top:1px solid rgba(255,255,255,.05);flex-shrink:0">
-            <button class="wp-btn ghost" onclick="huddleToggleTranscript()" style="flex:1;font-size:11px;padding:7px">🎙 Transcript</button>
+            <button class="wp-btn ghost" id="huddleTranscriptBtn" onclick="huddleToggleTranscript()" style="flex:1;font-size:11px;padding:7px">🎙 Transcript</button>
             <button class="wp-btn ghost" onclick="huddleMeetingNotes()" style="flex:1;font-size:11px;padding:7px">📋 Notes</button>
           </div>
           <div class="hs-ai-in">
@@ -8299,7 +8300,10 @@ async function huddleLeave() {
   const s=$('huddleStrip'); if(s) s.innerHTML='';
   $('huddleStage').style.display='none';
   $('huddlePre').style.display='';
-  const tb=$('huddleTranscriptBox'); if(tb) tb.style.display='none';
+  const tb=$('huddleTranscriptBtn');if(tb){tb.textContent='🎙 Transcript';tb.style.color='';}
+  const log=$('huddleAiLog');if(log)log.innerHTML='';
+  const ap=$('huddleAiPanel');if(ap)ap.style.display='none';
+  const at=$('huddleAiToggle');if(at)at.classList.remove('on');
   _huddleStartPreview(); _huddleEnumerateDevices();
 }
 
@@ -8533,18 +8537,40 @@ async function huddleAiSend(){
   finally{HUDDLE.aiLoading=false;if(st)st.textContent='';}
 }
 function huddleToggleTranscript(){
-  const box=$('huddleTranscriptBox');if(!box)return;
-  if(HUDDLE.transcribing){if(HUDDLE.recog){try{HUDDLE.recog.stop();}catch(_){} HUDDLE.recog=null;}HUDDLE.transcribing=false;box.style.display='none';return;}
+  const btn=$('huddleTranscriptBtn');
+  if(HUDDLE.transcribing){
+    if(HUDDLE.recog){try{HUDDLE.recog.stop();}catch(_){} HUDDLE.recog=null;}
+    HUDDLE.transcribing=false;
+    if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
+    _huddleAiMsg('sys','🎙 Transcription stopped.');
+    return;
+  }
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){toast&&toast('Speech recognition not supported');return;}
-  HUDDLE.recog=new SR();HUDDLE.recog.continuous=true;HUDDLE.recog.interimResults=true;HUDDLE.recog.lang='en-US';
+  if(!SR){toast&&toast('Speech recognition not supported in this browser');return;}
+  if($('huddleAiPanel').style.display==='none')huddleToggleAi();
+  HUDDLE.recog=new SR();HUDDLE.recog.continuous=true;HUDDLE.recog.interimResults=false;HUDDLE.recog.lang='en-US';
   HUDDLE.recog.onresult=ev=>{
-    for(let i=ev.resultIndex;i<ev.results.length;i++)
-      if(ev.results[i].isFinal)HUDDLE.transcript.push({text:ev.results[i][0].transcript,ts:Date.now()});
-    const el=$('huddleTranscriptText');if(el)el.textContent=HUDDLE.transcript.slice(-5).map(t=>t.text).join(' ');
+    for(let i=ev.resultIndex;i<ev.results.length;i++){
+      if(ev.results[i].isFinal){
+        const text=ev.results[i][0].transcript.trim();
+        if(text){HUDDLE.transcript.push({text,ts:Date.now()});_huddleAiMsg('transcript','🎙 '+text);}
+      }
+    }
   };
-  HUDDLE.recog.onerror=e=>{if(e.error!=='no-speech')toast&&toast('Transcript: '+e.error);};
-  HUDDLE.recog.start();HUDDLE.transcribing=true;box.style.display='';
+  HUDDLE.recog.onerror=e=>{
+    if(e.error==='not-allowed'){
+      _huddleAiMsg('sys','🎙 Mic permission denied — grant permission and retry.');
+      HUDDLE.transcribing=false;if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
+    } else if(e.error!=='no-speech'){
+      toast&&toast('Transcript error: '+e.error);
+    }
+  };
+  HUDDLE.recog.onend=()=>{if(HUDDLE.transcribing)try{HUDDLE.recog.start();}catch(_){}};
+  try{
+    HUDDLE.recog.start();HUDDLE.transcribing=true;
+    if(btn){btn.textContent='🔴 Stop Transcript';btn.style.color='rgba(255,120,120,1)';}
+    _huddleAiMsg('sys','🎙 Transcription active — speak to capture.');
+  }catch(e){toast&&toast('Could not start transcript: '+e.message);}
 }
 async function huddleMeetingNotes(){
   if(!HUDDLE.transcript.length){
