@@ -4988,7 +4988,12 @@ function tab(btn, skipHash){
     if(p==='slap')    loadSlap();
     if(p==='wa')      loadWa();
     if(p==='giveaway') loadGiveaway();
-    if(p==='watch')   loadWatch();
+    if(p==='watch'){
+      // Defer one tick so the page settles before opening a WebSocket.
+      // On mobile, connecting synchronously during page parse causes
+      // transient failures that never trigger connect_error.
+      setTimeout(loadWatch, 0);
+    }
   }
 })();
 function fmtLast(iso){ if(!iso) return 'offline';
@@ -6564,6 +6569,7 @@ function wpScript(src){
 async function loadWatch(){
   if(WP.booted){
     if(WP.sock && !WP.sock.connected){ WP.tries=0; wpConnect(); }
+    else if(!WP.sock){ WP.booted=false; loadWatch(); } // failed before socket was created
     return;
   }
   WP.booted = true;
@@ -6613,8 +6619,8 @@ async function wpConnect(){
   clearTimeout(WP.reconnectTimer); WP.reconnectTimer=null;
   let ticket;
   try{ ticket = await wpTicket(); }
-  catch(e){ wpErr(e.message || 'Could not join the watch party.'); wpStatus('offline', false); return; }
-  if(!ticket) return;
+  catch(e){ wpErr(e.message || 'Could not join the watch party.'); wpRetry(e.message||''); return; }
+  if(!ticket){ WP.booted=false; return; } // 401 → navigating to login
   wpErr('');
 
   if(WP.sock){ WP.sock.removeAllListeners(); WP.sock.close(); WP.sock=null; }
@@ -6647,7 +6653,16 @@ function wpRetry(reason){
 }
 
 function wpBind(s){
+  // Watchdog: if the socket is created but neither connect nor connect_error
+  // fires within 15s (e.g. WebSocket upgrade silently hangs on mobile), force
+  // a retry so the user isn't stuck on "connecting" indefinitely.
+  const watchdog = setTimeout(()=>{
+    if(WP.sock === s && !s.connected) wpRetry('Connection timed out');
+  }, 15000);
+  const clearWatchdog = ()=> clearTimeout(watchdog);
+
   s.on('connect', ()=>{
+    clearWatchdog();
     WP.tries = 0; wpErr('');
     wpStatus('connected', true);
     s.emit('watch:presence:get');
@@ -6659,6 +6674,7 @@ function wpBind(s){
     }, 1000);
   });
   s.on('connect_error', (err)=>{
+    clearWatchdog();
     const code = String(err?.message||'');
     if(code==='AUTH_REQUIRED' || code==='INVALID_WATCH_TICKET' || code==='WRONG_ROOM'){
       // Ticket problem, not a network problem: a fresh one may work once.
@@ -6669,6 +6685,7 @@ function wpBind(s){
     wpRetry(code);
   });
   s.on('disconnect', ()=>{
+    clearWatchdog();
     if(WP.tsTimer){ clearInterval(WP.tsTimer); WP.tsTimer=null; }
     // Peer connections are addressed by socket id server-side, so they're all
     // dead now. Our own camera stays on and re-announces once we're back.
