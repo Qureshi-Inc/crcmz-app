@@ -1415,6 +1415,15 @@ async def settings_change_password(request: Request):
         return JSONResponse({"error": "service unavailable"}, status_code=503)
 
 
+@app.get("/api/admin/check")
+async def admin_check(request: Request):
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"admin": False})
+    is_admin = await _is_iam_admin(session.get("sub", ""))
+    return JSONResponse({"admin": is_admin})
+
+
 @app.get("/api/admin/users")
 async def admin_list_users(request: Request):
     session = _get_session(request)
@@ -4544,6 +4553,24 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     .wp-orb.speaking .wp-orb-ring { width:118px; height:118px; }
     .wp-orb.speaking .wp-orb-ini { font-size:38px; }
   }
+  /* back-camera has no mirror */
+  .wp-orb.me.no-mirror .wp-orb-inner video { transform:none !important; }
+  /* fullscreen camera grid overlay */
+  .wp-cam-fs { position:fixed; inset:0; z-index:9999; background:rgba(5,4,16,.97);
+    display:none; flex-direction:column; }
+  .wp-cam-fs.open { display:flex; }
+  .wp-cam-fs-head { display:flex; align-items:center; gap:8px; padding:12px 16px;
+    border-bottom:1px solid rgba(255,255,255,.07); flex-shrink:0; }
+  .wp-cam-fs-title { font-size:14px; font-weight:700; color:#fff; flex:1; }
+  .wp-orbs-grid { flex:1; overflow-y:auto; display:grid; gap:16px; padding:16px;
+    grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); align-content:start; }
+  .wp-orbs-grid .wp-orb { width:auto; cursor:pointer; }
+  .wp-orbs-grid .wp-orb-ring { width:clamp(110px,calc(100% - 16px),160px) !important;
+    height:clamp(110px,calc(100% - 16px),160px) !important; }
+  .wp-orbs-grid .wp-orb-ini { font-size:46px !important; }
+  .wp-orbs-grid .wp-orb-badge { min-width:24px !important; height:24px !important;
+    font-size:12px !important; }
+  .wp-orbs-grid .wp-orb-name { font-size:13px !important; margin-top:2px; }
   .wp-cam-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin-bottom:10px; }
   .wp-ptt { user-select:none; -webkit-user-select:none; }
@@ -4792,6 +4819,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div class="wp-cam-bar">
       <button class="wp-btn ghost" id="wpCamBtn" onclick="wpToggleCam()">📷 Turn on camera</button>
       <button class="wp-btn ghost wp-ptt" id="wpPttBtn" style="display:none">🎤 Mute</button>
+      <button class="wp-btn ghost" id="wpFsBtn" onclick="wpFsOpen()" title="Camera grid fullscreen">⛶ Cams</button>
       <span class="wp-cam-note" id="wpCamNote"></span>
     </div>
     <div class="wp-stage" id="wpStage">
@@ -4819,6 +4847,16 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       </div>
     </div>
   </div>
+</div>
+
+<!-- Watch Party fullscreen camera grid overlay -->
+<div class="wp-cam-fs" id="wpCamFs">
+  <div class="wp-cam-fs-head">
+    <span class="wp-cam-fs-title">📷 Camera Grid</span>
+    <button class="wp-btn ghost" id="wpFlipBtn" onclick="wpFlipCam()" style="display:none">🔄 Flip</button>
+    <button class="wp-btn ghost" onclick="wpFsClose()" style="margin-left:auto">✕ Close</button>
+  </div>
+  <div class="wp-orbs-grid" id="wpOrbsFs"></div>
 </div>
 
 <div class="board-wrap" id="boardWrap">
@@ -5765,10 +5803,16 @@ async function registerPasskey(){
 }
 
 // ── Settings modal ─────────────────────────────────────────────────────────
+let _adminChecked = false;
 function openSettings(){
   $('userMenu')?.classList.remove('open');
   $('settingsOverlay').classList.add('open');
   loadPasskeys();
+  if(!_adminChecked){ _adminChecked=true;
+    fetch('/api/admin/check').then(r=>r.json()).then(d=>{
+      if(d.admin){ const tb=$('tabUsersBtn'); if(tb) tb.style.display=''; }
+    }).catch(()=>{});
+  }
 }
 function closeSettings(){ $('settingsOverlay').classList.remove('open'); }
 
@@ -6936,6 +6980,8 @@ const WPC = {
   timer:0,
   busy:false,
   gesture:false,
+  camFs:false,      // is the fullscreen camera grid open
+  facingMode:'user',// 'user' (front) or 'environment' (back)
 };
 const WP_ICE = [{ urls:[
   'stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302',
@@ -7062,7 +7108,7 @@ async function wpRemountMic(){
 }
 
 function wpCamSync(){
-  const b=$('wpCamBtn'), p=$('wpPttBtn');
+  const b=$('wpCamBtn'), p=$('wpPttBtn'), flip=$('wpFlipBtn');
   if(b) b.textContent = WPC.on ? '📷 Turn off camera' : '📷 Turn on camera';
   if(p){
     p.style.display = WPC.on ? '' : 'none';
@@ -7070,6 +7116,7 @@ function wpCamSync(){
     p.classList.toggle('hot', WPC.muted);
     if(WPC.on) wpMuteWire();
   }
+  if(flip) flip.style.display = WPC.on ? '' : 'none';
   wpCamNote('');
   wpRenderOrbs();
 }
@@ -7097,6 +7144,72 @@ function wpMuteWire(){
     const t=e.target; if(t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
     wpToggleMute();
   });
+}
+
+// ── camera fullscreen grid ────────────────────────────────────────────────────
+function wpFsOpen(){
+  const el=$('wpCamFs'); if(!el) return;
+  WPC.camFs = true;
+  el.classList.add('open');
+  const flip=$('wpFlipBtn'); if(flip) flip.style.display = WPC.on ? '' : 'none';
+  wpRenderOrbs();
+  document.body.style.overflow = 'hidden';
+}
+function wpFsClose(){
+  const el=$('wpCamFs'); if(!el) return;
+  WPC.camFs = false;
+  el.classList.remove('open');
+  // Detach srcObjects so they don't linger; the compact strip keeps its own copies.
+  const fsBox=$('wpOrbsFs');
+  if(fsBox){ fsBox.querySelectorAll('video').forEach(v=>{ v.srcObject=null; }); fsBox.innerHTML=''; }
+  document.body.style.overflow = '';
+}
+
+// ESC closes the fullscreen grid
+addEventListener('keydown', e=>{ if(e.key==='Escape' && WPC.camFs) wpFsClose(); });
+
+async function wpFlipCam(){
+  if(!WPC.on || WPC.busy) return;
+  WPC.busy = true;
+  const next = WPC.facingMode === 'environment' ? 'user' : 'environment';
+  try{
+    let newTrack;
+    try{
+      // Use {exact} first so we get the true back/front camera on multi-camera phones.
+      const s = await navigator.mediaDevices.getUserMedia({
+        video:{ width:{ideal:320}, height:{ideal:320},
+                frameRate:{ideal:15,max:20}, facingMode:{exact:next} }
+      });
+      newTrack = s.getVideoTracks()[0];
+    }catch(e){
+      // Single-camera device or permission issue — try without exact.
+      try{
+        const s2 = await navigator.mediaDevices.getUserMedia({
+          video:{ width:{ideal:320}, height:{ideal:320},
+                  frameRate:{ideal:15,max:20}, facingMode:next }
+        });
+        newTrack = s2.getVideoTracks()[0];
+      }catch(e2){ wpCamNote('Could not flip camera.'); return; }
+    }
+    if(!newTrack) return;
+
+    // Swap into every peer sender — no ICE renegotiation needed.
+    await Promise.all(Object.values(WPC.peers).map(async p=>{
+      const s = p.pc.getSenders().find(s=> s.track && s.track.kind==='video');
+      if(s) await s.replaceTrack(newTrack).catch(()=>{});
+    }));
+
+    // Replace in the local stream so the preview video picks up the new track.
+    WPC.stream.getVideoTracks().forEach(t=>{ try{t.stop();}catch(e){} WPC.stream.removeTrack(t); });
+    WPC.stream.addTrack(newTrack);
+    newTrack.addEventListener('ended', ()=>{ if(WPC.on) wpCamStop(); });
+
+    WPC.facingMode = next;
+    // Mirror front camera, don't mirror back camera.
+    document.querySelectorAll('[data-k="me"]').forEach(el=>{
+      el.classList.toggle('no-mirror', next === 'environment');
+    });
+  }finally{ WPC.busy = false; }
 }
 
 // ── peer connections (perfect negotiation) ──────────────────────────────────
@@ -7307,7 +7420,13 @@ function wpOrbBadge(v){
 // Reconciling render: <video> elements are reused in place, because replacing
 // one drops its stream and makes the feed flicker on every roster update.
 function wpRenderOrbs(){
-  const box=$('wpOrbs'); if(!box) return;
+  _wpRenderOrbsInto($('wpOrbs'));
+  if(WPC.camFs) _wpRenderOrbsInto($('wpOrbsFs'));
+  wpOrbState();
+}
+
+function _wpRenderOrbsInto(box){
+  if(!box) return;
   const roster = wpOrbRoster();
   const existing = {};
   Array.from(box.children).forEach(el=>{
@@ -7330,6 +7449,7 @@ function wpRenderOrbs(){
     }
     if(box.children[i] !== el) box.insertBefore(el, box.children[i] || null);
     el.classList.toggle('me', v.me);
+    if(v.me) el.classList.toggle('no-mirror', WPC.facingMode === 'environment');
 
     const label = v.me ? (v.name + ' (you)') : v.name;
     const nameEl = el.querySelector('.wp-orb-name');
@@ -7355,7 +7475,7 @@ function wpRenderOrbs(){
         vid.setAttribute('playsinline','');
         inner.insertBefore(vid, inner.firstChild);
       }
-      vid.muted = v.me;   // never play our own mic back at us
+      vid.muted = v.me;
       if(vid.srcObject !== stream){
         vid.srcObject = stream;
         const pr = vid.play();
@@ -7382,14 +7502,12 @@ function wpRenderOrbs(){
       el.remove();
     }
   });
-  wpOrbState();
 }
 
 // Cheap pass for state that changes often — never rebuilds the video elements.
 function wpOrbState(){
-  const box=$('wpOrbs'); if(!box) return;
-  Array.from(box.children).forEach(el=>{
-    const k = el.dataset && el.dataset.k; if(!k) return;
+  document.querySelectorAll('.wp-orb[data-k]').forEach(el=>{
+    const k = el.dataset.k; if(!k) return;
     const m = WPC.levels[k];
     const talking = !!(m && m.loud) && (k!=='me' || !WPC.muted);
     el.classList.toggle('talking', talking);
