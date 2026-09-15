@@ -4743,67 +4743,101 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     color:#ff8f9f; display:none; }
   .wp-err.on { display:block; }
 
-  /* ── Huddle ─────────────────────────────────────────────────────────────── */
+  /* ── Huddle (revamped) ──────────────────────────────────────────────────── */
   #p-huddle { padding:0 !important; overflow:hidden; display:flex; flex-direction:column; }
-  #huddlePre, #huddleStage { height:100%; }
-  .huddle-join { display:flex; flex-direction:column; align-items:center; justify-content:center;
-    height:100%; padding:20px; text-align:center; }
-  #huddleStage { display:flex; flex-direction:column; }
-  .huddle-header { display:flex; align-items:center; justify-content:space-between;
-    padding:10px 14px; border-bottom:1px solid rgba(255,255,255,.06); flex-shrink:0; }
-  .huddle-room-label { font-size:14px; font-weight:700; color:#fff;
-    font-family:"Orbitron",sans-serif; letter-spacing:.5px; }
-  .huddle-main { flex:1; display:flex; overflow:hidden; min-height:0; }
-  .huddle-grid { flex:1; display:grid; gap:8px; padding:10px; align-content:start;
-    overflow-y:auto; min-width:0; }
-  .huddle-tile { position:relative; background:#0c0c1a; border-radius:14px; overflow:hidden;
-    aspect-ratio:4/3; transition:outline .15s; }
-  .huddle-tile video { width:100%; height:100%; object-fit:cover; display:block; background:#111; }
-  .huddle-tile.me video { transform:scaleX(-1); }
-  .huddle-tile.speaking { outline:2px solid rgba(140,255,43,.75); outline-offset:1px; }
-  .huddle-tile-info { position:absolute; bottom:0; left:0; right:0;
-    padding:22px 10px 8px;
-    background:linear-gradient(0deg,rgba(0,0,0,.7) 0%,rgba(0,0,0,0) 100%);
+  #huddlePre { height:100%; display:flex; align-items:center; justify-content:center; padding:16px; overflow-y:auto; }
+  .hpj { display:flex; gap:20px; width:100%; max-width:620px; align-items:center; }
+  .hpj-cam { flex:1; position:relative; background:#0a0a1a; border-radius:16px; overflow:hidden;
+    aspect-ratio:4/3; min-width:0; border:1px solid rgba(255,255,255,.08); }
+  .hpj-cam video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block; }
+  .hpj-cam-off { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:var(--dim); font-size:13px; flex-direction:column; gap:6px; }
+  .hpj-side { flex:1; display:flex; flex-direction:column; gap:10px; min-width:0; }
+  .hpj-title { font-size:20px; font-weight:800; color:#fff; font-family:"Orbitron",sans-serif; letter-spacing:1px; }
+  .hpj-sub { font-size:12px; color:var(--dim); margin-top:-6px; }
+  .hpj-devices { display:flex; flex-direction:column; gap:6px; }
+  #huddleStage { display:flex; flex-direction:column; height:100%; }
+  .hs-topbar { display:flex; align-items:center; gap:8px; padding:8px 12px;
+    border-bottom:1px solid rgba(255,255,255,.06); flex-shrink:0; }
+  .hs-room { font-size:13px; font-weight:700; color:#fff; font-family:"Orbitron",sans-serif; letter-spacing:.5px; }
+  .hs-topbtn { background:none; border:1px solid rgba(255,255,255,.14); color:var(--dim);
+    border-radius:8px; padding:5px 10px; font-size:12px; cursor:pointer;
+    font-family:"Rajdhani",sans-serif; font-weight:700; transition:all .15s; white-space:nowrap; }
+  .hs-topbtn:hover { color:#fff; border-color:rgba(255,255,255,.3); }
+  .hs-topbtn.on { color:var(--cyan); border-color:rgba(34,230,255,.4); background:rgba(34,230,255,.08); }
+  .hs-main { flex:1; display:flex; overflow:hidden; min-height:0; }
+  .hs-spotlight-wrap { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
+  .hs-spotlight { flex:1; position:relative; background:#050510; overflow:hidden; min-height:0; }
+  .hs-spotlight video { width:100%; height:100%; object-fit:contain; display:block; }
+  .hs-spotlight.me video { transform:scaleX(-1); }
+  .hs-spot-info { position:absolute; bottom:0; left:0; right:0; padding:28px 12px 10px;
+    background:linear-gradient(0deg,rgba(0,0,0,.65),rgba(0,0,0,0));
     display:flex; align-items:flex-end; gap:6px; pointer-events:none; }
-  .huddle-tile-name { font-size:12px; font-weight:700; color:#fff; flex:1;
+  .hs-spot-name { font-size:14px; font-weight:700; color:#fff; flex:1; }
+  .hs-spot-badges { font-size:16px; }
+  .hs-strip { height:88px; flex-shrink:0; display:flex; gap:6px; padding:6px 8px;
+    overflow-x:auto; background:rgba(0,0,0,.35); border-top:1px solid rgba(255,255,255,.05); }
+  .hs-strip::-webkit-scrollbar { height:3px; }
+  .hs-strip::-webkit-scrollbar-thumb { background:rgba(255,255,255,.2); border-radius:2px; }
+  .hs-strip-tile { width:116px; flex-shrink:0; position:relative; border-radius:10px;
+    overflow:hidden; background:#0c0c1e; cursor:pointer;
+    border:2px solid transparent; transition:border-color .15s; }
+  .hs-strip-tile video { width:100%; height:100%; object-fit:cover; display:block; }
+  .hs-strip-tile.me video { transform:scaleX(-1); }
+  .hs-strip-tile.speaking { border-color:rgba(140,255,43,.7); }
+  .hs-strip-tile.active { border-color:rgba(34,230,255,.7); }
+  .hs-strip-name { position:absolute; bottom:0; left:0; right:0;
+    padding:14px 5px 3px; background:linear-gradient(0deg,rgba(0,0,0,.7),transparent);
+    font-size:10px; font-weight:700; color:#fff; text-align:center;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+  .hs-grid { flex:1; display:grid; gap:6px; padding:8px; align-content:start; overflow-y:auto; }
+  .hs-tile { position:relative; background:#0a0a1a; border-radius:12px; overflow:hidden;
+    aspect-ratio:4/3; border:2px solid transparent; transition:border-color .15s; }
+  .hs-tile video { width:100%; height:100%; object-fit:cover; display:block; background:#111; }
+  .hs-tile.me video { transform:scaleX(-1); }
+  .hs-tile.speaking { border-color:rgba(140,255,43,.75); }
+  .hs-tile-info { position:absolute; bottom:0; left:0; right:0; padding:18px 8px 6px;
+    background:linear-gradient(0deg,rgba(0,0,0,.7),rgba(0,0,0,0));
+    display:flex; align-items:flex-end; gap:4px; pointer-events:none; }
+  .hs-tile-name { font-size:11px; font-weight:700; color:#fff; flex:1;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .huddle-tile-badges { font-size:14px; flex-shrink:0; }
-  .huddle-controls { display:flex; align-items:center; justify-content:center; gap:8px;
-    padding:10px 14px; border-top:1px solid rgba(255,255,255,.06); flex-shrink:0; flex-wrap:wrap; }
-  .huddle-ctrl { padding:10px 16px; border-radius:12px; border:1px solid rgba(255,255,255,.14);
-    background:rgba(255,255,255,.05); color:#fff; font-size:12.5px; font-weight:700;
-    font-family:"Rajdhani",sans-serif; letter-spacing:.3px; cursor:pointer;
-    transition:background .15s, border-color .15s; white-space:nowrap; }
-  .huddle-ctrl:hover { background:rgba(255,255,255,.1); }
-  .huddle-ctrl.on { background:rgba(34,230,255,.12); border-color:rgba(34,230,255,.4); color:var(--cyan); }
-  .huddle-ctrl.off { background:rgba(255,50,50,.1); border-color:rgba(255,50,50,.3); color:#ff6666; }
-  .huddle-ctrl.danger { background:rgba(255,40,40,.12); border-color:rgba(255,40,40,.35); color:#ff5555; }
-  .huddle-ctrl.danger:hover { background:rgba(255,40,40,.22); }
-  /* AI sidebar */
-  .huddle-ai { width:270px; flex-shrink:0; display:flex; flex-direction:column;
+  .hs-tile-badges { font-size:13px; flex-shrink:0; }
+  .hs-controls { display:flex; align-items:center; justify-content:center; gap:10px;
+    padding:10px 12px; border-top:1px solid rgba(255,255,255,.06); flex-shrink:0; }
+  .hs-ctrl { width:46px; height:46px; border-radius:50%; border:1px solid rgba(255,255,255,.18);
+    background:rgba(255,255,255,.06); color:#fff; font-size:18px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:background .15s, border-color .15s, transform .1s; flex-shrink:0; }
+  .hs-ctrl:hover { background:rgba(255,255,255,.14); transform:scale(1.08); }
+  .hs-ctrl.on { background:rgba(34,230,255,.15); border-color:rgba(34,230,255,.5); }
+  .hs-ctrl.off { background:rgba(255,50,50,.12); border-color:rgba(255,50,50,.4); }
+  .hs-ctrl.active { background:rgba(34,230,255,.12); border-color:rgba(34,230,255,.4); }
+  .hs-ctrl.danger { width:auto; border-radius:22px; padding:0 18px; font-size:13px;
+    font-weight:700; font-family:"Rajdhani",sans-serif; letter-spacing:.3px;
+    background:rgba(255,40,40,.15); border-color:rgba(255,40,40,.4); color:#ff5555; }
+  .hs-ctrl.danger:hover { background:rgba(255,40,40,.28); transform:none; }
+  .hs-ai { width:260px; flex-shrink:0; display:flex; flex-direction:column;
     border-left:1px solid rgba(255,255,255,.07); overflow:hidden; }
-  .huddle-ai-head { padding:10px 14px; border-bottom:1px solid rgba(255,255,255,.05); flex-shrink:0; }
-  .huddle-ai-log { flex:1; overflow-y:auto; padding:10px; display:flex;
-    flex-direction:column; gap:8px; min-height:0; }
-  .huddle-ai-msg { padding:8px 10px; border-radius:10px; font-size:12.5px; line-height:1.5;
+  .hs-ai-head { display:flex; align-items:center; justify-content:space-between;
+    padding:8px 12px; border-bottom:1px solid rgba(255,255,255,.05);
+    font-size:13px; font-weight:700; color:#fff; flex-shrink:0; }
+  .hs-ai-log { flex:1; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:6px; min-height:0; }
+  .hs-ai-msg { padding:7px 9px; border-radius:10px; font-size:12px; line-height:1.5;
     white-space:pre-wrap; word-break:break-word; }
-  .huddle-ai-msg.user { background:rgba(34,230,255,.1); border:1px solid rgba(34,230,255,.2);
+  .hs-ai-msg.user { background:rgba(34,230,255,.1); border:1px solid rgba(34,230,255,.2);
     align-self:flex-end; max-width:90%; }
-  .huddle-ai-msg.assistant { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1);
-    align-self:flex-start; max-width:100%; }
-  .huddle-ai-msg.sys { color:var(--dim); font-size:11px; text-align:center;
-    background:none; border:none; padding:2px 0; }
-  .huddle-ai-in { display:flex; gap:6px; padding:8px;
-    border-top:1px solid rgba(255,255,255,.05); flex-shrink:0; }
-  .huddle-transcript-box { padding:8px 14px; flex-shrink:0;
-    border-top:1px solid rgba(255,255,255,.05);
-    border-bottom:1px solid rgba(255,255,255,.05);
-    background:rgba(255,255,255,.02); }
-  @media (max-width:560px) {
-    .huddle-ai { width:100%; border-left:none; border-top:1px solid rgba(255,255,255,.07); }
-    .huddle-main { flex-direction:column; }
-    #huddleAiPanel { max-height:200px; }
-    .huddle-ctrl { padding:8px 10px; font-size:11px; }
+  .hs-ai-msg.assistant { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); }
+  .hs-ai-msg.sys { color:var(--dim); font-size:11px; text-align:center; background:none; border:none; padding:2px 0; }
+  .hs-ai-in { display:flex; gap:6px; padding:8px; border-top:1px solid rgba(255,255,255,.05); flex-shrink:0; }
+  @media (max-width:600px) {
+    .hpj { flex-direction:column; }
+    .hpj-cam { width:100%; max-width:260px; align-self:center; }
+    .hs-ai { width:100%; border-left:none; border-top:1px solid rgba(255,255,255,.07); max-height:180px; }
+    .hs-main { flex-direction:column; }
+    .hs-ctrl { width:40px; height:40px; font-size:16px; }
+    .hs-strip { height:70px; }
+    .hs-strip-tile { width:88px; }
+    .hs-controls { gap:8px; padding:8px; }
   }
 </style></head>
 <body>
@@ -5042,57 +5076,82 @@ _DASHBOARD_TMPL = r"""<!doctype html>
 
   <!-- ── Huddle panel ── -->
   <div class="panel" id="p-huddle">
-    <!-- Pre-join screen -->
+    <!-- Pre-join -->
     <div id="huddlePre" style="height:100%;display:flex;flex-direction:column">
-      <div class="huddle-join">
-        <div style="font-size:52px;margin-bottom:10px">🎥</div>
-        <h2 style="font-size:22px;font-weight:800;color:#fff;margin:0 0 6px;font-family:'Orbitron',sans-serif;letter-spacing:1px">Huddle</h2>
-        <p style="font-size:13px;color:var(--dim);margin:0 0 28px">Video calls with your squad &amp; AI</p>
-        <div style="width:100%;max-width:300px;display:flex;flex-direction:column;gap:10px">
-          <input class="sfield" id="huddleRoom" value="crcmz" placeholder="Room name" style="text-align:center;font-size:16px">
-          <button class="wp-btn" onclick="huddleJoin()">🎥 Join Huddle</button>
-          <div id="huddleJoinMsg" style="font-size:12px;color:var(--dim);text-align:center;min-height:18px"></div>
+      <div class="hpj">
+        <div class="hpj-cam">
+          <video id="huddleLocalPreview" autoplay muted playsinline></video>
+          <div class="hpj-cam-off" id="huddlePreviewOff" style="display:none">
+            <span style="font-size:28px">📷</span>
+            <span>Camera off</span>
+          </div>
+        </div>
+        <div class="hpj-side">
+          <div class="hpj-title">🎥 Huddle</div>
+          <div class="hpj-sub">Video calls with your squad &amp; AI</div>
+          <input class="sfield" id="huddleRoom" value="crcmz" placeholder="Room name" style="font-size:15px;text-align:center">
+          <div class="hpj-devices">
+            <select class="sfield" id="huddleMicSel" style="font-size:12px;padding:8px 10px"></select>
+            <select class="sfield" id="huddleCamSel" style="font-size:12px;padding:8px 10px"></select>
+          </div>
+          <button class="wp-btn" id="huddleJoinBtn" onclick="huddleJoin()">🎥 Join</button>
+          <div id="huddleJoinMsg" style="font-size:12px;color:var(--dim);text-align:center;min-height:16px"></div>
         </div>
       </div>
     </div>
-    <!-- In-call screen -->
+    <!-- In-call stage -->
     <div id="huddleStage" style="display:none;flex-direction:column;height:100%">
-      <div class="huddle-header">
-        <span class="huddle-room-label">🎥 <span id="huddleRoomName">crcmz</span></span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <span id="huddleCount" style="font-size:12px;color:var(--dim)">1 connected</span>
-          <button class="wp-btn ghost" onclick="huddleToggleAi()" id="huddleAiToggle" style="padding:6px 12px;font-size:12px">💬 AI</button>
+      <div class="hs-topbar">
+        <span class="hs-room">🎥 <span id="huddleRoomName">crcmz</span></span>
+        <span id="huddleCount" style="font-size:12px;color:var(--dim);margin-left:6px"></span>
+        <div style="display:flex;gap:6px;margin-left:auto;align-items:center">
+          <button class="hs-topbtn" id="huddleLayoutBtn" onclick="huddleToggleLayout()" title="Toggle layout">⊞ Grid</button>
+          <button class="hs-topbtn" id="huddleAiToggle" onclick="huddleToggleAi()">💬 AI</button>
         </div>
       </div>
-      <div class="huddle-main" id="huddleMain">
-        <div class="huddle-grid" id="huddleGrid"></div>
-        <div class="huddle-ai" id="huddleAiPanel" style="display:none">
-          <div class="huddle-ai-head">
-            <span style="font-size:13px;font-weight:700;color:#fff">💬 AI Assistant</span>
-            <div id="huddleAiStatus" style="font-size:11px;color:var(--dim);margin-top:2px"></div>
+      <div class="hs-main" id="huddleMain">
+        <!-- Spotlight + filmstrip (default) -->
+        <div class="hs-spotlight-wrap" id="huddleSpotlightWrap">
+          <div class="hs-spotlight" id="huddleSpotlight">
+            <video id="huddleSpotVid" autoplay playsinline muted></video>
+            <audio id="huddleSpotAud" autoplay style="display:none"></audio>
+            <div class="hs-spot-info">
+              <span class="hs-spot-name" id="huddleSpotName">You</span>
+              <span class="hs-spot-badges" id="huddleSpotBadges"></span>
+            </div>
           </div>
-          <div class="huddle-ai-log" id="huddleAiLog"></div>
+          <div class="hs-strip" id="huddleStrip"></div>
+        </div>
+        <!-- Grid mode (hidden by default) -->
+        <div class="hs-grid" id="huddleGrid" style="display:none"></div>
+        <!-- AI panel -->
+        <div class="hs-ai" id="huddleAiPanel" style="display:none">
+          <div class="hs-ai-head">
+            <span>💬 AI</span>
+            <span id="huddleAiStatus" style="font-size:11px;color:var(--dim)"></span>
+          </div>
+          <div class="hs-ai-log" id="huddleAiLog"></div>
           <div class="huddle-transcript-box" id="huddleTranscriptBox" style="display:none">
             <div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Live Transcript</div>
-            <div id="huddleTranscriptText" style="font-size:12px;color:rgba(255,255,255,.7);max-height:72px;overflow-y:auto"></div>
+            <div id="huddleTranscriptText" style="font-size:12px;color:rgba(255,255,255,.7);max-height:60px;overflow-y:auto"></div>
           </div>
-          <div class="huddle-ai-in">
-            <input class="sfield" id="huddleAiInput" placeholder="Ask AI anything…"
-              onkeydown="if(event.key==='Enter')huddleAiSend()" style="margin:0;flex:1">
-            <button class="wp-btn ghost" onclick="huddleAiSend()" style="flex-shrink:0;padding:10px 14px">➤</button>
+          <div style="display:flex;gap:6px;padding:6px 8px;border-top:1px solid rgba(255,255,255,.05);flex-shrink:0">
+            <button class="wp-btn ghost" onclick="huddleToggleTranscript()" style="flex:1;font-size:11px;padding:7px">🎙 Transcript</button>
+            <button class="wp-btn ghost" onclick="huddleMeetingNotes()" style="flex:1;font-size:11px;padding:7px">📋 Notes</button>
           </div>
-          <div style="display:flex;gap:6px;padding:0 8px 8px">
-            <button class="wp-btn ghost" onclick="huddleToggleTranscript()" style="flex:1;font-size:12px;padding:8px">🎙 Transcript</button>
-            <button class="wp-btn ghost" onclick="huddleMeetingNotes()" style="flex:1;font-size:12px;padding:8px">📋 Notes</button>
+          <div class="hs-ai-in">
+            <input class="sfield" id="huddleAiInput" placeholder="Ask AI…"
+              onkeydown="if(event.key==='Enter')huddleAiSend()" style="margin:0;flex:1;font-size:13px">
+            <button class="wp-btn ghost" onclick="huddleAiSend()" style="flex-shrink:0;padding:10px 12px">➤</button>
           </div>
         </div>
       </div>
-      <div class="huddle-controls">
-        <button class="huddle-ctrl on" id="huddleMicBtn" onclick="huddleToggleMic()">🎤 Mic</button>
-        <button class="huddle-ctrl on" id="huddleCamBtn" onclick="huddleToggleCam()">📷 Cam</button>
-        <button class="huddle-ctrl" id="huddleShareBtn" onclick="huddleToggleShare()">🖥 Share</button>
-        <button class="huddle-ctrl" id="huddleBlurBtn" onclick="huddleToggleBlur()">🌫 Blur</button>
-        <button class="huddle-ctrl danger" onclick="huddleLeave()">🔴 Leave</button>
+      <div class="hs-controls">
+        <button class="hs-ctrl on" id="huddleMicBtn" onclick="huddleToggleMic()" title="Mute">🎤</button>
+        <button class="hs-ctrl on" id="huddleCamBtn" onclick="huddleToggleCam()" title="Camera off">📷</button>
+        <button class="hs-ctrl" id="huddleShareBtn" onclick="huddleToggleShare()" title="Share screen">🖥</button>
+        <button class="hs-ctrl" id="huddleBlurBtn" onclick="huddleToggleBlur()" title="Background blur">🌫</button>
+        <button class="hs-ctrl danger" onclick="huddleLeave()">🔴 Leave</button>
       </div>
     </div>
   </div>
@@ -8105,17 +8164,16 @@ async function wpRally(){
   v.addEventListener('seeked', ()=>{ if(!WP.applying) WP.sock?.emit('CMD:seek', v.currentTime); });
 })();
 
-// ── Huddle (LiveKit video chat) ───────────────────────────────────────────────
+// ── Huddle (LiveKit video chat — revamped) ────────────────────────────────────
 const HUDDLE = {
-  room: null,
-  loading: false,
-  blurEnabled: false,
-  blurCtx: null,   // { srcVideo, canvas, active, stop() }
-  blurAnim: null,
-  transcript: [],
-  transcribing: false,
-  recog: null,
+  room: null, loading: false,
+  blurEnabled: false, blurCtx: null, blurAnim: null,
+  transcript: [], transcribing: false, recog: null,
   aiLoading: false,
+  layout: 'spotlight',
+  pinnedId: null,
+  spotlight: null,
+  previewStream: null,
 };
 
 let _livekitLoaded = false;
@@ -8130,157 +8188,239 @@ async function _loadLivekit() {
   });
 }
 
-function loadHuddle() {
-  // Just ensure pre-join is visible if not currently in a call
-  if(!HUDDLE.room) {
-    const pre = $('huddlePre'); if(pre) pre.style.display = '';
-    const stage = $('huddleStage'); if(stage) stage.style.display = 'none';
-  }
+async function loadHuddle() {
+  if(HUDDLE.room) return;
+  $('huddlePre').style.display = '';
+  $('huddleStage').style.display = 'none';
+  _loadLivekit().catch(()=>{});
+  _huddleStartPreview();
+  _huddleEnumerateDevices();
+}
+
+async function _huddleStartPreview() {
+  const off = $('huddlePreviewOff');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+    HUDDLE.previewStream = stream;
+    const v = $('huddleLocalPreview'); if(v) v.srcObject = stream;
+    if(off) off.style.display = 'none';
+  } catch(e) { if(off) off.style.display = ''; }
+}
+
+async function _huddleEnumerateDevices() {
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const mics = devs.filter(d => d.kind==='audioinput');
+    const cams = devs.filter(d => d.kind==='videoinput');
+    const ms = $('huddleMicSel'), cs = $('huddleCamSel');
+    if(ms) ms.innerHTML = mics.map((d,i)=>`<option value="${d.deviceId}">${d.label||'Mic '+(i+1)}</option>`).join('');
+    if(cs) cs.innerHTML = cams.map((d,i)=>`<option value="${d.deviceId}">${d.label||'Camera '+(i+1)}</option>`).join('');
+  } catch(e) {}
 }
 
 async function huddleJoin() {
   if(HUDDLE.loading) return;
-  const roomEl = $('huddleRoom');
-  const room = (roomEl && roomEl.value.trim()) || 'crcmz';
+  const room = ($('huddleRoom')?.value.trim()) || 'crcmz';
   const msgEl = $('huddleJoinMsg');
-  function setMsg(t, err) {
-    if(!msgEl) return;
-    msgEl.textContent = t;
-    msgEl.style.color = err ? '#ff6060' : 'var(--dim)';
-  }
-  setMsg('Loading SDK…', false);
+  const setMsg = (t,err) => { if(msgEl){ msgEl.textContent=t; msgEl.style.color=err?'#ff6060':'var(--dim)'; } };
+  const btn = $('huddleJoinBtn');
+  setMsg('Connecting…', false);
+  if(btn) { btn.disabled=true; btn.textContent='Connecting…'; }
   HUDDLE.loading = true;
+  if(HUDDLE.previewStream) { HUDDLE.previewStream.getTracks().forEach(t=>t.stop()); HUDDLE.previewStream=null; }
   try {
     await _loadLivekit();
-    setMsg('Getting token…', false);
-    const r = await fetch('/api/huddle/token', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ room }),
-    });
+    const r = await fetch('/api/huddle/token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({room})});
     const d = await r.json();
-    if(!r.ok) { setMsg(d.error || 'Failed to get token', true); return; }
-    const { token, url } = d;
-    setMsg('Connecting…', false);
-    HUDDLE.room = new LivekitClient.Room({
-      adaptiveStream: true,
-      dynacast: true,
-    });
+    if(!r.ok) { setMsg(d.error||'Failed to get token', true); return; }
+    HUDDLE.room = new LivekitClient.Room({ adaptiveStream:true, dynacast:true, stopLocalTrackOnUnpublish:false });
     HUDDLE.room
-      .on(LivekitClient.RoomEvent.TrackSubscribed,      (track, pub, p) => huddleOnTrack(track, pub, p, true))
-      .on(LivekitClient.RoomEvent.TrackUnsubscribed,    (track) => { track.detach(); huddleRenderGrid(); })
-      .on(LivekitClient.RoomEvent.ParticipantConnected,    () => huddleRenderGrid())
-      .on(LivekitClient.RoomEvent.ParticipantDisconnected, () => huddleRenderGrid())
+      .on(LivekitClient.RoomEvent.TrackSubscribed,         () => huddleRenderAll())
+      .on(LivekitClient.RoomEvent.TrackUnsubscribed,       (track) => { track.detach(); huddleRenderAll(); })
+      .on(LivekitClient.RoomEvent.ParticipantConnected,    () => huddleRenderAll())
+      .on(LivekitClient.RoomEvent.ParticipantDisconnected, () => huddleRenderAll())
       .on(LivekitClient.RoomEvent.ActiveSpeakersChanged,   sp => huddleActiveSpeakers(sp))
-      .on(LivekitClient.RoomEvent.LocalTrackPublished,     () => huddleRenderGrid())
-      .on(LivekitClient.RoomEvent.TrackMuted,              () => huddleRenderGrid())
-      .on(LivekitClient.RoomEvent.TrackUnmuted,            () => huddleRenderGrid())
+      .on(LivekitClient.RoomEvent.LocalTrackPublished,     () => huddleRenderAll())
+      .on(LivekitClient.RoomEvent.TrackMuted,              () => huddleRenderAll())
+      .on(LivekitClient.RoomEvent.TrackUnmuted,            () => huddleRenderAll())
       .on(LivekitClient.RoomEvent.Disconnected, reason => {
         if(reason !== LivekitClient.DisconnectReason?.CLIENT_INITIATED) {
           $('huddleStage').style.display = 'none';
           $('huddlePre').style.display = '';
-          setMsg('Disconnected' + (reason ? ': ' + reason : ''), true);
+          setMsg('Disconnected', true);
+          _huddleStartPreview(); _huddleEnumerateDevices();
         }
       });
-    await HUDDLE.room.connect(url, token);
-    await HUDDLE.room.localParticipant.setMicrophoneEnabled(true);
-    await HUDDLE.room.localParticipant.setCameraEnabled(true);
+    await HUDDLE.room.connect(d.url, d.token);
+    const micId = $('huddleMicSel')?.value, camId = $('huddleCamSel')?.value;
+    await HUDDLE.room.localParticipant.setMicrophoneEnabled(true, micId ? {deviceId:{exact:micId}} : true);
+    await HUDDLE.room.localParticipant.setCameraEnabled(true, camId ? {deviceId:{exact:camId}} : true);
     $('huddleRoomName').textContent = room;
     $('huddlePre').style.display = 'none';
-    const stage = $('huddleStage'); stage.style.display = 'flex';
+    $('huddleStage').style.display = 'flex';
     setMsg('', false);
-    huddleRenderGrid();
-    huddleSyncControls();
+    HUDDLE.layout = 'spotlight';
+    HUDDLE.spotlight = HUDDLE.room.localParticipant.identity;
+    $('huddleSpotlightWrap').style.display = '';
+    $('huddleGrid').style.display = 'none';
+    huddleRenderAll(); huddleSyncControls();
   } catch(e) {
-    setMsg('Could not connect: ' + (e.message || e), true);
-    if(HUDDLE.room) { try{ await HUDDLE.room.disconnect(); }catch(_){} HUDDLE.room = null; }
+    setMsg('Could not connect: '+(e.message||e), true);
+    if(HUDDLE.room) { try{await HUDDLE.room.disconnect();}catch(_){} HUDDLE.room=null; }
+    _huddleStartPreview();
   } finally {
     HUDDLE.loading = false;
+    if(btn) { btn.disabled=false; btn.textContent='🎥 Join'; }
   }
 }
 
 async function huddleLeave() {
-  if(HUDDLE.room) { await HUDDLE.room.disconnect(); HUDDLE.room = null; }
+  if(HUDDLE.room) { await HUDDLE.room.disconnect(); HUDDLE.room=null; }
   _huddleBlurStop();
-  if(HUDDLE.recog) { try{ HUDDLE.recog.stop(); }catch(_){} HUDDLE.recog = null; }
-  HUDDLE.transcript = [];
-  HUDDLE.transcribing = false;
-  const grid = $('huddleGrid'); if(grid) grid.innerHTML = '';
-  $('huddleStage').style.display = 'none';
-  $('huddlePre').style.display = '';
-  const tb = $('huddleTranscriptBox'); if(tb) tb.style.display = 'none';
+  if(HUDDLE.recog) { try{HUDDLE.recog.stop();}catch(_){} HUDDLE.recog=null; }
+  HUDDLE.transcript=[]; HUDDLE.transcribing=false; HUDDLE.pinnedId=null; HUDDLE.spotlight=null;
+  const g=$('huddleGrid'); if(g) g.innerHTML='';
+  const s=$('huddleStrip'); if(s) s.innerHTML='';
+  $('huddleStage').style.display='none';
+  $('huddlePre').style.display='';
+  const tb=$('huddleTranscriptBox'); if(tb) tb.style.display='none';
+  _huddleStartPreview(); _huddleEnumerateDevices();
 }
 
-function huddleOnTrack(track, pub, participant) {
-  // Re-render the grid and attach the track to the matching element
-  huddleRenderGrid();
-  const tileId = 'ht-' + participant.identity;
-  const tile = document.getElementById(tileId);
-  if(!tile) return;
-  if(track.kind === 'video') { const v = tile.querySelector('video'); if(v) track.attach(v); }
-  if(track.kind === 'audio') { const a = tile.querySelector('audio'); if(a) track.attach(a); }
+// ── Rendering ──────────────────────────────────────────────────────────────────
+function _allP() {
+  if(!HUDDLE.room) return [];
+  return [
+    {p:HUDDLE.room.localParticipant, local:true},
+    ...[...HUDDLE.room.remoteParticipants.values()].map(p=>({p,local:false}))
+  ];
 }
 
-function huddleRenderGrid() {
-  const grid = $('huddleGrid'); if(!grid || !HUDDLE.room) return;
-  const lp = HUDDLE.room.localParticipant;
-  const remotes = [...HUDDLE.room.remoteParticipants.values()];
-  const all = [{ p: lp, local: true }, ...remotes.map(p => ({ p, local: false }))];
-  const n = all.length;
-  grid.style.gridTemplateColumns = n === 1 ? '1fr' : n <= 4 ? 'repeat(2,1fr)' : n <= 9 ? 'repeat(3,1fr)' : 'repeat(4,1fr)';
-  const countEl = $('huddleCount');
-  if(countEl) countEl.textContent = n + (n === 1 ? ' connected' : ' connected');
-  // Remove tiles for departed participants
-  const ids = new Set(all.map(({p}) => p.identity));
-  Array.from(grid.querySelectorAll('.huddle-tile[data-id]')).forEach(t => {
-    if(!ids.has(t.dataset.id)) t.remove();
-  });
-  all.forEach(({p, local}) => {
-    const tid = 'ht-' + p.identity;
-    let tile = document.getElementById(tid);
+function huddleRenderAll() {
+  if(!HUDDLE.room) return;
+  const n = 1 + HUDDLE.room.remoteParticipants.size;
+  const countEl=$('huddleCount'); if(countEl) countEl.textContent = n+' in call';
+  if(HUDDLE.layout==='spotlight') {
+    _huddleRenderSpotlight();
+    _huddleRenderStrip();
+  } else {
+    _huddleRenderGrid();
+  }
+}
+
+function _spotP() {
+  const all = _allP();
+  if(!all.length) return null;
+  if(HUDDLE.pinnedId) { const p=all.find(({p})=>p.identity===HUDDLE.pinnedId); if(p) return p; }
+  if(HUDDLE.spotlight) { const p=all.find(({p})=>p.identity===HUDDLE.spotlight); if(p) return p; }
+  return all[0];
+}
+
+function _attachTracks(p, local, vid, aud) {
+  const Src = LivekitClient.Track?.Source;
+  if(local) {
+    const cp = p.getTrackPublication(Src?.Camera||'camera');
+    if(cp?.track && vid) { try{cp.track.attach(vid);}catch(_){} }
+    else if(vid && !cp?.track) vid.srcObject=null;
+  } else {
+    p.trackPublications.forEach(pub => {
+      if(!pub.isSubscribed||!pub.track) return;
+      try {
+        if(pub.kind==='video'&&vid) pub.track.attach(vid);
+        if(pub.kind==='audio'&&aud) pub.track.attach(aud);
+      } catch(_) {}
+    });
+  }
+}
+
+function _huddleRenderSpotlight() {
+  const cur = _spotP(); if(!cur) return;
+  const {p, local} = cur;
+  const spotEl=$('huddleSpotlight'), vid=$('huddleSpotVid'), aud=$('huddleSpotAud');
+  if(!vid) return;
+  if(vid.dataset.pid !== p.identity) {
+    vid.srcObject=null; if(aud) aud.srcObject=null;
+    vid.dataset.pid = p.identity;
+  }
+  spotEl?.classList.toggle('me', local);
+  if(local) vid.muted=true; else vid.muted=false;
+  _attachTracks(p, local, vid, aud);
+  const sn=$('huddleSpotName'); if(sn) sn.textContent=(p.name||p.identity)+(local?' (you)':'');
+  const sb=$('huddleSpotBadges');
+  if(sb) { const mic=p.getTrackPublication(LivekitClient.Track?.Source?.Microphone||'microphone'); sb.textContent=(!mic||mic.isMuted)?'🔇':''; }
+}
+
+function _huddleRenderStrip() {
+  const strip=$('huddleStrip'); if(!strip||!HUDDLE.room) return;
+  const all=_allP(), spotId=_spotP()?.p.identity;
+  const ids=new Set(all.map(({p})=>p.identity));
+  Array.from(strip.querySelectorAll('.hs-strip-tile')).forEach(t=>{ if(!ids.has(t.dataset.id)) t.remove(); });
+  all.forEach(({p,local}) => {
+    const tid='hst-'+p.identity;
+    let tile=document.getElementById(tid);
     if(!tile) {
-      tile = document.createElement('div');
-      tile.className = 'huddle-tile' + (local ? ' me' : '');
-      tile.id = tid; tile.dataset.id = p.identity;
-      tile.innerHTML =
-        `<video autoplay playsinline ${local ? 'muted' : ''}></video>` +
-        `<audio autoplay style="display:none"></audio>` +
-        `<div class="huddle-tile-info">` +
-          `<span class="huddle-tile-name">${esc(p.name || p.identity)}${local?' (you)':''}</span>` +
-          `<span class="huddle-tile-badges" id="htb-${p.identity}"></span>` +
-        `</div>`;
+      tile=document.createElement('div');
+      tile.className='hs-strip-tile'+(local?' me':'');
+      tile.id=tid; tile.dataset.id=p.identity;
+      tile.onclick=()=>{ HUDDLE.pinnedId=p.identity; HUDDLE.spotlight=p.identity; huddleRenderAll(); };
+      tile.innerHTML=`<video autoplay playsinline ${local?'muted':''}></video><audio autoplay style="display:none"></audio><div class="hs-strip-name">${esc(p.name||p.identity)}</div>`;
+      strip.appendChild(tile);
+    }
+    tile.classList.toggle('active', p.identity===spotId);
+    _attachTracks(p, local, tile.querySelector('video'), tile.querySelector('audio'));
+  });
+}
+
+function _huddleRenderGrid() {
+  const grid=$('huddleGrid'); if(!grid||!HUDDLE.room) return;
+  const all=_allP(), n=all.length;
+  grid.style.gridTemplateColumns=n===1?'1fr':n<=4?'repeat(2,1fr)':n<=9?'repeat(3,1fr)':'repeat(4,1fr)';
+  const ids=new Set(all.map(({p})=>p.identity));
+  Array.from(grid.querySelectorAll('.hs-tile')).forEach(t=>{ if(!ids.has(t.dataset.id)) t.remove(); });
+  all.forEach(({p,local}) => {
+    const tid='hgt-'+p.identity;
+    let tile=document.getElementById(tid);
+    if(!tile) {
+      tile=document.createElement('div');
+      tile.className='hs-tile'+(local?' me':'');
+      tile.id=tid; tile.dataset.id=p.identity;
+      tile.innerHTML=`<video autoplay playsinline ${local?'muted':''}></video><audio autoplay style="display:none"></audio>`+
+        `<div class="hs-tile-info"><span class="hs-tile-name">${esc(p.name||p.identity)}${local?' (you)':''}</span><span class="hs-tile-badges" id="hgb-${p.identity}"></span></div>`;
       grid.appendChild(tile);
     }
-    const vid = tile.querySelector('video');
-    const aud = tile.querySelector('audio');
-    if(local) {
-      const cp = p.getTrackPublication(LivekitClient.Track?.Source?.Camera || 'camera');
-      if(cp?.track && vid) { try{ cp.track.attach(vid); }catch(_){} }
-    } else {
-      p.trackPublications.forEach(pub => {
-        if(!pub.isSubscribed || !pub.track) return;
-        try {
-          if(pub.kind === 'video' && vid) pub.track.attach(vid);
-          if(pub.kind === 'audio' && aud) pub.track.attach(aud);
-        } catch(_) {}
-      });
-    }
-    const badges = document.getElementById('htb-' + p.identity);
-    if(badges) {
-      const mic = p.getTrackPublication(LivekitClient.Track?.Source?.Microphone || 'microphone');
-      badges.textContent = (!mic || mic.isMuted) ? '🔇' : '';
-    }
+    _attachTracks(p, local, tile.querySelector('video'), tile.querySelector('audio'));
+    const b=document.getElementById('hgb-'+p.identity);
+    if(b) { const mic=p.getTrackPublication(LivekitClient.Track?.Source?.Microphone||'microphone'); b.textContent=(!mic||mic.isMuted)?'🔇':''; }
   });
 }
 
 function huddleActiveSpeakers(speakers) {
-  document.querySelectorAll('.huddle-tile').forEach(t => t.classList.remove('speaking'));
-  (speakers || []).forEach(p => {
-    const t = document.getElementById('ht-' + p.identity);
-    if(t) t.classList.add('speaking');
-  });
+  document.querySelectorAll('.hs-tile,.hs-strip-tile').forEach(t=>t.classList.remove('speaking'));
+  (speakers||[]).forEach(p => document.querySelectorAll(`[data-id="${p.identity}"]`).forEach(t=>t.classList.add('speaking')));
+  if(!HUDDLE.pinnedId && speakers?.length > 0) {
+    const top = speakers[0];
+    if(HUDDLE.spotlight !== top.identity) {
+      HUDDLE.spotlight = top.identity;
+      if(HUDDLE.layout==='spotlight') _huddleRenderSpotlight();
+    }
+  }
 }
 
+function huddleToggleLayout() {
+  HUDDLE.layout = HUDDLE.layout==='spotlight' ? 'grid' : 'spotlight';
+  const sw=$('huddleSpotlightWrap'), gr=$('huddleGrid'), btn=$('huddleLayoutBtn');
+  if(HUDDLE.layout==='spotlight') {
+    if(sw) sw.style.display=''; if(gr) gr.style.display='none';
+    if(btn) btn.textContent='⊞ Grid';
+    if(!HUDDLE.spotlight && HUDDLE.room) HUDDLE.spotlight=HUDDLE.room.localParticipant.identity;
+  } else {
+    if(sw) sw.style.display='none'; if(gr) { gr.style.display=''; gr.innerHTML=''; }
+    if(btn) btn.textContent='▦ Spotlight';
+  }
+  huddleRenderAll();
+}
+
+// ── Controls ───────────────────────────────────────────────────────────────────
 async function huddleToggleMic() {
   if(!HUDDLE.room) return;
   await HUDDLE.room.localParticipant.setMicrophoneEnabled(!HUDDLE.room.localParticipant.isMicrophoneEnabled);
@@ -8289,153 +8429,127 @@ async function huddleToggleMic() {
 async function huddleToggleCam() {
   if(!HUDDLE.room) return;
   await HUDDLE.room.localParticipant.setCameraEnabled(!HUDDLE.room.localParticipant.isCameraEnabled);
-  huddleSyncControls(); huddleRenderGrid();
+  huddleSyncControls(); huddleRenderAll();
 }
 async function huddleToggleShare() {
   if(!HUDDLE.room) return;
+  if(!navigator.mediaDevices?.getDisplayMedia) { toast&&toast('Screen sharing not supported on this device'); return; }
   try {
     await HUDDLE.room.localParticipant.setScreenShareEnabled(!HUDDLE.room.localParticipant.isScreenShareEnabled);
     huddleSyncControls();
-  } catch(e) { toast && toast('Screen share: ' + e.message); }
+  } catch(e) { if(e.name!=='NotAllowedError') toast&&toast('Screen share: '+e.message); }
 }
-
 async function huddleToggleBlur() {
   if(!HUDDLE.room) return;
-  const Source = LivekitClient.Track?.Source;
-  const camPub = HUDDLE.room.localParticipant.getTrackPublication(Source?.Camera || 'camera');
-  if(!camPub?.track) { toast && toast('Enable camera first'); return; }
+  const Src=LivekitClient.Track?.Source;
+  const camPub=HUDDLE.room.localParticipant.getTrackPublication(Src?.Camera||'camera');
+  if(!camPub?.track) { toast&&toast('Enable camera first'); return; }
   if(!HUDDLE.blurEnabled) {
-    const origTrack = camPub.track.mediaStreamTrack;
-    const srcVid = document.createElement('video');
-    srcVid.srcObject = new MediaStream([origTrack]); srcVid.muted = true; srcVid.autoplay = true;
-    await srcVid.play().catch(()=>{});
-    const canvas = document.createElement('canvas');
-    canvas.width = 640; canvas.height = 360;
-    const ctx = canvas.getContext('2d');
-    let active = true;
-    function frame() {
-      if(!active) return;
-      ctx.filter = 'blur(8px)';
-      ctx.drawImage(srcVid, -10, -10, 660, 380); // overshoot so edges don't look harsh
-      ctx.filter = 'none';
-      HUDDLE.blurAnim = requestAnimationFrame(frame);
-    }
+    const orig=camPub.track.mediaStreamTrack;
+    const sv=document.createElement('video');
+    sv.srcObject=new MediaStream([orig]); sv.muted=true; sv.autoplay=true;
+    await sv.play().catch(()=>{});
+    const cv=document.createElement('canvas'); cv.width=640; cv.height=360;
+    const ctx=cv.getContext('2d');
+    let active=true;
+    function frame(){ if(!active) return; ctx.filter='blur(8px)'; ctx.drawImage(sv,-10,-10,660,380); ctx.filter='none'; HUDDLE.blurAnim=requestAnimationFrame(frame); }
     frame();
-    const blurTrack = canvas.captureStream(30).getVideoTracks()[0];
-    // Republish with the blurred track
-    try { await HUDDLE.room.localParticipant.unpublishTrack(camPub.track); } catch(_) {}
-    await HUDDLE.room.localParticipant.publishTrack(blurTrack, { source: Source?.Camera || 'camera' });
-    HUDDLE.blurCtx = { srcVid, canvas, origTrack, blurTrack, stop() { active=false; srcVid.srcObject=null; } };
-    HUDDLE.blurEnabled = true;
+    const bt=cv.captureStream(30).getVideoTracks()[0];
+    try {
+      await camPub.track.replaceTrack(bt);
+      HUDDLE.blurCtx={sv,orig,bt,stop(){active=false;sv.srcObject=null;}};
+      HUDDLE.blurEnabled=true;
+    } catch(e) {
+      active=false; sv.srcObject=null;
+      toast&&toast('Blur failed: '+e.message); return;
+    }
   } else {
+    if(HUDDLE.blurCtx?.orig && camPub?.track) { try{await camPub.track.replaceTrack(HUDDLE.blurCtx.orig);}catch(_){} }
     _huddleBlurStop();
-    await HUDDLE.room.localParticipant.setCameraEnabled(false);
-    await HUDDLE.room.localParticipant.setCameraEnabled(true);
   }
   huddleSyncControls();
 }
-
 function _huddleBlurStop() {
-  if(HUDDLE.blurCtx) { HUDDLE.blurCtx.stop(); HUDDLE.blurCtx = null; }
-  if(HUDDLE.blurAnim) { cancelAnimationFrame(HUDDLE.blurAnim); HUDDLE.blurAnim = null; }
-  HUDDLE.blurEnabled = false;
+  if(HUDDLE.blurCtx){HUDDLE.blurCtx.stop();HUDDLE.blurCtx=null;}
+  if(HUDDLE.blurAnim){cancelAnimationFrame(HUDDLE.blurAnim);HUDDLE.blurAnim=null;}
+  HUDDLE.blurEnabled=false;
 }
-
 function huddleSyncControls() {
   if(!HUDDLE.room) return;
-  const p = HUDDLE.room.localParticipant;
-  const mic = $('huddleMicBtn'), cam = $('huddleCamBtn'), share = $('huddleShareBtn'), blur = $('huddleBlurBtn');
-  if(mic) { const on=p.isMicrophoneEnabled; mic.textContent=on?'🎤 Mic':'🔇 Unmute'; mic.className='huddle-ctrl '+(on?'on':'off'); }
-  if(cam) { const on=p.isCameraEnabled; cam.textContent=on?'📷 Cam':'📷 Off'; cam.className='huddle-ctrl '+(on?'on':''); }
-  if(share) { const on=p.isScreenShareEnabled; share.textContent=on?'🖥 Sharing':'🖥 Share'; share.className='huddle-ctrl '+(on?'on':''); }
-  if(blur) { blur.textContent=HUDDLE.blurEnabled?'🌫 Blur On':'🌫 Blur'; blur.className='huddle-ctrl '+(HUDDLE.blurEnabled?'on':''); }
+  const p=HUDDLE.room.localParticipant;
+  const mic=$('huddleMicBtn'),cam=$('huddleCamBtn'),share=$('huddleShareBtn'),blur=$('huddleBlurBtn');
+  if(mic){const on=p.isMicrophoneEnabled;mic.textContent=on?'🎤':'🔇';mic.className='hs-ctrl '+(on?'on':'off');mic.title=on?'Mute':'Unmute';}
+  if(cam){const on=p.isCameraEnabled;cam.textContent='📷';cam.className='hs-ctrl '+(on?'on':'off');cam.title=on?'Turn off camera':'Turn on camera';}
+  if(share){const on=p.isScreenShareEnabled;share.textContent='🖥';share.className='hs-ctrl '+(on?'active':'');share.title=on?'Stop sharing':'Share screen';}
+  if(blur){blur.className='hs-ctrl '+(HUDDLE.blurEnabled?'active':'');blur.title=HUDDLE.blurEnabled?'Remove blur':'Add blur';}
 }
 
-// AI sidebar
+// ── AI sidebar ─────────────────────────────────────────────────────────────────
 function huddleToggleAi() {
-  const panel = $('huddleAiPanel'); if(!panel) return;
-  const show = panel.style.display === 'none' || !panel.style.display;
-  panel.style.display = show ? 'flex' : 'none';
-  const btn = $('huddleAiToggle'); if(btn) btn.classList.toggle('on', show);
-  if(show && !$('huddleAiLog').children.length)
-    _huddleAiMsg('sys', 'Ask me anything during the call. I can help summarise, answer questions, and more.');
+  const panel=$('huddleAiPanel'); if(!panel) return;
+  const show=panel.style.display==='none'||!panel.style.display;
+  panel.style.display=show?'flex':'none';
+  const btn=$('huddleAiToggle'); if(btn) btn.classList.toggle('on',show);
+  if(show&&!$('huddleAiLog').children.length)
+    _huddleAiMsg('sys','Ask me anything. I can help summarise, answer questions, and more.');
 }
-function _huddleAiMsg(role, text) {
-  const log = $('huddleAiLog'); if(!log) return;
-  const d = document.createElement('div');
-  d.className = 'huddle-ai-msg ' + role; d.textContent = text;
-  log.appendChild(d); log.scrollTop = log.scrollHeight;
+function _huddleAiMsg(role,text){
+  const log=$('huddleAiLog');if(!log)return;
+  const d=document.createElement('div');d.className='hs-ai-msg '+role;d.textContent=text;
+  log.appendChild(d);log.scrollTop=log.scrollHeight;
 }
-async function huddleAiSend() {
-  if(HUDDLE.aiLoading) return;
-  const inp = $('huddleAiInput'); if(!inp) return;
-  const text = inp.value.trim(); if(!text) return;
-  inp.value = '';
-  _huddleAiMsg('user', text);
-  HUDDLE.aiLoading = true;
-  const status = $('huddleAiStatus'); if(status) status.textContent = 'thinking…';
-  const ctx = HUDDLE.transcript.slice(-20).map(t => t.text).join(' ');
-  const sysMsg = 'You are a helpful AI assistant in a video call. Be concise.' + (ctx ? '\n\nMeeting so far:\n' + ctx : '');
-  try {
-    const r = await fetch('/api/huddle/ai', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ messages: [
-        { role: 'system', content: sysMsg },
-        { role: 'user', content: text },
-      ]}),
-    });
-    const d = await r.json();
-    if(!r.ok) { _huddleAiMsg('sys', 'Error: ' + (d.error||'Failed')); return; }
-    _huddleAiMsg('assistant', d.message?.content || d.response || JSON.stringify(d));
-  } catch(e) { _huddleAiMsg('sys', 'Could not reach AI: ' + e.message); }
-  finally { HUDDLE.aiLoading = false; if(status) status.textContent = ''; }
+async function huddleAiSend(){
+  if(HUDDLE.aiLoading)return;
+  const inp=$('huddleAiInput');if(!inp)return;
+  const text=inp.value.trim();if(!text)return;
+  inp.value=''; _huddleAiMsg('user',text);
+  HUDDLE.aiLoading=true;
+  const st=$('huddleAiStatus');if(st)st.textContent='thinking…';
+  const ctx=HUDDLE.transcript.slice(-20).map(t=>t.text).join(' ');
+  const sys='You are a helpful AI assistant in a video call. Be concise.'+(ctx?'\n\nMeeting so far:\n'+ctx:'');
+  try{
+    const r=await fetch('/api/huddle/ai',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:[{role:'system',content:sys},{role:'user',content:text}]})});
+    const d=await r.json();
+    if(!r.ok){_huddleAiMsg('sys','Error: '+(d.error||'Failed'));return;}
+    _huddleAiMsg('assistant',d.message?.content||d.response||JSON.stringify(d));
+  }catch(e){_huddleAiMsg('sys','Could not reach AI: '+e.message);}
+  finally{HUDDLE.aiLoading=false;if(st)st.textContent='';}
 }
-
-// Web Speech API transcript
-function huddleToggleTranscript() {
-  const box = $('huddleTranscriptBox'); if(!box) return;
-  if(HUDDLE.transcribing) {
-    if(HUDDLE.recog) { try{ HUDDLE.recog.stop(); }catch(_){} HUDDLE.recog = null; }
-    HUDDLE.transcribing = false; box.style.display = 'none'; return;
-  }
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR) { toast && toast('Speech recognition not supported in this browser'); return; }
-  HUDDLE.recog = new SR();
-  HUDDLE.recog.continuous = true; HUDDLE.recog.interimResults = true; HUDDLE.recog.lang = 'en-US';
-  HUDDLE.recog.onresult = ev => {
-    for(let i = ev.resultIndex; i < ev.results.length; i++) {
-      if(ev.results[i].isFinal) HUDDLE.transcript.push({ text: ev.results[i][0].transcript, ts: Date.now() });
-    }
-    const el = $('huddleTranscriptText');
-    if(el) el.textContent = HUDDLE.transcript.slice(-5).map(t => t.text).join(' ');
+function huddleToggleTranscript(){
+  const box=$('huddleTranscriptBox');if(!box)return;
+  if(HUDDLE.transcribing){if(HUDDLE.recog){try{HUDDLE.recog.stop();}catch(_){} HUDDLE.recog=null;}HUDDLE.transcribing=false;box.style.display='none';return;}
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){toast&&toast('Speech recognition not supported');return;}
+  HUDDLE.recog=new SR();HUDDLE.recog.continuous=true;HUDDLE.recog.interimResults=true;HUDDLE.recog.lang='en-US';
+  HUDDLE.recog.onresult=ev=>{
+    for(let i=ev.resultIndex;i<ev.results.length;i++)
+      if(ev.results[i].isFinal)HUDDLE.transcript.push({text:ev.results[i][0].transcript,ts:Date.now()});
+    const el=$('huddleTranscriptText');if(el)el.textContent=HUDDLE.transcript.slice(-5).map(t=>t.text).join(' ');
   };
-  HUDDLE.recog.onerror = e => { if(e.error !== 'no-speech') toast && toast('Transcript: ' + e.error); };
-  HUDDLE.recog.start(); HUDDLE.transcribing = true; box.style.display = '';
+  HUDDLE.recog.onerror=e=>{if(e.error!=='no-speech')toast&&toast('Transcript: '+e.error);};
+  HUDDLE.recog.start();HUDDLE.transcribing=true;box.style.display='';
 }
-
-async function huddleMeetingNotes() {
-  if(!HUDDLE.transcript.length) {
-    if($('huddleAiPanel').style.display === 'none') huddleToggleAi();
-    _huddleAiMsg('sys', 'No transcript yet — enable 🎙 Transcript first then come back.');
-    return;
+async function huddleMeetingNotes(){
+  if(!HUDDLE.transcript.length){
+    if($('huddleAiPanel').style.display==='none')huddleToggleAi();
+    _huddleAiMsg('sys','No transcript yet — enable 🎙 Transcript first.');return;
   }
-  if($('huddleAiPanel').style.display === 'none') huddleToggleAi();
-  _huddleAiMsg('sys', 'Generating meeting notes…');
-  HUDDLE.aiLoading = true;
-  try {
-    const r = await fetch('/api/huddle/ai', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ messages: [
-        { role: 'system', content: 'Create clean, organised meeting notes from this transcript.' },
-        { role: 'user', content: 'Transcript:\n\n' + HUDDLE.transcript.map(t => t.text).join('\n') },
-      ]}),
-    });
-    const d = await r.json();
-    _huddleAiMsg('assistant', d.message?.content || d.response || JSON.stringify(d));
-  } catch(e) { _huddleAiMsg('sys', 'Could not reach AI: ' + e.message); }
-  finally { HUDDLE.aiLoading = false; const s=$('huddleAiStatus'); if(s) s.textContent=''; }
+  if($('huddleAiPanel').style.display==='none')huddleToggleAi();
+  _huddleAiMsg('sys','Generating meeting notes…');
+  HUDDLE.aiLoading=true;
+  try{
+    const r=await fetch('/api/huddle/ai',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:[
+        {role:'system',content:'Create clean, organised meeting notes from this transcript.'},
+        {role:'user',content:'Transcript:\n\n'+HUDDLE.transcript.map(t=>t.text).join('\n')},
+      ]})});
+    const d=await r.json();
+    _huddleAiMsg('assistant',d.message?.content||d.response||JSON.stringify(d));
+  }catch(e){_huddleAiMsg('sys','Could not reach AI: '+e.message);}
+  finally{HUDDLE.aiLoading=false;const s=$('huddleAiStatus');if(s)s.textContent='';}
 }
-// ── end Huddle ─────────────────────────────────────────────────────────────────
+// ── end Huddle ──────────────────────────────────────────────────────────────────
 
 </script>
 </body></html>"""
