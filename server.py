@@ -8550,13 +8550,19 @@ function huddleToggleTranscript(){
   if($('huddleAiPanel').style.display==='none')huddleToggleAi();
   let restarts=0,gotResult=false;
   function _mkRecog(){
-    const r=new SR();r.continuous=true;r.interimResults=false;r.lang='en-US';
+    const r=new SR();r.continuous=true;r.interimResults=true;r.lang='en-US';
+    r.onaudiostart=()=>_huddleAiMsg('sys','🎙 [audio input detected]');
+    r.onsoundstart=()=>_huddleAiMsg('sys','🎙 [sound detected]');
+    r.onspeechstart=()=>_huddleAiMsg('sys','🎙 [speech detected — waiting for final result]');
+    r.onspeechend=()=>_huddleAiMsg('sys','🎙 [speech ended]');
     r.onresult=ev=>{
       gotResult=true;restarts=0;
       for(let i=ev.resultIndex;i<ev.results.length;i++){
+        const text=ev.results[i][0].transcript.trim();
         if(ev.results[i].isFinal){
-          const text=ev.results[i][0].transcript.trim();
           if(text){HUDDLE.transcript.push({text,ts:Date.now()});_huddleAiMsg('transcript','🎙 '+text);}
+        } else if(text){
+          const st=$('huddleAiStatus');if(st)st.textContent='🎙 '+text.slice(0,40)+'…';
         }
       }
     };
