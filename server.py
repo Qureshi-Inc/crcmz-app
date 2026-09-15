@@ -8539,38 +8539,61 @@ async function huddleAiSend(){
 function huddleToggleTranscript(){
   const btn=$('huddleTranscriptBtn');
   if(HUDDLE.transcribing){
-    if(HUDDLE.recog){try{HUDDLE.recog.stop();}catch(_){} HUDDLE.recog=null;}
     HUDDLE.transcribing=false;
+    if(HUDDLE.recog){try{HUDDLE.recog.abort();}catch(_){} HUDDLE.recog=null;}
     if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
     _huddleAiMsg('sys','🎙 Transcription stopped.');
     return;
   }
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){toast&&toast('Speech recognition not supported in this browser');return;}
+  if(!SR){_huddleAiMsg('sys','🎙 Speech recognition not supported in this browser.');return;}
   if($('huddleAiPanel').style.display==='none')huddleToggleAi();
-  HUDDLE.recog=new SR();HUDDLE.recog.continuous=true;HUDDLE.recog.interimResults=false;HUDDLE.recog.lang='en-US';
-  HUDDLE.recog.onresult=ev=>{
-    for(let i=ev.resultIndex;i<ev.results.length;i++){
-      if(ev.results[i].isFinal){
-        const text=ev.results[i][0].transcript.trim();
-        if(text){HUDDLE.transcript.push({text,ts:Date.now()});_huddleAiMsg('transcript','🎙 '+text);}
+  let restarts=0,gotResult=false;
+  function _mkRecog(){
+    const r=new SR();r.continuous=true;r.interimResults=false;r.lang='en-US';
+    r.onresult=ev=>{
+      gotResult=true;restarts=0;
+      for(let i=ev.resultIndex;i<ev.results.length;i++){
+        if(ev.results[i].isFinal){
+          const text=ev.results[i][0].transcript.trim();
+          if(text){HUDDLE.transcript.push({text,ts:Date.now()});_huddleAiMsg('transcript','🎙 '+text);}
+        }
       }
-    }
-  };
-  HUDDLE.recog.onerror=e=>{
-    if(e.error==='not-allowed'){
-      _huddleAiMsg('sys','🎙 Mic permission denied — grant permission and retry.');
-      HUDDLE.transcribing=false;if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
-    } else if(e.error!=='no-speech'){
-      toast&&toast('Transcript error: '+e.error);
-    }
-  };
-  HUDDLE.recog.onend=()=>{if(HUDDLE.transcribing)try{HUDDLE.recog.start();}catch(_){}};
+    };
+    r.onerror=e=>{
+      if(e.error==='not-allowed'||e.error==='audio-capture'){
+        _huddleAiMsg('sys','🎙 Mic blocked: '+e.error+'. Mic may be in use exclusively by the call — try a different browser.');
+        HUDDLE.transcribing=false;HUDDLE.recog=null;
+        if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
+      } else if(e.error!=='no-speech'&&e.error!=='aborted'){
+        _huddleAiMsg('sys','🎙 Recognition error: '+e.error);
+      }
+    };
+    r.onend=()=>{
+      if(!HUDDLE.transcribing)return;
+      restarts++;
+      if(restarts>15){
+        _huddleAiMsg('sys','🎙 Browser kept closing recognition. Try speaking — or refresh the page if mic is blocked.');
+        HUDDLE.transcribing=false;HUDDLE.recog=null;
+        if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
+        return;
+      }
+      setTimeout(()=>{
+        if(!HUDDLE.transcribing)return;
+        try{const nr=_mkRecog();HUDDLE.recog=nr;nr.start();}catch(e){
+          _huddleAiMsg('sys','🎙 Restart failed: '+e.message);
+          HUDDLE.transcribing=false;HUDDLE.recog=null;
+          if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
+        }
+      },600);
+    };
+    return r;
+  }
   try{
-    HUDDLE.recog.start();HUDDLE.transcribing=true;
+    const r=_mkRecog();r.start();HUDDLE.recog=r;HUDDLE.transcribing=true;
     if(btn){btn.textContent='🔴 Stop Transcript';btn.style.color='rgba(255,120,120,1)';}
-    _huddleAiMsg('sys','🎙 Transcription active — speak to capture.');
-  }catch(e){toast&&toast('Could not start transcript: '+e.message);}
+    _huddleAiMsg('sys','🎙 Transcription active — speak and your words will appear here. (Only captures your mic, not remote audio.)');
+  }catch(e){_huddleAiMsg('sys','🎙 Could not start: '+e.message);}
 }
 async function huddleMeetingNotes(){
   if(!HUDDLE.transcript.length){
