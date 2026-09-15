@@ -3879,12 +3879,43 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     text-transform:uppercase; }
 
   /* ── Chat Board (sticky bottom) ── */
-  .board-wrap { position:fixed; left:0; right:0; bottom:0; z-index:30;
+  .board-wrap { position:fixed; left:0; right:0; bottom:var(--minibar-h,0px); z-index:30;
     padding:10px 14px calc(12px + env(safe-area-inset-bottom));
     background:linear-gradient(0deg, rgba(7,11,24,.97) 72%, rgba(7,11,24,0));
     backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
     border-top:1px solid var(--line);
-    transition:top .25s ease, border-radius .25s ease, background .25s ease; }
+    transition:top .25s ease, bottom .25s ease, border-radius .25s ease, background .25s ease; }
+  /* ── Watch Party mini-bar (persists across pages while connected) ── */
+  .wp-minibar { position:fixed; bottom:0; left:0; right:0; z-index:31;
+    padding:8px 14px calc(8px + env(safe-area-inset-bottom));
+    background:rgba(7,11,24,.98); border-top:1px solid rgba(34,230,255,.18);
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+    display:none; }
+  .wp-minibar.on { display:block; }
+  .wp-minibar-inner { display:flex; align-items:center; gap:10px;
+    max-width:760px; margin:0 auto; height:38px; }
+  .wp-minibar-back { background:rgba(34,230,255,.07); border:1px solid rgba(34,230,255,.28);
+    color:var(--cyan); border-radius:10px; padding:0 13px; height:38px; font-size:14px;
+    cursor:pointer; flex-shrink:0; white-space:nowrap;
+    font-family:"Rajdhani",sans-serif; font-weight:700; letter-spacing:.3px; }
+  .wp-minibar-back:active { background:rgba(34,230,255,.18); }
+  .wp-minibar-info { flex:1; min-width:0; }
+  .wp-minibar-label { font-size:10px; font-weight:700; color:var(--dim);
+    text-transform:uppercase; letter-spacing:1px; display:block; line-height:1.2; }
+  .wp-minibar-sub { font-size:13px; color:#fff; font-weight:600;
+    font-family:"Rajdhani",sans-serif; display:block;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; line-height:1.5; }
+  .wp-minibar-mute { background:none; border:1px solid rgba(255,255,255,.18);
+    color:#fff; border-radius:10px; padding:0 12px; height:38px; font-size:13px;
+    cursor:pointer; flex-shrink:0; font-weight:700;
+    font-family:"Rajdhani",sans-serif; white-space:nowrap; }
+  .wp-minibar-mute.muted { border-color:rgba(255,80,80,.45); color:#ff6060;
+    background:rgba(255,60,60,.1); }
+  @keyframes wpMiniPulse {
+    0%,100%{ box-shadow:0 0 0 0 rgba(140,255,43,.5); }
+    50%{ box-shadow:0 0 0 7px rgba(140,255,43,0); } }
+  .wp-minibar.speaking .wp-minibar-back { border-color:rgba(140,255,43,.5);
+    color:var(--lime); animation:wpMiniPulse 1.15s ease-in-out infinite; }
   .board-wrap > * { max-width:760px; margin:0 auto; }
   /* fullscreen: covers the whole viewport */
   .board-wrap.fullscreen { top:0; border-radius:0; overflow-y:auto;
@@ -4893,6 +4924,19 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   </div>
   <button class="board-done-btn" id="boardDoneBtn" onclick="exitOrganize()">✓ Done Organizing</button>
 </div>
+
+<!-- Watch Party mini-bar: visible on any page while still connected to the watch room -->
+<div class="wp-minibar" id="wpMiniBar">
+  <div class="wp-minibar-inner">
+    <button class="wp-minibar-back" onclick="wpMiniGoWatch()">🍿 Watch</button>
+    <div class="wp-minibar-info">
+      <span class="wp-minibar-label">Watch Party</span>
+      <span class="wp-minibar-sub" id="wpMiniSub">connected</span>
+    </div>
+    <button class="wp-minibar-mute" id="wpMiniMute" onclick="wpToggleMute()" style="display:none">🎤 Live</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <script>
 const SOUNDBOARD = __SOUNDBOARD__;
@@ -4921,7 +4965,10 @@ function renderButtons(){
 // ── Collapse / expand ────────────────────────────────────────────────────────
 function syncBoardHeight(){
   const bar = document.querySelector('.board-wrap');
-  if(bar) document.body.style.setProperty('--board-h', (_isFullscreen ? 0 : bar.offsetHeight + 16) + 'px');
+  const mini = $('wpMiniBar');
+  const miniH = (mini && mini.classList.contains('on')) ? (mini.offsetHeight || 0) : 0;
+  document.body.style.setProperty('--minibar-h', miniH + 'px');
+  if(bar) document.body.style.setProperty('--board-h', (_isFullscreen ? miniH : bar.offsetHeight + miniH + 16) + 'px');
 }
 function toggleBoard(){
   if(_isFullscreen) return;
@@ -6925,6 +6972,7 @@ function wpBind(s){
     clearWatchdog();
     WP.tries = 0; wpErr('');
     wpStatus('connected', true);
+    wpMiniSync();
     s.emit('watch:presence:get');
     s.emit('CMD:askHost');
     if(WP.tsTimer) clearInterval(WP.tsTimer);
@@ -6952,6 +7000,7 @@ function wpBind(s){
     WP.roster = [];
     wpDropAllPeers();
     wpStatus('reconnecting…', false);
+    wpMiniSync();
     wpRetry('');
   });
   s.on('errorMessage', m => wpErr(String(m||'')));
@@ -6979,6 +7028,7 @@ function wpRenderPresence(){
   const d = WP.presence || {count:0, viewers:[]};
   wpStatus(d.count===1 ? '1 watching' : d.count+' watching', d.count>0);
   wpRenderOrbs();
+  wpMiniSync();
 }
 
 // ── camera orbs ─────────────────────────────────────────────────────────────
@@ -7136,6 +7186,7 @@ function wpCamSync(){
   if(flip) flip.style.display = WPC.on ? '' : 'none';
   wpCamNote('');
   wpRenderOrbs();
+  wpMiniSync();
 }
 function wpCamNote(msg){
   const n=$('wpCamNote'); if(!n) return;
@@ -7162,6 +7213,52 @@ function wpMuteWire(){
     wpToggleMute();
   });
 }
+
+// ── Watch Party mini-bar ─────────────────────────────────────────────────────
+function wpMiniSync(){
+  const bar = $('wpMiniBar'); if(!bar) return;
+  const watchActive = !!($('p-watch') && $('p-watch').classList.contains('on'));
+  const connected = !!(WP.sock && WP.sock.connected);
+  const shouldShow = connected && !watchActive;
+
+  const wasOn = bar.classList.contains('on');
+  bar.classList.toggle('on', shouldShow);
+
+  if(shouldShow){
+    const sub = $('wpMiniSub');
+    if(sub){
+      const viewers = (WP.presence && WP.presence.viewers) || [];
+      const others = viewers.filter(v => v.id !== WP.clientId);
+      if(!others.length){
+        sub.textContent = 'just you';
+      } else {
+        const names = others.map(v => v.name || 'Viewer').slice(0, 2);
+        const extra = others.length - names.length;
+        sub.textContent = names.join(', ') + (extra > 0 ? ' +'+extra : '');
+      }
+    }
+    const mBtn = $('wpMiniMute');
+    if(mBtn){
+      mBtn.style.display = WPC.on ? '' : 'none';
+      mBtn.textContent = WPC.muted ? '🔇 Muted' : '🎤 Live';
+      mBtn.classList.toggle('muted', WPC.muted);
+    }
+  }
+
+  if(wasOn !== shouldShow) syncBoardHeight();
+}
+
+function wpMiniGoWatch(){
+  const btn = document.querySelector('.nav-item[data-p="watch"]');
+  if(btn) { btn.click(); loadWatch(); }
+}
+
+// Hook tab() so the mini-bar shows/hides on every navigation.
+// tab() is a function declaration; reassigning after parse-time is safe in JS.
+(function(){
+  const _origTab = tab;
+  tab = function(btn, skipHash){ _origTab(btn, skipHash); wpMiniSync(); };
+})();
 
 // ── camera fullscreen grid ────────────────────────────────────────────────────
 function wpFsOpen(){
@@ -7538,6 +7635,12 @@ function wpOrbState(){
       }
     }
   });
+  // Pulse the mini-bar 🍿 button when someone is speaking
+  const mb = $('wpMiniBar');
+  if(mb && mb.classList.contains('on')){
+    const anySpeaking = Object.values(WPC.levels).some(l => l && l.loud);
+    mb.classList.toggle('speaking', anySpeaking);
+  }
 }
 
 // Browsers refuse to autoplay audio without user activation; if that bites,
