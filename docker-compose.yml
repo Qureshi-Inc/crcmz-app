@@ -45,6 +45,8 @@ services:
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
       - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
       - WHISPER_MODEL=${WHISPER_MODEL:-whisper-large-v3-turbo}
+      - WHISPER_BASE_URL=${WHISPER_BASE_URL:-}
+      - WHISPER_API_KEY=${WHISPER_API_KEY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

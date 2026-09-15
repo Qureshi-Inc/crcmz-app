@@ -2726,15 +2726,17 @@ async def huddle_transcribe(request: Request):
     session = _get_session(request)
     if not session:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
-    if not OLLAMA_BASE_URL:
-        return JSONResponse({"error": "AI not configured"}, status_code=503)
-    base = OLLAMA_BASE_URL.rstrip('/')
-    if not base.endswith('/v1'):
-        return JSONResponse({"error": "Audio transcription requires LM Studio /v1 endpoint"}, status_code=400)
-    endpoint = f"{base}/audio/transcriptions"
+    # Prefer dedicated Whisper URL (Groq etc); fall back to LM Studio base URL
+    whisper_base = (WHISPER_BASE_URL or OLLAMA_BASE_URL).rstrip('/')
+    if not whisper_base:
+        return JSONResponse({"error": "Set WHISPER_BASE_URL (e.g. https://api.groq.com/openai/v1)"}, status_code=503)
+    if not whisper_base.endswith('/v1'):
+        return JSONResponse({"error": "Whisper base URL must end in /v1"}, status_code=400)
+    endpoint = f"{whisper_base}/audio/transcriptions"
+    api_key = WHISPER_API_KEY or OLLAMA_API_KEY
     headers = {}
-    if OLLAMA_API_KEY:
-        headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     import httpx as _hx
     try:
         form = await request.form()
@@ -2961,7 +2963,9 @@ LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "")
 OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL", "llama3.2")
 OLLAMA_API_KEY  = os.environ.get("OLLAMA_API_KEY", "")
-WHISPER_MODEL   = os.environ.get("WHISPER_MODEL", "whisper-large-v3-turbo")
+WHISPER_MODEL    = os.environ.get("WHISPER_MODEL", "whisper-large-v3-turbo")
+WHISPER_BASE_URL = os.environ.get("WHISPER_BASE_URL", "")   # e.g. https://api.groq.com/openai/v1
+WHISPER_API_KEY  = os.environ.get("WHISPER_API_KEY", "")    # Groq / OpenAI key
 
 # Resolve WA bridge host — host.docker.internal may not exist in Coolify
 if WA_BRIDGE_URL:
