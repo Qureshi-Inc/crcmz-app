@@ -2721,6 +2721,42 @@ async def huddle_ai(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=502)
 
 
+@app.post("/api/huddle/transcribe")
+async def huddle_transcribe(request: Request):
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not OLLAMA_BASE_URL:
+        return JSONResponse({"error": "AI not configured"}, status_code=503)
+    base = OLLAMA_BASE_URL.rstrip('/')
+    if not base.endswith('/v1'):
+        return JSONResponse({"error": "Audio transcription requires LM Studio /v1 endpoint"}, status_code=400)
+    endpoint = f"{base}/audio/transcriptions"
+    headers = {}
+    if OLLAMA_API_KEY:
+        headers["Authorization"] = f"Bearer {OLLAMA_API_KEY}"
+    import httpx as _hx
+    try:
+        form = await request.form()
+        audio_file = form.get("file")
+        if not audio_file:
+            return JSONResponse({"error": "No audio file"}, status_code=400)
+        audio_data = await audio_file.read()
+        content_type = getattr(audio_file, "content_type", None) or "audio/webm"
+        async with _hx.AsyncClient(timeout=30.0) as c:
+            r = await c.post(
+                endpoint,
+                headers=headers,
+                files={"file": ("audio.webm", audio_data, content_type)},
+                data={"model": WHISPER_MODEL, "response_format": "json"},
+            )
+        r.raise_for_status()
+        return JSONResponse(r.json())
+    except Exception as exc:
+        logger.warning("huddle transcribe error: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=502)
+
+
 @app.get("/watch")
 def watch_page():
     """User-facing entry point — the Watch tab of the existing dashboard.
@@ -2922,6 +2958,7 @@ LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "")
 OLLAMA_MODEL    = os.environ.get("OLLAMA_MODEL", "llama3.2")
 OLLAMA_API_KEY  = os.environ.get("OLLAMA_API_KEY", "")
+WHISPER_MODEL   = os.environ.get("WHISPER_MODEL", "whisper-large-v3-turbo")
 
 # Resolve WA bridge host — host.docker.internal may not exist in Coolify
 if WA_BRIDGE_URL:
@@ -8185,7 +8222,7 @@ async function wpRally(){
 const HUDDLE = {
   room: null, loading: false,
   blurEnabled: false, blurCtx: null, blurAnim: null,
-  transcript: [], transcribing: false, recog: null,
+  transcript: [], transcribing: false, recorder: null, _transcriptTimer: null,
   aiLoading: false,
   layout: 'spotlight',
   pinnedId: null,
@@ -8294,7 +8331,8 @@ async function huddleJoin() {
 async function huddleLeave() {
   if(HUDDLE.room) { await HUDDLE.room.disconnect(); HUDDLE.room=null; }
   _huddleBlurStop();
-  if(HUDDLE.recog) { try{HUDDLE.recog.stop();}catch(_){} HUDDLE.recog=null; }
+  if(HUDDLE.recorder){try{HUDDLE.recorder.stop();}catch(_){} HUDDLE.recorder=null;}
+  clearTimeout(HUDDLE._transcriptTimer);
   HUDDLE.transcript=[]; HUDDLE.transcribing=false; HUDDLE.pinnedId=null; HUDDLE.spotlight=null;
   const g=$('huddleGrid'); if(g) g.innerHTML='';
   const s=$('huddleStrip'); if(s) s.innerHTML='';
@@ -8540,53 +8578,57 @@ function huddleToggleTranscript(){
   const btn=$('huddleTranscriptBtn');
   function _stopT(msg){
     HUDDLE.transcribing=false;
-    if(HUDDLE.recog){try{HUDDLE.recog.abort();}catch(_){} HUDDLE.recog=null;}
-    clearTimeout(HUDDLE._silenceTimer);
+    if(HUDDLE.recorder){try{HUDDLE.recorder.stop();}catch(_){} HUDDLE.recorder=null;}
+    clearTimeout(HUDDLE._transcriptTimer);
     if(btn){btn.textContent='🎙 Transcript';btn.style.color='';}
+    const s=$('huddleAiStatus');if(s)s.textContent='';
     if(msg)_huddleAiMsg('sys',msg);
   }
   if(HUDDLE.transcribing){_stopT('🎙 Transcription stopped.');return;}
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){_huddleAiMsg('sys','🎙 Speech recognition not supported in this browser.');return;}
   if($('huddleAiPanel').style.display==='none')huddleToggleAi();
-  let restarts=0;
-  function _mkRecog(){
-    const r=new SR();r.continuous=true;r.interimResults=true;r.lang='en-US';
-    r.onaudiostart=()=>{
-      clearTimeout(HUDDLE._silenceTimer);
-      HUDDLE._silenceTimer=setTimeout(()=>{
-        _stopT('🎙 Mic stream is silent — this browser gave Speech API a dead mic (likely because LiveKit already owns the mic hardware). Transcript works on desktop Chrome. On mobile, type context into the chat instead.');
-      },4000);
-    };
-    r.onsoundstart=()=>clearTimeout(HUDDLE._silenceTimer);
-    r.onresult=ev=>{
-      clearTimeout(HUDDLE._silenceTimer);restarts=0;
-      for(let i=ev.resultIndex;i<ev.results.length;i++){
-        const text=ev.results[i][0].transcript.trim();
-        if(ev.results[i].isFinal){
-          if(text){HUDDLE.transcript.push({text,ts:Date.now()});_huddleAiMsg('transcript','🎙 '+text);}
-        } else if(text){const s=$('huddleAiStatus');if(s)s.textContent='🎙 '+text.slice(0,40)+'…';}
-      }
-    };
-    r.onerror=e=>{
-      clearTimeout(HUDDLE._silenceTimer);
-      if(e.error==='not-allowed'||e.error==='audio-capture')
-        _stopT('🎙 Mic blocked ('+e.error+'). Mic may be in exclusive use by the call.');
-      else if(e.error!=='no-speech'&&e.error!=='aborted')
-        _huddleAiMsg('sys','🎙 Error: '+e.error);
-    };
-    r.onend=()=>{
-      if(!HUDDLE.transcribing)return;
-      if(++restarts>15){_stopT('🎙 Recognition kept stopping — transcript not supported in this context.');return;}
-      setTimeout(()=>{if(!HUDDLE.transcribing)return;try{const nr=_mkRecog();HUDDLE.recog=nr;nr.start();}catch(e){_stopT('🎙 Restart failed: '+e.message);}},600);
-    };
-    return r;
-  }
-  try{
-    const r=_mkRecog();r.start();HUDDLE.recog=r;HUDDLE.transcribing=true;
-    if(btn){btn.textContent='🔴 Stop Transcript';btn.style.color='rgba(255,120,120,1)';}
-    _huddleAiMsg('sys','🎙 Listening… speak and your words will appear here.');
-  }catch(e){_huddleAiMsg('sys','🎙 Could not start: '+e.message);}
+  // Get LiveKit's already-captured audio track — no second mic grab needed
+  const audioPubs=[...HUDDLE.room.localParticipant.audioTrackPublications.values()];
+  const mst=audioPubs[0]?.track?.mediaStreamTrack;
+  if(!mst){_huddleAiMsg('sys','🎙 No local audio track — unmute mic and try again.');return;}
+  const mime=MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':
+              MediaRecorder.isTypeSupported('audio/webm')?'audio/webm':'audio/ogg';
+  let chunks=[];
+  let rec;
+  try{rec=new MediaRecorder(new MediaStream([mst]),{mimeType:mime});}
+  catch(e){_huddleAiMsg('sys','🎙 MediaRecorder error: '+e.message);return;}
+  rec.ondataavailable=e=>{if(e.data?.size>0)chunks.push(e.data);};
+  rec.onstop=async()=>{
+    const blob=new Blob(chunks,{type:mime});chunks=[];
+    if(blob.size>2000&&HUDDLE.transcribing){
+      const st=$('huddleAiStatus');if(st)st.textContent='🎙 transcribing…';
+      try{
+        const fd=new FormData();fd.append('file',blob,'audio.webm');
+        const r=await fetch('/api/huddle/transcribe',{method:'POST',body:fd});
+        const d=await r.json();
+        if(d.text?.trim()){
+          const text=d.text.trim();
+          HUDDLE.transcript.push({text,ts:Date.now()});
+          _huddleAiMsg('transcript','🎙 '+text);
+        }
+      }catch(_){}
+      if(st)st.textContent='';
+    }
+    // start next chunk immediately
+    if(HUDDLE.transcribing&&HUDDLE.recorder){
+      try{HUDDLE.recorder.start();}catch(_){}
+      HUDDLE._transcriptTimer=setTimeout(()=>{
+        if(HUDDLE.recorder?.state==='recording')try{HUDDLE.recorder.stop();}catch(_){}
+      },6000);
+    }
+  };
+  rec.onerror=e=>_huddleAiMsg('sys','🎙 Recorder error: '+e.error);
+  HUDDLE.recorder=rec;HUDDLE.transcribing=true;
+  if(btn){btn.textContent='🔴 Stop Transcript';btn.style.color='rgba(255,120,120,1)';}
+  _huddleAiMsg('sys','🎙 Transcription active via Whisper — speak and your words will appear.');
+  try{rec.start();}catch(e){_stopT('🎙 Could not start recorder: '+e.message);return;}
+  HUDDLE._transcriptTimer=setTimeout(()=>{
+    if(HUDDLE.recorder?.state==='recording')try{HUDDLE.recorder.stop();}catch(_){}
+  },6000);
 }
 async function huddleMeetingNotes(){
   if(!HUDDLE.transcript.length){
