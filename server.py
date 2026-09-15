@@ -6835,6 +6835,13 @@ async function wpToggleCam(){
     stream.getVideoTracks().forEach(t=>{
       t.addEventListener('ended', ()=>{ if(WPC.on) wpCamStop(); });
     });
+    // The mic can be revoked independently (phone call, iOS background, another
+    // app grabbing the mic). When that happens the audio track ends silently —
+    // video keeps working so wpCamStop never fires, but no audio transmits.
+    // Remount just the mic without touching ICE or the video track.
+    stream.getAudioTracks().forEach(t=>{
+      t.addEventListener('ended', ()=>{ if(WPC.on) wpRemountMic(); });
+    });
 
     wpMeter('me', stream);
     wpAnnounceCam(true);
@@ -6857,6 +6864,38 @@ function wpCamStop(){
   if(WPC.stream){ WPC.stream.getTracks().forEach(t=>t.stop()); WPC.stream = null; }
   wpMeterStop('me');
   wpCamSync();
+}
+
+async function wpRemountMic(){
+  if(!WPC.on || !WPC.stream) return;
+  let newTrack;
+  try{
+    const fresh = await navigator.mediaDevices.getUserMedia({
+      audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+    });
+    newTrack = fresh.getAudioTracks()[0];
+  }catch(e){
+    wpCamNote('Mic disconnected — tap 🎤 to refresh.');
+    return;
+  }
+  if(!newTrack || !WPC.on) return;
+
+  // Swap into every sender without renegotiating ICE (video keeps flowing).
+  await Promise.all(Object.values(WPC.peers).map(async p=>{
+    const s = p.pc.getSenders().find(s=> s.track && s.track.kind==='audio');
+    if(s) await s.replaceTrack(newTrack).catch(()=>{});
+  }));
+
+  // Replace in the local stream so wpSyncTracks and mute toggle see the right track.
+  WPC.stream.getAudioTracks().forEach(t=>{ try{t.stop();}catch(e){} WPC.stream.removeTrack(t); });
+  WPC.stream.addTrack(newTrack);
+
+  newTrack.enabled = !WPC.muted;
+  newTrack.addEventListener('ended', ()=>{ if(WPC.on) wpRemountMic(); });
+
+  wpMeterStop('me');
+  wpMeter('me', WPC.stream);
+  wpCamNote('');
 }
 
 function wpCamSync(){
