@@ -2695,16 +2695,26 @@ async def huddle_ai(request: Request):
         return JSONResponse({"error": "invalid JSON"}, status_code=400)
     messages = body.get("messages", [])
     model = body.get("model") or OLLAMA_MODEL
+    base = OLLAMA_BASE_URL.rstrip('/')
+    # OpenAI-compatible (LM Studio / Ollama /v1) vs native Ollama
+    if base.endswith('/v1'):
+        endpoint = f"{base}/chat/completions"
+        payload = {"model": model, "messages": messages, "stream": False}
+    else:
+        endpoint = f"{base}/api/chat"
+        payload = {"model": model, "messages": messages, "stream": False}
     import httpx as _hx
     try:
         async with _hx.AsyncClient(timeout=60) as c:
-            r = await c.post(
-                f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat",
-                json={"model": model, "messages": messages, "stream": False},
-            )
-        return JSONResponse(r.json())
+            r = await c.post(endpoint, json=payload)
+        data = r.json()
+        # Normalise OpenAI format → Ollama-style so the JS always reads d.message.content
+        if 'choices' in data and data['choices']:
+            content = data['choices'][0].get('message', {}).get('content', '')
+            data = {'message': {'role': 'assistant', 'content': content}}
+        return JSONResponse(data)
     except Exception as exc:
-        logger.warning("huddle ollama proxy error: %s", exc)
+        logger.warning("huddle ai proxy error: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=502)
 
 
