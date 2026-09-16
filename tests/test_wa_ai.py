@@ -93,6 +93,54 @@ def wa_msg(text, **over):
     return msg
 
 
+# ── @mentions: how people actually talk to a bot on WhatsApp ─────────────────
+def t_a_mention_followed_by_ai_triggers():
+    # The real message that got no reply: the mention comes first, so "ai" is
+    # no longer at the start of the body.
+    assert wa_ai.trigger_from(wa_msg("@56767304183939 ai yo")) == "yo"
+    assert wa_ai.trigger_from(wa_msg("@56767304183939  ai who yaps the most")) == \
+        "who yaps the most"
+
+
+def t_a_mention_of_us_is_enough_on_its_own():
+    wa_ai._self_ids.add("56767304183939")
+    try:
+        assert wa_ai.trigger_from(wa_msg("@56767304183939 yo")) == "yo"
+        assert wa_ai.trigger_from(wa_msg("@56767304183939 who yaps the most?")) == \
+            "who yaps the most?"
+    finally:
+        wa_ai._self_ids.discard("56767304183939")
+
+
+def t_mentioning_somebody_else_is_not_a_trigger():
+    wa_ai._self_ids.add("56767304183939")
+    try:
+        assert wa_ai.trigger_from(wa_msg("@19998887777 yo bro")) is None
+        # ...unless they also say "ai", which is unambiguous either way.
+        assert wa_ai.trigger_from(wa_msg("@19998887777 ai yo")) == "yo"
+    finally:
+        wa_ai._self_ids.discard("56767304183939")
+
+
+def t_a_bare_mention_with_nothing_after_it_is_ignored():
+    wa_ai._self_ids.add("56767304183939")
+    try:
+        assert wa_ai.trigger_from(wa_msg("@56767304183939")) is None
+        assert wa_ai.trigger_from(wa_msg("@56767304183939   ")) is None
+    finally:
+        wa_ai._self_ids.discard("56767304183939")
+
+
+def t_our_id_is_learned_from_our_own_messages():
+    wa_ai._self_ids.clear()
+    assert wa_ai.trigger_from(wa_msg("anything", from_me=True,
+                                     sender_jid="56767304183939:2@lid")) is None
+    assert "56767304183939" in wa_ai.self_ids(), wa_ai.self_ids()
+    # ...and from then on a bare mention works.
+    assert wa_ai.trigger_from(wa_msg("@56767304183939 sup")) == "sup"
+    wa_ai._self_ids.clear()
+
+
 # ── trigger ───────────────────────────────────────────────────────────────────
 def t_picks_up_the_ai_prefix():
     assert wa_ai.trigger_from(wa_msg("ai who yaps the most")) == "who yaps the most"

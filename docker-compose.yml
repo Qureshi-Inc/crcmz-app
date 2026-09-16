@@ -58,7 +58,11 @@ services:
       - PSN_AI_ENABLED=${PSN_AI_ENABLED:-1}
       - PSN_AI_POLL_SECONDS=${PSN_AI_POLL_SECONDS:-20}
       # Same "ai ..." trigger in the WhatsApp group (answered via the bridge).
+      # An @mention of the bot works too. WA_BOT_IDS seeds the bot's own numbers
+      # so a bare mention triggers it from the first message; otherwise they are
+      # learned the first time the bot replies.
       - WA_AI_ENABLED=${WA_AI_ENABLED:-1}
+      - WA_BOT_IDS=${WA_BOT_IDS:-}
       # Which groups it listens in: "squad" (default), "main", or "squad,main".
       - PSN_AI_GROUPS=${PSN_AI_GROUPS:-squad}
       - WHISPER_MODEL=${WHISPER_MODEL:-whisper-large-v3-turbo}
