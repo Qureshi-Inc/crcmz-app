@@ -143,30 +143,31 @@ def t_our_id_is_learned_from_our_own_messages():
 
 # ── quoted-reply (replying to a bot message) ─────────────────────────────────
 def t_reply_to_bot_message_triggers_without_ai_prefix():
-    # A quoted reply to one of our own messages should trigger even without "ai".
-    wa_ai._self_ids.add("56767304183939")
-    try:
-        # Path 1: quoted sender matches our JID.
-        msg = wa_msg("lol ok but who is second?")
-        msg["quotedMsg"] = {"sender": "56767304183939:2@s.whatsapp.net",
-                            "text": "Mutasif yaps the most."}
-        assert wa_ai.trigger_from(msg) == "lol ok but who is second?", wa_ai.trigger_from(msg)
+    # Swipe-reply to a bot message: bridge sends reply_to = the bot's message ID.
+    # The bot's own messages come back through ingest with from_me=True, so
+    # learn_self() records the ID in _recent_sent_ids.
+    wa_ai._recent_sent_ids.clear()
+    bot_echo = wa_msg("Mutasif yaps the most.", from_me=True,
+                      sender_jid="56767304183939:2@lid", message_id="BOT-MSG-1")
+    assert wa_ai.trigger_from(bot_echo) is None   # own message, not a trigger
+    assert "BOT-MSG-1" in wa_ai._recent_sent_ids, wa_ai._recent_sent_ids
 
-        # Path 2: quoted text in _recent_replies (fallback before JID is known).
-        wa_ai._self_ids.discard("56767304183939")
-        wa_ai._recent_replies.append("the bot said this earlier")
-        msg2 = wa_msg("and who is third?")
-        msg2["quotedMsg"] = {"sender": "99999@s.whatsapp.net",
-                             "text": "the bot said this earlier"}
-        assert wa_ai.trigger_from(msg2) == "and who is third?", wa_ai.trigger_from(msg2)
-        wa_ai._recent_replies.remove("the bot said this earlier")
-    finally:
-        wa_ai._self_ids.discard("56767304183939")
+    # Now someone swipe-replies to that message.
+    reply = wa_msg("lol ok but who is second?")
+    reply["reply_to"] = "BOT-MSG-1"
+    assert wa_ai.trigger_from(reply) == "lol ok but who is second?"
+
+    # quotedMessageId is an alias some bridge versions send.
+    reply2 = wa_msg("and who is third?")
+    reply2["quotedMessageId"] = "BOT-MSG-1"
+    assert wa_ai.trigger_from(reply2) == "and who is third?"
+    wa_ai._recent_sent_ids.clear()
 
 
 def t_reply_to_someone_else_does_not_trigger():
+    wa_ai._recent_sent_ids.clear()
     msg = wa_msg("lol ok")
-    msg["quotedMsg"] = {"sender": "12345@s.whatsapp.net", "text": "random other message"}
+    msg["reply_to"] = "OTHER-MSG-999"
     assert wa_ai.trigger_from(msg) is None
 
 

@@ -26,6 +26,12 @@ MAX_REPLY_CHARS = 900     # WhatsApp is roomier than PSN, but still a chat
 _recent_replies: list[str] = []
 _RECENT_KEEP = 20
 
+# Message IDs of messages we've sent — learned from from_me echoes coming back
+# through ingest. When someone swipe-replies to one of these, reply_to will
+# match and we know it's directed at us.
+_recent_sent_ids: list[str] = []
+_SENT_IDS_KEEP = 60
+
 # On WhatsApp the natural way to talk to a bot is to @mention it, which puts the
 # mention ahead of everything: "@56767304183939 ai yo". So mentions are stripped
 # before the trigger is read, and a mention OF US is itself a trigger -- no "ai"
@@ -44,13 +50,17 @@ def _digits(jid: str) -> str:
 
 
 def learn_self(msg: dict) -> None:
-    """Remember our own id from a message WhatsApp says we sent."""
+    """Remember our own id and sent message IDs from messages we sent."""
     if not (msg.get("from_me") or msg.get("fromMe")):
         return
     me = _digits(msg.get("sender_jid") or msg.get("from") or "")
     if me and me not in _self_ids:
         _self_ids.add(me)
         logger.info("wa_ai: learned our own WhatsApp id %s", me)
+    msg_id = msg.get("message_id") or msg.get("id") or ""
+    if msg_id and msg_id not in _recent_sent_ids:
+        _recent_sent_ids.append(msg_id)
+        del _recent_sent_ids[:-_SENT_IDS_KEEP]
 
 
 def self_ids() -> set[str]:
@@ -82,15 +92,12 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
         return None
 
     # Path 2: quoted reply to one of our messages — no prefix needed.
-    # Baileys puts the quoted message in "quotedMsg" with sender/text.
-    quoted = msg.get("quotedMsg") or {}
-    if quoted:
-        q_sender = _digits(quoted.get("sender") or quoted.get("senderJid")
-                           or quoted.get("from") or "")
-        q_text = (quoted.get("text") or quoted.get("body") or "").strip()
-        if ((q_sender and q_sender in _self_ids) or
-                (q_text and q_text in _recent_replies)):
-            return text[:400]
+    # The Baileys bridge stores the quoted message ID in reply_to / quotedMessageId.
+    # Our own messages come back through ingest with from_me=True; learn_self()
+    # records their IDs in _recent_sent_ids so we can match here.
+    reply_to = msg.get("reply_to") or msg.get("quotedMessageId") or ""
+    if reply_to and reply_to in _recent_sent_ids:
+        return text[:400]
 
     # Path 1: @mention.
     lead = _MENTION.match(text)
