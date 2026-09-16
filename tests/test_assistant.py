@@ -89,9 +89,12 @@ class _Stub(BaseHTTPRequestHandler):
                 "genres": {"entries": [{"genre": "bollywood", "count": 88}]},
                 "personalities": {"cards": [{"username": "themoosecompany",
                                              "personality": "The Populist",
-                                             "description": "finger on the pulse"}]},
-                "streaks": {"entries": [{"username": "themoosecompany", "current_streak": 2}]},
-                "hipster": {"username": "nooramin40", "score": 91},
+                                             "description": "finger on the pulse",
+                                             "song_count": 215}]},
+                "streaks": {"entries": [{"username": "themoosecompany",
+                                         "current_streak": 2, "longest_streak": 6}]},
+                "hipster": {"entries": [{"username": "moiz", "unique_artists": 171,
+                                         "hipster_score": 3.06}]},
             }.get(name, {})
             body = json.dumps(payload).encode(); ctype = "application/json"
         self.send_response(200)
@@ -224,7 +227,10 @@ def t_slap_personalities():
     assert ok is True, out
     d = json.loads(out)
     assert d["personalities"][0]["personality"] == "The Populist", d
-    assert d["most_obscure_taste"]["username"] == "nooramin40", d
+    assert d["personalities"][0]["songs_added"] == 215, d
+    assert d["day_streaks"][0]["longest_streak_days"] == 6, d
+    top = d["obscure_taste_ranking"][0]
+    assert top == {"who": "moiz", "different_artists": 171, "hipster_score": 3.06}, top
 
 
 def t_slap_results_are_cached():
@@ -261,6 +267,52 @@ def t_website_text_is_capped():
     finally:
         assistant.MAX_SITE_CHARS = saved
         assistant._cache.clear()
+
+
+def t_persona_is_vulgar_by_default():
+    os.environ.pop("ASSISTANT_STYLE", None)
+    reset(final("aight"))
+    assistant.ask("who yaps most")
+    p = SEEN[0]["messages"][0]["content"]
+    assert "VOICE" in p, p[:300]
+    assert "Dave Chappelle" in p, "the persona brief should be in the prompt"
+    for word in ("bhenchod", "chutiya", "oye khotay"):
+        assert word in p, f"{word} missing from the persona"
+    assert "never add disclaimers" in p, p[-600:]
+    # Vulgar or not, the accuracy rule has to survive.
+    assert "the FACTS stay real" in p, p[-600:]
+    assert "Never invent a number" in p, p[:900]
+    assert SEEN[0]["temperature"] > 0.5, SEEN[0]["temperature"]
+
+
+def t_plain_style_switches_the_persona_off():
+    os.environ["ASSISTANT_STYLE"] = "plain"
+    try:
+        reset(final("ok"))
+        assistant.ask("who yaps most")
+        p = SEEN[0]["messages"][0]["content"]
+        assert "Dave Chappelle" not in p and "bhenchod" not in p, p[:400]
+        assert "short, plain, group-chat casual" in p, p[-400:]
+        assert SEEN[0]["temperature"] < 0.5, SEEN[0]["temperature"]
+        # Same data rules either way.
+        assert "Never invent a number" in p, p[:900]
+    finally:
+        os.environ.pop("ASSISTANT_STYLE", None)
+
+
+def t_default_model_is_the_uncensored_tune():
+    assert assistant.DEFAULT_MODEL == "Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit", \
+        assistant.DEFAULT_MODEL
+
+
+def t_slap_labels_are_explicit():
+    assistant._cache.clear()
+    out, ok = assistant.call_tool("slap_personalities", {})
+    assert ok is True, out
+    d = json.loads(out)
+    assert "different_artists" in json.dumps(d["obscure_taste_ranking"]), d
+    assert "songs_added" in json.dumps(d["personalities"]), d
+    assert "not songs" in d["field_notes"], d
 
 
 def t_the_prompt_does_not_privilege_whatsapp():

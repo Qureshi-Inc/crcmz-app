@@ -44,12 +44,15 @@ services:
       # directly over LAN. Huddle's AI and the Chat Board button flavor text both
       # use it; FLAVOR_MODEL points the buttons at one model (e.g. a gemma).
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+      # One model for everything keeps a single copy resident on the Mac — two
+      # 35B-class models at once was already 52 GB of the 90 GB budget.
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit}
       - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
       - FLAVOR_MODEL=${FLAVOR_MODEL:-}
-      # Platform assistant: tool-calling model (Qwen handles tools far better
-      # than gemma, and it is already loaded on the omlx box).
-      - ASSISTANT_MODEL=${ASSISTANT_MODEL:-Qwen3.6-35B-A3B-MLX-8bit}
+      # Platform assistant: the uncensored Heretic tune (verified to still do
+      # tool calls). ASSISTANT_STYLE=plain drops the vulgar persona.
+      - ASSISTANT_MODEL=${ASSISTANT_MODEL:-Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit}
+      - ASSISTANT_STYLE=${ASSISTANT_STYLE:-vulgar}
       - WHISPER_MODEL=${WHISPER_MODEL:-whisper-large-v3-turbo}
       - WHISPER_BASE_URL=${WHISPER_BASE_URL:-}
       - WHISPER_API_KEY=${WHISPER_API_KEY:-}

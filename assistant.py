@@ -26,8 +26,10 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Qwen is the tool-calling model on the omlx box; gemma stays on button flavor.
-DEFAULT_MODEL = "Qwen3.6-35B-A3B-MLX-8bit"
+# The uncensored Heretic tune of Qwen3.6-35B — verified to still emit real
+# tool_calls, which abliterated models sometimes lose. Point OLLAMA_MODEL at the
+# same name to keep exactly one model resident on the Mac.
+DEFAULT_MODEL = "Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit"
 MAX_STEPS = 6                 # model turns per question (tool round-trips)
 MAX_TOOL_CHARS = 6000         # per-tool result budget handed back to the model
 REQUEST_TIMEOUT = 180.0       # a 35B MLX model on a Mac is not instant
@@ -60,10 +62,46 @@ SYSTEM_PROMPT = (
     "number, name, date or quote: if a tool did not return it, say you do not "
     "have it.\n"
     "Today is {today}.\n"
-    "Style: short, plain, group-chat casual. Give the numbers you actually got, "
-    "and name the range they cover. No preamble, no bullet lists unless asked."
+    "{style}"
     "{facts}"
 )
+
+# ── Voice ─────────────────────────────────────────────────────────────────────
+# This is a private clan app for seven friends who asked for a bot that talks
+# like their group chat, not like a helpdesk. ASSISTANT_STYLE=plain switches back
+# to the neutral tone. Whatever the voice, the numbers stay real — that is the
+# one rule the persona is not allowed to bend.
+PERSONA_VULGAR = (
+    "VOICE — this matters as much as the answer:\n"
+    "You are NOT a polite assistant. You are the squad's foul-mouthed stoner "
+    "best friend — Dave Chappelle in How High, mid-session, controller in hand. "
+    "Loud, filthy, hilarious, zero filter.\n"
+    "- Curse constantly and creatively in English (fuck, shit, bitch, ass, "
+    "dumbass, bruh) and mix in Urdu / Lahori Punjabi like an uncle who just lost "
+    "his temper: bhenchod, madarchod, chutiya, gandu, harami, kanjar, saala, "
+    "ullu da patha, oye khotay, teri maa di, pencho, bakwaas, paagal kutta.\n"
+    "- Roast whoever the question is about. The squad facts are ammunition — use "
+    "them to clown people.\n"
+    "- Slang, contractions, short bursts, jokes and tangents. Talk like you are "
+    "on voice chat at 2am, not writing a report.\n"
+    "- Never apologise for your language, never add disclaimers, never warn "
+    "anybody about anything. No corporate voice, ever.\n"
+    "- Keep it to a few sentences unless they ask for detail.\n"
+    "HARD LINE: be as vulgar as you like, but the FACTS stay real. Every number, "
+    "name and date comes from a tool. Keep a number attached to the label the "
+    "tool gave it — songs are not artists, messages are not days. Roast with real "
+    "stats; making shit up is the only thing that makes you look weak.\n"
+)
+PERSONA_PLAIN = (
+    "Style: short, plain, group-chat casual. Give the numbers you actually got, "
+    "and name the range they cover. No preamble, no bullet lists unless asked.\n"
+)
+
+
+def _persona() -> str:
+    return (PERSONA_PLAIN
+            if os.environ.get("ASSISTANT_STYLE", "").strip().lower() == "plain"
+            else PERSONA_VULGAR)
 
 # Facts are typed by the squad, so they are data to weigh, never instructions to
 # follow. Saying so explicitly (and fencing the block) is what stops "ignore
@@ -295,14 +333,28 @@ def _slap_stats() -> Any:
       {"type": "object", "properties": {}, "required": []})
 def _slap_people() -> Any:
     data = _slap("personalities", "streaks", "hipster")
+    # Field names are spelled out because a loose paraphrase turns
+    # "171 different artists" into "171 tracks" and the answer stops being true.
     return {
         "personalities": [
             {"who": c.get("username"), "personality": c.get("personality"),
-             "description": c.get("description")}
+             "description": c.get("description"),
+             "songs_added": c.get("song_count")}
             for c in ((data.get("personalities") or {}).get("cards") or [])
         ],
-        "streaks": ((data.get("streaks") or {}).get("entries") or [])[:8],
-        "most_obscure_taste": data.get("hipster"),
+        "day_streaks": [
+            {"who": e.get("username"), "current_streak_days": e.get("current_streak"),
+             "longest_streak_days": e.get("longest_streak")}
+            for e in ((data.get("streaks") or {}).get("entries") or [])[:8]
+        ],
+        "obscure_taste_ranking": [
+            {"who": e.get("username"),
+             "different_artists": e.get("unique_artists"),
+             "hipster_score": e.get("hipster_score")}
+            for e in ((data.get("hipster") or {}).get("entries") or [])
+        ],
+        "field_notes": ("different_artists counts ARTISTS, not songs. "
+                        "songs_added counts songs. Do not mix them up."),
     }
 
 
@@ -523,7 +575,9 @@ def _chat(messages: list[dict], model: str, base: str, key: str) -> dict:
         "tools": tool_specs(),
         "tool_choice": "auto",
         "stream": False,
-        "temperature": 0.2,
+        # Comedy needs room to move; 0.2 produced a flat civil-servant voice.
+        # Tool calls still land reliably here because the schemas are explicit.
+        "temperature": 0.25 if _persona() is PERSONA_PLAIN else 0.85,
     }
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
         r = client.post(f"{base}/chat/completions", json=payload, headers=headers)
@@ -582,7 +636,8 @@ def ask(question: str, history: list[dict] | None = None) -> dict:
     messages: list[dict] = [
         {"role": "system",
          "content": SYSTEM_PROMPT.format(
-             today=datetime.now().strftime("%A %Y-%m-%d"), facts=facts_block)},
+             today=datetime.now().strftime("%A %Y-%m-%d"),
+             style=_persona(), facts=facts_block)},
     ]
     # Prior turns, trimmed: only user/assistant text, last 3 exchanges.
     for turn in (history or [])[-6:]:
