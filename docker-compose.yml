@@ -53,6 +53,10 @@ services:
       # tool calls). ASSISTANT_STYLE=plain drops the vulgar persona.
       - ASSISTANT_MODEL=${ASSISTANT_MODEL:-Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit}
       - ASSISTANT_STYLE=${ASSISTANT_STYLE:-vulgar}
+      # "ai <question>" in The Squad PSN group, answered by the same assistant
+      # (replaces the standalone psn-gpt bot). PSN_AI_ENABLED=0 turns it off.
+      - PSN_AI_ENABLED=${PSN_AI_ENABLED:-1}
+      - PSN_AI_POLL_SECONDS=${PSN_AI_POLL_SECONDS:-20}
       - WHISPER_MODEL=${WHISPER_MODEL:-whisper-large-v3-turbo}
       - WHISPER_BASE_URL=${WHISPER_BASE_URL:-}
       - WHISPER_API_KEY=${WHISPER_API_KEY:-}

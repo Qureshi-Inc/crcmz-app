@@ -3201,6 +3201,11 @@ import giveaway as _giveaway
 import assistant
 import facts as _facts
 import chat_history as _chat
+import psn_ai
+# The "ai ..." bot in The Squad group. On by default now that it answers from the
+# local model; PSN_AI_ENABLED=0 is the kill switch.
+PSN_AI_ENABLED = os.environ.get("PSN_AI_ENABLED", "1") != "0"
+PSN_AI_POLL_SECONDS = max(10, int(os.environ.get("PSN_AI_POLL_SECONDS", "20")))
 _wa.init()
 _facts.init()
 _chat.init()
@@ -3426,6 +3431,36 @@ async def _start_squad_poller():
 
     asyncio.create_task(_loop())
     logger.info("squad presence poller started (180s)")
+
+    # ── "ai …" in The Squad group ────────────────────────────────────────────
+    # Same trigger as the old standalone psn-gpt bot, but answered by the local
+    # model with the tools, the squad facts and the group's own history. The
+    # group shares one thread so follow-ups work: "ai who yaps most" then
+    # "ai and who is second".
+    if PSN_AI_ENABLED and _squad_messenger is not None:
+        def _group_ask(prompt: str, author: str) -> str:
+            thread = f"psn-group:{SQUAD_GROUP_ID}"
+            history = _chat.context(thread)
+            result = assistant.ask(f"{author} asks: {prompt}", history)
+            answer = (result.get("answer") or "").strip()
+            reply_id = _chat.start_turn(thread, f"{author}: {prompt}")
+            _chat.finish_turn(reply_id, answer, result.get("tools_used") or [],
+                              result.get("elapsed_ms", 0))
+            return answer
+
+        async def _psn_ai_loop():
+            while True:
+                try:
+                    if assistant.available():
+                        await asyncio.to_thread(psn_ai.poll_once,
+                                                _squad_messenger, _group_ask)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("psn_ai tick failed: %s", e)
+                await asyncio.sleep(PSN_AI_POLL_SECONDS)
+
+        asyncio.create_task(_psn_ai_loop())
+        logger.info('psn_ai: watching "%s" for "ai ..." every %ds',
+                    SQUAD_GROUP_NAME, PSN_AI_POLL_SECONDS)
 
     if WA_BRIDGE_URL and WA_GOOPERS_JID:
         global _watched_messengers, _video_queue

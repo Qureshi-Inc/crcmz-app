@@ -301,6 +301,8 @@ def t_prompt_tells_it_to_shut_up_and_not_call_tools():
     # The example answers carry the voice, so they must sit inside the persona.
     assert "HOW IT SHOULD GO" in p, p[:1200]
     assert "Never turn a broken tool into a fact" in p, p[:1500]
+    # A follow-up used to be answered from the previous reply, inventing numbers.
+    assert "A FOLLOW-UP STILL NEEDS THE TOOL" in p, p[:1500]
 
 
 def t_persona_is_vulgar_by_default():
