@@ -684,7 +684,12 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/.well-known/webauthn",
                # Public key material only — WatchParty fetches this to verify
                # Watch Tickets. Never contains a private key.
-               "/api/watch/jwks.json"}
+               "/api/watch/jwks.json",
+               # The WhatsApp bridge is a machine, not a person: it has no
+               # session cookie and authenticates with WA_INGEST_SECRET, which
+               # the endpoint itself requires. Without this the auth gate 401s
+               # every live message and the analytics silently stop updating.
+               "/api/whatsapp/ingest"}
 
 
 def _signer() -> _USTS:
@@ -1696,9 +1701,16 @@ async def wa_import(
 
 @app.post("/api/whatsapp/ingest")
 async def wa_ingest(request: Request):
-    """Receive a single live message from the Baileys bridge (internal use)."""
+    """Receive live messages from the Baileys bridge (machine-to-machine).
+
+    This path is in _OPEN_PATHS — the bridge has no session — so the shared
+    secret is the only thing guarding a write endpoint and is mandatory.
+    """
     secret = request.headers.get("x-ingest-secret", "")
-    if WA_INGEST_SECRET and secret != WA_INGEST_SECRET:
+    if not WA_INGEST_SECRET:
+        logger.error("wa_ingest: WA_INGEST_SECRET is unset, refusing ingest")
+        raise HTTPException(status_code=503, detail="ingest not configured")
+    if not _secrets.compare_digest(secret.encode(), WA_INGEST_SECRET.encode()):
         raise HTTPException(status_code=403, detail="invalid ingest secret")
     body = await request.json()
     # Support batch or single message

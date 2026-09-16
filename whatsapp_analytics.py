@@ -172,7 +172,55 @@ _MEDIA_RE = re.compile(
 )
 
 
-def _parse_datetime(date_str: str, time_str: str) -> Optional[int]:
+def _split_date(date_str: str) -> Optional[tuple[int, int, int]]:
+    """Split "9/12/26" into its two ambiguous parts plus the year."""
+    date_str = date_str.strip()
+    sep = "/" if "/" in date_str else "-"
+    dp = date_str.split(sep)
+    if len(dp) != 3:
+        return None
+    try:
+        d1, d2 = int(dp[0]), int(dp[1])
+    except ValueError:
+        return None
+    yr = dp[2]
+    if len(yr) == 2:
+        yr = "20" + yr
+    try:
+        year = int(yr)
+    except ValueError:
+        return None
+    return d1, d2, year
+
+
+def detect_date_order(text: str) -> str:
+    """Decide whether a whole export is day-first or month-first: "DMY"/"MDY".
+
+    WhatsApp writes dates in the *phone's* locale, and "9/12/26" is September
+    12th on a North American phone but the 9th of December on most others.
+    Guessing per line silently scrambles every date where both parts are <= 12
+    (which is how this group's history ended up with messages in the future),
+    so the whole file is decided once: the first line where one part is > 12
+    settles it, and failing that AM/PM in the timestamps means a US export.
+    """
+    ampm = False
+    for line in text.splitlines():
+        m = _PAT1.match(line) or _PAT2.match(line)
+        if not m:
+            continue
+        parts = _split_date(m.group(1))
+        if not parts:
+            continue
+        d1, d2, _ = parts
+        if d1 > 12:
+            return "DMY"      # first field can only be a day
+        if d2 > 12:
+            return "MDY"      # second field can only be a day
+        ampm = ampm or bool(re.search(r"[AaPp]\.?[Mm]", m.group(2)))
+    return "MDY" if ampm else "DMY"
+
+
+def _parse_datetime(date_str: str, time_str: str, order: str = "") -> Optional[int]:
     date_str = date_str.strip()
     time_str = time_str.strip().upper().replace(".", "")
     ampm = ""
@@ -196,22 +244,19 @@ def _parse_datetime(date_str: str, time_str: str) -> Optional[int]:
     elif ampm == "AM" and hour == 12:
         hour = 0
 
-    sep = "/" if "/" in date_str else "-"
-    dp = date_str.split(sep)
-    if len(dp) != 3:
+    parts = _split_date(date_str)
+    if parts is None:
         return None
-    try:
-        d1, d2, yr = int(dp[0]), int(dp[1]), dp[2]
-    except ValueError:
-        return None
-    if len(yr) == 2:
-        yr = "20" + yr
-    try:
-        year = int(yr)
-    except ValueError:
-        return None
+    d1, d2, year = parts
 
-    for day, month in [(d1, d2), (d2, d1)]:
+    # `order` comes from detect_date_order() for the file being imported; the
+    # other ordering is still tried as a fallback for a line that cannot be
+    # read that way (e.g. a stray "13/5" in an MDY export).
+    if order == "MDY":
+        candidates = [(d2, d1), (d1, d2)]
+    else:
+        candidates = [(d1, d2), (d2, d1)]
+    for day, month in candidates:
         if 1 <= month <= 12 and 1 <= day <= 31:
             try:
                 dt = datetime(year, month, day, hour, minute, second, tzinfo=_TZ)
@@ -221,9 +266,13 @@ def _parse_datetime(date_str: str, time_str: str) -> Optional[int]:
     return None
 
 
-def parse_txt(text: str) -> list[dict]:
-    """Parse a WhatsApp .txt export. Returns list of message dicts."""
+def parse_txt(text: str, order: str = "") -> list[dict]:
+    """Parse a WhatsApp .txt export. Returns list of message dicts.
+
+    `order` ("MDY"/"DMY") overrides the auto-detected date order.
+    """
     text = text.lstrip("﻿").replace("‎", "").replace("‏", "")
+    order = order or detect_date_order(text)
     lines = text.splitlines()
     messages: list[dict] = []
     current: dict | None = None
@@ -236,7 +285,7 @@ def parse_txt(text: str) -> list[dict]:
             date_s, time_s = m.group(1), m.group(2)
             sender = m.group(3).strip()
             body = (m.group(4) or "").strip()
-            ts = _parse_datetime(date_s, time_s)
+            ts = _parse_datetime(date_s, time_s, order)
             if ts is None:
                 current = None
                 continue
@@ -274,6 +323,25 @@ def _msg_id(sender: str, ts: int, text: str, batch: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _dedupe_key(sender: str, ts: int, text: str) -> tuple[str, int, str]:
+    """Identity of a message across sources and across exports.
+
+    The row id is batch-scoped, so it only ever catches duplicates *within*
+    one file -- re-exporting the chat later would otherwise re-insert the whole
+    history under a new batch. This key ignores the batch, and truncates to the
+    minute because an Android export has no seconds while the live bridge
+    records the real epoch second for the same message.
+    """
+    return (sender.strip().lower(), ts // 60, (text or "").strip()[:120])
+
+
+def _existing_keys(db) -> set[tuple[str, int, str]]:
+    return {
+        _dedupe_key(r["sender_name"] or "", r["timestamp"], r["text"] or "")
+        for r in db.execute("SELECT sender_name, timestamp, text FROM whatsapp_messages")
+    }
+
+
 def import_messages(content: bytes, filename: str, group_jid: str, imported_by_sub: str) -> dict:
     """Parse and ingest a WhatsApp export (bytes). Returns import summary."""
     file_sha = hashlib.sha256(content).hexdigest()
@@ -306,7 +374,13 @@ def import_messages(content: bytes, filename: str, group_jid: str, imported_by_s
     batch_tag = file_sha[:16]
 
     with _lock, _conn() as db:
+        seen = _existing_keys(db)
         for msg in messages:
+            key = _dedupe_key(msg["sender_name"], msg["timestamp"], msg.get("text") or "")
+            if key in seen:
+                duplicates += 1
+                continue
+            seen.add(key)
             mid = _msg_id(msg["sender_name"], msg["timestamp"], msg.get("text") or "", batch_tag)
             cur = db.execute(
                 "INSERT OR IGNORE INTO whatsapp_messages "
