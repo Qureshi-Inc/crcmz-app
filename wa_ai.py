@@ -141,4 +141,17 @@ def send_reply(bridge_url: str, group_jid: str, text: str) -> bool:
         return False
     _recent_replies.append(text)
     del _recent_replies[:-_RECENT_KEEP]
+    # Record the message ID from the bridge response so swipe-replies can be
+    # matched without relying on from_me echoes through ingest. Baileys bridges
+    # typically return {id: "...", key: {id: "..."}, or messageId: "..."}.
+    try:
+        data = r.json()
+        msg_id = (data.get("id") or data.get("messageId") or data.get("message_id")
+                  or (data.get("key") or {}).get("id") or "")
+        if msg_id and msg_id not in _recent_sent_ids:
+            _recent_sent_ids.append(msg_id)
+            del _recent_sent_ids[:-_SENT_IDS_KEEP]
+            logger.debug("wa_ai: recorded sent msg id %s", msg_id)
+    except Exception:  # noqa: BLE001
+        pass
     return True
