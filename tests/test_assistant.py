@@ -66,6 +66,40 @@ class _Stub(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def do_GET(self):  # noqa: N802
+        """Stands in for the Slapshare dashboard and the public clan site."""
+        SEEN.append({"get": self.path})
+        if self.path.startswith("/site"):
+            body = (b"<html><head><style>.x{color:red}</style>"
+                    b"<script>var a=1</script></head><body>"
+                    b"<h1>CRCMZ</h1><p>Quick. Clean. Gone.</p>"
+                    b"<p>We built CRCMZ because good squads deserve better "
+                    b"tools &amp; a real home base.</p></body></html>")
+            ctype = "text/html"
+        elif "/boom" in self.path:
+            self.send_response(500); self.end_headers(); self.wfile.write(b"nope"); return
+        else:
+            name = self.path.rsplit("/", 1)[-1].split("?")[0]
+            payload = {
+                "stats": {"total_songs": 309, "total_contributors": 7,
+                          "top_artist": "Arijit Singh"},
+                "leaderboard": {"entries": [{"username": "themoosecompany", "song_count": 215},
+                                            {"username": "asamad89", "song_count": 41}]},
+                "artists": {"entries": [{"artist": "Arijit Singh", "count": 12}]},
+                "genres": {"entries": [{"genre": "bollywood", "count": 88}]},
+                "personalities": {"cards": [{"username": "themoosecompany",
+                                             "personality": "The Populist",
+                                             "description": "finger on the pulse"}]},
+                "streaks": {"entries": [{"username": "themoosecompany", "current_streak": 2}]},
+                "hipster": {"username": "nooramin40", "score": 91},
+            }.get(name, {})
+            body = json.dumps(payload).encode(); ctype = "application/json"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def log_message(self, *a):
         pass
 
@@ -77,6 +111,8 @@ BASE = f"http://127.0.0.1:{srv.server_address[1]}/v1"
 os.environ["OLLAMA_BASE_URL"] = BASE
 os.environ["OLLAMA_API_KEY"] = "omlx-test"
 os.environ["ASSISTANT_MODEL"] = "Qwen3.6-35B-A3B-MLX-8bit"
+os.environ["SLAP_API_BASE"] = BASE.replace("/v1", "") + "/dash"
+os.environ["CRCMZ_SITE_URL"] = BASE.replace("/v1", "") + "/site"
 
 import assistant  # noqa: E402
 import whatsapp_analytics as wa  # noqa: E402
@@ -101,7 +137,7 @@ def reset(*script):
 # ── registry ──────────────────────────────────────────────────────────────────
 def t_registry_is_exposed_as_openai_specs():
     specs = assistant.tool_specs()
-    assert len(specs) == len(assistant.tool_names()) == 11, len(specs)
+    assert len(specs) == len(assistant.tool_names()) == 17, len(specs)
     for s in specs:
         assert s["type"] == "function", s
         fn = s["function"]
@@ -160,6 +196,83 @@ def t_search_tool_filters_by_sender():
     assert d["count"] == 1 and "R3" in d["messages"][0]["text"], d
 
 
+# ── general (non-WhatsApp) sources ────────────────────────────────────────────
+def t_overview_spans_every_domain():
+    assistant._cache.clear()
+    out, ok = assistant.call_tool("platform_overview", {})
+    assert ok is True, out
+    d = json.loads(out)
+    for key in ("what_this_is", "members", "squad_facts_count", "whatsapp",
+                "psn_clips", "music", "giveaway"):
+        assert key in d, (key, list(d))
+    assert d["music"]["songs"] == 309, d["music"]
+    assert "gaming clan" in d["what_this_is"], d["what_this_is"]
+
+
+def t_slap_music_stats():
+    assistant._cache.clear()
+    out, ok = assistant.call_tool("slap_music_stats", {})
+    assert ok is True, out
+    d = json.loads(out)
+    assert d["totals"]["total_songs"] == 309, d
+    assert d["top_contributors"][0] == {"who": "themoosecompany", "songs": 215}, d
+
+
+def t_slap_personalities():
+    assistant._cache.clear()
+    out, ok = assistant.call_tool("slap_personalities", {})
+    assert ok is True, out
+    d = json.loads(out)
+    assert d["personalities"][0]["personality"] == "The Populist", d
+    assert d["most_obscure_taste"]["username"] == "nooramin40", d
+
+
+def t_slap_results_are_cached():
+    assistant._cache.clear()
+    assistant.call_tool("slap_music_stats", {})
+    before = len([x for x in SEEN if x.get("get")])
+    assistant.call_tool("slap_music_stats", {})
+    after = len([x for x in SEEN if x.get("get")])
+    assert before == after, "second call should have come from the cache"
+
+
+def t_a_dead_slap_endpoint_does_not_sink_the_tool():
+    assistant._cache.clear()
+    data = assistant._slap("boom")
+    assert data == {"boom": {}}, data
+
+
+def t_website_is_stripped_to_text():
+    assistant._cache.clear()
+    out, ok = assistant.call_tool("crcmz_website", {})
+    assert ok is True, out
+    d = json.loads(out)
+    assert "Quick. Clean. Gone." in d["text"], d
+    assert "good squads deserve better tools & a real home base" in d["text"], d
+    assert "<" not in d["text"] and "var a=1" not in d["text"], d
+
+
+def t_website_text_is_capped():
+    saved = assistant.MAX_SITE_CHARS
+    assistant.MAX_SITE_CHARS = 20
+    assistant._cache.clear()
+    try:
+        assert len(assistant._site_text()) == 20
+    finally:
+        assistant.MAX_SITE_CHARS = saved
+        assistant._cache.clear()
+
+
+def t_the_prompt_does_not_privilege_whatsapp():
+    reset(final("hi"))
+    assistant.ask("tell me about this squad")
+    p = SEEN[0]["messages"][0]["content"]
+    assert "NONE of them is the default answer" in p, p[:300]
+    assert "platform_overview first" in p, p[:600]
+    for source in ("Slapshare", "squad_facts", "psn_squad_status", "crcmz.me"):
+        assert source in p, source
+
+
 # ── the loop ──────────────────────────────────────────────────────────────────
 def t_loop_calls_a_tool_then_answers():
     reset(tool_call("whatsapp_stats", {"range": "all_time"}),
@@ -184,7 +297,7 @@ def t_tools_and_system_prompt_are_sent():
     assistant.ask("hey")
     body = SEEN[0]
     assert body["tool_choice"] == "auto" and body["stream"] is False, body
-    assert len(body["tools"]) == 11, len(body["tools"])
+    assert len(body['tools']) == 17, len(body['tools'])
     sys_msg = body["messages"][0]
     assert sys_msg["role"] == "system" and "Today is" in sys_msg["content"], sys_msg
 
@@ -307,7 +420,7 @@ def http_tests():
         d = r.json()
         assert d["available"] is True, d
         assert d["model"] == "Qwen3.6-35B-A3B-MLX-8bit", d
-        assert len(d["tools"]) == 11, d
+        assert len(d['tools']) == 17, d
         assert {"name", "description"} <= set(d["tools"][0]), d["tools"][0]
 
     def t_ask_returns_answer_and_trail():

@@ -68,6 +68,7 @@ _RL_LIMITS = {
     "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
     "watch_extract": (5, 60.0),  # yt-dlp URL extraction (subprocess, keep tight)
     "assistant": (10, 60.0),    # platform assistant (each ask = several local LLM calls)
+    "facts_add": (12, 60.0),    # squad facts (shared prompt context, keep it civil)
 }
 
 
@@ -1773,6 +1774,82 @@ async def assistant_ask(req: AssistantRequest, request: Request):
     return JSONResponse(result)
 
 
+class FactRequest(BaseModel):
+    text: str = ""
+    subject: str = ""
+
+
+class FactDeleteRequest(BaseModel):
+    id: str
+
+
+def _session_display(session: dict) -> str:
+    """Short name to credit a fact to."""
+    rec = None
+    try:
+        rec = portal_mod.find_by_zitadel_id(session.get("sub", ""))
+    except Exception:  # noqa: BLE001
+        pass
+    if rec and rec.get("online_id"):
+        return rec["online_id"]
+    email = session.get("email", "") or ""
+    return (session.get("preferred_username")
+            or session.get("name")
+            or (email.split("@")[0] if "@" in email else email)
+            or "someone")
+
+
+@app.get("/api/assistant/facts")
+def assistant_facts(request: Request):
+    """Every fact the squad has added — shared, not per-user."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    rows = _facts.list_facts()
+    me = session.get("sub", "")
+    return {
+        "facts": [
+            {"id": r["id"], "subject": r["subject"], "text": r["text"],
+             "author": r["author_name"] or "someone", "created_at": r["created_at"],
+             "mine": r["author_sub"] == me}
+            for r in rows
+        ],
+        "total": len(rows),
+        "mine": sum(1 for r in rows if r["author_sub"] == me),
+        "max_per_user": _facts.MAX_PER_USER,
+        "max_chars": _facts.MAX_TEXT,
+    }
+
+
+@app.post("/api/assistant/facts")
+def assistant_add_fact(req: FactRequest, request: Request):
+    """Add a fact. It goes into every future answer, for everyone."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    _rate_limit("facts_add", session.get("sub", "") or request.client.host)
+    try:
+        row = _facts.add(req.text, req.subject, session.get("sub", ""),
+                         _session_display(session))
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    logger.info("facts: %s added %r about %r", row["author_name"],
+                row["text"][:60], row["subject"])
+    return {"status": "added", "id": row["id"], "total": _facts.count()}
+
+
+@app.post("/api/assistant/facts/delete")
+def assistant_delete_fact(req: FactDeleteRequest, request: Request):
+    """Delete one of your own facts."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not _facts.delete(req.id, session.get("sub", "")):
+        return JSONResponse({"error": "not your fact, or already gone"},
+                            status_code=404)
+    return {"status": "deleted", "total": _facts.count()}
+
+
 def _portal_members() -> list[dict]:
     users = portal_mod.list_users()
     # Deduplicate by account_id — same PSN account linked under two different files
@@ -3061,7 +3138,9 @@ _clips.init()
 import whatsapp_analytics as _wa
 import giveaway as _giveaway
 import assistant
+import facts as _facts
 _wa.init()
+_facts.init()
 
 _video_seen: set[str] = set()
 _video_initialized: bool = False
@@ -4243,6 +4322,27 @@ _DASHBOARD_TMPL = r"""<!doctype html>
      ask box "into view" has to stop short of it — otherwise the input lands
      behind the board and cannot be tapped. */
   #p-ai .quick { scroll-margin-bottom:calc(var(--board-h, 220px) + 14px); }
+  /* Squad facts */
+  .fact-form { display:flex; flex-direction:column; gap:8px; }
+  .fact-form input { padding:12px 14px; border-radius:12px; font-size:14px;
+    border:1px solid rgba(34,230,255,.28); background:rgba(6,4,18,.8); color:var(--txt);
+    -webkit-appearance:none; font-family:"Rajdhani",sans-serif; }
+  .fact-form input:focus { outline:none; border-color:var(--cyan);
+    box-shadow:0 0 0 3px rgba(34,230,255,.2); }
+  .fact-list { display:flex; flex-direction:column; gap:7px; margin-top:12px; }
+  .fact { display:flex; align-items:flex-start; gap:9px; padding:10px 12px;
+    border:1px solid rgba(255,255,255,.1); border-radius:12px;
+    background:rgba(18,10,38,.5); font-size:13px; line-height:1.45;
+    font-family:"Rajdhani",sans-serif; font-weight:600; }
+  .fact-body { flex:1; min-width:0; word-break:break-word; }
+  .fact-who { color:var(--neon); font-weight:800; }
+  .fact-by { display:block; font-size:9.5px; letter-spacing:1px; color:var(--dim);
+    text-transform:uppercase; margin-top:3px; }
+  .fact-del { flex:none; width:26px; height:26px; border-radius:8px; cursor:pointer;
+    border:1px solid rgba(255,80,80,.35); background:rgba(255,60,60,.08);
+    color:#ff8a8a; font-size:13px; line-height:1; }
+  .fact-del:active { background:rgba(255,60,60,.2); }
+  .fact-empty { color:var(--dim); font-size:12px; font-style:italic; }
   .ai-log .ai-msg, .ai-log .ai-meta { scroll-margin-bottom:calc(var(--board-h, 220px) + 60px); }
 
   /* ── Chat Board (sticky bottom) ── */
@@ -5352,20 +5452,38 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   <div class="panel" id="p-ai">
     <div class="pip-title" style="margin:8px 0 4px">Ask the Squad AI</div>
     <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.55">
-      Runs on the Mac at home and answers from this app's own data — WhatsApp
-      history, clips, PSN presence. It only reads. <span id="aiModel" style="color:var(--cyan)"></span></p>
+      Runs on the Mac at home and answers from everything the squad has here —
+      PSN presence and clips, the group chat, the Slapshare music library,
+      giveaways, and the facts you add below. It only reads.
+      <span id="aiModel" style="color:var(--cyan)"></span></p>
     <div class="ai-chips">
+      <button class="ai-chip" onclick="aiChip('tell me about this squad')">tell me about the squad</button>
+      <button class="ai-chip" onclick="aiChip('who is online right now?')">who is online</button>
+      <button class="ai-chip" onclick="aiChip('who has the best music taste?')">best music taste</button>
       <button class="ai-chip" onclick="aiChip('who sends the most messages?')">who yaps the most?</button>
       <button class="ai-chip" onclick="aiChip('what time of day is the group most active?')">busiest hours</button>
-      <button class="ai-chip" onclick="aiChip('who is online right now?')">who is online</button>
-      <button class="ai-chip" onclick="aiChip('how much media has been shared in the group?')">media count</button>
-      <button class="ai-chip" onclick="aiChip('what are the group awards?')">awards</button>
+      <button class="ai-chip" onclick="aiChip('what is CRCMZ?')">what is CRCMZ?</button>
     </div>
     <div class="ai-log" id="aiLog"></div>
     <div class="quick">
       <input id="aiQ" type="text" placeholder="Ask about the squad…" maxlength="1000"
         autocomplete="off" onkeydown="if(event.key==='Enter')askSend()">
       <button class="qsend" id="aiSend" onclick="askSend()" aria-label="Ask">➤</button>
+    </div>
+    <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:14px">
+      <p class="pip-title" style="margin:0 0 4px">Squad Facts <span id="factCount" style="color:var(--dim)"></span></p>
+      <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.55">
+        What you add here becomes part of what the AI knows — for everyone, in
+        every future answer. Short lines work best.</p>
+      <div class="fact-form">
+        <input id="factSubject" type="text" placeholder="About who? (optional)"
+          maxlength="60" autocomplete="off">
+        <input id="factText" type="text" placeholder="e.g. Zubi runs on iced caps"
+          maxlength="280" autocomplete="off" onkeydown="if(event.key==='Enter')factAdd()">
+        <button class="smodal-btn" id="factAddBtn" style="margin-top:0" onclick="factAdd()">＋ Add fact</button>
+      </div>
+      <div id="factMsg" class="smsg" style="display:none;margin-top:8px"></div>
+      <div class="fact-list" id="factList"></div>
     </div>
   </div>
   <div class="panel" id="p-giveaway">
@@ -5911,6 +6029,7 @@ async function loadAsk(){
     setTimeout(syncBoardHeight, 300);
   }
   setTimeout(()=>{ const i=$('aiQ'); if(i && window.innerWidth>720) i.focus(); aiScrollToInput(); }, 320);
+  loadFacts();
   if(_aiLoaded) return;
   _aiLoaded = true;
   try {
@@ -5926,6 +6045,67 @@ async function loadAsk(){
 }
 function aiFmt(s){
   return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+}
+
+// ── Squad facts: shared knowledge that goes into every answer ────────────────
+async function loadFacts(){
+  try {
+    const d = await (await fetch('/api/assistant/facts')).json();
+    if(d.error) return;
+    const c = $('factCount');
+    if(c) c.textContent = '· ' + d.total + ' total, ' + d.mine + '/' + d.max_per_user + ' yours';
+    const list = $('factList');
+    if(!list) return;
+    list.innerHTML = d.facts.length ? d.facts.map(f =>
+      '<div class="fact"><div class="fact-body">' +
+        (f.subject ? '<span class="fact-who">' + esc(f.subject) + '</span> — ' : '') +
+        esc(f.text) +
+        '<span class="fact-by">added by ' + esc(f.author) + '</span>' +
+      '</div>' +
+      (f.mine ? '<button class="fact-del" title="Delete" onclick="factDel(\'' +
+                esc(f.id) + '\')">✕</button>' : '') +
+      '</div>').join('')
+      : '<div class="fact-empty">No facts yet. Add the first one — the AI will use it.</div>';
+  } catch(e){ /* the chat still works without the facts list */ }
+}
+function factMsg(cls, text){
+  const m = $('factMsg');
+  if(!m) return;
+  m.className = 'smsg ' + cls; m.textContent = text; m.style.display = 'block';
+}
+async function factAdd(){
+  const t = $('factText'), s = $('factSubject'), btn = $('factAddBtn');
+  const text = (t.value||'').trim();
+  if(!text){ factMsg('err', 'Type the fact first.'); return; }
+  if(btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/assistant/facts', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text: text, subject: (s.value||'').trim()})});
+    const raw = await r.text();
+    let d = {}; try { d = JSON.parse(raw); } catch(e){}
+    if(r.ok){
+      t.value = ''; s.value = '';
+      factMsg('ok', 'Added — the AI knows it from now on.');
+      await loadFacts();
+    } else {
+      factMsg('err', d.error || (r.status===429 ? 'Slow down a sec ⏳'
+                                                : 'Could not add that ('+r.status+').'));
+    }
+  } catch(e){ factMsg('err', 'Network error.'); }
+  if(btn) btn.disabled = false;
+}
+async function factDel(id){
+  if(!confirm('Delete this fact? The AI will stop using it.')) return;
+  try {
+    const r = await fetch('/api/assistant/facts/delete', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:id})});
+    if(r.ok){ factMsg('ok', 'Deleted.'); await loadFacts(); }
+    else {
+      const d = await r.json().catch(()=>({}));
+      factMsg('err', d.error || 'Could not delete that.');
+    }
+  } catch(e){ factMsg('err', 'Network error.'); }
 }
 function aiSay(cls, html){
   const el = document.createElement('div');
