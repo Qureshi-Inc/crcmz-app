@@ -67,6 +67,7 @@ _RL_LIMITS = {
     "custom_add": (6, 60.0),    # AI-flavored custom button creation (also Bedrock cost)
     "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
     "watch_extract": (5, 60.0),  # yt-dlp URL extraction (subprocess, keep tight)
+    "assistant": (10, 60.0),    # platform assistant (each ask = several local LLM calls)
 }
 
 
@@ -1726,6 +1727,52 @@ async def wa_ingest(request: Request):
     return JSONResponse({"inserted": inserted, "received": len(msgs)})
 
 
+# ── Platform assistant (local model + read-only tools) ───────────────────────
+
+class AssistantRequest(BaseModel):
+    question: str
+    history: list[dict] = []
+
+
+@app.get("/api/assistant/tools")
+def assistant_tools(request: Request):
+    """What the assistant can look at. Handy for the UI and for debugging."""
+    if not _get_session(request):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    return {
+        "available": assistant.available(),
+        "model": os.environ.get("ASSISTANT_MODEL", "") or assistant.DEFAULT_MODEL,
+        "tools": [
+            {"name": t["function"]["name"], "description": t["function"]["description"]}
+            for t in assistant.tool_specs()
+        ],
+    }
+
+
+@app.post("/api/assistant/ask")
+async def assistant_ask(req: AssistantRequest, request: Request):
+    """Ask the local model a question about this platform's own data."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    _rate_limit("assistant", session.get("sub", "") or request.client.host)
+    if not assistant.available():
+        return JSONResponse(
+            {"error": "assistant not configured — set OLLAMA_BASE_URL"},
+            status_code=503)
+    try:
+        # Tool calls hit SQLite and the PSN API, so keep it off the event loop.
+        result = await asyncio.to_thread(assistant.ask, req.question, req.history)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("assistant ask failed: %s", exc)
+        return JSONResponse({"error": f"assistant failed: {exc}"}, status_code=502)
+    logger.info("assistant: %r -> tools=%s in %dms",
+                req.question[:60], result.get("tools_used"), result.get("elapsed_ms", 0))
+    return JSONResponse(result)
+
+
 def _portal_members() -> list[dict]:
     users = portal_mod.list_users()
     # Deduplicate by account_id — same PSN account linked under two different files
@@ -3013,6 +3060,7 @@ _clips.init()
 
 import whatsapp_analytics as _wa
 import giveaway as _giveaway
+import assistant
 _wa.init()
 
 _video_seen: set[str] = set()

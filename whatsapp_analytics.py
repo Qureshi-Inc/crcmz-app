@@ -507,6 +507,12 @@ def ingest_baileys_reaction(reaction: dict) -> bool:
 
 def _ts_bounds(range_str: str, start: str = "", end: str = "") -> tuple[int | None, int | None]:
     now = datetime.now(_TZ)
+    if range_str == "today":
+        s = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return int(s.timestamp()), None
+    if range_str in ("last_7_days", "last_30_days", "last_90_days"):
+        days = int(range_str.split("_")[1])
+        return int(now.timestamp()) - days * 86400, None
     if range_str == "this_month":
         s = datetime(now.year, now.month, 1, tzinfo=_TZ)
         return int(s.timestamp()), None
@@ -544,6 +550,42 @@ def _q(sql: str, params=()) -> list[dict]:
         return [dict(r) for r in db.execute(sql, params).fetchall()]
 
 
+# ── Search ─────────────────────────────────────────────────────────────────────
+
+def search(query: str = "", sender: str = "", range_str: str = "all_time",
+           start: str = "", end: str = "", limit: int = 20) -> dict:
+    """Find actual messages. Substring match, newest first.
+
+    Written for the assistant's whatsapp_search tool: it needs to quote real
+    lines, not aggregates, so this returns readable dates and trimmed text
+    rather than raw rows.
+    """
+    limit = max(1, min(int(limit or 20), 50))
+    s, e = _ts_bounds(range_str, start, end)
+    w, p = _where_ts(s, e)
+    if query.strip():
+        w += " AND m.text LIKE ?"
+        p = p + [f"%{query.strip()}%"]
+    if sender.strip():
+        w += " AND lower(m.sender_name) LIKE ?"
+        p = p + [f"%{sender.strip().lower()}%"]
+    rows = _q(
+        "SELECT timestamp, sender_name, text FROM whatsapp_messages m "
+        f"WHERE m.text IS NOT NULL{w} ORDER BY m.timestamp DESC LIMIT ?",
+        p + [limit],
+    )
+    return {
+        "query": query, "sender": sender, "range": range_str,
+        "count": len(rows),
+        "messages": [
+            {"date": datetime.fromtimestamp(r["timestamp"], _TZ).strftime("%Y-%m-%d %H:%M"),
+             "sender": r["sender_name"],
+             "text": (r["text"] or "")[:280]}
+            for r in rows
+        ],
+    }
+
+
 # ── Stats ──────────────────────────────────────────────────────────────────────
 
 def stats(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
@@ -553,12 +595,17 @@ def stats(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
     members = _q(f"SELECT COUNT(DISTINCT sender_name) n FROM whatsapp_messages m WHERE 1=1{w}", p)[0]["n"]
     videos  = _q(f"SELECT COUNT(*) n FROM whatsapp_messages m WHERE has_video=1{w}", p)[0]["n"]
     photos  = _q(f"SELECT COUNT(*) n FROM whatsapp_messages m WHERE has_photo=1{w}", p)[0]["n"]
+    # An English export only says "<Media omitted>", so photo/video counts are 0
+    # for imported history and only fill in for live-ingested messages. This is
+    # the honest total: media was sent, the type is unknown.
+    media   = _q(f"SELECT COUNT(*) n FROM whatsapp_messages m WHERE is_media_omitted=1{w}", p)[0]["n"]
     span    = _q(f"SELECT MIN(timestamp) mn, MAX(timestamp) mx FROM whatsapp_messages m WHERE 1=1{w}", p)[0]
     days = max(1, int((span["mx"] - span["mn"]) / 86400)) if span["mn"] and span["mx"] else 0
     per_member = _q(f"SELECT sender_name, COUNT(*) cnt FROM whatsapp_messages m WHERE 1=1{w} GROUP BY sender_name ORDER BY cnt DESC", p)
     return {
         "total_messages": total, "total_members": members,
         "total_videos": videos, "total_photos": photos,
+        "total_media": media,
         "conversation_days": days,
         "first_ts": span["mn"], "last_ts": span["mx"],
         "member_message_counts": per_member,
