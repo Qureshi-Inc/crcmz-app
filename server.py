@@ -208,6 +208,27 @@ def v2_health():
     return {"status": "ok", "version": "v2"}
 
 
+def _send_as_user(request: Request, message: str) -> bool:
+    """Send `message` to the squad group as the logged-in user's PSN account.
+
+    Always falls back to the server (crcmz-mod) account if the caller has no
+    linked PSN token or the user-token send fails.
+    """
+    success = False
+    try:
+        session = _get_session(request)
+        if session:
+            user_token = portal_mod.get_fresh_access_token(session.get("sub", ""))
+            if user_token:
+                user_messenger = PSNMessenger(_DirectAuth(user_token), SQUAD_GROUP_ID)
+                success = user_messenger.send_message(message)
+    except Exception as ue:  # noqa: BLE001
+        logger.warning("v2: user-token send failed (%s), falling back to server account", ue)
+    if not success and _squad_messenger is not None:
+        success = _squad_messenger.send_message(message)
+    return bool(success)
+
+
 @app.post("/v2/send")
 def v2_send_message(req: MessageRequest, request: Request):
     _rate_limit("psn_send", request.client.host)
@@ -216,21 +237,7 @@ def v2_send_message(req: MessageRequest, request: Request):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     try:
-        # Try to send as the logged-in user's PSN account; always fall back to
-        # the server (crcmz-mod) account if anything goes wrong.
-        success = False
-        try:
-            session = _get_session(request)
-            if session:
-                user_token = portal_mod.get_fresh_access_token(session.get("sub", ""))
-                if user_token:
-                    user_messenger = PSNMessenger(_DirectAuth(user_token), SQUAD_GROUP_ID)
-                    success = user_messenger.send_message(req.message.strip())
-        except Exception as ue:
-            logger.warning("v2: user-token send failed (%s), falling back to server account", ue)
-        if not success:
-            success = _squad_messenger.send_message(req.message.strip())
-        if success:
+        if _send_as_user(request, req.message.strip()):
             return {"status": "sent", "message": req.message.strip(), "version": "v2"}
         raise HTTPException(status_code=500, detail="Failed to send message")
     except HTTPException:
@@ -3870,6 +3877,95 @@ def api_delete_button(req: CustomButtonRequest):
     return {"status": "deleted", "removed": len(customs) - len(kept)}
 
 
+# ── Personal board (swipe left on the dashboard board) ───────────────────────
+# Same idea as the shared soundboard, but every button belongs to one signed-in
+# person: nobody else sees it and nobody else can delete it. Pressing one sends
+# to the squad group as *them* (see _send_as_user), which is the whole point.
+
+
+@app.get("/api/soundboard/personal")
+def api_personal_board(request: Request):
+    """This user's private buttons. Anonymous callers get an empty board."""
+    key = _personal_key(request)
+    if not key:
+        return {"buttons": [], "signed_in": False}
+    return {"buttons": _load_personal_buttons(key), "signed_in": True}
+
+
+@app.post("/api/soundboard/personal")
+def api_add_personal_button(req: CustomButtonRequest, request: Request):
+    """Add an AI-flavored button to the caller's private board."""
+    key = _personal_key(request)
+    if not key:
+        raise HTTPException(status_code=401, detail="Sign in to use your own board")
+    _rate_limit("custom_add", key)
+    if req.send:
+        _rate_limit("psn_send", key)
+    raw = (req.text or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+    if len(raw) > 200:
+        raise HTTPException(status_code=400, detail="Too long (200 char max)")
+
+    mine = _load_personal_buttons(key)
+    if len(mine) >= _PERSONAL_MAX:
+        raise HTTPException(status_code=400,
+                            detail=f"Your board is full ({_PERSONAL_MAX} max)")
+
+    flavored = roast_bot.flavor_message(raw)
+    label = flavored if len(flavored) <= 22 else flavored[:21].rstrip() + "…"
+    color = _CUSTOM_COLORS[len(mine) % len(_CUSTOM_COLORS)]
+    button = {"label": label, "msg": flavored, "cls": color,
+              "custom": True, "mine": True}
+    mine.append(button)
+    _save_personal_buttons(key, mine)
+
+    # Fire it now so the person sees it land in the group. Personal buttons go
+    # out as crcmz-mod, exactly like the shared ones — the board is private,
+    # the message is not.
+    sent = False
+    if req.send and _squad_messenger is not None:
+        try:
+            sent = _squad_messenger.send_message(flavored)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("personal button initial send failed: %s", e)
+
+    return {"status": "added", "button": button, "flavored": flavored, "sent": sent}
+
+
+@app.post("/api/soundboard/personal/delete")
+def api_delete_personal_button(req: CustomButtonRequest, request: Request):
+    """Remove one of the caller's own buttons by its exact message text."""
+    key = _personal_key(request)
+    if not key:
+        raise HTTPException(status_code=401, detail="Sign in to use your own board")
+    mine = _load_personal_buttons(key)
+    kept = [b for b in mine if b.get("msg") != req.text]
+    _save_personal_buttons(key, kept)
+    return {"status": "deleted", "removed": len(mine) - len(kept)}
+
+
+class BoardOrderRequest(BaseModel):
+    labels: list[str]
+
+
+@app.post("/api/soundboard/personal/order")
+def api_order_personal_board(req: BoardOrderRequest, request: Request):
+    """Persist the caller's drag-to-reorder of their own board, server-side.
+
+    Labels not in `labels` keep their relative order at the end, so a button
+    added from another device is never dropped.
+    """
+    key = _personal_key(request)
+    if not key:
+        raise HTTPException(status_code=401, detail="Sign in to use your own board")
+    mine = _load_personal_buttons(key)
+    rank = {label: i for i, label in enumerate(req.labels)}
+    mine.sort(key=lambda b: rank.get(b.get("label", ""), len(rank)))
+    _save_personal_buttons(key, mine)
+    return {"status": "saved", "buttons": mine}
+
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -3880,7 +3976,11 @@ def dashboard(request: Request):
         rec = portal_mod.find_by_zitadel_id(session.get("sub", ""))
         if rec:
             psn_id = rec.get("online_id", "")
-    return HTMLResponse(_dashboard_html(user_email, psn_id))
+    # The personal board is inlined so it is there on first paint, same as the
+    # shared one — no empty-grid flash while /api/soundboard/personal loads.
+    personal = _load_personal_buttons(session["sub"]) if session else []
+    return HTMLResponse(_dashboard_html(user_email, psn_id, personal,
+                                        signed_in=bool(session)))
 
 
 
@@ -3928,7 +4028,46 @@ def _soundboard_json() -> str:
     return json.dumps(_soundboard())
 
 
-def _dashboard_html(user_email: str = "", psn_id: str = "") -> str:
+# ── Personal boards ──────────────────────────────────────────────────────────
+# One private button list per signed-in person, keyed by their Zitadel `sub`
+# (the permanent identity — email can change). All of them live in one file:
+# {"boards": {"<sub>": [button, ...]}}.
+_PERSONAL_FILE = _Path("/data/soundboard_personal.json")
+_PERSONAL_MAX = 24
+
+
+def _personal_key(request: Request) -> str:
+    """Stable per-user key, or "" when nobody is signed in."""
+    session = _get_session(request)
+    return (session or {}).get("sub", "") or ""
+
+
+def _load_personal_all() -> dict[str, list[dict]]:
+    try:
+        return json.loads(_PERSONAL_FILE.read_text()).get("boards", {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _load_personal_buttons(key: str) -> list[dict]:
+    board = _load_personal_all().get(key, [])
+    # `mine` is what tells the dashboard this button is deletable by its owner.
+    return [{**b, "custom": True, "mine": True} for b in board]
+
+
+def _save_personal_buttons(key: str, buttons: list[dict]) -> None:
+    boards = _load_personal_all()
+    if buttons:
+        boards[key] = buttons
+    else:
+        boards.pop(key, None)
+    _PERSONAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _PERSONAL_FILE.write_text(json.dumps({"boards": boards}, indent=2))
+
+
+def _dashboard_html(user_email: str = "", psn_id: str = "",
+                    personal: list[dict] | None = None,
+                    signed_in: bool = False) -> str:
     if user_email:
         disp = user_email.split("@")[0] if "@" in user_email else user_email
         user_html = (
@@ -3947,6 +4086,8 @@ def _dashboard_html(user_email: str = "", psn_id: str = "") -> str:
     import json as _json
     return (_DASHBOARD_TMPL
             .replace("__SOUNDBOARD__", _soundboard_json())
+            .replace("__PERSONAL__", _json.dumps(personal or []))
+            .replace("__SIGNED_IN__", "true" if signed_in else "false")
             .replace("__USER__", user_html)
             .replace("__PSN_ID__", _json.dumps(psn_id)))
 
@@ -4080,9 +4221,29 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     8%  { opacity:.48; max-height:22px; margin:0 0 6px }
     80% { opacity:.48; max-height:22px; margin:0 0 6px }
     100%{ opacity:0;   max-height:0;    margin:0 } }
+  /* pager dots: which board page you're on (shared squad board / your own) */
+  .board-pager { display:flex; align-items:center; justify-content:center; gap:7px;
+    margin:0 0 7px; }
+  .board-dot { width:7px; height:7px; border-radius:50%; padding:0; cursor:pointer;
+    border:1px solid rgba(34,230,255,.45); background:none;
+    transition:background .18s, transform .18s, box-shadow .18s; }
+  .board-dot.on { background:var(--cyan); transform:scale(1.25);
+    box-shadow:0 0 9px rgba(34,230,255,.7); }
+  .board-toggle-btn .mine-tag { font-size:9px; letter-spacing:1px; padding:1px 5px;
+    border-radius:5px; color:var(--neon); border:1px solid rgba(255,47,214,.35);
+    background:rgba(255,47,214,.1); }
   .board { display:grid; grid-template-columns:repeat(3,1fr); gap:8px;
     max-height:52vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
     transition:max-height .28s ease, opacity .2s ease, margin .28s ease; }
+  /* page-change slide: direction matches the swipe */
+  @keyframes boardInL { from{opacity:0; transform:translateX(26px)} to{opacity:1; transform:none} }
+  @keyframes boardInR { from{opacity:0; transform:translateX(-26px)} to{opacity:1; transform:none} }
+  .board.slide-l { animation:boardInL .22s ease both; }
+  .board.slide-r { animation:boardInR .22s ease both; }
+  /* empty / signed-out state on the personal page */
+  .board-empty { grid-column:1/-1; text-align:center; color:var(--dim);
+    font-size:12px; line-height:1.6; padding:14px 8px; }
+  .board-empty a { color:var(--cyan); }
   /* collapsed: hide buttons grid */
   .board-wrap.collapsed .board { max-height:0; opacity:0; overflow:hidden;
     margin-bottom:-8px; pointer-events:none; }
@@ -5231,12 +5392,16 @@ _DASHBOARD_TMPL = r"""<!doctype html>
 <div class="board-wrap" id="boardWrap">
   <div class="board-hdr">
     <button class="board-toggle-btn" onclick="toggleBoard()">
-      <span class="chev" id="chev">▾</span><span>Chat Board</span>
+      <span class="chev" id="chev">▾</span><span id="boardTitle">Chat Board</span>
     </button>
     <button class="board-fs-btn" id="boardFsBtn" onclick="toggleBoardFs()" title="Fullscreen">⛶</button>
   </div>
-  <div class="board-hint" id="boardHint">tap title to minimize · hold in fullscreen to organize</div>
+  <div class="board-hint" id="boardHint">swipe left for your own board · tap title to minimize · hold in fullscreen to organize</div>
   <div class="board" id="board"></div>
+  <div class="board-pager" id="boardPager">
+    <button class="board-dot on" onclick="setBoardPage(0)" aria-label="Squad board"></button>
+    <button class="board-dot" onclick="setBoardPage(1)" aria-label="My board"></button>
+  </div>
   <div class="quick">
     <input id="quick" type="text" placeholder="Send a quick message to the squad…"
       maxlength="200" autocomplete="off"
@@ -5261,6 +5426,8 @@ _DASHBOARD_TMPL = r"""<!doctype html>
 <div class="toast" id="toast"></div>
 <script>
 const SOUNDBOARD = __SOUNDBOARD__;
+const PERSONAL = __PERSONAL__;
+const SIGNED_IN = __SIGNED_IN__;
 const MY_PSN_ID = __PSN_ID__;
 let MY_AVATAR = null, MOD_AVATAR = null;
 const $ = id => document.getElementById(id);
@@ -5269,19 +5436,102 @@ const toast = m => { const t=$('toast'); t.textContent=m; t.classList.add('show'
   setTimeout(()=>t.classList.remove('show'),2000); };
 
 // ── Chat Board state ─────────────────────────────────────────────────────────
-let BUTTONS = SOUNDBOARD.slice();
+// Two pages: page 0 is the shared squad board, page 1 is this user's private
+// board (nobody else sees it). Swipe left/right or tap the pager dots.
+let BUTTONS = _restoreOrder(SOUNDBOARD.slice(), 'cb_order');
+let MY_BUTTONS = PERSONAL.slice();
+let _boardPage = 0;
 let _isFullscreen = false, _organizeMode = false;
 
+const onMyBoard = () => _boardPage === 1;
+// The live array for the visible page — drag-to-reorder splices it in place.
+const pageButtons = () => onMyBoard() ? MY_BUTTONS : BUTTONS;
+
+// Re-apply a saved drag order. Labels we've never seen keep their incoming
+// order and land at the end, so a new button is never dropped.
+function _restoreOrder(list, key){
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem(key) || '[]'); } catch(e){}
+  if(!Array.isArray(saved) || !saved.length) return list;
+  const rank = new Map(saved.map((l,i)=>[l,i]));
+  return list
+    .map((b,i)=>({b, r: rank.has(b.label) ? rank.get(b.label) : saved.length + i}))
+    .sort((x,y)=>x.r-y.r).map(x=>x.b);
+}
+
 function renderButtons(){
-  $('board').innerHTML = BUTTONS.map((b,i)=>
+  const list = pageButtons();
+  let html = list.map((b,i)=>
     '<button class="snd '+(b.cls||'c1')+(b.custom?' custom':'')+'" data-i="'+i+'" '+
     (_organizeMode ? 'style="touch-action:none"' : 'onclick="fire(this)"')+'>'+esc(b.label)+'</button>'
-  ).join('') +
-    (_organizeMode ? '' : '<button class="snd add" onclick="openCustom()">＋ Custom</button>');
+  ).join('');
+  if(onMyBoard() && !SIGNED_IN){
+    html = '<div class="board-empty">Your board is private to you.<br>'+
+           '<a href="/auth/login">Sign in</a> to build it.</div>';
+  } else if(!_organizeMode){
+    if(onMyBoard() && !list.length)
+      html += '<div class="board-empty">Nothing here yet — buttons you add on this '+
+              'page are yours alone. They still fire into the squad group.</div>';
+    html += '<button class="snd add" onclick="openCustom()">＋ Custom</button>';
+  }
+  $('board').innerHTML = html;
   if(_organizeMode) bindDrag();
   else bindLongPress();
   syncBoardHeight();
 }
+
+// ── Board pages: shared squad board  ⇄  your private board ───────────────────
+function _syncBoardChrome(){
+  $('boardTitle').innerHTML = onMyBoard()
+    ? 'My Board <span class="mine-tag">PRIVATE</span>' : 'Chat Board';
+  $('boardHint').textContent = onMyBoard()
+    ? 'swipe right for the squad board · hold a button to remove it'
+    : 'swipe left for your own board · tap title to minimize · hold in fullscreen to organize';
+  document.querySelectorAll('#boardPager .board-dot')
+    .forEach((d,i)=>d.classList.toggle('on', i===_boardPage));
+}
+function setBoardPage(p, dir){
+  p = p ? 1 : 0;
+  if(p === _boardPage) return;
+  dir = dir || (p > _boardPage ? 'left' : 'right');   // tapped a dot
+  if(_organizeMode) exitOrganize();
+  _boardPage = p;
+  _syncBoardChrome();
+  renderButtons();
+  const g = $('board');
+  g.classList.remove('slide-l','slide-r');
+  void g.offsetWidth;                       // restart the animation
+  g.classList.add(dir === 'right' ? 'slide-r' : 'slide-l');
+  if(onMyBoard()) refreshPersonal();
+}
+
+// Swipe: horizontal, far enough, and clearly not the vertical scroll of the
+// button grid. A recognized swipe also swallows the click it would land on.
+let _swipedAt = 0, _sw = null;
+(function bindBoardSwipe(){
+  const zone = $('boardWrap');
+  zone.addEventListener('touchstart', ev=>{
+    if(_organizeMode || ev.touches.length !== 1 ||
+       (ev.target.closest && ev.target.closest('input,.quick'))){ _sw = null; return; }
+    const t = ev.touches[0];
+    _sw = {x:t.clientX, y:t.clientY, dx:0, dy:0, at:Date.now()};
+  }, {passive:true});
+  zone.addEventListener('touchmove', ev=>{
+    if(!_sw || ev.touches.length !== 1) return;
+    const t = ev.touches[0];
+    _sw.dx = t.clientX - _sw.x; _sw.dy = t.clientY - _sw.y;
+  }, {passive:true});
+  zone.addEventListener('touchend', ()=>{
+    const s = _sw; _sw = null;
+    if(!s || Math.abs(s.dx) < 55) return;
+    if(Math.abs(s.dx) < Math.abs(s.dy) * 1.4) return;   // that was a scroll
+    if(Date.now() - s.at > 800) return;                 // too slow for a swipe
+    _swipedAt = Date.now();
+    clearTimeout(_lpTimer);
+    if(navigator.vibrate) navigator.vibrate(12);
+    if(s.dx < 0) setBoardPage(1, 'left'); else setBoardPage(0, 'right');
+  }, {passive:true});
+})();
 
 // ── Collapse / expand ────────────────────────────────────────────────────────
 function syncBoardHeight(){
@@ -5314,7 +5564,7 @@ function toggleBoardFs(){
 
 // ── Organize mode (fullscreen only, long-press any button) ───────────────────
 function enterOrganize(){
-  if(!_isFullscreen) return;
+  if(!_isFullscreen || !pageButtons().length) return;
   _organizeMode = true;
   $('boardWrap').classList.add('organizing');
   $('boardDoneBtn').style.display = 'block';
@@ -5328,8 +5578,18 @@ function exitOrganize(){
   _saveOrder();
   renderButtons();
 }
+// Shared board order is per-device (localStorage); your private board's order
+// is saved server-side so it follows you to your phone.
 function _saveOrder(){
-  try{ localStorage.setItem('cb_order', JSON.stringify(BUTTONS.map(b=>b.label))); }catch(e){}
+  const labels = pageButtons().map(b=>b.label);
+  if(onMyBoard()){
+    if(!SIGNED_IN) return;
+    fetch('/api/soundboard/personal/order',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({labels})})
+      .catch(()=>{});
+    return;
+  }
+  try{ localStorage.setItem('cb_order', JSON.stringify(labels)); }catch(e){}
 }
 
 // ── Drag-to-reorder ──────────────────────────────────────────────────────────
@@ -5365,8 +5625,9 @@ document.addEventListener('pointerup', ()=>{
   const from=_drag.idx, to=_drag.cur;
   _drag=null;
   if(to>=0 && to!==from){
-    const [item]=BUTTONS.splice(from,1);
-    BUTTONS.splice(to,0,item);
+    const list = pageButtons();
+    const [item]=list.splice(from,1);
+    list.splice(to,0,item);
     renderButtons();
   }
 });
@@ -5412,6 +5673,7 @@ function bindLongPress(){
   }
 }
 
+_syncBoardChrome();
 renderButtons();
 // ── Sent flyout: avatar card that floats up and fades away ───────────────────
 function showSentFly(avatarUrl, senderName, msgText, originEl){
@@ -5440,14 +5702,18 @@ function showSentFly(avatarUrl, senderName, msgText, originEl){
 
 async function fire(el){
   if(_lpFired){ _lpFired=false; return; }  // a long-press just deleted; don't send
-  const b = BUTTONS[el.dataset.i];
+  if(Date.now() - _swipedAt < 250) return; // that tap was the end of a swipe
+  const b = pageButtons()[el.dataset.i];
+  if(!b) return;
   el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'),500);
   try {
     let r;
     if(b.path){ r = await fetch(b.path,{method:'POST'}); }
+    // Private board or shared, the message goes out as crcmz-mod.
     else { r = await fetch('/v2/squad',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({message:b.msg})}); }
     if(r.ok) showSentFly(MOD_AVATAR, 'CRCMZ MOD', b.label||b.msg||'', el);
+    else if(r.status===429) toast('Slow down a sec ⏳');
     else toast('Failed ('+r.status+')');
   } catch(e){ toast('Network error'); }
 }
@@ -5470,33 +5736,49 @@ async function sendQuick(){
   btn.disabled = false;
 }
 async function openCustom(){
-  const text = prompt("What should the button say? The AI will add the flavor 🔥");
+  const mine = onMyBoard();
+  if(mine && !SIGNED_IN){ toast('Sign in to build your own board'); return; }
+  const text = prompt(mine
+    ? "Your private button — what should it say? The AI adds the flavor 🔥"
+    : "What should the button say? The AI will add the flavor 🔥");
   if(!text || !text.trim()) return;
   toast("✨ AI is cooking…");
   try {
-    const r = await fetch('/api/soundboard',{method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:text.trim()})});
+    const r = await fetch(mine ? '/api/soundboard/personal' : '/api/soundboard',
+      {method:'POST', headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({text:text.trim()})});
     if(!r.ok){ toast('Failed ('+r.status+')'); return; }
     const d = await r.json();
-    await refreshBoard();
+    if(mine) await refreshPersonal(); else await refreshBoard();
     toast('Added: '+d.flavored.slice(0,40));
   } catch(e){ toast('Network error'); }
 }
 async function delBtn(ev, i){
   if(ev && ev.preventDefault) ev.preventDefault();
-  const b = BUTTONS[i];
+  const b = pageButtons()[i];
   if(!b || !b.custom) return false;
-  if(!confirm('Remove this custom button?\n\n'+b.msg)) return false;
+  if(!confirm((b.mine?'Remove this button from your board?':'Remove this custom button?')+'\n\n'+b.msg))
+    return false;
   try {
-    await fetch('/api/soundboard/delete',{method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:b.msg})});
-    await refreshBoard(); toast('Removed');
+    await fetch(b.mine ? '/api/soundboard/personal/delete' : '/api/soundboard/delete',
+      {method:'POST', headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({text:b.msg})});
+    if(b.mine) await refreshPersonal(); else await refreshBoard();
+    toast('Removed');
   } catch(e){ toast('Network error'); }
   return false;
 }
 async function refreshBoard(){
   try { const d = await (await fetch('/api/soundboard')).json();
-    BUTTONS = d.buttons || BUTTONS; renderButtons();
+    if(d.buttons) BUTTONS = _restoreOrder(d.buttons, 'cb_order');
+    renderButtons();
+  } catch(e){}
+}
+async function refreshPersonal(){
+  if(!SIGNED_IN) return;
+  try { const d = await (await fetch('/api/soundboard/personal')).json();
+    MY_BUTTONS = d.buttons || MY_BUTTONS;
+    if(onMyBoard()) renderButtons();
   } catch(e){}
 }
 
