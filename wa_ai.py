@@ -100,8 +100,12 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
         # Tagged us? Then whatever follows is the question, "ai" or not.
         if mentioned & _self_ids and rest:
             return parse_trigger(rest) or rest[:400]
-        # We may not know our own number yet (it is learned from our first
-        # reply), so "@somebody ai ..." is still treated as ours.
+        # Don't know our own ID yet (WA_BOT_IDS not set): treat any @mention
+        # with following text as a trigger so the bot responds from day one.
+        # Once WA_BOT_IDS is set, only actual @mentions of us fire.
+        if not _self_ids and rest:
+            return rest[:400]
+        # We know our IDs but this mention isn't us — still catch "ai ..." in rest.
         return parse_trigger(rest)
 
     # Path 3: plain "ai ..." prefix.
