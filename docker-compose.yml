@@ -40,10 +40,13 @@ services:
       - LIVEKIT_URL=${LIVEKIT_URL:-wss://huddle.crcmz.me}
       - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-}
       - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-}
-      # Ollama on the local Mac (server reaches it directly over LAN)
+      # Ollama / omlx (LM Studio-style) on the local Mac — the server reaches it
+      # directly over LAN. Huddle's AI and the Chat Board button flavor text both
+      # use it; FLAVOR_MODEL points the buttons at one model (e.g. a gemma).
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
       - OLLAMA_API_KEY=${OLLAMA_API_KEY:-}
+      - FLAVOR_MODEL=${FLAVOR_MODEL:-}
       - WHISPER_MODEL=${WHISPER_MODEL:-whisper-large-v3-turbo}
       - WHISPER_BASE_URL=${WHISPER_BASE_URL:-}
       - WHISPER_API_KEY=${WHISPER_API_KEY:-}
