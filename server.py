@@ -5311,7 +5311,8 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <div style="border-top:1px solid var(--line);padding-top:14px">
         <p class="pip-title">Import WhatsApp History</p>
         <div class="card" style="padding:14px 16px">
-          <p style="font-size:12.5px;color:var(--dim);margin:0 0 12px">Upload a WhatsApp export (.txt or .zip) to import historical messages.</p>
+          <p style="font-size:12.5px;color:var(--dim);margin:0 0 12px">Upload a WhatsApp export (.txt or .zip) to fill in history. Export
+            <b>without media</b> — a with-media export is far over the 50&nbsp;MB limit, and the media is not used. Re-importing is safe: only new messages are added.</p>
           <input type="file" id="waImportFile" accept=".txt,.zip" style="display:none" onchange="waDoImport()">
           <button class="smodal-btn" style="margin-top:0" onclick="document.getElementById('waImportFile').click()">📂 Choose Export File</button>
           <div id="waImportMsg" class="smsg" style="display:none;margin-top:8px"></div>
@@ -7197,6 +7198,25 @@ async function loadWa(){
   }
 }
 
+// Upload ceilings, smallest first: this app caps at 50 MB, and Cloudflare
+// rejects anything over 100 MB at the edge — before the request reaches the
+// app at all, with an HTML error page. A "with media" export blows past both,
+// so say so instead of uploading a gigabyte to find out.
+const WA_MAX_UPLOAD_MB = 50;
+const WA_EXPORT_HINT = 'Re-export without media: WhatsApp → the chat → ⋮ → More → Export chat → Without media. The analytics only read the chat text.';
+function waSizeError(bytes){
+  const mb = bytes / 1048576;
+  return mb > WA_MAX_UPLOAD_MB
+    ? 'That export is ' + mb.toFixed(0) + ' MB and the limit is ' + WA_MAX_UPLOAD_MB + ' MB. ' + WA_EXPORT_HINT
+    : '';
+}
+function waImportError(status, detail){
+  if(detail) return detail;
+  if(status===413) return 'Too big for the upload path — Cloudflare rejects anything over 100 MB before it reaches the app. ' + WA_EXPORT_HINT;
+  if(status===401) return 'Session expired — reload the page and sign in again.';
+  if(status===403) return 'Your account is not allowed to import WhatsApp history.';
+  return 'Import failed (' + status + ').';
+}
 async function waDoImport(){
   const fi = $('waImportFile');
   if(!fi||!fi.files.length) return;
@@ -7204,12 +7224,21 @@ async function waDoImport(){
   const msg = $('waImportMsg');
   const btn = fi.previousElementSibling;
   if(msg){ msg.style.display='none'; }
+  const tooBig = waSizeError(file.size);
+  if(tooBig){
+    if(msg){ msg.className='smsg err'; msg.textContent=tooBig; msg.style.display='block'; }
+    fi.value='';
+    return;
+  }
   if(btn){ btn.disabled=true; btn.textContent='Uploading…'; }
   try {
     const fd = new FormData();
     fd.append('file', file);
     const r = await fetch('/api/whatsapp/import', {method:'POST', body:fd});
-    const d = await r.json();
+    // Never assume JSON: an edge 413 or a proxy error is an HTML page.
+    const raw = await r.text();
+    let d = {};
+    try { d = JSON.parse(raw); } catch(e){}
     if(r.ok){
       const s = d.status==='already_imported'
         ? `Already imported (${d.message_count} messages on file).`
@@ -7218,10 +7247,13 @@ async function waDoImport(){
       // Reload analytics
       setTimeout(()=>{ _waLoaded=false; loadWa(); }, 800);
     } else {
-      if(msg){ msg.className='smsg err'; msg.textContent=d.detail||'Import failed.'; msg.style.display='block'; }
+      const err = waImportError(r.status, d.detail);
+      if(msg){ msg.className='smsg err'; msg.textContent=err; msg.style.display='block'; }
     }
   } catch(e){
-    if(msg){ msg.className='smsg err'; msg.textContent='Network error.'; msg.style.display='block'; }
+    if(msg){ msg.className='smsg err';
+      msg.textContent='Upload failed before it reached the app — usually the file is too big. ' + WA_EXPORT_HINT;
+      msg.style.display='block'; }
   } finally {
     if(btn){ btn.disabled=false; btn.textContent='📂 Choose Export File'; }
     fi.value='';
