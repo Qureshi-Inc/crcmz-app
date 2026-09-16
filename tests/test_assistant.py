@@ -508,17 +508,29 @@ def http_tests():
         assert len(d['tools']) == 17, d
         assert {"name", "description"} <= set(d["tools"][0]), d["tools"][0]
 
-    def t_ask_returns_answer_and_trail():
+    def wait_for_reply(timeout=10.0):
+        import time as _t
+        end = _t.time() + timeout
+        while _t.time() < end:
+            d = client.get("/api/assistant/history").json()
+            if not d["pending"]:
+                return d["messages"][-1]
+            _t.sleep(0.05)
+        raise AssertionError("reply never landed")
+
+    def t_ask_queues_and_the_answer_lands_in_the_thread():
         login()
+        client.post("/api/assistant/clear", headers=HDR)
         reset(tool_call("whatsapp_search", {"query": "iced cap"}),
               final("Zubi asked about an iced cap run on Sept 12."))
         r = client.post("/api/assistant/ask",
                         json={"question": "who mentioned iced caps?"}, headers=HDR)
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert "iced cap" in d["answer"], d
-        assert d["tools_used"] == ["whatsapp_search"], d
-        assert isinstance(d["elapsed_ms"], int), d
+        assert r.status_code == 202, r.text
+        assert r.json()["reply_id"], r.json()
+        reply = wait_for_reply()
+        assert "iced cap" in reply["content"], reply
+        assert reply["tools"] == ["whatsapp_search"], reply
+        assert reply["status"] == "done", reply
 
     def t_empty_question_is_a_400():
         login()
@@ -541,7 +553,8 @@ def http_tests():
         for i in range(10):
             reset(final("ok"))
             r = client.post("/api/assistant/ask", json={"question": f"q{i}"}, headers=HDR)
-            assert r.status_code == 200, (i, r.status_code, r.text)
+            assert r.status_code == 202, (i, r.status_code, r.text)
+            wait_for_reply()          # clear the pending row before the next one
         reset(final("ok"))
         r = client.post("/api/assistant/ask", json={"question": "one too many"},
                         headers=HDR)

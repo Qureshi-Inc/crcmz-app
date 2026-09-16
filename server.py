@@ -1750,28 +1750,77 @@ def assistant_tools(request: Request):
     }
 
 
+def _run_assistant_turn(user_sub: str, question: str, reply_id: int) -> None:
+    """Answer and write the reply into the person's thread.
+
+    Runs on its own thread rather than as an asyncio task tied to the request:
+    the whole job is synchronous anyway, and a phone that locks or a tab that
+    gets backgrounded must not be able to cancel it. If the process dies
+    mid-answer, chat_history.init() releases the pending row on the next boot.
+    """
+    try:
+        history = _chat.context(user_sub)
+        result = assistant.ask(question, history)
+        _chat.finish_turn(reply_id, result.get("answer", ""),
+                          result.get("tools_used") or [],
+                          result.get("elapsed_ms", 0))
+        logger.info("assistant: %r -> tools=%s in %dms", question[:60],
+                    result.get("tools_used"), result.get("elapsed_ms", 0))
+    except ValueError as exc:
+        _chat.fail_turn(reply_id, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("assistant ask failed: %s", exc)
+        _chat.fail_turn(reply_id, f"couldn't get an answer out of the model ({exc})")
+
+
 @app.post("/api/assistant/ask")
 async def assistant_ask(req: AssistantRequest, request: Request):
-    """Ask the local model a question about this platform's own data."""
+    """Queue a question. The answer lands in the thread, not in this response."""
     session = _get_session(request)
     if not session:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
-    _rate_limit("assistant", session.get("sub", "") or request.client.host)
+    sub = session.get("sub", "")
+    _rate_limit("assistant", sub or request.client.host)
     if not assistant.available():
         return JSONResponse(
             {"error": "assistant not configured — set OLLAMA_BASE_URL"},
             status_code=503)
-    try:
-        # Tool calls hit SQLite and the PSN API, so keep it off the event loop.
-        result = await asyncio.to_thread(assistant.ask, req.question, req.history)
-    except ValueError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("assistant ask failed: %s", exc)
-        return JSONResponse({"error": f"assistant failed: {exc}"}, status_code=502)
-    logger.info("assistant: %r -> tools=%s in %dms",
-                req.question[:60], result.get("tools_used"), result.get("elapsed_ms", 0))
-    return JSONResponse(result)
+    question = (req.question or "").strip()
+    if not question:
+        return JSONResponse({"error": "question cannot be empty"}, status_code=400)
+    if len(question) > 1000:
+        return JSONResponse({"error": "question too long (1000 char max)"},
+                            status_code=400)
+    if _chat.pending(sub):
+        return JSONResponse({"error": "still working on your last one"},
+                            status_code=409)
+    reply_id = await asyncio.to_thread(_chat.start_turn, sub, question)
+    _threading.Thread(target=_run_assistant_turn, args=(sub, question, reply_id),
+                      name=f"assistant-{reply_id}", daemon=True).start()
+    return JSONResponse({"status": "queued", "reply_id": reply_id}, status_code=202)
+
+
+@app.get("/api/assistant/history")
+def assistant_history(request: Request):
+    """This person's thread, including a reply that is still being written."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    sub = session.get("sub", "")
+    messages = _chat.recent(sub)
+    return {"messages": messages,
+            "pending": bool(_chat.pending(sub)),
+            "count": len(messages)}
+
+
+@app.post("/api/assistant/clear")
+def assistant_clear(request: Request):
+    """Wipe this person's thread."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    removed = _chat.clear(session.get("sub", ""))
+    return {"status": "cleared", "removed": removed}
 
 
 class FactRequest(BaseModel):
@@ -1807,6 +1856,17 @@ def assistant_facts(request: Request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     rows = _facts.list_facts()
     me = session.get("sub", "")
+    # Names to suggest in the "about who?" box: squad members first, then anyone
+    # already written about. Typing "Zubi" and "zubi" as two subjects splits the
+    # AI's knowledge about one person, so the suggestions matter.
+    suggestions: list[str] = []
+    try:
+        suggestions = [m["display"] for m in _portal_members() if m.get("display")]
+    except Exception:  # noqa: BLE001
+        pass
+    for r in rows:
+        if r["subject"] and r["subject"] not in suggestions:
+            suggestions.append(r["subject"])
     return {
         "facts": [
             {"id": r["id"], "subject": r["subject"], "text": r["text"],
@@ -1818,6 +1878,7 @@ def assistant_facts(request: Request):
         "mine": sum(1 for r in rows if r["author_sub"] == me),
         "max_per_user": _facts.MAX_PER_USER,
         "max_chars": _facts.MAX_TEXT,
+        "subjects": suggestions,
     }
 
 
@@ -3139,8 +3200,10 @@ import whatsapp_analytics as _wa
 import giveaway as _giveaway
 import assistant
 import facts as _facts
+import chat_history as _chat
 _wa.init()
 _facts.init()
+_chat.init()
 
 _video_seen: set[str] = set()
 _video_initialized: bool = False
@@ -4322,6 +4385,26 @@ _DASHBOARD_TMPL = r"""<!doctype html>
      ask box "into view" has to stop short of it — otherwise the input lands
      behind the board and cannot be tapped. */
   #p-ai .quick { scroll-margin-bottom:calc(var(--board-h, 220px) + 14px); }
+  /* row under the ask box: saved-thread hint + clear */
+  .ai-tools-row { display:flex; align-items:center; gap:8px; margin-top:8px; }
+  .ai-hint { flex:1; font-size:10px; color:var(--dim); letter-spacing:.4px; }
+  .ai-mini { flex:none; background:none; border:1px solid rgba(255,255,255,.14);
+    color:var(--dim); border-radius:9px; padding:5px 10px; font-size:10.5px;
+    cursor:pointer; font-family:"Rajdhani",sans-serif; font-weight:700;
+    letter-spacing:.5px; }
+  .ai-mini:active { background:rgba(255,255,255,.08); color:#fff; }
+  /* facts, tucked into a disclosure so the chat is the main surface */
+  .ai-settings { margin-top:18px; border-top:1px solid var(--line); padding-top:12px; }
+  .ai-settings > summary { cursor:pointer; font-family:"Orbitron",sans-serif;
+    font-size:11px; letter-spacing:1.5px; text-transform:uppercase;
+    color:var(--cyan); list-style:none; padding:4px 0; }
+  .ai-settings > summary::-webkit-details-marker { display:none; }
+  .ai-settings > summary::after { content:' ▾'; font-size:10px; }
+  .ai-settings[open] > summary::after { content:' ▴'; }
+  .ai-settings > summary span { color:var(--dim); letter-spacing:.5px; }
+  .fact-filter { width:100%; margin-top:12px; padding:10px 12px; border-radius:10px;
+    font-size:13px; border:1px solid rgba(255,255,255,.12); background:rgba(6,4,18,.8);
+    color:var(--txt); -webkit-appearance:none; font-family:"Rajdhani",sans-serif; }
   /* Squad facts */
   .fact-form { display:flex; flex-direction:column; gap:8px; }
   .fact-form input { padding:12px 14px; border-radius:12px; font-size:14px;
@@ -5470,21 +5553,29 @@ _DASHBOARD_TMPL = r"""<!doctype html>
         autocomplete="off" onkeydown="if(event.key==='Enter')askSend()">
       <button class="qsend" id="aiSend" onclick="askSend()" aria-label="Ask">➤</button>
     </div>
-    <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:14px">
-      <p class="pip-title" style="margin:0 0 4px">Squad Facts <span id="factCount" style="color:var(--dim)"></span></p>
-      <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.55">
-        What you add here becomes part of what the AI knows — for everyone, in
-        every future answer. Short lines work best.</p>
+    <div class="ai-tools-row">
+      <span id="aiHint" class="ai-hint">Your thread is saved — you can close this and come back.</span>
+      <button class="ai-mini" id="aiClearBtn" onclick="askClear()">🗑 Clear chat</button>
+    </div>
+
+    <details class="ai-settings" id="factBox">
+      <summary>🧠 What the AI knows about us <span id="factCount"></span></summary>
+      <p style="font-size:12px;color:var(--dim);margin:10px 0;line-height:1.55">
+        Facts are shared: whatever anyone adds here, the AI uses in every future
+        answer for everyone. It never says who added what.</p>
       <div class="fact-form">
-        <input id="factSubject" type="text" placeholder="About who? (optional)"
+        <input id="factSubject" type="text" list="factSubjects" placeholder="About who? (optional)"
           maxlength="60" autocomplete="off">
+        <datalist id="factSubjects"></datalist>
         <input id="factText" type="text" placeholder="e.g. Zubi runs on iced caps"
           maxlength="280" autocomplete="off" onkeydown="if(event.key==='Enter')factAdd()">
         <button class="smodal-btn" id="factAddBtn" style="margin-top:0" onclick="factAdd()">＋ Add fact</button>
       </div>
       <div id="factMsg" class="smsg" style="display:none;margin-top:8px"></div>
+      <input id="factFilter" class="fact-filter" type="text" placeholder="Filter facts…"
+        autocomplete="off" oninput="factRender()" style="display:none">
       <div class="fact-list" id="factList"></div>
-    </div>
+    </details>
   </div>
   <div class="panel" id="p-giveaway">
     <div id="giveaway-inner"><div class="spin">Loading giveaway…</div></div>
@@ -6013,7 +6104,8 @@ async function refreshPersonal(){
 // The model is a 35B running on the Mac, so an answer takes ~8-20s. There is no
 // streaming, so the wait is shown with a live counter — silence for 20 seconds
 // reads as broken.
-let _aiHistory = [], _aiBusy = false, _aiLoaded = false;
+// The thread lives on the server, so this only tracks what is on screen.
+let _aiBusy = false, _aiLoaded = false, _aiPoll = null, _aiWaitEl = null, _aiWaitAt = 0;
 
 function aiScrollToInput(){
   const row = document.querySelector('#p-ai .quick');
@@ -6028,8 +6120,9 @@ async function loadAsk(){
     w.classList.add('collapsed');
     setTimeout(syncBoardHeight, 300);
   }
-  setTimeout(()=>{ const i=$('aiQ'); if(i && window.innerWidth>720) i.focus(); aiScrollToInput(); }, 320);
+  setTimeout(()=>{ const i=$('aiQ'); if(i && window.innerWidth>720) i.focus(); }, 320);
   loadFacts();
+  loadHistory();
   if(_aiLoaded) return;
   _aiLoaded = true;
   try {
@@ -6043,30 +6136,115 @@ async function loadAsk(){
     if(m) m.textContent = d.model + ' · ' + d.tools.length + ' tools';
   } catch(e){ /* the panel still works; the first ask will surface any error */ }
 }
+
+// ── The thread ───────────────────────────────────────────────────────────────
+// Rendered from the server every time, so a reload, a second device or a phone
+// that locked mid-answer all show the same thing. A reply still being written
+// comes back as status 'pending' and we poll until it lands.
+async function loadHistory(){
+  try {
+    const d = await (await fetch('/api/assistant/history')).json();
+    if(d.error) return;
+    renderThread(d.messages || []);
+    if(d.pending) startPolling(); else stopPolling();
+  } catch(e){ /* leave whatever is on screen */ }
+}
+function renderThread(msgs){
+  const log = $('aiLog');
+  if(!log) return;
+  _aiWaitEl = null;
+  log.innerHTML = '';
+  if(!msgs.length){
+    _aiBusy = false; aiEnable(true);
+    return;
+  }
+  msgs.forEach(m=>{
+    if(m.role === 'user'){ aiSay('me', aiFmt(m.content)); return; }
+    if(m.status === 'pending'){
+      _aiWaitEl = aiSay('bot wait', 'thinking…');
+      _aiWaitAt = (m.created_at || 0) * 1000;
+      return;
+    }
+    aiSay(m.status === 'error' ? 'bot err' : 'bot', aiFmt(m.content));
+    if(m.status !== 'error'){
+      const used = [...new Set(m.tools||[])];
+      aiMeta((used.length ? 'used ' + used.join(' · ') : 'no tools')
+             + ' · ' + ((m.elapsed_ms||0)/1000).toFixed(1) + 's');
+    }
+  });
+  const waiting = !!_aiWaitEl;
+  _aiBusy = waiting;
+  aiEnable(!waiting);
+}
+function startPolling(){
+  if(_aiPoll) return;
+  _aiBusy = true; aiEnable(false);
+  // Tick the visible counter every second; ask the server every two.
+  let ticks = 0;
+  _aiPoll = setInterval(async ()=>{
+    ticks++;
+    if(_aiWaitEl && _aiWaitAt){
+      _aiWaitEl.textContent = 'thinking… ' + Math.max(1, Math.round((Date.now()-_aiWaitAt)/1000)) + 's';
+    }
+    if(ticks % 2 === 0) await loadHistory();
+  }, 1000);
+}
+function stopPolling(){
+  if(_aiPoll){ clearInterval(_aiPoll); _aiPoll = null; }
+}
+// Coming back to the tab is exactly when an answer is usually waiting.
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden && $('p-ai') && $('p-ai').classList.contains('on')) loadHistory();
+});
+async function askClear(){
+  if(!confirm('Clear this chat? The squad facts stay.')) return;
+  try {
+    await fetch('/api/assistant/clear', {method:'POST'});
+    stopPolling();
+    renderThread([]);
+  } catch(e){ aiSay('bot err', 'Could not clear the chat.'); }
+}
 function aiFmt(s){
   return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
 }
 
 // ── Squad facts: shared knowledge that goes into every answer ────────────────
+let _facts = [];
 async function loadFacts(){
   try {
     const d = await (await fetch('/api/assistant/facts')).json();
     if(d.error) return;
+    _facts = d.facts || [];
     const c = $('factCount');
-    if(c) c.textContent = '· ' + d.total + ' total, ' + d.mine + '/' + d.max_per_user + ' yours';
-    const list = $('factList');
-    if(!list) return;
-    list.innerHTML = d.facts.length ? d.facts.map(f =>
-      '<div class="fact"><div class="fact-body">' +
-        (f.subject ? '<span class="fact-who">' + esc(f.subject) + '</span> — ' : '') +
-        esc(f.text) +
-        '<span class="fact-by">added by ' + esc(f.author) + '</span>' +
-      '</div>' +
-      (f.mine ? '<button class="fact-del" title="Delete" onclick="factDel(\'' +
-                esc(f.id) + '\')">✕</button>' : '') +
-      '</div>').join('')
-      : '<div class="fact-empty">No facts yet. Add the first one — the AI will use it.</div>';
+    if(c) c.textContent = '· ' + d.total + ' facts, ' + d.mine + '/' + d.max_per_user + ' yours';
+    const dl = $('factSubjects');
+    if(dl) dl.innerHTML = (d.subjects||[]).map(s=>'<option value="'+esc(s)+'">').join('');
+    const filter = $('factFilter');
+    if(filter) filter.style.display = _facts.length > 6 ? 'block' : 'none';
+    factRender();
   } catch(e){ /* the chat still works without the facts list */ }
+}
+function factRender(){
+  const list = $('factList');
+  if(!list) return;
+  const q = (($('factFilter')||{}).value || '').trim().toLowerCase();
+  const rows = q
+    ? _facts.filter(f => (f.subject+' '+f.text+' '+f.author).toLowerCase().includes(q))
+    : _facts;
+  if(!_facts.length){
+    list.innerHTML = '<div class="fact-empty">Nothing yet. Add the first one — the AI starts using it immediately.</div>';
+    return;
+  }
+  list.innerHTML = rows.length ? rows.map(f =>
+    '<div class="fact"><div class="fact-body">' +
+      (f.subject ? '<span class="fact-who">' + esc(f.subject) + '</span> — ' : '') +
+      esc(f.text) +
+      '<span class="fact-by">added by ' + esc(f.author) + '</span>' +
+    '</div>' +
+    (f.mine ? '<button class="fact-del" title="Delete" onclick="factDel(\'' +
+              esc(f.id) + '\')">✕</button>' : '') +
+    '</div>').join('')
+    : '<div class="fact-empty">Nothing matches that.</div>';
 }
 function factMsg(cls, text){
   const m = $('factMsg');
@@ -6140,41 +6318,33 @@ async function askSend(){
   if(!q) return;
   inp.value = '';
   _aiBusy = true; aiEnable(false);
+  // Optimistic bubbles; the thread reload replaces them with the stored truth.
   aiSay('me', aiFmt(q));
-  const wait = aiSay('bot wait', 'thinking…');
-  const t0 = Date.now();
-  const tick = setInterval(()=>{
-    wait.textContent = 'thinking… ' + ((Date.now()-t0)/1000).toFixed(0) + 's';
-  }, 500);
+  _aiWaitEl = aiSay('bot wait', 'thinking…');
+  _aiWaitAt = Date.now();
   try {
+    // The server answers in the background and writes the reply into the
+    // thread, so closing the tab or locking the phone no longer loses it.
     const r = await fetch('/api/assistant/ask', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({question:q, history:_aiHistory.slice(-6)})});
-    // Same lesson as the WhatsApp upload: an edge error is not JSON.
+      body: JSON.stringify({question:q})});
     const raw = await r.text();
     let d = {};
     try { d = JSON.parse(raw); } catch(e){}
-    clearInterval(tick); wait.remove();
-    if(r.ok && d.answer){
-      aiSay('bot', aiFmt(d.answer));
-      const used = [...new Set(d.tools_used||[])];
-      aiMeta((used.length ? 'used ' + used.join(' · ') : 'answered without tools')
-             + ' · ' + ((d.elapsed_ms||0)/1000).toFixed(1) + 's');
-      _aiHistory = _aiHistory.concat(
-        [{role:'user', content:q}, {role:'assistant', content:d.answer}]).slice(-6);
-    } else if(r.status===429){
-      aiSay('bot err', 'Slow down a sec ⏳ — 10 questions a minute.');
-    } else if(r.status===401){
-      aiSay('bot err', 'Session expired — reload the page and sign in again.');
-    } else {
-      aiSay('bot err', aiFmt(d.error || ('Failed (' + r.status + ')')));
+    if(r.status === 202 || r.ok){
+      startPolling();
+      return;
     }
+    if(_aiWaitEl){ _aiWaitEl.remove(); _aiWaitEl = null; }
+    if(r.status===429)      aiSay('bot err', 'Slow down a sec ⏳ — 10 questions a minute.');
+    else if(r.status===409) aiSay('bot err', 'Still working on your last one — give it a sec.');
+    else if(r.status===401) aiSay('bot err', 'Session expired — reload the page and sign in again.');
+    else                    aiSay('bot err', aiFmt(d.error || ('Failed (' + r.status + ')')));
   } catch(e){
-    clearInterval(tick); wait.remove();
-    aiSay('bot err', 'Could not reach the assistant. If the Mac is asleep the local model is offline.');
+    if(_aiWaitEl){ _aiWaitEl.remove(); _aiWaitEl = null; }
+    aiSay('bot err', 'Could not reach the app. Your question may not have been sent.');
   }
   _aiBusy = false; aiEnable(true);
-  aiScrollToInput();
   const i = $('aiQ'); if(i && window.innerWidth>720) i.focus();
 }
 
