@@ -57,6 +57,8 @@ services:
       # (replaces the standalone psn-gpt bot). PSN_AI_ENABLED=0 turns it off.
       - PSN_AI_ENABLED=${PSN_AI_ENABLED:-1}
       - PSN_AI_POLL_SECONDS=${PSN_AI_POLL_SECONDS:-20}
+      # Same "ai ..." trigger in the WhatsApp group (answered via the bridge).
+      - WA_AI_ENABLED=${WA_AI_ENABLED:-1}
       # Which groups it listens in: "squad" (default), "main", or "squad,main".
       - PSN_AI_GROUPS=${PSN_AI_GROUPS:-squad}
       - WHISPER_MODEL=${WHISPER_MODEL:-whisper-large-v3-turbo}

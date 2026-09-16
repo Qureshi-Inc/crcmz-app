@@ -1725,7 +1725,41 @@ async def wa_ingest(request: Request):
         else:
             if await asyncio.to_thread(_wa.ingest_baileys_message, msg):
                 inserted += 1
+        # "ai <question>" in the WhatsApp group hits the same assistant as the
+        # PSN group and the Ask AI tab. Answered on a thread so the bridge is
+        # not left holding this request open for the length of a model run.
+        if WA_AI_ENABLED:
+            prompt = wa_ai.trigger_from(msg, WA_GOOPERS_JID)
+            if prompt:
+                _threading.Thread(
+                    target=_answer_whatsapp, name="wa-ai",
+                    args=(prompt, wa_ai.sender_name(msg),
+                          msg.get("group_jid") or msg.get("groupJid") or WA_GOOPERS_JID),
+                    daemon=True).start()
     return JSONResponse({"inserted": inserted, "received": len(msgs)})
+
+
+def _answer_whatsapp(prompt: str, author: str, group_jid: str) -> None:
+    """Answer one "ai ..." from WhatsApp and send it back to the group."""
+    if not assistant.available():
+        return
+    thread = f"wa-group:{group_jid}"
+    logger.info("wa_ai: %s asked %r", author, prompt[:80])
+    try:
+        result = assistant.ask(f"{author} asks: {prompt}", _chat.context(thread))
+        answer = (result.get("answer") or "").strip()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("wa_ai: answering failed: %s", e)
+        answer = "my brain just crashed, ask me again in a sec"
+        result = {}
+    if not answer:
+        return
+    if wa_ai.send_reply(WA_BRIDGE_URL, group_jid, answer):
+        logger.info("wa_ai: answered %s with tools=%s in %dms", author,
+                    result.get("tools_used"), result.get("elapsed_ms", 0))
+        reply_id = _chat.start_turn(thread, f"{author}: {prompt}")
+        _chat.finish_turn(reply_id, answer, result.get("tools_used") or [],
+                          result.get("elapsed_ms", 0))
 
 
 # ── Platform assistant (local model + read-only tools) ───────────────────────
@@ -3202,6 +3236,9 @@ import assistant
 import facts as _facts
 import chat_history as _chat
 import psn_ai
+import wa_ai
+# "ai ..." in the WhatsApp group answers from the same assistant.
+WA_AI_ENABLED = os.environ.get("WA_AI_ENABLED", "1") != "0"
 # The "ai ..." bot in The Squad group. On by default now that it answers from the
 # local model; PSN_AI_ENABLED=0 is the kill switch.
 PSN_AI_ENABLED = os.environ.get("PSN_AI_ENABLED", "1") != "0"

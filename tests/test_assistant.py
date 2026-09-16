@@ -305,6 +305,72 @@ def t_prompt_tells_it_to_shut_up_and_not_call_tools():
     assert "A FOLLOW-UP STILL NEEDS THE TOOL" in p, p[:1500]
 
 
+def t_data_questions_are_classified():
+    for q in ("who added the most songs?", "how many messages do we have",
+              "and who is second?", "who is online right now?",
+              "what did samad say last month?"):
+        assert assistant.needs_tool(q) is True, q
+    for q in ("whats up", "tell me a joke", "roast samad", "yo you good?",
+              "lol", "you awake?"):
+        assert assistant.needs_tool(q) is False, q
+
+
+def t_a_data_question_without_a_tool_is_refused_not_guessed():
+    # The model will happily invent "Coco_WasTaken, 198" for a ranking question.
+    # Two refusals to call a tool must produce no answer rather than a lie.
+    reset(final("themoosecompany, 215"), final("still not calling a tool"))
+    r = assistant.ask("who added the most songs?")
+    assert r.get("no_tool") is True, r
+    assert "couldn't look that one up" in r["answer"], r
+    assert r["tools_used"] == [], r
+    assert "215" not in r["answer"], "a guessed number reached the user"
+
+
+def t_the_retry_drops_previous_answers_but_keeps_the_question():
+    # tool_choice="required" is ignored by the server once history exists, so the
+    # retry strips the assistant's own answers -- those are what it copies.
+    reset(final("asamad89, 148"),                       # lazy first attempt
+          tool_call("slap_music_stats", {}),            # retry reaches for data
+          final("themoosecompany, 215."))
+    r = assistant.ask("and who is second?", history=[
+        {"role": "user", "content": "who added the most songs?"},
+        {"role": "assistant", "content": "themoosecompany, 215"}])
+    assert r["tools_used"] == ["slap_music_stats"], r
+    assert r["answer"] == "themoosecompany, 215.", r
+    retry = SEEN[1]["messages"]
+    assert [m["role"] for m in retry] == ["system", "user", "assistant", "user"], retry
+    assert retry[1]["content"] == "who added the most songs?", retry[1]
+    assert "215" not in retry[2]["content"], "the old answer leaked into the retry"
+
+
+def t_banter_is_never_refused():
+    reset(final("sup bhenchod"))
+    r = assistant.ask("whats up")
+    assert r.get("no_tool") is not True, r
+    assert r["answer"] == "sup bhenchod", r
+
+
+def t_data_questions_ask_the_server_to_require_a_tool():
+    reset(tool_call("whatsapp_members", {}), final("Mutasif, 2,943"))
+    assistant.ask("who sends the most messages?")
+    assert SEEN[0]["tool_choice"] == "required", SEEN[0]["tool_choice"]
+    # ...and once a tool has run, it goes back to auto so it can write the answer.
+    assert SEEN[1]["tool_choice"] == "auto", SEEN[1]["tool_choice"]
+
+
+def t_banter_leaves_tool_choice_auto():
+    reset(final("sup"))
+    assistant.ask("yo you good?")
+    assert SEEN[0]["tool_choice"] == "auto", SEEN[0]["tool_choice"]
+
+
+def t_prompt_forbids_translating_usernames():
+    reset(final("ok"))
+    assistant.ask("hi")
+    p = SEEN[0]["messages"][0]["content"]
+    assert "NAMES ARE LITERAL" in p, p[:1600]
+
+
 def t_persona_is_vulgar_by_default():
     os.environ.pop("ASSISTANT_STYLE", None)
     reset(final("aight"))
