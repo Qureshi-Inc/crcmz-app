@@ -88,7 +88,13 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
     if group_jid and jid and jid != group_jid:
         return None
     text = (msg.get("text") or msg.get("body") or "").strip()
-    if not text or text in _recent_replies:
+    has_image = bool(msg.get("image_b64") or msg.get("message_type") == "image")
+    # An image with no caption still needs a prompt — use a default question.
+    if not text:
+        if not has_image:
+            return None
+        text = "what's in this image?"
+    if text in _recent_replies:
         return None
 
     # Path 2: quoted reply to one of our messages — no prefix needed.

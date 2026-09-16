@@ -1731,26 +1731,31 @@ async def wa_ingest(request: Request):
         if WA_AI_ENABLED:
             prompt = wa_ai.trigger_from(msg, WA_GOOPERS_JID)
             logger.info("wa_ingest: type=%s from_me=%s reply_to=%s sent_ids=%s prompt=%r",
-                        msg.get("type"), msg.get("from_me") or msg.get("fromMe"),
+                        msg.get("message_type") or msg.get("type"),
+                        msg.get("from_me") or msg.get("fromMe"),
                         msg.get("reply_to") or msg.get("quotedMessageId"),
                         wa_ai._recent_sent_ids[-3:], prompt)
             if prompt:
                 _threading.Thread(
                     target=_answer_whatsapp, name="wa-ai",
                     args=(prompt, wa_ai.sender_name(msg),
-                          msg.get("group_jid") or msg.get("groupJid") or WA_GOOPERS_JID),
+                          msg.get("group_jid") or msg.get("groupJid") or WA_GOOPERS_JID,
+                          msg.get("image_b64", ""), msg.get("image_type", "image/jpeg")),
                     daemon=True).start()
     return JSONResponse({"inserted": inserted, "received": len(msgs)})
 
 
-def _answer_whatsapp(prompt: str, author: str, group_jid: str) -> None:
+def _answer_whatsapp(prompt: str, author: str, group_jid: str,
+                     image_b64: str = "", image_type: str = "image/jpeg") -> None:
     """Answer one "ai ..." from WhatsApp and send it back to the group."""
     if not assistant.available():
         return
     thread = f"wa-group:{group_jid}"
-    logger.info("wa_ai: %s asked %r", author, prompt[:80])
+    logger.info("wa_ai: %s asked %r%s", author, prompt[:80],
+                " [+image]" if image_b64 else "")
     try:
-        result = assistant.ask(f"{author} asks: {prompt}", _chat.context(thread))
+        result = assistant.ask(f"{author} asks: {prompt}", _chat.context(thread),
+                               image_b64=image_b64, image_type=image_type)
         answer = (result.get("answer") or "").strip()
     except Exception as e:  # noqa: BLE001
         logger.warning("wa_ai: answering failed: %s", e)
