@@ -3206,6 +3206,8 @@ import psn_ai
 # local model; PSN_AI_ENABLED=0 is the kill switch.
 PSN_AI_ENABLED = os.environ.get("PSN_AI_ENABLED", "1") != "0"
 PSN_AI_POLL_SECONDS = max(10, int(os.environ.get("PSN_AI_POLL_SECONDS", "20")))
+# Which PSN groups it listens in: "squad", "main", or both (the default).
+PSN_AI_GROUPS = os.environ.get("PSN_AI_GROUPS", "squad,main").lower()
 _wa.init()
 _facts.init()
 _chat.init()
@@ -3437,30 +3439,43 @@ async def _start_squad_poller():
     # model with the tools, the squad facts and the group's own history. The
     # group shares one thread so follow-ups work: "ai who yaps most" then
     # "ai and who is second".
-    if PSN_AI_ENABLED and _squad_messenger is not None:
-        def _group_ask(prompt: str, author: str) -> str:
-            thread = f"psn-group:{SQUAD_GROUP_ID}"
-            history = _chat.context(thread)
-            result = assistant.ask(f"{author} asks: {prompt}", history)
-            answer = (result.get("answer") or "").strip()
-            reply_id = _chat.start_turn(thread, f"{author}: {prompt}")
-            _chat.finish_turn(reply_id, answer, result.get("tools_used") or [],
-                              result.get("elapsed_ms", 0))
-            return answer
+    # Both groups by default: people type "ai ..." wherever they are talking, and
+    # a bot that only listens in one of them just looks broken. Each group keeps
+    # its own thread, and the reply goes back to the group that asked.
+    _ai_groups = []
+    if "squad" in PSN_AI_GROUPS and _squad_messenger is not None:
+        _ai_groups.append((SQUAD_GROUP_NAME, SQUAD_GROUP_ID, _squad_messenger))
+    if "main" in PSN_AI_GROUPS and psn_messenger is not None:
+        _ai_groups.append((GROUP_NAME or "main group", GROUP_ID, psn_messenger))
+
+    if PSN_AI_ENABLED and _ai_groups:
+        def _make_ask(group_id: str):
+            def _group_ask(prompt: str, author: str) -> str:
+                thread = f"psn-group:{group_id}"
+                history = _chat.context(thread)
+                result = assistant.ask(f"{author} asks: {prompt}", history)
+                answer = (result.get("answer") or "").strip()
+                reply_id = _chat.start_turn(thread, f"{author}: {prompt}")
+                _chat.finish_turn(reply_id, answer, result.get("tools_used") or [],
+                                  result.get("elapsed_ms", 0))
+                return answer
+            return _group_ask
 
         async def _psn_ai_loop():
+            askers = [(m, _make_ask(gid)) for _, gid, m in _ai_groups]
             while True:
-                try:
-                    if assistant.available():
-                        await asyncio.to_thread(psn_ai.poll_once,
-                                                _squad_messenger, _group_ask)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("psn_ai tick failed: %s", e)
+                for messenger, ask in askers:
+                    try:
+                        if assistant.available():
+                            await asyncio.to_thread(psn_ai.poll_once, messenger, ask)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("psn_ai tick failed: %s", e)
                 await asyncio.sleep(PSN_AI_POLL_SECONDS)
 
         asyncio.create_task(_psn_ai_loop())
-        logger.info('psn_ai: watching "%s" for "ai ..." every %ds',
-                    SQUAD_GROUP_NAME, PSN_AI_POLL_SECONDS)
+        logger.info('psn_ai: watching %s for "ai ..." every %ds',
+                    " + ".join(f'"{n}"' for n, _, _ in _ai_groups),
+                    PSN_AI_POLL_SECONDS)
 
     if WA_BRIDGE_URL and WA_GOOPERS_JID:
         global _watched_messengers, _video_queue

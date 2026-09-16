@@ -57,6 +57,8 @@ services:
       # (replaces the standalone psn-gpt bot). PSN_AI_ENABLED=0 turns it off.
       - PSN_AI_ENABLED=${PSN_AI_ENABLED:-1}
       - PSN_AI_POLL_SECONDS=${PSN_AI_POLL_SECONDS:-20}
+      # Which groups it listens in: squad, main, or both (default).
+      - PSN_AI_GROUPS=${PSN_AI_GROUPS:-squad,main}
       - WHISPER_MODEL=${WHISPER_MODEL:-whisper-large-v3-turbo}
       - WHISPER_BASE_URL=${WHISPER_BASE_URL:-}
       - WHISPER_API_KEY=${WHISPER_API_KEY:-}
