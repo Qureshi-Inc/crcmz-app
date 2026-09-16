@@ -141,6 +141,35 @@ def t_our_id_is_learned_from_our_own_messages():
     wa_ai._self_ids.clear()
 
 
+# ── quoted-reply (replying to a bot message) ─────────────────────────────────
+def t_reply_to_bot_message_triggers_without_ai_prefix():
+    # A quoted reply to one of our own messages should trigger even without "ai".
+    wa_ai._self_ids.add("56767304183939")
+    try:
+        # Path 1: quoted sender matches our JID.
+        msg = wa_msg("lol ok but who is second?")
+        msg["quotedMsg"] = {"sender": "56767304183939:2@s.whatsapp.net",
+                            "text": "Mutasif yaps the most."}
+        assert wa_ai.trigger_from(msg) == "lol ok but who is second?", wa_ai.trigger_from(msg)
+
+        # Path 2: quoted text in _recent_replies (fallback before JID is known).
+        wa_ai._self_ids.discard("56767304183939")
+        wa_ai._recent_replies.append("the bot said this earlier")
+        msg2 = wa_msg("and who is third?")
+        msg2["quotedMsg"] = {"sender": "99999@s.whatsapp.net",
+                             "text": "the bot said this earlier"}
+        assert wa_ai.trigger_from(msg2) == "and who is third?", wa_ai.trigger_from(msg2)
+        wa_ai._recent_replies.remove("the bot said this earlier")
+    finally:
+        wa_ai._self_ids.discard("56767304183939")
+
+
+def t_reply_to_someone_else_does_not_trigger():
+    msg = wa_msg("lol ok")
+    msg["quotedMsg"] = {"sender": "12345@s.whatsapp.net", "text": "random other message"}
+    assert wa_ai.trigger_from(msg) is None
+
+
 # ── trigger ───────────────────────────────────────────────────────────────────
 def t_picks_up_the_ai_prefix():
     assert wa_ai.trigger_from(wa_msg("ai who yaps the most")) == "who yaps the most"

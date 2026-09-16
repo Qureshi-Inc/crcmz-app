@@ -63,6 +63,11 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
     Skips our own messages: a reply we send comes straight back through ingest
     with from_me set, and if the model opened with "ai ..." the bot would answer
     itself forever.
+
+    Three trigger paths:
+      1. "@<our-id> <anything>" — mentioning the bot is asking the bot.
+      2. Quoted reply to one of our messages (the normal WhatsApp reply gesture).
+      3. "ai <question>" prefix — for when neither of the above applies.
     """
     if not isinstance(msg, dict) or msg.get("type") == "reaction":
         return None
@@ -76,6 +81,18 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
     if not text or text in _recent_replies:
         return None
 
+    # Path 2: quoted reply to one of our messages — no prefix needed.
+    # Baileys puts the quoted message in "quotedMsg" with sender/text.
+    quoted = msg.get("quotedMsg") or {}
+    if quoted:
+        q_sender = _digits(quoted.get("sender") or quoted.get("senderJid")
+                           or quoted.get("from") or "")
+        q_text = (quoted.get("text") or quoted.get("body") or "").strip()
+        if ((q_sender and q_sender in _self_ids) or
+                (q_text and q_text in _recent_replies)):
+            return text[:400]
+
+    # Path 1: @mention.
     lead = _MENTION.match(text)
     if lead:
         mentioned = set(_MENTION_ID.findall(lead.group(0)))
@@ -86,6 +103,8 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
         # We may not know our own number yet (it is learned from our first
         # reply), so "@somebody ai ..." is still treated as ours.
         return parse_trigger(rest)
+
+    # Path 3: plain "ai ..." prefix.
     return parse_trigger(text)
 
 

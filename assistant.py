@@ -713,8 +713,13 @@ def _tool_calls_from(message: dict) -> list[dict]:
              "function": {"name": name, "arguments": json.dumps(args)}}]
 
 
-def ask(question: str, history: list[dict] | None = None) -> dict:
-    """Answer `question` with tools. Returns answer + the trail of tool calls."""
+def ask(question: str, history: list[dict] | None = None,
+        image_b64: str = "", image_type: str = "image/jpeg") -> dict:
+    """Answer `question` with tools. Returns answer + the trail of tool calls.
+
+    `image_b64` is an optional base64-encoded image for vision-capable models.
+    The image travels with the current question only; history turns stay text.
+    """
     from datetime import datetime
 
     question = (question or "").strip()
@@ -722,6 +727,8 @@ def ask(question: str, history: list[dict] | None = None) -> dict:
         raise ValueError("question cannot be empty")
     if len(question) > 1000:
         raise ValueError("question too long (1000 char max)")
+    if image_b64 and len(image_b64) > 5_000_000:
+        raise ValueError("image too large (4 MB max)")
 
     base, model, key = _config()
     if not base:
@@ -748,7 +755,17 @@ def ask(question: str, history: list[dict] | None = None) -> dict:
         content = (turn.get("content") or "")[:1500]
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": question})
+
+    # Build the current user message — multipart when an image is attached.
+    if image_b64:
+        safe_type = image_type if image_type.startswith("image/") else "image/jpeg"
+        messages.append({"role": "user", "content": [
+            {"type": "image_url",
+             "image_url": {"url": f"data:{safe_type};base64,{image_b64}"}},
+            {"type": "text", "text": question},
+        ]})
+    else:
+        messages.append({"role": "user", "content": question})
 
     trail: list[dict] = []
     started = time.time()

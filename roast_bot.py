@@ -38,49 +38,92 @@ MUTASIF:
 - Always leaves games and takes FOREVER to come back
 - Really good at Arc Raiders PvE, learning PvP
 - Does well in PvP sometimes but still learning the ropes
-- Known for disappearing mid-session
+- Known for disappearing mid-session to do "5 minutes of work"
 
 SAMAD:
-- Always drives a truck (trucker lifestyle)
-- Comes on rarely
-- Always wants to play Call of Duty instead of Arc Raiders
-- FULL of excuses when he loses: "my R3 is broken", "my screen is tilted"
-- King of cope
+- Drives a truck for a living — out here thinking he's cool
+- Rarely shows up; when he does it's ONLY to push CoD and ghost everyone
+- Legendary excuse factory: "my R3 is broken", "my screen is tilted",
+  "my internet cut out right as i got shot" — brother just can't take an L
+- Has never once run Arc Raiders without immediately asking when everyone
+  is switching to Call of Duty
+- Shows up once a month, demands everyone drop what they're playing, leaves
 
 BRENDEN:
 - Very skilled player, typically #1
 - In Arc Raiders he pushes too aggressively, causing squad wipes
-- At times his aggression costs the team
-- Good at all games but his over-confidence gets the squad killed
+- Good at all games but his over-confidence wipes the whole team
+- Brags about stats while reviving nobody
 
 ZUBI:
-- Addicted to iced caps (Tim Hortons)
-- Hardcore PvP guy on Arc Raiders
-- Recently has been the ONLY one dying and not extracting in trios
-- The supposed PvP god who can't survive
+- Addicted to iced caps (Tim Hortons) — fueled by caffeine and bad decisions
+- Self-proclaimed PvP god who has been the ONLY one dying all trios lately
+- Supposed to be the carry but needs carrying
+
+NOOR:
+- Certified thurki — pervy/horny 24/7, squad knows it, Noor knows it
+- DMs people things they didn't ask for and has no shame about it
+- Has been caught looking up things no one asked him to look up
+- Thirsting in the group chat like it's a dating app
+- The squad's designated NPC simp — attracted to absolutely everyone
+- Finds a way to make everything weird within 3 messages
+- Looking at everyone sideways, all the time, with suspicious energy
 
 RULES:
-- Roast ONE random person per message
+- Roast ONE specific person per message (the target is given to you)
 - MAXIMUM 100 characters. Must fit in a PS notification preview.
 - One short sentence only. No essays.
 - Be MEAN. Ruthless. Millennial energy. No mercy.
-- Profanity is encouraged. Swear freely.
-- Reference their specific traits/habits
-- Use gaming lingo, slang, and abbreviations
-- Don't use hashtags or act like a bot
-- Sound like a toxic friend roasting in 10 words or less
-- Think Xbox 360 lobby energy meets group chat savagery
-- Be vulgar, creative, and absolutely ruthless
+- Profanity is encouraged. Swear freely, including Urdu/Punjabi slang if it fits.
+- Reference their specific traits — be SPECIFIC, not generic.
+- Use gaming lingo, slang, abbreviations.
+- Don't use hashtags or act like a bot.
+- Sound like a toxic friend roasting in 10 words or less.
+- Think Xbox 360 lobby energy meets group chat savagery.
+- Be vulgar, creative, and absolutely ruthless.
+- VARY YOUR ANGLE every time — never use the same opener or framing twice.
 """
+
+# Random angle injected per call so the same trait hits differently each time.
+_ANGLES = [
+    "Frame it as a discovery nobody asked for.",
+    "Use an unexpected comparison or analogy.",
+    "Make it sound like disappointing sports commentary.",
+    "Phrase it as something a mom would text.",
+    "Say it like a shocked eyewitness.",
+    "Deliver it as a formal complaint.",
+    "Frame it as breaking news.",
+    "Say it like you just found out and you're disgusted.",
+    "Use a counting stat or made-up percentage to hammer it home.",
+    "Phrase it as a roast-battle opener that hits and walks off.",
+    "Make it sound like career advice gone wrong.",
+    "Frame it as a police report.",
+    "Deliver it like a disappointed coach after a loss.",
+    "Say it as if you're explaining to someone who just met them.",
+]
 
 _client = boto3.client("bedrock-runtime", region_name="us-east-1")
 _running = False
 _task = None
 
 
+def _roast_prompt(target: str) -> str:
+    angle = random.choice(_ANGLES)
+    return (
+        f"{FRIENDS_CONTEXT}\n\n"
+        f"Roast {target}. Style instruction: {angle} "
+        f"Start with their name. One sentence, under 100 characters. "
+        f"Just the roast text, nothing else."
+    )
+
+
 def generate_roast() -> str:
-    """Generate a roast — mix of AI and insider one-liners."""
-    friends = ["Mutasif", "Samad", "Brenden", "Zubi"]
+    """Generate a roast — mix of AI and insider one-liners.
+
+    Tries the local omlx model first (same uncensored Qwen the rest of the app
+    uses), falls back to Bedrock if the local server is unavailable.
+    """
+    friends = ["Mutasif", "Samad", "Brenden", "Zubi", "Noor"]
     target = random.choice(friends)
 
     # 30% chance of insider one-liner, 70% AI generated
@@ -88,6 +131,17 @@ def generate_roast() -> str:
         line = random.choice(INSIDER_LINES).format(name=target)
         logger.info("Insider roast for %s: %s", target, line)
         return line
+
+    prompt = _roast_prompt(target)
+
+    # Local model first — uncensored and already resident on the Mac.
+    try:
+        out = _local_llm(prompt, max_tokens=80, temperature=1.0)
+        if out:
+            logger.info("AI roast (local) for %s: %s", target, out[:60])
+            return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning("local roast failed (%s), trying Bedrock", e)
 
     response = _client.invoke_model(
         modelId="us.anthropic.claude-sonnet-4-6",
@@ -97,18 +151,13 @@ def generate_roast() -> str:
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 150,
             "temperature": 1.0,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": f"{FRIENDS_CONTEXT}\n\nGenerate a roast about {target}. Start the message with their name. Just the roast text, nothing else."
-                }
-            ]
+            "messages": [{"role": "user", "content": prompt}],
         }),
     )
 
     result = json.loads(response["body"].read())
     roast = result["content"][0]["text"].strip()
-    logger.info("AI roast for %s: %s", target, roast[:50])
+    logger.info("AI roast (bedrock) for %s: %s", target, roast[:50])
     return roast
 
 

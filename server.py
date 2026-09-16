@@ -1767,6 +1767,8 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str) -> None:
 class AssistantRequest(BaseModel):
     question: str
     history: list[dict] = []
+    image_b64: str = ""
+    image_type: str = "image/jpeg"
 
 
 @app.get("/api/assistant/tools")
@@ -1784,7 +1786,8 @@ def assistant_tools(request: Request):
     }
 
 
-def _run_assistant_turn(user_sub: str, question: str, reply_id: int) -> None:
+def _run_assistant_turn(user_sub: str, question: str, reply_id: int,
+                        image_b64: str = "", image_type: str = "image/jpeg") -> None:
     """Answer and write the reply into the person's thread.
 
     Runs on its own thread rather than as an asyncio task tied to the request:
@@ -1794,7 +1797,8 @@ def _run_assistant_turn(user_sub: str, question: str, reply_id: int) -> None:
     """
     try:
         history = _chat.context(user_sub)
-        result = assistant.ask(question, history)
+        result = assistant.ask(question, history,
+                               image_b64=image_b64, image_type=image_type)
         _chat.finish_turn(reply_id, result.get("answer", ""),
                           result.get("tools_used") or [],
                           result.get("elapsed_ms", 0))
@@ -1829,8 +1833,10 @@ async def assistant_ask(req: AssistantRequest, request: Request):
         return JSONResponse({"error": "still working on your last one"},
                             status_code=409)
     reply_id = await asyncio.to_thread(_chat.start_turn, sub, question)
-    _threading.Thread(target=_run_assistant_turn, args=(sub, question, reply_id),
-                      name=f"assistant-{reply_id}", daemon=True).start()
+    _threading.Thread(
+        target=_run_assistant_turn,
+        args=(sub, question, reply_id, req.image_b64, req.image_type),
+        name=f"assistant-{reply_id}", daemon=True).start()
     return JSONResponse({"status": "queued", "reply_id": reply_id}, status_code=202)
 
 
@@ -4480,6 +4486,23 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     cursor:pointer; font-family:"Rajdhani",sans-serif; font-weight:700;
     letter-spacing:.5px; }
   .ai-mini:active { background:rgba(255,255,255,.08); color:#fff; }
+  /* image attach */
+  .ai-img-btn { flex:none; width:40px; height:52px; border:none; background:none;
+    color:var(--dim); font-size:19px; cursor:pointer; padding:0; border-radius:12px;
+    transition:color .15s; }
+  .ai-img-btn:hover { color:var(--cyan); }
+  .ai-img-preview { display:none; align-items:center; gap:8px; margin-bottom:6px;
+    padding:6px 8px; border-radius:10px; border:1px solid rgba(34,230,255,.25);
+    background:rgba(34,230,255,.06); }
+  .ai-img-preview.on { display:flex; }
+  .ai-img-preview img { width:52px; height:52px; object-fit:cover; border-radius:8px;
+    border:1px solid rgba(255,255,255,.1); }
+  .ai-img-preview span { flex:1; font-size:11px; color:var(--dim); }
+  .ai-img-preview button { flex:none; background:none; border:none; color:var(--dim);
+    font-size:15px; cursor:pointer; padding:0 2px; }
+  .ai-img-preview button:hover { color:#ff6b6b; }
+  .ai-msg.me img.ai-msg-img { display:block; max-width:180px; border-radius:8px;
+    margin-bottom:4px; border:1px solid rgba(255,255,255,.1); }
   /* facts, tucked into a disclosure so the chat is the main surface */
   .ai-settings { margin-top:18px; border-top:1px solid var(--line); padding-top:12px; }
   .ai-settings > summary { cursor:pointer; font-family:"Orbitron",sans-serif;
@@ -5635,7 +5658,16 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="ai-chip" onclick="aiChip('what is CRCMZ?')">what is CRCMZ?</button>
     </div>
     <div class="ai-log" id="aiLog"></div>
+    <div class="ai-img-preview" id="aiImgPreview">
+      <img id="aiImgThumb" src="" alt="attached">
+      <span id="aiImgName">image attached</span>
+      <button onclick="aiImgClear()" aria-label="Remove image">✕</button>
+    </div>
     <div class="quick">
+      <input type="file" id="aiImgInput" accept="image/*" style="display:none"
+        onchange="aiImgPicked(this)">
+      <button class="ai-img-btn" onclick="$('aiImgInput').click()" aria-label="Attach image"
+        title="Attach an image (requires a vision-capable model)">📎</button>
       <input id="aiQ" type="text" placeholder="Ask about the squad…" maxlength="1000"
         autocomplete="off" onkeydown="if(event.key==='Enter')askSend()">
       <button class="qsend" id="aiSend" onclick="askSend()" aria-label="Ask">➤</button>
@@ -6388,33 +6420,65 @@ function aiMeta(text){
   el.scrollIntoView({block:'nearest', behavior:'smooth'});
 }
 function aiEnable(on){
-  const b = $('aiSend'), i = $('aiQ');
+  const b = $('aiSend'), i = $('aiQ'), img = $('aiImgInput');
   if(b) b.disabled = !on;
   if(i) i.disabled = !on;
-  document.querySelectorAll('.ai-chip').forEach(c=>c.disabled = !on);
+  if(img) img.disabled = !on;
+  document.querySelectorAll('.ai-chip,.ai-img-btn').forEach(c=>c.disabled = !on);
 }
 function aiChip(q){
   if(_aiBusy) return;
   $('aiQ').value = q;
   askSend();
 }
+let _aiImg = null;   // {b64, type, dataUrl} while an image is staged
+
+function aiImgPicked(inp){
+  const file = inp.files[0];
+  if(!file) return;
+  if(file.size > 4*1024*1024){ alert('Image is too large — keep it under 4 MB.'); inp.value=''; return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    const dataUrl = e.target.result;
+    const b64 = dataUrl.split(',')[1];
+    _aiImg = {b64, type: file.type || 'image/jpeg', dataUrl};
+    $('aiImgThumb').src = dataUrl;
+    $('aiImgName').textContent = file.name;
+    $('aiImgPreview').classList.add('on');
+  };
+  reader.readAsDataURL(file);
+  inp.value = '';
+}
+
+function aiImgClear(){
+  _aiImg = null;
+  $('aiImgPreview').classList.remove('on');
+  $('aiImgThumb').src = '';
+}
+
 async function askSend(){
   if(_aiBusy) return;
   const inp = $('aiQ');
   const q = (inp.value||'').trim();
   if(!q) return;
   inp.value = '';
+  const img = _aiImg;
+  aiImgClear();
   _aiBusy = true; aiEnable(false);
   // Optimistic bubbles; the thread reload replaces them with the stored truth.
-  aiSay('me', aiFmt(q));
+  const meEl = aiSay('me', '');
+  if(img) meEl.innerHTML = `<img class="ai-msg-img" src="${img.dataUrl}" alt="image">${aiFmt(q)}`;
+  else meEl.innerHTML = aiFmt(q);
   _aiWaitEl = aiSay('bot wait', 'thinking…');
   _aiWaitAt = Date.now();
   try {
     // The server answers in the background and writes the reply into the
     // thread, so closing the tab or locking the phone no longer loses it.
+    const body = {question:q};
+    if(img){ body.image_b64 = img.b64; body.image_type = img.type; }
     const r = await fetch('/api/assistant/ask', {method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({question:q})});
+      body: JSON.stringify(body)});
     const raw = await r.text();
     let d = {};
     try { d = JSON.parse(raw); } catch(e){}
