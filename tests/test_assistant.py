@@ -269,6 +269,40 @@ def t_website_text_is_capped():
         assistant._cache.clear()
 
 
+def t_thinking_is_disabled_and_answers_are_capped():
+    # Hybrid reasoning leaked "Here's a thinking process: 1. Analyze User Input"
+    # into answers and burned ~15s of generation before the real reply.
+    reset(final("sup"))
+    assistant.ask("whats up")
+    body = SEEN[0]
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}, body.get("chat_template_kwargs")
+    assert body["max_tokens"] == assistant.MAX_ANSWER_TOKENS, body["max_tokens"]
+
+
+def t_a_leaked_think_block_is_stripped():
+    reset(final("<think>ok so they said hi, I should greet them</think>sup bhenchod"))
+    r = assistant.ask("whats up")
+    assert r["answer"] == "sup bhenchod", r["answer"]
+
+
+def t_unclosed_think_block_is_stripped():
+    reset(final("<think>rambling forever with no close tag"))
+    r = assistant.ask("whats up")
+    assert "rambling" not in r["answer"], r["answer"]
+
+
+def t_prompt_tells_it_to_shut_up_and_not_call_tools():
+    reset(final("sup"))
+    assistant.ask("whats up")
+    p = SEEN[0]["messages"][0]["content"]
+    assert "Default is NO TOOL AT ALL" in p, p[:600]
+    assert "Never write a report" in p, p[:900]
+    assert "TELL A JOKE" in p, p[:900]
+    # The example answers carry the voice, so they must sit inside the persona.
+    assert "HOW IT SHOULD GO" in p, p[:1200]
+    assert "Never turn a broken tool into a fact" in p, p[:1500]
+
+
 def t_persona_is_vulgar_by_default():
     os.environ.pop("ASSISTANT_STYLE", None)
     reset(final("aight"))
@@ -281,7 +315,7 @@ def t_persona_is_vulgar_by_default():
     assert "never add disclaimers" in p, p[-600:]
     # Vulgar or not, the accuracy rule has to survive.
     assert "the FACTS stay real" in p, p[-600:]
-    assert "Never invent a number" in p, p[:900]
+    assert "never invent one" in p, "the accuracy rule must survive the persona"
     assert SEEN[0]["temperature"] > 0.5, SEEN[0]["temperature"]
 
 
@@ -295,7 +329,7 @@ def t_plain_style_switches_the_persona_off():
         assert "short, plain, group-chat casual" in p, p[-400:]
         assert SEEN[0]["temperature"] < 0.5, SEEN[0]["temperature"]
         # Same data rules either way.
-        assert "Never invent a number" in p, p[:900]
+        assert "never invent one" in p, "the accuracy rule must survive the persona"
     finally:
         os.environ.pop("ASSISTANT_STYLE", None)
 
@@ -319,10 +353,9 @@ def t_the_prompt_does_not_privilege_whatsapp():
     reset(final("hi"))
     assistant.ask("tell me about this squad")
     p = SEEN[0]["messages"][0]["content"]
-    assert "NONE of them is the default answer" in p, p[:300]
-    assert "platform_overview first" in p, p[:600]
-    for source in ("Slapshare", "squad_facts", "psn_squad_status", "crcmz.me"):
+    for source in ("Slapshare", "PSN", "WhatsApp", "crcmz_website"):
         assert source in p, source
+    assert "Match the source to the question" in p, p[:900]
 
 
 # ── the loop ──────────────────────────────────────────────────────────────────

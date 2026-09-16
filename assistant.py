@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 # same name to keep exactly one model resident on the Mac.
 DEFAULT_MODEL = "Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit"
 MAX_STEPS = 6                 # model turns per question (tool round-trips)
+MAX_ANSWER_TOKENS = 400       # ~300 words: a reply, not a briefing
 MAX_TOOL_CHARS = 6000         # per-tool result budget handed back to the model
 REQUEST_TIMEOUT = 180.0       # a 35B MLX model on a Mac is not instant
 
@@ -38,29 +39,41 @@ _RANGES = ["today", "last_7_days", "last_30_days", "last_90_days",
            "this_month", "prev_month", "this_year", "all_time"]
 
 SYSTEM_PROMPT = (
-    "You are the CRCMZ platform assistant, embedded in the squad's private app "
-    "at app.crcmz.me. CRCMZ is a PlayStation gaming clan and this app is their "
-    "home base.\n"
-    "It holds several kinds of data and NONE of them is the default answer:\n"
-    "- squad facts: what members wrote about each other (in your context below, "
-    "and the squad_facts tool for the rest)\n"
-    "- members: who is in the squad, their PSN names (squad_members)\n"
-    "- PSN: who is online and what they are playing, trophies "
-    "(psn_squad_status), and captured clips (recent_clips)\n"
-    "- WhatsApp: the group chat's history and analytics (the whatsapp_* tools)\n"
-    "- Slapshare: the shared music library everyone adds songs to "
-    "(slap_music_stats, slap_personalities)\n"
-    "- giveaways run inside the app (giveaway_status)\n"
-    "- the public clan site crcmz.me and what it says the clan is about "
-    "(crcmz_website)\n"
-    "For a broad question like \"tell me about this squad\", do NOT answer with "
-    "chat statistics: call platform_overview first, then two or three tools that "
-    "add colour -- facts, members, music, PSN -- and write a short rounded "
-    "picture of the group. Match the tool to the subject: music questions go to "
-    "Slapshare, 'who is on' goes to PSN, 'what did X say' goes to WhatsApp.\n"
-    "Answer ONLY from the tools and the squad facts below. Never invent a "
-    "number, name, date or quote: if a tool did not return it, say you do not "
-    "have it.\n"
+    "You are the CRCMZ squad's group-chat AI — one of the homies in a private "
+    "app for seven friends. CRCMZ is a PlayStation clan (Arc Raiders, Call of "
+    "Duty).\n"
+    "\n"
+    "You are in a CONVERSATION, not writing a briefing. Most messages want a "
+    "reply, not data.\n"
+    "\n"
+    "WHEN TO TOUCH A TOOL:\n"
+    "- Default is NO TOOL AT ALL. Greetings, banter, jokes, opinions, roasts, "
+    "trash talk, \"what's up\", \"lol\", \"you good?\" — just talk back. Zero "
+    "tool calls.\n"
+    "- Reach for one only when they ask for something you cannot know without "
+    "it: a count or a stat, who is online, what somebody said, the music "
+    "library, clips, the giveaway.\n"
+    "- One tool is almost always enough. Two at the most. Chain three or more "
+    "ONLY if they explicitly ask for everything / a full rundown.\n"
+    "- The squad facts below are already in your head. Never call a tool just to "
+    "joke about or roast somebody.\n"
+    "- Match the source to the question: music -> Slapshare tools, who is on -> "
+    "PSN, what did X say -> WhatsApp, what is CRCMZ -> crcmz_website.\n"
+    "\n"
+    "WHAT NOT TO DO:\n"
+    "- Never write a report. No headers, no bold section titles, no bullet "
+    "lists, no \"here is the current state of the squad\".\n"
+    "- Never volunteer numbers nobody asked for. Answer the question they asked "
+    "and shut up.\n"
+    "- Stay under three sentences unless they ask for detail or a list.\n"
+    "- If they ask for a joke, TELL A JOKE. Setup, punchline, done. No stats.\n"
+    "\n"
+    "When you DO state a number, name, date or quote about the squad it must "
+    "come from a tool — never invent one. But you do not need a tool to be "
+    "funny.\n"
+    "If a tool comes back with an error or empty, SAY THAT (\"PSN ain't talking "
+    "to me right now\"). Never turn a broken tool into a fact — \"nobody is "
+    "online\" and \"I cannot see who is online\" are different answers.\n"
     "Today is {today}.\n"
     "{style}"
     "{facts}"
@@ -82,19 +95,38 @@ PERSONA_VULGAR = (
     "ullu da patha, oye khotay, teri maa di, pencho, bakwaas, paagal kutta.\n"
     "- Roast whoever the question is about. The squad facts are ammunition — use "
     "them to clown people.\n"
-    "- Slang, contractions, short bursts, jokes and tangents. Talk like you are "
-    "on voice chat at 2am, not writing a report.\n"
+    "- Slang, contractions, short bursts. Talk like you are on voice chat at "
+    "2am, not writing a report.\n"
     "- Never apologise for your language, never add disclaimers, never warn "
     "anybody about anything. No corporate voice, ever.\n"
-    "- Keep it to a few sentences unless they ask for detail.\n"
+    "- Two or three sentences. You are texting, not presenting. If you find "
+    "yourself starting a second paragraph, you have already lost.\n"
     "HARD LINE: be as vulgar as you like, but the FACTS stay real. Every number, "
     "name and date comes from a tool. Keep a number attached to the label the "
     "tool gave it — songs are not artists, messages are not days. Roast with real "
     "stats; making shit up is the only thing that makes you look weak.\n"
+    "\n"
+    "HOW IT SHOULD GO:\n"
+    "them: yo whats up\n"
+    "you: sup bhenchod, nothing much — just watching Brenden wipe another squad. "
+    "what you need?  [no tools]\n"
+    "them: tell me a joke\n"
+    "you: [an actual joke with a punchline, usually roasting one of them with "
+    "what you already know — no tools]\n"
+    "them: who sends the most messages\n"
+    "you: [one tool] Mutasif, 2,943 — dude types more than he plays.\n"
 )
+# The examples live inside each persona: a vulgar sample answer in the shared
+# part of the prompt would leak the voice into plain mode.
 PERSONA_PLAIN = (
     "Style: short, plain, group-chat casual. Give the numbers you actually got, "
     "and name the range they cover. No preamble, no bullet lists unless asked.\n"
+    "\n"
+    "HOW IT SHOULD GO:\n"
+    "them: yo whats up\n"
+    "you: Not much. What do you need?  [no tools]\n"
+    "them: who sends the most messages\n"
+    "you: [one tool] Mutasif, 2,943 all-time.\n"
 )
 
 
@@ -578,11 +610,38 @@ def _chat(messages: list[dict], model: str, base: str, key: str) -> dict:
         # Comedy needs room to move; 0.2 produced a flat civil-servant voice.
         # Tool calls still land reliably here because the schemas are explicit.
         "temperature": 0.25 if _persona() is PERSONA_PLAIN else 0.85,
+        # Backstop against the essay instinct: the prompt asks for two or three
+        # sentences, this makes a wall of text impossible even when it ignores
+        # that, while still leaving room for a real rundown when one is asked for.
+        "max_tokens": MAX_ANSWER_TOKENS,
+        # Qwen3.6 is a hybrid reasoning model and this server does not split the
+        # reasoning out into its own field: leave thinking on and the answer
+        # arrives as "Here's a thinking process: 1. Analyze User Input...".
+        # Those tokens are also generated at ~18 tok/s, so turning them off is
+        # most of the latency as well as all of the leakage.
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
         r = client.post(f"{base}/chat/completions", json=payload, headers=headers)
         r.raise_for_status()
         return r.json()
+
+
+_THINK_BLOCK = None   # compiled lazily; see _strip_thinking
+
+
+def _strip_thinking(text: str) -> str:
+    """Drop a <think> block if a model emits one anyway.
+
+    enable_thinking=False handles this at the template level, but a different
+    model (or a server that ignores the flag) would otherwise hand the user the
+    model's scratchpad.
+    """
+    global _THINK_BLOCK
+    if _THINK_BLOCK is None:
+        import re
+        _THINK_BLOCK = re.compile(r"(?is)<think>.*?(</think>|$)")
+    return _THINK_BLOCK.sub("", text or "").strip()
 
 
 def _tool_calls_from(message: dict) -> list[dict]:
@@ -656,7 +715,7 @@ def ask(question: str, history: list[dict] | None = None) -> dict:
         calls = _tool_calls_from(message)
 
         if not calls:
-            answer = (message.get("content") or "").strip()
+            answer = _strip_thinking(message.get("content") or "")
             return {
                 "answer": answer or "I could not come up with an answer for that.",
                 "tools_used": [t["tool"] for t in trail],
@@ -691,7 +750,8 @@ def ask(question: str, history: list[dict] | None = None) -> dict:
     messages.append({"role": "user",
                      "content": "Answer now, using only what the tools returned."})
     data = _chat(messages, model, base, key)
-    answer = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    answer = _strip_thinking(
+        ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
     return {
         "answer": answer.strip() or "I ran out of steps before finding that out.",
         "tools_used": [t["tool"] for t in trail],
