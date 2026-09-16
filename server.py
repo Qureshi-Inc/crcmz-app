@@ -4217,6 +4217,34 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .tag { color:var(--dim); font-size:12px; margin:3px 0 0; letter-spacing:1px;
     text-transform:uppercase; }
 
+  /* ── Ask AI (platform assistant) ── */
+  .ai-chips { display:flex; flex-wrap:wrap; gap:7px; margin:0 0 12px; }
+  .ai-chip { border:1px dashed rgba(34,230,255,.32); background:none; color:var(--cyan);
+    border-radius:999px; padding:7px 12px; font-size:11.5px; cursor:pointer;
+    font-family:"Rajdhani",sans-serif; font-weight:700; letter-spacing:.3px; }
+  .ai-chip:active { background:rgba(34,230,255,.14); }
+  .ai-chip:disabled { opacity:.45; }
+  .ai-log { display:flex; flex-direction:column; gap:9px; margin:0 0 12px; }
+  .ai-msg { max-width:88%; padding:11px 13px; border-radius:14px; font-size:13.5px;
+    line-height:1.55; word-break:break-word; font-family:"Rajdhani",sans-serif;
+    font-weight:600; animation:aiIn .18s ease both; }
+  @keyframes aiIn { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+  .ai-msg.me { align-self:flex-end; color:#fff; border-bottom-right-radius:5px;
+    border:1px solid rgba(255,47,214,.38);
+    background:linear-gradient(135deg,rgba(255,47,214,.22),rgba(255,47,214,.07)); }
+  .ai-msg.bot { align-self:flex-start; color:var(--txt); border-bottom-left-radius:5px;
+    border:1px solid rgba(34,230,255,.24); background:rgba(34,230,255,.07); }
+  .ai-msg.err { border-color:rgba(255,80,80,.45); background:rgba(255,60,60,.1);
+    color:#ff9d9d; }
+  .ai-msg.wait { color:var(--dim); font-style:italic; }
+  .ai-meta { align-self:flex-start; font-size:9.5px; letter-spacing:1px; color:var(--dim);
+    margin:-5px 0 2px 5px; text-transform:uppercase; }
+  /* The Chat Board is fixed over the bottom of the viewport, so scrolling the
+     ask box "into view" has to stop short of it — otherwise the input lands
+     behind the board and cannot be tapped. */
+  #p-ai .quick { scroll-margin-bottom:calc(var(--board-h, 220px) + 14px); }
+  .ai-log .ai-msg, .ai-log .ai-meta { scroll-margin-bottom:calc(var(--board-h, 220px) + 60px); }
+
   /* ── Chat Board (sticky bottom) ── */
   .board-wrap { position:fixed; left:0; right:0; bottom:var(--minibar-h,0px); z-index:30;
     padding:10px 14px calc(12px + env(safe-area-inset-bottom));
@@ -5262,6 +5290,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="nav-item" data-p="giveaway" data-icon="🎁" data-label="Giveaway" onclick="tab(this);loadGiveaway()"><span class="nav-i-icon">🎁</span><span>Giveaway</span></button>
       <button class="nav-item" data-p="watch" data-icon="🍿" data-label="Watch" onclick="tab(this);loadWatch()"><span class="nav-i-icon">🍿</span><span>Watch</span></button>
       <button class="nav-item" data-p="huddle" data-icon="🎥" data-label="Huddle" onclick="tab(this);loadHuddle()"><span class="nav-i-icon">🎥</span><span>Huddle</span></button>
+      <button class="nav-item" data-p="ai" data-icon="🤖" data-label="Ask AI" onclick="tab(this);loadAsk()"><span class="nav-i-icon">🤖</span><span>Ask AI</span></button>
     </div>
   </div>
   <div class="panel" id="p-squad">
@@ -5318,6 +5347,25 @@ _DASHBOARD_TMPL = r"""<!doctype html>
           <div id="waImportMsg" class="smsg" style="display:none;margin-top:8px"></div>
         </div>
       </div>
+    </div>
+  </div>
+  <div class="panel" id="p-ai">
+    <div class="pip-title" style="margin:8px 0 4px">Ask the Squad AI</div>
+    <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.55">
+      Runs on the Mac at home and answers from this app's own data — WhatsApp
+      history, clips, PSN presence. It only reads. <span id="aiModel" style="color:var(--cyan)"></span></p>
+    <div class="ai-chips">
+      <button class="ai-chip" onclick="aiChip('who sends the most messages?')">who yaps the most?</button>
+      <button class="ai-chip" onclick="aiChip('what time of day is the group most active?')">busiest hours</button>
+      <button class="ai-chip" onclick="aiChip('who is online right now?')">who is online</button>
+      <button class="ai-chip" onclick="aiChip('how much media has been shared in the group?')">media count</button>
+      <button class="ai-chip" onclick="aiChip('what are the group awards?')">awards</button>
+    </div>
+    <div class="ai-log" id="aiLog"></div>
+    <div class="quick">
+      <input id="aiQ" type="text" placeholder="Ask about the squad…" maxlength="1000"
+        autocomplete="off" onkeydown="if(event.key==='Enter')askSend()">
+      <button class="qsend" id="aiSend" onclick="askSend()" aria-label="Ask">➤</button>
     </div>
   </div>
   <div class="panel" id="p-giveaway">
@@ -5843,6 +5891,113 @@ async function refreshPersonal(){
   } catch(e){}
 }
 
+// ── Ask AI: chat over /api/assistant/ask ─────────────────────────────────────
+// The model is a 35B running on the Mac, so an answer takes ~8-20s. There is no
+// streaming, so the wait is shown with a live counter — silence for 20 seconds
+// reads as broken.
+let _aiHistory = [], _aiBusy = false, _aiLoaded = false;
+
+function aiScrollToInput(){
+  const row = document.querySelector('#p-ai .quick');
+  if(row) row.scrollIntoView({block:'end', behavior:'smooth'});
+}
+async function loadAsk(){
+  // An expanded Chat Board eats ~350px of a phone screen and would sit on top
+  // of the ask box. Tuck it away without touching the saved preference, so a
+  // reload (or a tap on the title) brings it back.
+  const w = $('boardWrap');
+  if(w && !w.classList.contains('collapsed')){
+    w.classList.add('collapsed');
+    setTimeout(syncBoardHeight, 300);
+  }
+  setTimeout(()=>{ const i=$('aiQ'); if(i && window.innerWidth>720) i.focus(); aiScrollToInput(); }, 320);
+  if(_aiLoaded) return;
+  _aiLoaded = true;
+  try {
+    const d = await (await fetch('/api/assistant/tools')).json();
+    if(!d.available){
+      aiSay('bot err', 'The assistant has no model configured — set OLLAMA_BASE_URL on the server.');
+      aiEnable(false);
+      return;
+    }
+    const m = $('aiModel');
+    if(m) m.textContent = d.model + ' · ' + d.tools.length + ' tools';
+  } catch(e){ /* the panel still works; the first ask will surface any error */ }
+}
+function aiFmt(s){
+  return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+}
+function aiSay(cls, html){
+  const el = document.createElement('div');
+  el.className = 'ai-msg ' + cls;
+  el.innerHTML = html;
+  $('aiLog').appendChild(el);
+  el.scrollIntoView({block:'nearest', behavior:'smooth'});
+  return el;
+}
+function aiMeta(text){
+  const el = document.createElement('div');
+  el.className = 'ai-meta';
+  el.textContent = text;
+  $('aiLog').appendChild(el);
+  el.scrollIntoView({block:'nearest', behavior:'smooth'});
+}
+function aiEnable(on){
+  const b = $('aiSend'), i = $('aiQ');
+  if(b) b.disabled = !on;
+  if(i) i.disabled = !on;
+  document.querySelectorAll('.ai-chip').forEach(c=>c.disabled = !on);
+}
+function aiChip(q){
+  if(_aiBusy) return;
+  $('aiQ').value = q;
+  askSend();
+}
+async function askSend(){
+  if(_aiBusy) return;
+  const inp = $('aiQ');
+  const q = (inp.value||'').trim();
+  if(!q) return;
+  inp.value = '';
+  _aiBusy = true; aiEnable(false);
+  aiSay('me', aiFmt(q));
+  const wait = aiSay('bot wait', 'thinking…');
+  const t0 = Date.now();
+  const tick = setInterval(()=>{
+    wait.textContent = 'thinking… ' + ((Date.now()-t0)/1000).toFixed(0) + 's';
+  }, 500);
+  try {
+    const r = await fetch('/api/assistant/ask', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:q, history:_aiHistory.slice(-6)})});
+    // Same lesson as the WhatsApp upload: an edge error is not JSON.
+    const raw = await r.text();
+    let d = {};
+    try { d = JSON.parse(raw); } catch(e){}
+    clearInterval(tick); wait.remove();
+    if(r.ok && d.answer){
+      aiSay('bot', aiFmt(d.answer));
+      const used = [...new Set(d.tools_used||[])];
+      aiMeta((used.length ? 'used ' + used.join(' · ') : 'answered without tools')
+             + ' · ' + ((d.elapsed_ms||0)/1000).toFixed(1) + 's');
+      _aiHistory = _aiHistory.concat(
+        [{role:'user', content:q}, {role:'assistant', content:d.answer}]).slice(-6);
+    } else if(r.status===429){
+      aiSay('bot err', 'Slow down a sec ⏳ — 10 questions a minute.');
+    } else if(r.status===401){
+      aiSay('bot err', 'Session expired — reload the page and sign in again.');
+    } else {
+      aiSay('bot err', aiFmt(d.error || ('Failed (' + r.status + ')')));
+    }
+  } catch(e){
+    clearInterval(tick); wait.remove();
+    aiSay('bot err', 'Could not reach the assistant. If the Mac is asleep the local model is offline.');
+  }
+  _aiBusy = false; aiEnable(true);
+  aiScrollToInput();
+  const i = $('aiQ'); if(i && window.innerWidth>720) i.focus();
+}
+
 function toggleNav(e){
   e && e.stopPropagation();
   const trigger=$('navTrigger'), dd=$('navDropdown');
@@ -5880,6 +6035,7 @@ function tab(btn, skipHash){
     tab(btn, true);
     if(p==='slap')    loadSlap();
     if(p==='wa')      loadWa();
+    if(p==='ai')      loadAsk();
     if(p==='giveaway') loadGiveaway();
     if(p==='watch'){
       // Defer one tick so the page settles before opening a WebSocket.
