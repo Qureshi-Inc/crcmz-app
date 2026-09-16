@@ -3206,8 +3206,9 @@ import psn_ai
 # local model; PSN_AI_ENABLED=0 is the kill switch.
 PSN_AI_ENABLED = os.environ.get("PSN_AI_ENABLED", "1") != "0"
 PSN_AI_POLL_SECONDS = max(10, int(os.environ.get("PSN_AI_POLL_SECONDS", "20")))
-# Which PSN groups it listens in: "squad", "main", or both (the default).
-PSN_AI_GROUPS = os.environ.get("PSN_AI_GROUPS", "squad,main").lower()
+# Which PSN groups it listens in. The Squad only by default — the main group is
+# opt-in via PSN_AI_GROUPS=squad,main.
+PSN_AI_GROUPS = os.environ.get("PSN_AI_GROUPS", "squad").lower()
 _wa.init()
 _facts.init()
 _chat.init()
@@ -3439,9 +3440,8 @@ async def _start_squad_poller():
     # model with the tools, the squad facts and the group's own history. The
     # group shares one thread so follow-ups work: "ai who yaps most" then
     # "ai and who is second".
-    # Both groups by default: people type "ai ..." wherever they are talking, and
-    # a bot that only listens in one of them just looks broken. Each group keeps
-    # its own thread, and the reply goes back to the group that asked.
+    # Each watched group keeps its own thread, and a reply goes back to the group
+    # that asked. The Squad only unless PSN_AI_GROUPS says otherwise.
     _ai_groups = []
     if "squad" in PSN_AI_GROUPS and _squad_messenger is not None:
         _ai_groups.append((SQUAD_GROUP_NAME, SQUAD_GROUP_ID, _squad_messenger))
