@@ -1730,10 +1730,10 @@ async def wa_ingest(request: Request):
         # not left holding this request open for the length of a model run.
         if WA_AI_ENABLED:
             prompt = wa_ai.trigger_from(msg, WA_GOOPERS_JID)
-            logger.debug("wa_ingest: type=%s from_me=%s reply_to=%s sent_ids=%d prompt=%r",
-                         msg.get("type"), msg.get("from_me") or msg.get("fromMe"),
-                         msg.get("reply_to") or msg.get("quotedMessageId"),
-                         len(wa_ai._recent_sent_ids), prompt)
+            logger.info("wa_ingest: type=%s from_me=%s reply_to=%s sent_ids=%s prompt=%r",
+                        msg.get("type"), msg.get("from_me") or msg.get("fromMe"),
+                        msg.get("reply_to") or msg.get("quotedMessageId"),
+                        wa_ai._recent_sent_ids[-3:], prompt)
             if prompt:
                 _threading.Thread(
                     target=_answer_whatsapp, name="wa-ai",
