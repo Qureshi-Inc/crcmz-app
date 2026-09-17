@@ -2173,7 +2173,9 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
 
     # Summarize trigger — fetch missed messages and summarize for the requester
     if _SUMMARIZE_RE.search(prompt):
+        _wa_typing(group_jid, True)
         _summarize_chat(prompt, author, sender_jid, group_jid)
+        _wa_typing(group_jid, False)
         return
 
     # Fast-path: build requests bypass tool calling (oMLX ignores tool_choice).
