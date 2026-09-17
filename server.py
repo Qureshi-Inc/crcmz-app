@@ -1880,12 +1880,43 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     logger.info("clawbot: job done in %dm%ds for task %r", elapsed // 60, elapsed % 60, task[:40])
 
 
+_SUBDOMAIN_RE = re.compile(r"\b([a-z][a-z0-9-]{1,38})[.\s]*buildanator[.\s]*com\b", re.IGNORECASE)
+
+
+def _extract_subdomain(text: str) -> str:
+    m = _SUBDOMAIN_RE.search(text)
+    if m:
+        return m.group(1).lower()
+    # Derive from first meaningful word in the task
+    words = re.findall(r"[a-zA-Z]{3,}", text)
+    skip = {"make","build","create","deploy","ship","launch","website","site",
+            "app","tool","page","that","with","and","the","for","you","its"}
+    slug = next((w.lower() for w in words if w.lower() not in skip), "squad-build")
+    return slug[:30]
+
+
 def _answer_whatsapp(prompt: str, author: str, group_jid: str,
                      image_b64: str = "", image_type: str = "image/jpeg",
                      msg_id: str = "", sender_jid: str = "") -> None:
     """Answer one "ai ..." from WhatsApp and send it back to the group."""
     if not assistant.available():
         return
+
+    # Fast-path: build requests bypass tool calling (oMLX ignores tool_choice).
+    # Detect, reply immediately, fire job in background.
+    if assistant.needs_build(prompt) and not image_b64:
+        subdomain = _extract_subdomain(prompt)
+        _wa_typing(group_jid, True)
+        _wa_typing(group_jid, False)
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
+        _threading.Thread(
+            target=_run_clawbot_job,
+            args=(prompt, subdomain, group_jid),
+            daemon=True,
+        ).start()
+        logger.info("wa_ai: build fast-path for %r subdomain=%r", prompt[:60], subdomain)
+        return
+
     _wa_typing(group_jid, True)
     thread = f"wa-group:{group_jid}"
     logger.info("wa_ai: %s asked %r%s", author, prompt[:80],
@@ -1906,17 +1937,6 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         if "web_search" in (result.get("tools_used") or []):
             bot_msg_id = wa_ai._recent_sent_ids[-1] if wa_ai._recent_sent_ids else ""
             _wa_react(bot_msg_id, group_jid, "", emoji="🌐", from_me=True)
-        # If the model called clawbot_build, kick off the background job now
-        if "clawbot_build" in (result.get("tools_used") or []):
-            for step in (result.get("steps") or []):
-                if step.get("tool") == "clawbot_build" and step.get("ok"):
-                    args = step.get("args") or {}
-                    _threading.Thread(
-                        target=_run_clawbot_job,
-                        args=(args.get("task", prompt), args.get("subdomain", ""), group_jid),
-                        daemon=True,
-                    ).start()
-                    break
         logger.info("wa_ai: answered %s with tools=%s in %dms", author,
                     result.get("tools_used"), result.get("elapsed_ms", 0))
         reply_id = _chat.start_turn(thread, f"{author}: {prompt}")
