@@ -224,9 +224,15 @@ def send_reply(bridge_url: str, group_jid: str, text: str) -> bool:
         return False
     if len(text) > MAX_REPLY_CHARS:
         text = text[:MAX_REPLY_CHARS - 1].rstrip() + "…"
-    # Build proper WhatsApp mention JIDs from any @<number> in the text so
-    # WhatsApp renders them as tappable name tags instead of raw numbers.
-    mention_jids = [f"{n}@s.whatsapp.net" for n in _MENTION_NUM.findall(text)]
+    # Only keep @mentions for numbers we actually learned from the group.
+    # Any @number the model hallucinated gets the @ stripped so it reads as
+    # plain text instead of an ugly phone number.
+    known_numbers = {jid.split("@")[0] for jid in _member_jids.values()}
+    def _sanitize_mention(m: re.Match) -> str:
+        return m.group(0) if m.group(1) in known_numbers else m.group(1)
+    text = _MENTION_NUM.sub(_sanitize_mention, text)
+    mention_jids = [f"{n}@s.whatsapp.net" for n in _MENTION_NUM.findall(text)
+                    if n in known_numbers]
     try:
         r = httpx.post(f"{bridge_url.rstrip('/')}/send",
                        json={"message": text, "groupJid": group_jid,
