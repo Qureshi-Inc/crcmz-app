@@ -1933,7 +1933,7 @@ def _diagnostic_reply(prompt: str) -> str | None:
     """Return a diagnostic answer if the prompt is a known diagnostic question, else None."""
     q = prompt.lower().strip()
     if any(x in q for x in ("what model", "which model", "what's your model", "whats your model")):
-        model = assistant._config()[0]
+        model = assistant._config()[1]
         return f"model: {model}"
     if any(x in q for x in ("container", "version", "uptime", "running")):
         import socket as _sock, os as _os
@@ -1946,7 +1946,7 @@ def _diagnostic_reply(prompt: str) -> str | None:
             uptime = f"{h}h {m}m"
         except Exception:
             uptime = "unknown"
-        model = assistant._config()[0]
+        model = assistant._config()[1]
         known_members = len(wa_ai.member_jids())
         sent_ids = len(wa_ai._recent_sent_ids)
         return (f"model: {model}\n"
