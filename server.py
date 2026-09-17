@@ -64,7 +64,7 @@ _rl_hits: dict[str, list[float]] = {}
 _RL_LIMITS = {
     "psn_send": (8, 60.0),      # group messages (soundboard, squad, /v2/send)
     "roast": (5, 60.0),         # roast triggers
-    "custom_add": (6, 60.0),    # AI-flavored custom button creation (also Bedrock cost)
+    "custom_add": (6, 60.0),    # AI-flavored custom button creation
     "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
     "watch_extract": (5, 60.0),  # yt-dlp URL extraction (subprocess, keep tight)
     "assistant": (10, 60.0),    # platform assistant (each ask = several local LLM calls)
@@ -1747,14 +1747,16 @@ async def wa_ingest(request: Request):
     return JSONResponse({"inserted": inserted, "received": len(msgs)})
 
 
-def _wa_react(msg_id: str, group_jid: str, sender_jid: str, emoji: str = "👁") -> None:
+def _wa_react(msg_id: str, group_jid: str, sender_jid: str,
+              emoji: str = "👁", from_me: bool = False) -> None:
     if not WA_BRIDGE_URL or not msg_id or not group_jid:
         return
     try:
         import httpx as _hx
         r = _hx.post(f"{WA_BRIDGE_URL}/react",
                      json={"messageId": msg_id, "groupJid": group_jid,
-                           "participant": sender_jid, "emoji": emoji}, timeout=5)
+                           "participant": sender_jid, "emoji": emoji,
+                           "fromMe": from_me}, timeout=5)
         logger.info("wa_ai: react %s -> %s", msg_id[:12], r.text[:80])
     except Exception as e:  # noqa: BLE001
         logger.warning("wa_ai: react failed: %s", e)
@@ -1795,6 +1797,9 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
     if not answer:
         return
     if wa_ai.send_reply(WA_BRIDGE_URL, group_jid, answer):
+        if "web_search" in (result.get("tools_used") or []):
+            bot_msg_id = wa_ai._recent_sent_ids[-1] if wa_ai._recent_sent_ids else ""
+            _wa_react(bot_msg_id, group_jid, "", emoji="🌐", from_me=True)
         logger.info("wa_ai: answered %s with tools=%s in %dms", author,
                     result.get("tools_used"), result.get("elapsed_ms", 0))
         reply_id = _chat.start_turn(thread, f"{author}: {prompt}")

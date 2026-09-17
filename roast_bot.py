@@ -1,4 +1,4 @@
-"""AI Roast Bot — generates roasts using Bedrock and sends to PSN group."""
+"""AI Roast Bot — generates roasts using the local LLM and sends to PSN group."""
 
 import asyncio
 import json
@@ -7,7 +7,6 @@ import os
 import random
 import time
 
-import boto3
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -102,7 +101,6 @@ _ANGLES = [
     "Say it as if you're explaining to someone who just met them.",
 ]
 
-_client = boto3.client("bedrock-runtime", region_name="us-east-1")
 _running = False
 _task = None
 
@@ -134,31 +132,18 @@ def generate_roast() -> str:
 
     prompt = _roast_prompt(target)
 
-    # Local model first — uncensored and already resident on the Mac.
     try:
         out = _local_llm(prompt, max_tokens=80, temperature=1.0)
         if out:
             logger.info("AI roast (local) for %s: %s", target, out[:60])
             return out
     except Exception as e:  # noqa: BLE001
-        logger.warning("local roast failed (%s), trying Bedrock", e)
+        logger.warning("local roast failed: %s", e)
 
-    response = _client.invoke_model(
-        modelId="us.anthropic.claude-sonnet-4-6",
-        contentType="application/json",
-        accept="application/json",
-        body=json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 150,
-            "temperature": 1.0,
-            "messages": [{"role": "user", "content": prompt}],
-        }),
-    )
-
-    result = json.loads(response["body"].read())
-    roast = result["content"][0]["text"].strip()
-    logger.info("AI roast (bedrock) for %s: %s", target, roast[:50])
-    return roast
+    # Local unavailable — fall back to an insider line
+    line = random.choice(INSIDER_LINES).format(name=target)
+    logger.info("roast fallback (insider) for %s: %s", target, line)
+    return line
 
 
 def generate_single_roast() -> str:
@@ -242,7 +227,7 @@ def flavor_message(raw: str) -> str:
     This must stay faithful to what the user typed -- same words/intent, just a
     little group-chat energy and a fitting emoji or two. It is NOT the roast bot,
     so it deliberately avoids the roast persona/FRIENDS_CONTEXT. Runs on the
-    local model when one is configured, then Bedrock, then the raw text.
+    local model when one is configured, otherwise returns the raw text unchanged.
     """
     raw = (raw or "").strip()
     if not raw:
@@ -256,27 +241,8 @@ def flavor_message(raw: str) -> str:
                         raw[:40], out[:50])
             return out
     except Exception as e:  # noqa: BLE001
-        logger.warning("local flavor_message failed (%s), trying Bedrock", e)
-    try:
-        response = _client.invoke_model(
-            modelId="us.anthropic.claude-sonnet-4-6",
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 120,
-                "temperature": 0.6,
-                "messages": [{"role": "user", "content": prompt}],
-            }),
-        )
-        result = json.loads(response["body"].read())
-        out = _clean_flavor(result["content"][0]["text"], raw)
-        logger.info("flavored (bedrock) custom message: %s -> %s",
-                    raw[:40], out[:50])
-        return out or raw
-    except Exception as e:  # noqa: BLE001
         logger.warning("flavor_message failed, using raw: %s", e)
-        return raw
+    return raw
 
 
 def send_roast(message: str) -> bool:
