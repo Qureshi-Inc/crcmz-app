@@ -1828,16 +1828,23 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     if subdomain:
         prompt += f". Deploy to {subdomain}.buildanator.com"
 
-    # -n: close stdin so SSH doesn't wait for input
-    # 2>&1: merge stderr into stdout so we capture all output
-    ssh_cmd = [
+    # Write output to a temp file on remote so SSH closes as soon as openclaw
+    # exits — otherwise lab-ship's persistent server keeps the pipe open forever.
+    import uuid as _uuid
+    out_file = f"/tmp/claw-{_uuid.uuid4().hex[:8]}.json"
+    remote_cmd = (
+        f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(prompt)}"
+        f" --agent engineer --json --timeout 7200"
+        f" > {out_file} 2>&1; echo $? > {out_file}.exit"
+    )
+    ssh_base = [
         "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-n",
         "-i", assistant.AI_CONTROLLER_KEY, assistant.AI_CONTROLLER_SSH,
-        f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(prompt)} --agent engineer --json --timeout 7200 2>&1",
     ]
     logger.info("clawbot: starting job %r subdomain=%r", task[:60], subdomain)
 
-    proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.Popen(ssh_base + [remote_cmd],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     start = _time.time()
     last_patch = start
 
@@ -1853,9 +1860,18 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
             break
 
     try:
-        stdout, stderr = proc.communicate(timeout=10)
+        proc.communicate(timeout=10)
     except Exception:
-        stdout, stderr = "", ""
+        pass
+
+    # Read result from remote file
+    try:
+        read_proc = subprocess.run(
+            ssh_base + [f"cat {out_file}; rm -f {out_file} {out_file}.exit"],
+            capture_output=True, text=True, timeout=30)
+        stdout = read_proc.stdout
+    except Exception:
+        stdout = ""
 
     elapsed = int(_time.time() - start)
 
