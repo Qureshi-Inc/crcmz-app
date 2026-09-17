@@ -1818,7 +1818,7 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     ssh_cmd = [
         "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
         "-i", assistant.AI_CONTROLLER_KEY, assistant.AI_CONTROLLER_SSH,
-        f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(prompt)} --agent engineer --json",
+        f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(prompt)} --agent engineer --json --timeout 7200",
     ]
     logger.info("clawbot: starting job %r subdomain=%r", task[:60], subdomain)
 
