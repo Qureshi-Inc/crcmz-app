@@ -1889,10 +1889,21 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     m, s = divmod(elapsed, 60)
     _patch("done", f"✅ Finished in {m}:{s:02d}\n\n{answer_text[:300]}", result_url)
 
-    if result_url:
-        final_msg = f"✅ Done! → {result_url}"
+    # First sentence of the engineer's summary (up to first newline or period)
+    summary = ""
+    if answer_text and answer_text != "job finished":
+        first = _re.split(r"\n|(?<=\.)\s", answer_text.strip())[0].strip()
+        # Strip markdown bold/italic
+        first = _re.sub(r"\*+", "", first).strip()
+        if len(first) > 10:
+            summary = first[:180]
+
+    if result_url and summary:
+        final_msg = f"✅ engineer's done — {result_url}\n\n{summary}"
+    elif result_url:
+        final_msg = f"✅ engineer's done — {result_url}"
     else:
-        final_msg = f"✅ Done! {answer_text[:250]}"
+        final_msg = f"✅ done! {summary or answer_text[:200]}"
     wa_ai.send_reply(WA_BRIDGE_URL, group_jid, final_msg)
 
     logger.info("clawbot: job done in %dm%ds for task %r", elapsed // 60, elapsed % 60, task[:40])
