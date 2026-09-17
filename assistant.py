@@ -743,15 +743,10 @@ def needs_build(question: str) -> bool:
 
 
 def _chat(messages: list[dict], model: str, base: str, key: str,
-          force_tool: bool = False, force_tool_name: str = "") -> dict:
+          force_tool: bool = False) -> dict:
     """One /v1/chat/completions round trip with the tool registry attached."""
     headers = {"Authorization": f"Bearer {key}"} if key else {}
-    if force_tool_name:
-        tc: Any = {"type": "function", "function": {"name": force_tool_name}}
-    elif force_tool:
-        tc = "required"
-    else:
-        tc = "auto"
+    tc: Any = "required" if force_tool else "auto"
     payload = {
         "model": model,
         "messages": messages,
@@ -899,11 +894,8 @@ def ask(question: str, history: list[dict] | None = None,
     force_build = needs_build(question)
     retried_bare = False
     for step in range(MAX_STEPS):
-        if force_build and not trail:
-            data = _chat(messages, model, base, key, force_tool_name="clawbot_build")
-        else:
-            data = _chat(messages, model, base, key,
-                         force_tool=(force_first and not trail))
+        force_this = (force_build or force_first) and not trail
+        data = _chat(messages, model, base, key, force_tool=force_this)
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         calls = _tool_calls_from(message)
