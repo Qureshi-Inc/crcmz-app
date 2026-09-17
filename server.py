@@ -1730,10 +1730,11 @@ async def wa_ingest(request: Request):
         # not left holding this request open for the length of a model run.
         if WA_AI_ENABLED:
             prompt = wa_ai.trigger_from(msg, WA_GOOPERS_JID)
-            logger.info("wa_ingest: type=%s from_me=%s reply_to=%s sent_ids=%s prompt=%r",
+            logger.info("wa_ingest: type=%s from_me=%s reply_to=%s msg_id=%r sent_ids=%s prompt=%r",
                         msg.get("message_type") or msg.get("type"),
                         msg.get("from_me") or msg.get("fromMe"),
                         msg.get("reply_to") or msg.get("quotedMessageId"),
+                        msg.get("message_id", ""),
                         wa_ai._recent_sent_ids[-3:], prompt)
             if prompt:
                 _threading.Thread(
@@ -1750,21 +1751,25 @@ def _wa_react(msg_id: str, group_jid: str, sender_jid: str, emoji: str = "👁")
     if not WA_BRIDGE_URL or not msg_id or not group_jid:
         return
     try:
-        _httpx.post(f"{WA_BRIDGE_URL}/react",
-                    json={"messageId": msg_id, "groupJid": group_jid,
-                          "participant": sender_jid, "emoji": emoji}, timeout=5)
-    except Exception:  # noqa: BLE001
-        pass
+        import httpx as _hx
+        r = _hx.post(f"{WA_BRIDGE_URL}/react",
+                     json={"messageId": msg_id, "groupJid": group_jid,
+                           "participant": sender_jid, "emoji": emoji}, timeout=5)
+        logger.info("wa_ai: react %s -> %s", msg_id[:12], r.text[:80])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("wa_ai: react failed: %s", e)
 
 
 def _wa_typing(group_jid: str, composing: bool) -> None:
     if not WA_BRIDGE_URL or not group_jid:
         return
     try:
-        _httpx.post(f"{WA_BRIDGE_URL}/typing",
-                    json={"groupJid": group_jid, "composing": composing}, timeout=5)
-    except Exception:  # noqa: BLE001
-        pass
+        import httpx as _hx
+        r = _hx.post(f"{WA_BRIDGE_URL}/typing",
+                     json={"groupJid": group_jid, "composing": composing}, timeout=5)
+        logger.info("wa_ai: typing composing=%s -> %s", composing, r.text[:80])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("wa_ai: typing failed: %s", e)
 
 
 def _answer_whatsapp(prompt: str, author: str, group_jid: str,
@@ -1773,7 +1778,6 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
     """Answer one "ai ..." from WhatsApp and send it back to the group."""
     if not assistant.available():
         return
-    _wa_react(msg_id, group_jid, sender_jid)
     _wa_typing(group_jid, True)
     thread = f"wa-group:{group_jid}"
     logger.info("wa_ai: %s asked %r%s", author, prompt[:80],

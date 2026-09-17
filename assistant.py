@@ -756,7 +756,8 @@ def _tool_calls_from(message: dict) -> list[dict]:
 
 
 def ask(question: str, history: list[dict] | None = None,
-        image_b64: str = "", image_type: str = "image/jpeg") -> dict:
+        image_b64: str = "", image_type: str = "image/jpeg",
+        on_tool: Callable[[str], None] | None = None) -> dict:
     """Answer `question` with tools. Returns answer + the trail of tool calls.
 
     `image_b64` is an optional base64-encoded image for vision-capable models.
@@ -876,6 +877,11 @@ def ask(question: str, history: list[dict] | None = None,
                     args = {}
             else:
                 args = raw_args or {}
+            if on_tool:
+                try:
+                    on_tool(name)
+                except Exception:  # noqa: BLE001
+                    pass
             result, ok = call_tool(name, args)
             trail.append({"tool": name, "args": args, "ok": ok,
                           "chars": len(result)})
