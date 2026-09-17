@@ -1926,12 +1926,62 @@ def _extract_subdomain(text: str) -> str:
     return slug[:30]
 
 
+_creator_jids: set[str] = set()
+
+
+def _diagnostic_reply(prompt: str) -> str | None:
+    """Return a diagnostic answer if the prompt is a known diagnostic question, else None."""
+    q = prompt.lower().strip()
+    if any(x in q for x in ("what model", "which model", "what's your model", "whats your model")):
+        model = assistant._config()[0]
+        return f"model: {model}"
+    if any(x in q for x in ("container", "version", "uptime", "running")):
+        import socket as _sock, os as _os
+        pid = _os.getpid()
+        hostname = _sock.gethostname()
+        try:
+            with open("/proc/uptime") as f:
+                secs = float(f.read().split()[0])
+            h, m = int(secs // 3600), int((secs % 3600) // 60)
+            uptime = f"{h}h {m}m"
+        except Exception:
+            uptime = "unknown"
+        model = assistant._config()[0]
+        known_members = len(wa_ai.member_jids())
+        sent_ids = len(wa_ai._recent_sent_ids)
+        return (f"model: {model}\n"
+                f"host: {hostname}\npid: {pid}\nuptime: {uptime}\n"
+                f"known members: {known_members}\nsent ids tracked: {sent_ids}")
+    if any(x in q for x in ("bridge", "wa bridge", "whatsapp bridge")):
+        return f"bridge url: {WA_BRIDGE_URL or '(not set)'}"
+    if any(x in q for x in ("jobs", "clawbot", "engineer")):
+        return f"jobs api: {_JOBS_API}\nengineer model: omlx/Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit"
+    if any(x in q for x in ("member", "jid", "who do you know")):
+        jids = wa_ai.member_jids()
+        if not jids:
+            return "no members learned yet"
+        lines = "\n".join(f"{name}: {jid}" for name, jid in sorted(jids.items()))
+        return f"known members ({len(jids)}):\n{lines}"
+    return None
+
+
 def _answer_whatsapp(prompt: str, author: str, group_jid: str,
                      image_b64: str = "", image_type: str = "image/jpeg",
                      msg_id: str = "", sender_jid: str = "") -> None:
     """Answer one "ai ..." from WhatsApp and send it back to the group."""
     if not assistant.available():
         return
+
+    # Creator diagnostic mode
+    if prompt.lower().strip() in ("i am your creator", "i am the creator"):
+        _creator_jids.add(sender_jid or author)
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "creator mode enabled. ask me anything.")
+        return
+    if sender_jid in _creator_jids or author in _creator_jids:
+        diag = _diagnostic_reply(prompt)
+        if diag:
+            wa_ai.send_reply(WA_BRIDGE_URL, group_jid, diag)
+            return
 
     # Fast-path: build requests bypass tool calling (oMLX ignores tool_choice).
     # Detect, reply immediately, fire job in background.
