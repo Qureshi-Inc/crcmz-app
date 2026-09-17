@@ -1775,6 +1775,115 @@ def _wa_typing(group_jid: str, composing: bool) -> None:
         logger.warning("wa_ai: typing failed: %s", e)
 
 
+def _wa_edit(msg_id: str, group_jid: str, text: str) -> None:
+    if not WA_BRIDGE_URL or not msg_id or not group_jid:
+        return
+    try:
+        import httpx as _hx
+        _hx.post(f"{WA_BRIDGE_URL}/edit",
+                 json={"messageId": msg_id, "groupJid": group_jid, "text": text},
+                 timeout=10)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("clawbot: edit failed: %s", e)
+
+
+_CLAWBOT_TEMPLATE = (
+    "🤖 *Clawbot building:* {task}\n\n"
+    "{status}\n\n"
+    "_{elapsed}_"
+)
+
+
+def _clawbot_text(task: str, status: str, elapsed_s: int) -> str:
+    m, s = divmod(elapsed_s, 60)
+    return _CLAWBOT_TEMPLATE.format(
+        task=task, status=status,
+        elapsed=f"⏱ {m}:{s:02d} elapsed")
+
+
+def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
+    """SSH to ai-controller, run openclaw engineer one-shot, edit WA checklist."""
+    import shlex
+    import subprocess
+
+    initial = _clawbot_text(task, "⏳ Engineer starting up...", 0)
+    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, initial)
+    edit_id = wa_ai._recent_sent_ids[-1] if wa_ai._recent_sent_ids else ""
+    sent_at = _time.time()
+
+    prompt = task
+    if subdomain:
+        prompt += f". Deploy to {subdomain}.buildanator.com"
+
+    ssh_cmd = [
+        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+        "-i", assistant.AI_CONTROLLER_KEY, assistant.AI_CONTROLLER_SSH,
+        f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(prompt)} --agent engineer --json",
+    ]
+    logger.info("clawbot: starting job %r subdomain=%r", task[:60], subdomain)
+
+    proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    start = _time.time()
+    last_edit = start
+
+    while proc.poll() is None:
+        _time.sleep(5)
+        elapsed = int(_time.time() - start)
+        if _time.time() - last_edit >= 30:
+            now = _time.time()
+            # Rotate message if close to the 15-min WhatsApp edit limit
+            if edit_id and (now - sent_at) > 13 * 60:
+                _wa_edit(edit_id, group_jid, _clawbot_text(task, "⏳ Still working...\n_(continued below)_", elapsed))
+                _time.sleep(1)
+                cont = _clawbot_text(task, "⏳ Engineer still working...", elapsed)
+                wa_ai.send_reply(WA_BRIDGE_URL, group_jid, cont)
+                edit_id = wa_ai._recent_sent_ids[-1] if wa_ai._recent_sent_ids else ""
+                sent_at = now
+            elif edit_id:
+                _wa_edit(edit_id, group_jid, _clawbot_text(task, "⏳ Engineer working...", elapsed))
+            last_edit = _time.time()
+        if int(_time.time() - start) > 25 * 60:
+            proc.kill()
+            break
+
+    try:
+        stdout, stderr = proc.communicate(timeout=10)
+    except Exception:
+        stdout, stderr = "", ""
+
+    elapsed = int(_time.time() - start)
+
+    # Parse openclaw JSON result
+    answer_text = ""
+    try:
+        data = json.loads((stdout or "").strip())
+        answer_text = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
+    except Exception:
+        answer_text = (stdout or "").strip()[:400]
+
+    if not answer_text:
+        answer_text = "job finished — check Clawbot for details"
+
+    if subdomain:
+        status_final = f"✅ Done!\n\n🔗 https://{subdomain}.buildanator.com\n\n{answer_text[:300]}"
+    else:
+        status_final = f"✅ Done!\n\n{answer_text[:350]}"
+
+    final_text = _clawbot_text(task, status_final, elapsed)
+
+    now = _time.time()
+    if edit_id and (now - sent_at) > 13 * 60:
+        _wa_edit(edit_id, group_jid, _clawbot_text(task, "✅ Finished!", elapsed))
+        _time.sleep(1)
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, final_text)
+    elif edit_id:
+        _wa_edit(edit_id, group_jid, final_text)
+    else:
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, final_text)
+
+    logger.info("clawbot: job done in %dm%ds for task %r", elapsed // 60, elapsed % 60, task[:40])
+
+
 def _answer_whatsapp(prompt: str, author: str, group_jid: str,
                      image_b64: str = "", image_type: str = "image/jpeg",
                      msg_id: str = "", sender_jid: str = "") -> None:
@@ -1801,6 +1910,17 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         if "web_search" in (result.get("tools_used") or []):
             bot_msg_id = wa_ai._recent_sent_ids[-1] if wa_ai._recent_sent_ids else ""
             _wa_react(bot_msg_id, group_jid, "", emoji="🌐", from_me=True)
+        # If the model called clawbot_build, kick off the background job now
+        if "clawbot_build" in (result.get("tools_used") or []):
+            for step in (result.get("steps") or []):
+                if step.get("tool") == "clawbot_build" and step.get("ok"):
+                    args = step.get("args") or {}
+                    _threading.Thread(
+                        target=_run_clawbot_job,
+                        args=(args.get("task", prompt), args.get("subdomain", ""), group_jid),
+                        daemon=True,
+                    ).start()
+                    break
         logger.info("wa_ai: answered %s with tools=%s in %dms", author,
                     result.get("tools_used"), result.get("elapsed_ms", 0))
         reply_id = _chat.start_turn(thread, f"{author}: {prompt}")

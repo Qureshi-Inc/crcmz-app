@@ -512,6 +512,26 @@ def _web_search(query: str, limit: int = 6) -> Any:
     return data
 
 
+@tool("clawbot_build",
+      "Build and deploy a website, app, or tool using the Clawbot engineer AI. "
+      "Use when someone in the group asks to build, make, create, or ship something — "
+      "a site, a tool, an app, a dashboard. Clawbot codes and deploys it autonomously "
+      "to <subdomain>.buildanator.com. A live WhatsApp checklist updates as it works.",
+      {"type": "object",
+       "properties": {
+           "task": {"type": "string",
+                    "description": "Detailed description of what to build. Include all specifics mentioned."},
+           "subdomain": {"type": "string",
+                         "description": "Subdomain for buildanator.com (e.g. 'crcmz-stats'). "
+                                        "Lowercase letters and hyphens only. Derive from the task."},
+       },
+       "required": ["task", "subdomain"]})
+def _clawbot_build(task: str, subdomain: str) -> Any:
+    import re as _re
+    clean = _re.sub(r"[^a-z0-9-]", "-", subdomain.lower().strip()).strip("-")[:40]
+    return {"ready": True, "task": task, "subdomain": clean or "squad-build"}
+
+
 @tool("whatsapp_stats",
       "Totals for the WhatsApp group: message count, member count, active days, "
       "and messages per member. total_media counts messages that carried an "
