@@ -2048,7 +2048,7 @@ def _tts_and_send(text: str, group_jid: str) -> bool:
         import httpx as _hx
         r = _hx.post(
             f"{WA_TTS_URL.rstrip('/')}/v1/audio/speech",
-            json={"input": text, "voice": "af_heart"},
+            json={"input": text, "voice": "af_heart", "response_format": "opus"},
             timeout=120,
         )
         r.raise_for_status()
