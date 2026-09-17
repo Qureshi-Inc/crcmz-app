@@ -154,10 +154,11 @@ def send_reply(bridge_url: str, group_jid: str, text: str) -> bool:
         data = r.json()
         msg_id = (data.get("id") or data.get("messageId") or data.get("message_id")
                   or (data.get("key") or {}).get("id") or "")
+        logger.info("wa_ai: bridge /send response: %s (id=%r)", data, msg_id)
         if msg_id and msg_id not in _recent_sent_ids:
             _recent_sent_ids.append(msg_id)
             del _recent_sent_ids[:-_SENT_IDS_KEEP]
-            logger.debug("wa_ai: recorded sent msg id %s", msg_id)
+            logger.info("wa_ai: recorded sent msg id %s", msg_id)
     except Exception:  # noqa: BLE001
         pass
     return True
