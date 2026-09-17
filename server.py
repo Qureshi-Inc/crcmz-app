@@ -882,7 +882,7 @@ def _login_page(error: str = "", next: str = "/") -> str:
 
   function b64url(buf) {{
     return btoa(String.fromCharCode(...new Uint8Array(buf)))
-      .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+      .replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=/g,'');
   }}
   function fromB64url(s) {{
     const pad = '='.repeat((4-s.length%4)%4);
