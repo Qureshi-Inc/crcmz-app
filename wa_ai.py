@@ -60,6 +60,55 @@ def _save_sent_ids() -> None:
 
 _load_sent_ids()
 
+# name → JID map built from ingest messages so the model can @mention correctly.
+_MEMBER_JIDS_FILE = os.path.join(os.path.dirname(__file__), "data", "member_jids.json")
+_member_jids: dict[str, str] = {}   # display_name (lowercased) → full JID
+
+
+def _load_member_jids() -> None:
+    try:
+        with open(_MEMBER_JIDS_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _member_jids.update(data)
+            logger.info("wa_ai: loaded %d member jids from disk", len(_member_jids))
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning("wa_ai: could not load member jids: %s", e)
+
+
+def _save_member_jids() -> None:
+    try:
+        os.makedirs(os.path.dirname(_MEMBER_JIDS_FILE), exist_ok=True)
+        with open(_MEMBER_JIDS_FILE, "w") as f:
+            json.dump(_member_jids, f)
+    except Exception as e:
+        logger.warning("wa_ai: could not save member jids: %s", e)
+
+
+def learn_member(msg: dict) -> None:
+    """Build name→JID map from every ingest message."""
+    if msg.get("from_me") or msg.get("fromMe"):
+        return
+    jid = (msg.get("sender_jid") or msg.get("from") or "").strip()
+    name = (msg.get("sender_name") or msg.get("pushName") or "").strip()
+    if not jid or not name or "@" not in jid:
+        return
+    key = name.lower()
+    if _member_jids.get(key) != jid:
+        _member_jids[key] = jid
+        _save_member_jids()
+        logger.info("wa_ai: learned member jid %s -> %s", name, jid)
+
+
+def member_jids() -> dict[str, str]:
+    """Return a copy of the name→JID map for prompt injection."""
+    return dict(_member_jids)
+
+
+_load_member_jids()
+
 # On WhatsApp the natural way to talk to a bot is to @mention it, which puts the
 # mention ahead of everything: "@56767304183939 ai yo". So mentions are stripped
 # before the trigger is read, and a mention OF US is itself a trigger -- no "ai"

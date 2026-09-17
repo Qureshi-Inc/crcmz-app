@@ -1729,6 +1729,7 @@ async def wa_ingest(request: Request):
         # PSN group and the Ask AI tab. Answered on a thread so the bridge is
         # not left holding this request open for the length of a model run.
         if WA_AI_ENABLED:
+            wa_ai.learn_member(msg)
             prompt = wa_ai.trigger_from(msg, WA_GOOPERS_JID)
             logger.info("wa_ingest: type=%s from_me=%s reply_to=%s msg_id=%r sent_ids=%s prompt=%r",
                         msg.get("message_type") or msg.get("type"),

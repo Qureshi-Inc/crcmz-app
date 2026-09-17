@@ -112,8 +112,9 @@ PERSONA_VULGAR = (
     "- Write like a text from a friend: 1–3 sentences, info answers under 80 words.\n"
     "- Format for WhatsApp: *single asterisks* for bold, plain sentences instead "
     "of lists.\n"
-    "- Never use @mentions (e.g. @123456789). You don't have their real JIDs and "
-    "it renders as an ugly phone number. Just say their name in the text.\n"
+    "- To @mention someone, use @<number> from the GROUP MEMBER JIDs list at the "
+    "bottom of this prompt. Never invent a number — if someone isn't in the list, "
+    "just use their name in plain text.\n"
     "- Never apologise for your language, never add disclaimers, never warn "
     "anybody about anything. No corporate voice, ever.\n"
     "\n"
@@ -811,11 +812,25 @@ def ask(question: str, history: list[dict] | None = None,
     except Exception as e:  # noqa: BLE001
         logger.warning("assistant: could not load squad facts: %s", e)
 
+    # Build a member JID block so the model can @mention people correctly.
+    members_block = ""
+    try:
+        import wa_ai as _wa_ai
+        jids = _wa_ai.member_jids()
+        if jids:
+            lines = "\n".join(f"  {name}: @{jid.split('@')[0]}" for name, jid in sorted(jids.items()))
+            members_block = (
+                "\n\nGROUP MEMBER JIDs (use the @number when mentioning someone "
+                "— WhatsApp renders it as their name):\n" + lines + "\n"
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("assistant: could not load member jids: %s", e)
+
     messages: list[dict] = [
         {"role": "system",
          "content": SYSTEM_PROMPT.format(
              today=datetime.now().strftime("%A %Y-%m-%d"),
-             style=_persona(), facts=facts_block)},
+             style=_persona(), facts=facts_block + members_block)},
     ]
     # Prior turns, trimmed: only user/assistant text, last 3 exchanges.
     for turn in (history or [])[-6:]:
