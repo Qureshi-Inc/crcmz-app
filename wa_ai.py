@@ -220,6 +220,19 @@ _MENTION_NAME = re.compile(r"@([A-Za-z][A-Za-z0-9_.]{1,30})")
 _MENTION_NUM = re.compile(r"@(\d{7,})")
 
 
+def resolve_inbound_mentions(text: str) -> str:
+    """Replace @<number> in inbound messages with @<DisplayName> so the model
+    understands who is being referenced instead of seeing a raw phone number."""
+    if not text or "@" not in text:
+        return text
+    num_to_name = {jid.split("@")[0]: name for name, jid in _member_jids.items()}
+    def _replace(m: re.Match) -> str:
+        num = m.group(1)
+        name = num_to_name.get(num)
+        return f"@{name.title()}" if name else m.group(0)
+    return _MENTION_NUM.sub(_replace, text)
+
+
 def send_reply(bridge_url: str, group_jid: str, text: str) -> bool:
     """Send the answer to the group through the Baileys bridge."""
     text = (text or "").strip()

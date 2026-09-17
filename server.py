@@ -1978,10 +1978,15 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "creator mode enabled. ask me anything.")
         return
     if sender_jid in _creator_jids or author in _creator_jids:
+        _creator_jids.discard(sender_jid)
+        _creator_jids.discard(author)
         diag = _diagnostic_reply(prompt)
         if diag:
             wa_ai.send_reply(WA_BRIDGE_URL, group_jid, diag)
             return
+
+    # Resolve @numbers in inbound text → @Name so model understands who's mentioned
+    prompt = wa_ai.resolve_inbound_mentions(prompt)
 
     # Fast-path: build requests bypass tool calling (oMLX ignores tool_choice).
     # Detect, reply immediately, fire job in background.
