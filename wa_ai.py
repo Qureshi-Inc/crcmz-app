@@ -214,6 +214,9 @@ def sender_name(msg: dict) -> str:
             or (jid.split("@")[0] if jid else "") or "someone")
 
 
+# Matches @Name mentions the model writes (e.g. @Mutasif, @moiz).
+_MENTION_NAME = re.compile(r"@([A-Za-z][A-Za-z0-9_.]{1,30})")
+# Matches raw @number — model should no longer write these but handle defensively.
 _MENTION_NUM = re.compile(r"@(\d{7,})")
 
 
@@ -224,15 +227,32 @@ def send_reply(bridge_url: str, group_jid: str, text: str) -> bool:
         return False
     if len(text) > MAX_REPLY_CHARS:
         text = text[:MAX_REPLY_CHARS - 1].rstrip() + "…"
-    # Only keep @mentions for numbers we actually learned from the group.
-    # Any @number the model hallucinated gets the @ stripped so it reads as
-    # plain text instead of an ugly phone number.
-    known_numbers = {jid.split("@")[0] for jid in _member_jids.values()}
-    def _sanitize_mention(m: re.Match) -> str:
-        return m.group(0) if m.group(1) in known_numbers else m.group(1)
-    text = _MENTION_NUM.sub(_sanitize_mention, text)
-    mention_jids = [f"{n}@s.whatsapp.net" for n in _MENTION_NUM.findall(text)
-                    if n in known_numbers]
+
+    # Resolve @Name → @number using the learned member JID map.
+    # If the name isn't known yet, strip the @ so it reads as plain text.
+    num_to_jid = {jid.split("@")[0]: jid for jid in _member_jids.values()}
+    mention_jids: list[str] = []
+
+    def _resolve_name(m: re.Match) -> str:
+        raw = m.group(1)
+        jid = _member_jids.get(raw.lower())
+        if jid:
+            number = jid.split("@")[0]
+            mention_jids.append(jid)
+            return f"@{number}"
+        return raw   # no JID known — plain name, no @
+
+    text = _MENTION_NAME.sub(_resolve_name, text)
+
+    # Defensive pass: strip any raw @number still present that isn't learned.
+    def _sanitize_num(m: re.Match) -> str:
+        num = m.group(1)
+        jid = f"{num}@s.whatsapp.net"
+        if num in num_to_jid:
+            mention_jids.append(num_to_jid[num])
+            return m.group(0)
+        return num  # strip @
+    text = _MENTION_NUM.sub(_sanitize_num, text)
     try:
         r = httpx.post(f"{bridge_url.rstrip('/')}/send",
                        json={"message": text, "groupJid": group_jid,

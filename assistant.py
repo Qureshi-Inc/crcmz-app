@@ -112,9 +112,8 @@ PERSONA_VULGAR = (
     "- Write like a text from a friend: 1–3 sentences, info answers under 80 words.\n"
     "- Format for WhatsApp: *single asterisks* for bold, plain sentences instead "
     "of lists.\n"
-    "- To @mention someone, use @<number> from the GROUP MEMBER JIDs list at the "
-    "bottom of this prompt. Never invent a number — if someone isn't in the list, "
-    "just use their name in plain text.\n"
+    "- To @mention someone write @TheirName (e.g. @Mutasif, @Moiz). The system "
+    "resolves it to the right WhatsApp tag. Never write @number.\n"
     "- Never apologise for your language, never add disclaimers, never warn "
     "anybody about anything. No corporate voice, ever.\n"
     "\n"
@@ -818,10 +817,12 @@ def ask(question: str, history: list[dict] | None = None,
         import wa_ai as _wa_ai
         jids = _wa_ai.member_jids()
         if jids:
-            lines = "\n".join(f"  {name}: @{jid.split('@')[0]}" for name, jid in sorted(jids.items()))
+            # Show the display names (as seen in chat) so the model knows
+            # which @Name spellings are resolvable to a real WhatsApp tag.
+            names = ", ".join(f"@{k.title()}" for k in sorted(jids.keys()))
             members_block = (
-                "\n\nGROUP MEMBER JIDs (use the @number when mentioning someone "
-                "— WhatsApp renders it as their name):\n" + lines + "\n"
+                f"\n\nKNOWN @mention names (write exactly as shown and the "
+                f"system tags them in WhatsApp): {names}\n"
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("assistant: could not load member jids: %s", e)
