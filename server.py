@@ -1905,9 +1905,12 @@ def _extract_subdomain(text: str) -> str:
     m = _SUBDOMAIN_RE.search(text)
     if m:
         return m.group(1).lower()
-    words = _re.findall(r"[a-zA-Z]{3,}", text)
+    # Only derive from longer meaningful words — avoids slang like "bro", "man"
+    words = _re.findall(r"[a-zA-Z]{4,}", text)
     skip = {"make","build","create","deploy","ship","launch","website","site",
-            "app","tool","page","that","with","and","the","for","you","its"}
+            "app","tool","page","that","with","and","the","for","you","its",
+            "tell","your","engineer","have","want","need","just","like","this",
+            "single","whole","world","about","every","time","visit","grows","live"}
     slug = next((w.lower() for w in words if w.lower() not in skip), "squad-build")
     return slug[:30]
 

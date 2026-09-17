@@ -732,7 +732,9 @@ _BUILD_QUESTION = re.compile(
     r"\b(build|make|create|ship|deploy|launch|spin\s+up|set\s+up|put\s+together)\b"
     r".{0,80}\b(site|website|web\s*app|app|tool|dashboard|page|landing|portfolio|game)\b"
     r"|\b(site|website|web\s*app|app|tool|dashboard)\b.{0,80}"
-    r"\b(build|make|create|ship|deploy|launch)\b",
+    r"\b(build|make|create|ship|deploy|launch)\b"
+    r"|\b(tell|ask|get|have|use|send)\b.{0,30}\bengineer\b"
+    r"|\bengineer\b.{0,30}\b(build|make|create|fix|update|deploy|add|change)\b",
     re.IGNORECASE | re.DOTALL,
 )
 
