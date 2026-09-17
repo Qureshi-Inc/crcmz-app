@@ -1985,19 +1985,14 @@ def _messages_since_sender(sender_jid: str, group_jid: str) -> list[dict]:
         row = conn.execute("""
             SELECT timestamp FROM whatsapp_messages
             WHERE group_jid = ? AND sender_jid = ? AND from_me = 0
-              AND LOWER(text) NOT REGEXP 'summarize|catch me up|what did i miss|tldr|tl;dr|what happened|fill me in|recap'
+              AND LOWER(COALESCE(text,'')) NOT LIKE '%catch me up%'
+              AND LOWER(COALESCE(text,'')) NOT LIKE '%summarize%'
+              AND LOWER(COALESCE(text,'')) NOT LIKE '%what did i miss%'
+              AND LOWER(COALESCE(text,'')) NOT LIKE '%tldr%'
+              AND LOWER(COALESCE(text,'')) NOT LIKE '%fill me in%'
+              AND LOWER(COALESCE(text,'')) NOT LIKE '%what happened%'
             ORDER BY timestamp DESC LIMIT 1
         """, (group_jid, sender_jid)).fetchone()
-        if not row:
-            # REGEXP not available — fall back to simple LIKE exclusion
-            row = conn.execute("""
-                SELECT timestamp FROM whatsapp_messages
-                WHERE group_jid = ? AND sender_jid = ? AND from_me = 0
-                  AND LOWER(COALESCE(text,'')) NOT LIKE '%catch me up%'
-                  AND LOWER(COALESCE(text,'')) NOT LIKE '%summarize%'
-                  AND LOWER(COALESCE(text,'')) NOT LIKE '%what did i miss%'
-                ORDER BY timestamp DESC LIMIT 1
-            """, (group_jid, sender_jid)).fetchone()
         if not row:
             # No prior message found — fall back to last 2 hours
             import time as _t
