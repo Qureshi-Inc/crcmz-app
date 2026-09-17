@@ -2031,14 +2031,13 @@ def _format_messages_for_summary(msgs: list[dict]) -> str:
 
 def _tts_and_send(text: str, group_jid: str) -> bool:
     """Convert summary text to voice note via Kokoro TTS and send. Returns True if sent."""
+    if not WA_TTS_URL:
+        return False
     try:
         import httpx as _hx
-        base, _model, key = assistant._config()
-        headers = {"Authorization": f"Bearer {key}"} if key else {}
         r = _hx.post(
-            f"{base}/audio/speech",
-            headers=headers,
-            json={"model": "kokoro", "input": text, "voice": "af_heart", "response_format": "opus"},
+            f"{WA_TTS_URL.rstrip('/')}/v1/audio/speech",
+            json={"input": text, "voice": "af_heart"},
             timeout=120,
         )
         r.raise_for_status()
@@ -3625,6 +3624,7 @@ def _check_arc_alert(squad: list[dict]) -> None:
 
 # === PSN → WhatsApp / Discord video forwarder ================================
 WA_BRIDGE_URL  = os.environ.get("WA_BRIDGE_URL", "")
+WA_TTS_URL     = os.environ.get("WA_TTS_URL", "http://100.76.195.46:8880")
 WA_GOOPERS_JID = os.environ.get("WA_GOOPERS_JID", "")
 DISCORD_BOT_TOKEN       = os.environ.get("DISCORD_BOT_TOKEN", "")
 DISCORD_CLIPS_CHANNEL_ID = os.environ.get("DISCORD_CLIPS_CHANNEL_ID", "")
