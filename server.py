@@ -2052,10 +2052,20 @@ def _tts_and_send(text: str, group_jid: str) -> bool:
             timeout=120,
         )
         r.raise_for_status()
-        audio_bytes = r.content
-        if not audio_bytes:
+        raw_bytes = r.content
+        if not raw_bytes:
             return False
-        import base64 as _b64
+        # Kokoro returns OGG Vorbis despite claiming opus — transcode to real OGG Opus
+        import subprocess as _sp, base64 as _b64
+        try:
+            proc = _sp.run(
+                ["ffmpeg", "-y", "-i", "pipe:0", "-f", "ogg", "-c:a", "libopus",
+                 "-ar", "48000", "-ac", "1", "-b:a", "32k", "pipe:1"],
+                input=raw_bytes, capture_output=True, timeout=30,
+            )
+            audio_bytes = proc.stdout if proc.returncode == 0 and proc.stdout else raw_bytes
+        except Exception:
+            audio_bytes = raw_bytes
         audio_b64 = _b64.b64encode(audio_bytes).decode()
         bridge = WA_BRIDGE_URL.rstrip("/")
         r2 = _hx.post(
