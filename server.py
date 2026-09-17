@@ -2030,11 +2030,35 @@ def _format_messages_for_summary(msgs: list[dict]) -> str:
 
 
 def _tts_and_send(text: str, group_jid: str) -> bool:
-    """Convert summary text to audio and send. Returns True if sent.
-    TODO: wire up local TTS model (e.g. Kokoro) when available.
-    """
-    # Stub — not yet implemented
-    return False
+    """Convert summary text to voice note via Kokoro TTS and send. Returns True if sent."""
+    try:
+        import httpx as _hx
+        base, _model, key = assistant._config()
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        r = _hx.post(
+            f"{base}/audio/speech",
+            headers=headers,
+            json={"model": "kokoro", "input": text, "voice": "af_heart", "response_format": "opus"},
+            timeout=120,
+        )
+        r.raise_for_status()
+        audio_bytes = r.content
+        if not audio_bytes:
+            return False
+        import base64 as _b64
+        audio_b64 = _b64.b64encode(audio_bytes).decode()
+        bridge = WA_BRIDGE_URL.rstrip("/")
+        r2 = _hx.post(
+            f"{bridge}/send-audio",
+            json={"audioBase64": audio_b64, "mimetype": "audio/ogg; codecs=opus", "groupJid": group_jid},
+            timeout=30,
+        )
+        r2.raise_for_status()
+        logger.info("tts: sent audio voice note (%d bytes) to %s", len(audio_bytes), group_jid)
+        return True
+    except Exception as e:
+        logger.warning("tts: failed (%s), falling back to text", e)
+        return False
 
 
 def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -> None:
@@ -2050,14 +2074,12 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
     span_mins = (msgs[-1]["timestamp"] - msgs[0]["timestamp"]) // 60 if count > 1 else 0
 
     system = (
-        "You are Hasaan, summarizing a WhatsApp group chat for a member who was away. "
-        "Be concise — bullet points work well. Highlight anything important, funny, or dramatic. "
-        "Skip filler messages. Speak naturally, like you're catching a friend up."
+        "You are Hasaan. Reply ONLY with 4-6 bullet points catching someone up on a WhatsApp chat. "
+        "No intro, no explanation, no thinking — just the bullets. Start your reply with •"
     )
     user_msg = (
-        f"{author} was away and wants a catchup. Here are the {count} messages "
-        f"sent in the last {span_mins} min:\n\n{block}\n\n"
-        f"Give a short summary. /no_think"
+        f"{author} was away. Summarize these {count} messages from the last {span_mins} min. "
+        f"Highlight anything important, funny, or dramatic. Skip filler. /no_think\n\n{block}"
     )
 
     try:
@@ -2068,19 +2090,23 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
                      json={"model": model,
                            "messages": [{"role": "system", "content": system},
                                         {"role": "user", "content": user_msg}],
-                           "max_tokens": 600, "temperature": 0.7},
+                           "max_tokens": 500, "temperature": 0.5},
                      timeout=60)
         r.raise_for_status()
         summary = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
         # Strip <think>...</think> blocks
         summary = _re.sub(r"<think>.*?</think>", "", summary, flags=_re.DOTALL).strip()
-        # Strip untagged reasoning preamble ("Here's a thinking process:..." up to first real bullet/line)
-        summary = _re.sub(r"^(?:here'?s?\s+(?:a\s+)?(?:thinking|my\s+thought|a\s+summary)|let\s+me\s+(?:think|break|analyze)|okay|alright)[^\n]*\n+", "", summary, flags=_re.IGNORECASE).strip()
-        # If still starts with numbered reasoning steps, grab from first bullet point
-        if _re.match(r"^1\.\s+\*\*", summary):
-            m = _re.search(r"\n(?=[-•*]|\d+\.(?!\s+\*\*Analyze))", summary)
-            if m:
-                summary = summary[m.start():].strip()
+        # Strip any preamble before the first bullet — find the first • - * at line start
+        m = _re.search(r"(?m)^[•\-\*]", summary)
+        if m:
+            summary = summary[m.start():].strip()
+        else:
+            # No bullet found — model still gave prose; strip known thinking prefixes
+            summary = _re.sub(
+                r"(?si)^(?:here'?s?\s+(?:a\s+)?(?:thinking|my\s+thought|a\s+summary)|"
+                r"let\s+me\s+(?:think|break|analyze)|okay|alright|sure)[^\n]*\n+",
+                "", summary,
+            ).strip()
     except Exception as e:
         logger.warning("summarize: LLM error: %s", e)
         summary = ""
