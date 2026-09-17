@@ -1822,7 +1822,7 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
         except Exception as e:
             logger.warning("clawbot: patch job failed: %s", e)
 
-    _patch("running")
+    _patch("running", f"🚀 Starting job — deploying to {subdomain}.buildanator.com" if subdomain else "🚀 Starting job")
 
     prompt = task
     if subdomain:
@@ -1841,22 +1841,26 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
         "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-n",
         "-i", assistant.AI_CONTROLLER_KEY, assistant.AI_CONTROLLER_SSH,
     ]
-    logger.info("clawbot: starting job %r subdomain=%r", task[:60], subdomain)
+    logger.info("clawbot: SSH firing — subdomain=%r prompt=%r", subdomain, prompt[:120])
 
     proc = subprocess.Popen(ssh_base + [remote_cmd],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     start = _time.time()
     last_patch = start
+    log_lines = [f"🚀 SSH connected, engineer running…"]
 
     while proc.poll() is None:
         _time.sleep(5)
         elapsed = int(_time.time() - start)
         if _time.time() - last_patch >= 60:
             m, s = divmod(elapsed, 60)
-            _patch("running", f"⏳ Engineer working… {m}:{s:02d} elapsed")
+            log_lines.append(f"⏳ {m}:{s:02d} elapsed…")
+            _patch("running", "\n".join(log_lines))
+            logger.info("clawbot: still running at %dm%ds for %r", elapsed // 60, elapsed % 60, subdomain)
             last_patch = _time.time()
         if elapsed > 25 * 60:
             proc.kill()
+            logger.warning("clawbot: timed out after 25min for %r", subdomain)
             break
 
     try:
@@ -1887,7 +1891,10 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
 
     result_url = f"https://{subdomain}.buildanator.com" if subdomain else ""
     m, s = divmod(elapsed, 60)
-    _patch("done", f"✅ Finished in {m}:{s:02d}\n\n{answer_text[:300]}", result_url)
+    log_lines.append(f"✅ Finished in {m}:{s:02d}")
+    if answer_text and answer_text != "job finished":
+        log_lines.append(answer_text[:300])
+    _patch("done", "\n".join(log_lines), result_url)
 
     # First sentence of the engineer's summary (up to first newline or period)
     summary = ""
