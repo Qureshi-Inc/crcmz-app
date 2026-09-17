@@ -2072,11 +2072,12 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
     count = len(msgs)
     span_mins = (msgs[-1]["timestamp"] - msgs[0]["timestamp"]) // 60 if count > 1 else 0
 
-    system = "You are Hasaan. Write a short casual summary of the chat. Plain sentences only, no bullet points, no markdown, no formatting. Just talk."
+    system = "You are Hasaan. Summarize the chat for someone who was away. Casual, direct, plain sentences. No markdown, no bullets, no formatting symbols."
     user_msg = (
-        f"{author} was away for {span_mins} min and missed {count} messages. "
-        f"What happened? Keep it brief, hit the highlights, skip filler.\n\n{block}"
+        f"{author} missed {count} messages over {span_mins} min. What happened?\n\n{block}"
     )
+    # Prefill the assistant response so the model skips any preamble/thinking output
+    prefill = "While you were away,"
 
     try:
         base, model, key = assistant._config()
@@ -2084,14 +2085,18 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
         r = _hx.post(f"{base}/chat/completions",
                      headers={"Authorization": f"Bearer {key}"} if key else {},
                      json={"model": model,
-                           "messages": [{"role": "system", "content": system},
-                                        {"role": "user", "content": user_msg}],
-                           "max_tokens": 500, "temperature": 0.5,
-                           "enable_thinking": False},
+                           "messages": [
+                               {"role": "system", "content": system},
+                               {"role": "user", "content": user_msg},
+                               {"role": "assistant", "content": prefill},
+                           ],
+                           "max_tokens": 400, "temperature": 0.5},
                      timeout=60)
         r.raise_for_status()
-        summary = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
-        summary = _re.sub(r"<think>.*?</think>", "", summary, flags=_re.DOTALL).strip()
+        raw = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        raw = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
+        # Prepend the prefill back since the model continues from it
+        summary = f"{prefill} {raw}" if raw and not raw.startswith(prefill) else raw
     except Exception as e:
         logger.warning("summarize: LLM error: %s", e)
         summary = ""
