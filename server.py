@@ -2072,30 +2072,11 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
     count = len(msgs)
     span_mins = (msgs[-1]["timestamp"] - msgs[0]["timestamp"]) // 60 if count > 1 else 0
 
-    system = (
-        "You are Hasaan. Your ENTIRE response must be 4-6 bullet points starting with •. "
-        "First character of your response must be •. No numbered steps, no analysis, no preamble. "
-        "Example output:\n• thing 1\n• thing 2\n• thing 3"
-    )
+    system = "You are Hasaan. Write a short casual summary of the chat. Plain sentences only, no bullet points, no markdown, no formatting. Just talk."
     user_msg = (
-        f"{author} was away. Summarize these {count} messages from the last {span_mins} min. "
-        f"Highlight anything important, funny, or dramatic. Skip filler. /no_think\n\n{block}"
+        f"{author} was away for {span_mins} min and missed {count} messages. "
+        f"What happened? Keep it brief, hit the highlights, skip filler.\n\n{block}"
     )
-
-    def _strip_summary(raw: str) -> str:
-        raw = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
-        # Find first bullet at line start (•, -, *)
-        m = _re.search(r"(?m)^[•\-\*]", raw)
-        if m:
-            return raw[m.start():].strip()
-        # Model output numbered reasoning steps — strip blocks like "1. **Analyze..."
-        # by finding the first line that looks like actual content (short, no **)
-        lines = raw.splitlines()
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            if stripped and not _re.match(r"^\d+\.\s+\*\*|^[-–]\s+\*\*|^\*\*", stripped):
-                return "\n".join(lines[i:]).strip()
-        return raw
 
     try:
         base, model, key = assistant._config()
@@ -2105,11 +2086,12 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
                      json={"model": model,
                            "messages": [{"role": "system", "content": system},
                                         {"role": "user", "content": user_msg}],
-                           "max_tokens": 500, "temperature": 0.5},
+                           "max_tokens": 500, "temperature": 0.5,
+                           "enable_thinking": False},
                      timeout=60)
         r.raise_for_status()
-        raw = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
-        summary = _strip_summary(raw)
+        summary = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        summary = _re.sub(r"<think>.*?</think>", "", summary, flags=_re.DOTALL).strip()
     except Exception as e:
         logger.warning("summarize: LLM error: %s", e)
         summary = ""
@@ -2118,35 +2100,7 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "brain glitched trying to summarize, try again")
         return
 
-    # For audio: rewrite bullets as natural spoken prose (no markdown read aloud)
-    audio_sent = False
-    if WA_TTS_URL:
-        try:
-            base, model, key = assistant._config()
-            import httpx as _hx
-            r2 = _hx.post(f"{base}/chat/completions",
-                          headers={"Authorization": f"Bearer {key}"} if key else {},
-                          json={"model": model,
-                                "messages": [
-                                    {"role": "system", "content": (
-                                        "Rewrite this bullet-point chat summary as natural spoken audio. "
-                                        "Keep ALL the content and detail — nothing cut. "
-                                        "Use plain sentences, no bullet symbols, no asterisks, no markdown. "
-                                        "Write exactly as someone would say it out loud. "
-                                        "No intro like 'here is a summary', just start talking."
-                                    )},
-                                    {"role": "user", "content": summary},
-                                ],
-                                "max_tokens": 600, "temperature": 0.4},
-                          timeout=30)
-            r2.raise_for_status()
-            spoken = (r2.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
-            spoken = _re.sub(r"<think>.*?</think>", "", spoken, flags=_re.DOTALL).strip()
-            if spoken:
-                audio_sent = _tts_and_send(spoken, group_jid)
-        except Exception as e:
-            logger.warning("summarize: audio script error: %s", e)
-
+    _tts_and_send(summary, group_jid)
     wa_ai.send_reply(WA_BRIDGE_URL, group_jid, f"📋 *Catchup for {author}:*\n\n{summary}")
 
     logger.info("summarize: sent %d-msg summary (%d chars) for %s", count, len(summary), author)
