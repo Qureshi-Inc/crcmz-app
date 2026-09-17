@@ -1787,29 +1787,42 @@ def _wa_edit(msg_id: str, group_jid: str, text: str) -> None:
         logger.warning("clawbot: edit failed: %s", e)
 
 
-_CLAWBOT_TEMPLATE = (
-    "🤖 *Clawbot building:* {task}\n\n"
-    "{status}\n\n"
-    "_{elapsed}_"
-)
 
 
-def _clawbot_text(task: str, status: str, elapsed_s: int) -> str:
-    m, s = divmod(elapsed_s, 60)
-    return _CLAWBOT_TEMPLATE.format(
-        task=task, status=status,
-        elapsed=f"⏱ {m}:{s:02d} elapsed")
+_JOBS_API = "https://jobs.buildanator.com"
 
 
 def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
-    """SSH to ai-controller, run openclaw engineer one-shot, edit WA checklist."""
+    """SSH to ai-controller, run openclaw engineer, track via jobs.buildanator.com."""
     import shlex
     import subprocess
+    import httpx as _hx
 
-    initial = _clawbot_text(task, "⏳ Engineer starting up...", 0)
-    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, initial)
-    edit_id = wa_ai._recent_sent_ids[-1] if wa_ai._recent_sent_ids else ""
-    sent_at = _time.time()
+    # Create job in dashboard — get back a job ID + URL
+    job_id = ""
+    try:
+        r = _hx.post(f"{_JOBS_API}/jobs",
+                     json={"task": task, "subdomain": subdomain or ""},
+                     timeout=10)
+        r.raise_for_status()
+        job_id = r.json().get("id", "")
+    except Exception as e:
+        logger.warning("clawbot: could not create job in dashboard: %s", e)
+
+    job_url = f"{_JOBS_API}" + (f"?job={job_id}" if job_id else "")
+    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, f"🛠️ Track progress: {job_url}")
+
+    def _patch(status: str, logs: str = "", result_url: str = "") -> None:
+        if not job_id:
+            return
+        try:
+            _hx.patch(f"{_JOBS_API}/jobs/{job_id}",
+                      json={"status": status, "logs": logs, "result_url": result_url},
+                      timeout=10)
+        except Exception as e:
+            logger.warning("clawbot: patch job failed: %s", e)
+
+    _patch("running")
 
     prompt = task
     if subdomain:
@@ -1824,25 +1837,16 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
 
     proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     start = _time.time()
-    last_edit = start
+    last_patch = start
 
     while proc.poll() is None:
         _time.sleep(5)
         elapsed = int(_time.time() - start)
-        if _time.time() - last_edit >= 30:
-            now = _time.time()
-            # Rotate message if close to the 15-min WhatsApp edit limit
-            if edit_id and (now - sent_at) > 13 * 60:
-                _wa_edit(edit_id, group_jid, _clawbot_text(task, "⏳ Still working...\n_(continued below)_", elapsed))
-                _time.sleep(1)
-                cont = _clawbot_text(task, "⏳ Engineer still working...", elapsed)
-                wa_ai.send_reply(WA_BRIDGE_URL, group_jid, cont)
-                edit_id = wa_ai._recent_sent_ids[-1] if wa_ai._recent_sent_ids else ""
-                sent_at = now
-            elif edit_id:
-                _wa_edit(edit_id, group_jid, _clawbot_text(task, "⏳ Engineer working...", elapsed))
-            last_edit = _time.time()
-        if int(_time.time() - start) > 25 * 60:
+        if _time.time() - last_patch >= 60:
+            m, s = divmod(elapsed, 60)
+            _patch("running", f"⏳ Engineer working… {m}:{s:02d} elapsed")
+            last_patch = _time.time()
+        if elapsed > 25 * 60:
             proc.kill()
             break
 
@@ -1853,7 +1857,6 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
 
     elapsed = int(_time.time() - start)
 
-    # Parse openclaw JSON result
     answer_text = ""
     try:
         data = json.loads((stdout or "").strip())
@@ -1862,24 +1865,17 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
         answer_text = (stdout or "").strip()[:400]
 
     if not answer_text:
-        answer_text = "job finished — check Clawbot for details"
+        answer_text = "job finished"
 
-    if subdomain:
-        status_final = f"✅ Done!\n\n🔗 https://{subdomain}.buildanator.com\n\n{answer_text[:300]}"
+    result_url = f"https://{subdomain}.buildanator.com" if subdomain else ""
+    m, s = divmod(elapsed, 60)
+    _patch("done", f"✅ Finished in {m}:{s:02d}\n\n{answer_text[:300]}", result_url)
+
+    if result_url:
+        final_msg = f"✅ Done! → {result_url}"
     else:
-        status_final = f"✅ Done!\n\n{answer_text[:350]}"
-
-    final_text = _clawbot_text(task, status_final, elapsed)
-
-    now = _time.time()
-    if edit_id and (now - sent_at) > 13 * 60:
-        _wa_edit(edit_id, group_jid, _clawbot_text(task, "✅ Finished!", elapsed))
-        _time.sleep(1)
-        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, final_text)
-    elif edit_id:
-        _wa_edit(edit_id, group_jid, final_text)
-    else:
-        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, final_text)
+        final_msg = f"✅ Done! {answer_text[:250]}"
+    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, final_msg)
 
     logger.info("clawbot: job done in %dm%ds for task %r", elapsed // 60, elapsed % 60, task[:40])
 

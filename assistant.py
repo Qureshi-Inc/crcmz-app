@@ -517,8 +517,8 @@ def _web_search(query: str, limit: int = 6) -> Any:
       "Use when someone in the group asks to build, make, create, or ship something — "
       "a site, a tool, an app, a dashboard. Clawbot codes and deploys it autonomously. "
       "After calling this tool your reply must be ONE short line: confirm you're getting "
-      "the engineer on it. Do NOT mention a URL, do NOT say it's done — the checklist "
-      "message handles all status updates.",
+      "the engineer on it. Do NOT mention a URL, do NOT say it's done — a follow-up "
+      "message with the jobs dashboard link is sent automatically.",
       {"type": "object",
        "properties": {
            "task": {"type": "string",
