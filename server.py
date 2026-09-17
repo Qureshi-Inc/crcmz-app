@@ -2089,7 +2089,8 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
     system = "Summarize this WhatsApp chat for someone who missed it. Casual, plain sentences, no bullet points, no markdown. Just tell them what happened."
     user_msg = f"{author} missed {count} messages over the last {span_mins} minutes.\n\n{block}"
 
-    # Typing keepalive — WhatsApp clears composing after ~10s, re-send every 8s
+    # Show typing immediately, then keepalive every 8s (WhatsApp clears composing after ~10s)
+    _wa_typing(group_jid, True)
     _stop_typing = _threading.Event()
     def _typing_loop():
         while not _stop_typing.wait(8):
@@ -2155,7 +2156,6 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
     if assistant.needs_build(prompt) and not image_b64:
         subdomain = _extract_subdomain(prompt)
         _wa_typing(group_jid, True)
-        _wa_typing(group_jid, False)
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
         _threading.Thread(
             target=_run_clawbot_job,
