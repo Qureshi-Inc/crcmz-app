@@ -2073,13 +2073,29 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
     span_mins = (msgs[-1]["timestamp"] - msgs[0]["timestamp"]) // 60 if count > 1 else 0
 
     system = (
-        "You are Hasaan. Reply ONLY with 4-6 bullet points catching someone up on a WhatsApp chat. "
-        "No intro, no explanation, no thinking — just the bullets. Start your reply with •"
+        "You are Hasaan. Your ENTIRE response must be 4-6 bullet points starting with •. "
+        "First character of your response must be •. No numbered steps, no analysis, no preamble. "
+        "Example output:\n• thing 1\n• thing 2\n• thing 3"
     )
     user_msg = (
         f"{author} was away. Summarize these {count} messages from the last {span_mins} min. "
         f"Highlight anything important, funny, or dramatic. Skip filler. /no_think\n\n{block}"
     )
+
+    def _strip_summary(raw: str) -> str:
+        raw = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
+        # Find first bullet at line start (•, -, *)
+        m = _re.search(r"(?m)^[•\-\*]", raw)
+        if m:
+            return raw[m.start():].strip()
+        # Model output numbered reasoning steps — strip blocks like "1. **Analyze..."
+        # by finding the first line that looks like actual content (short, no **)
+        lines = raw.splitlines()
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped and not _re.match(r"^\d+\.\s+\*\*|^[-–]\s+\*\*|^\*\*", stripped):
+                return "\n".join(lines[i:]).strip()
+        return raw
 
     try:
         base, model, key = assistant._config()
@@ -2092,20 +2108,8 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
                            "max_tokens": 500, "temperature": 0.5},
                      timeout=60)
         r.raise_for_status()
-        summary = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
-        # Strip <think>...</think> blocks
-        summary = _re.sub(r"<think>.*?</think>", "", summary, flags=_re.DOTALL).strip()
-        # Strip any preamble before the first bullet — find the first • - * at line start
-        m = _re.search(r"(?m)^[•\-\*]", summary)
-        if m:
-            summary = summary[m.start():].strip()
-        else:
-            # No bullet found — model still gave prose; strip known thinking prefixes
-            summary = _re.sub(
-                r"(?si)^(?:here'?s?\s+(?:a\s+)?(?:thinking|my\s+thought|a\s+summary)|"
-                r"let\s+me\s+(?:think|break|analyze)|okay|alright|sure)[^\n]*\n+",
-                "", summary,
-            ).strip()
+        raw = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        summary = _strip_summary(raw)
     except Exception as e:
         logger.warning("summarize: LLM error: %s", e)
         summary = ""
