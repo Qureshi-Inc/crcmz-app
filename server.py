@@ -1916,6 +1916,10 @@ def _extract_subdomain(text: str) -> str:
     m = _SUBDOMAIN_RE.search(text)
     if m:
         return m.group(1).lower()
+    # "called recaply" / "named recaply" → use that name directly
+    m2 = _re.search(r'\b(?:called|named)\s+([a-z][a-z0-9-]{1,38})\b', text, _re.IGNORECASE)
+    if m2:
+        return m2.group(1).lower()[:30]
     # Only derive from longer meaningful words — avoids slang like "bro", "man"
     words = _re.findall(r"[a-zA-Z]{4,}", text)
     skip = {"make","build","create","deploy","ship","launch","website","site",
