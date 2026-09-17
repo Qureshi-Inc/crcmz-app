@@ -1740,16 +1740,41 @@ async def wa_ingest(request: Request):
                     target=_answer_whatsapp, name="wa-ai",
                     args=(prompt, wa_ai.sender_name(msg),
                           msg.get("group_jid") or msg.get("groupJid") or WA_GOOPERS_JID,
-                          msg.get("image_b64", ""), msg.get("image_type", "image/jpeg")),
+                          msg.get("image_b64", ""), msg.get("image_type", "image/jpeg"),
+                          msg.get("message_id", ""), msg.get("sender_jid", "")),
                     daemon=True).start()
     return JSONResponse({"inserted": inserted, "received": len(msgs)})
 
 
+def _wa_react(msg_id: str, group_jid: str, sender_jid: str, emoji: str = "👁") -> None:
+    if not WA_BRIDGE_URL or not msg_id or not group_jid:
+        return
+    try:
+        _httpx.post(f"{WA_BRIDGE_URL}/react",
+                    json={"messageId": msg_id, "groupJid": group_jid,
+                          "participant": sender_jid, "emoji": emoji}, timeout=5)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _wa_typing(group_jid: str, composing: bool) -> None:
+    if not WA_BRIDGE_URL or not group_jid:
+        return
+    try:
+        _httpx.post(f"{WA_BRIDGE_URL}/typing",
+                    json={"groupJid": group_jid, "composing": composing}, timeout=5)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _answer_whatsapp(prompt: str, author: str, group_jid: str,
-                     image_b64: str = "", image_type: str = "image/jpeg") -> None:
+                     image_b64: str = "", image_type: str = "image/jpeg",
+                     msg_id: str = "", sender_jid: str = "") -> None:
     """Answer one "ai ..." from WhatsApp and send it back to the group."""
     if not assistant.available():
         return
+    _wa_react(msg_id, group_jid, sender_jid)
+    _wa_typing(group_jid, True)
     thread = f"wa-group:{group_jid}"
     logger.info("wa_ai: %s asked %r%s", author, prompt[:80],
                 " [+image]" if image_b64 else "")
@@ -1761,6 +1786,8 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         logger.warning("wa_ai: answering failed: %s", e)
         answer = "my brain just crashed, ask me again in a sec"
         result = {}
+    finally:
+        _wa_typing(group_jid, False)
     if not answer:
         return
     if wa_ai.send_reply(WA_BRIDGE_URL, group_jid, answer):
