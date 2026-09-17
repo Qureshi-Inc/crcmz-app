@@ -2060,6 +2060,9 @@ def _tts_and_send(text: str, group_jid: str) -> bool:
         return False
 
 
+_SUMMARY_MODEL = "gemma-4-26B-A4B-it-QAT-MLX-4bit"
+
+
 def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -> None:
     """Fetch missed messages and send a summary back to the group."""
     msgs = _messages_since_sender(sender_jid, group_jid)
@@ -2072,34 +2075,37 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
     count = len(msgs)
     span_mins = (msgs[-1]["timestamp"] - msgs[0]["timestamp"]) // 60 if count > 1 else 0
 
-    system = "You are Hasaan. Summarize the chat for someone who was away. Casual, direct, plain sentences. No markdown, no bullets, no formatting symbols."
-    user_msg = (
-        f"{author} missed {count} messages over {span_mins} min. What happened?\n\n{block}"
-    )
-    # Prefill the assistant response so the model skips any preamble/thinking output
-    prefill = "While you were away,"
+    system = "Summarize this WhatsApp chat for someone who missed it. Casual, plain sentences, no bullet points, no markdown. Just tell them what happened."
+    user_msg = f"{author} missed {count} messages over the last {span_mins} minutes.\n\n{block}"
+
+    # Typing keepalive — WhatsApp clears composing after ~10s, re-send every 8s
+    _stop_typing = _threading.Event()
+    def _typing_loop():
+        while not _stop_typing.wait(8):
+            _wa_typing(group_jid, True)
+    _threading.Thread(target=_typing_loop, daemon=True).start()
 
     try:
-        base, model, key = assistant._config()
+        base, _m, key = assistant._config()
         import httpx as _hx
         r = _hx.post(f"{base}/chat/completions",
                      headers={"Authorization": f"Bearer {key}"} if key else {},
-                     json={"model": model,
+                     json={"model": _SUMMARY_MODEL,
                            "messages": [
                                {"role": "system", "content": system},
                                {"role": "user", "content": user_msg},
-                               {"role": "assistant", "content": prefill},
                            ],
-                           "max_tokens": 400, "temperature": 0.5},
-                     timeout=60)
+                           "max_tokens": 500, "temperature": 0.5},
+                     timeout=90)
         r.raise_for_status()
-        raw = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
-        raw = _re.sub(r"<think>.*?</think>", "", raw, flags=_re.DOTALL).strip()
-        # Prepend the prefill back since the model continues from it
-        summary = f"{prefill} {raw}" if raw and not raw.startswith(prefill) else raw
+        summary = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        summary = _re.sub(r"<think>.*?</think>", "", summary, flags=_re.DOTALL).strip()
     except Exception as e:
         logger.warning("summarize: LLM error: %s", e)
         summary = ""
+    finally:
+        _stop_typing.set()
+        _wa_typing(group_jid, False)
 
     if not summary:
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "brain glitched trying to summarize, try again")
@@ -2107,7 +2113,6 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
 
     _tts_and_send(summary, group_jid)
     wa_ai.send_reply(WA_BRIDGE_URL, group_jid, f"📋 *Catchup for {author}:*\n\n{summary}")
-
     logger.info("summarize: sent %d-msg summary (%d chars) for %s", count, len(summary), author)
 
 
@@ -2136,9 +2141,7 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
 
     # Summarize trigger — fetch missed messages and summarize for the requester
     if _SUMMARIZE_RE.search(prompt):
-        _wa_typing(group_jid, True)
         _summarize_chat(prompt, author, sender_jid, group_jid)
-        _wa_typing(group_jid, False)
         return
 
     # Fast-path: build requests bypass tool calling (oMLX ignores tool_choice).
