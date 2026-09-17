@@ -9,4 +9,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/health')" || exit 1
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "3000"]
+CMD ["sh", "-c", "if [ -n \"$AI_CONTROLLER_SSH_KEY\" ]; then mkdir -p /home/opti3/.ssh && printf '%s' \"$AI_CONTROLLER_SSH_KEY\" | base64 -d > /home/opti3/.ssh/id_ed25519_aicontroller && chmod 600 /home/opti3/.ssh/id_ed25519_aicontroller; fi && uvicorn server:app --host 0.0.0.0 --port 3000"]
