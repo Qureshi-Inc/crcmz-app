@@ -1966,8 +1966,8 @@ def _diagnostic_reply(prompt: str) -> str | None:
 
 
 _SUMMARIZE_RE = _re.compile(
-    r"\b(summarize|summary|catch\s+me\s+up|what\s+did\s+i\s+miss|tldr|tl;dr|"
-    r"what\s+happened|fill\s+me\s+in|recap)\b",
+    r"\b(summarize|catch\s+me\s+up|what\s+did\s+i\s+miss|tldr|tl;?dr|"
+    r"fill\s+me\s+in|missed\s+anything|catch\s+up\s+on\s+chat)\b",
     _re.IGNORECASE,
 )
 
@@ -2139,13 +2139,8 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
     # Resolve @numbers in inbound text → @Name so model understands who's mentioned
     prompt = wa_ai.resolve_inbound_mentions(prompt)
 
-    # Summarize trigger — fetch missed messages and summarize for the requester
-    if _SUMMARIZE_RE.search(prompt):
-        _summarize_chat(prompt, author, sender_jid, group_jid)
-        return
-
-    # Fast-path: build requests bypass tool calling (oMLX ignores tool_choice).
-    # Detect, reply immediately, fire job in background.
+    # Build requests take priority — check before summarize so a message like
+    # "build me a catchup app, I missed what we discussed" doesn't hit summarize.
     if assistant.needs_build(prompt) and not image_b64:
         subdomain = _extract_subdomain(prompt)
         _wa_typing(group_jid, True)
@@ -2157,6 +2152,11 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
             daemon=True,
         ).start()
         logger.info("wa_ai: build fast-path for %r subdomain=%r", prompt[:60], subdomain)
+        return
+
+    # Summarize trigger — only fires on explicit catchup requests, not build messages
+    if _SUMMARIZE_RE.search(prompt):
+        _summarize_chat(prompt, author, sender_jid, group_jid)
         return
 
     _wa_typing(group_jid, True)
