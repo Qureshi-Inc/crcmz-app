@@ -1965,6 +1965,123 @@ def _diagnostic_reply(prompt: str) -> str | None:
     return None
 
 
+_SUMMARIZE_RE = _re.compile(
+    r"\b(summarize|summary|catch\s+me\s+up|what\s+did\s+i\s+miss|tldr|tl;dr|"
+    r"what\s+happened|fill\s+me\s+in|recap)\b",
+    _re.IGNORECASE,
+)
+
+_WA_DB_PATH = "/data/whatsapp.db"
+
+
+def _messages_since_sender(sender_jid: str, group_jid: str) -> list[dict]:
+    """Return all messages in the group after sender's last message before this one."""
+    import sqlite3 as _sq
+    try:
+        conn = _sq.connect(_WA_DB_PATH)
+        conn.row_factory = _sq.Row
+        # Find sender's most recent message before now (exclude from_me bot messages)
+        row = conn.execute("""
+            SELECT timestamp FROM whatsapp_messages
+            WHERE group_jid = ? AND sender_jid = ? AND from_me = 0
+            ORDER BY timestamp DESC LIMIT 1
+        """, (group_jid, sender_jid)).fetchone()
+        if not row:
+            # No prior message found — fall back to last 2 hours
+            import time as _t
+            since_ts = int(_t.time()) - 7200
+        else:
+            since_ts = row["timestamp"]
+        msgs = conn.execute("""
+            SELECT sender_name, timestamp, text, has_photo, has_video, has_audio
+            FROM whatsapp_messages
+            WHERE group_jid = ? AND timestamp > ? AND from_me = 0
+            ORDER BY timestamp ASC
+        """, (group_jid, since_ts)).fetchall()
+        conn.close()
+        return [dict(r) for r in msgs]
+    except Exception as e:
+        logger.warning("summarize: DB error: %s", e)
+        return []
+
+
+def _format_messages_for_summary(msgs: list[dict]) -> str:
+    """Format messages into a readable block for the LLM."""
+    import datetime as _dt
+    lines = []
+    for m in msgs:
+        ts = _dt.datetime.fromtimestamp(m["timestamp"]).strftime("%H:%M")
+        name = m.get("sender_name") or "unknown"
+        text = (m.get("text") or "").strip()
+        media = []
+        if m.get("has_photo"): media.append("📷 photo")
+        if m.get("has_video"): media.append("🎬 video")
+        if m.get("has_audio"): media.append("🎵 audio")
+        content = text or (", ".join(media)) or "(message)"
+        lines.append(f"[{ts}] {name}: {content}")
+    return "\n".join(lines)
+
+
+def _tts_and_send(text: str, group_jid: str) -> bool:
+    """Convert summary text to audio and send. Returns True if sent.
+    TODO: wire up local TTS model (e.g. Kokoro) when available.
+    """
+    # Stub — not yet implemented
+    return False
+
+
+def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -> None:
+    """Fetch missed messages and send a summary back to the group."""
+    msgs = _messages_since_sender(sender_jid, group_jid)
+    if not msgs:
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid,
+                         f"couldn't find any messages since your last one, {author}")
+        return
+
+    block = _format_messages_for_summary(msgs)
+    count = len(msgs)
+    span_mins = (msgs[-1]["timestamp"] - msgs[0]["timestamp"]) // 60 if count > 1 else 0
+
+    system = (
+        "You are Hasaan, summarizing a WhatsApp group chat for a member who was away. "
+        "Be concise — bullet points work well. Highlight anything important, funny, or dramatic. "
+        "Skip filler messages. Speak naturally, like you're catching a friend up."
+    )
+    user_msg = (
+        f"{author} was away and wants a catchup. Here are the {count} messages "
+        f"sent in the last {span_mins} min:\n\n{block}\n\n"
+        f"Give a short summary."
+    )
+
+    try:
+        base, model, key = assistant._config()
+        import httpx as _hx
+        r = _hx.post(f"{base}/chat/completions",
+                     headers={"Authorization": f"Bearer {key}"} if key else {},
+                     json={"model": model,
+                           "messages": [{"role": "system", "content": system},
+                                        {"role": "user", "content": user_msg}],
+                           "max_tokens": 600, "temperature": 0.7},
+                     timeout=60)
+        r.raise_for_status()
+        summary = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+        # Strip thinking tags if present
+        summary = _re.sub(r"<think>.*?</think>", "", summary, flags=_re.DOTALL).strip()
+    except Exception as e:
+        logger.warning("summarize: LLM error: %s", e)
+        summary = ""
+
+    if not summary:
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "brain glitched trying to summarize, try again")
+        return
+
+    # Try audio first (stub returns False until TTS is wired up)
+    if not _tts_and_send(summary, group_jid):
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, f"📋 *Catchup for {author}:*\n\n{summary}")
+
+    logger.info("summarize: sent %d-msg summary (%d chars) for %s", count, len(summary), author)
+
+
 def _answer_whatsapp(prompt: str, author: str, group_jid: str,
                      image_b64: str = "", image_type: str = "image/jpeg",
                      msg_id: str = "", sender_jid: str = "") -> None:
@@ -1987,6 +2104,11 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
 
     # Resolve @numbers in inbound text → @Name so model understands who's mentioned
     prompt = wa_ai.resolve_inbound_mentions(prompt)
+
+    # Summarize trigger — fetch missed messages and summarize for the requester
+    if _SUMMARIZE_RE.search(prompt):
+        _summarize_chat(prompt, author, sender_jid, group_jid)
+        return
 
     # Fast-path: build requests bypass tool calling (oMLX ignores tool_choice).
     # Detect, reply immediately, fire job in background.
