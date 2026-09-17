@@ -2143,8 +2143,7 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
         except Exception as e:
             logger.warning("summarize: audio script error: %s", e)
 
-    if not audio_sent:
-        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, f"📋 *Catchup for {author}:*\n\n{summary}")
+    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, f"📋 *Catchup for {author}:*\n\n{summary}")
 
     logger.info("summarize: sent %d-msg summary (%d chars) for %s", count, len(summary), author)
 
