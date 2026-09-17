@@ -2057,7 +2057,7 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
     user_msg = (
         f"{author} was away and wants a catchup. Here are the {count} messages "
         f"sent in the last {span_mins} min:\n\n{block}\n\n"
-        f"Give a short summary."
+        f"Give a short summary. /no_think"
     )
 
     try:
@@ -2072,8 +2072,15 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
                      timeout=60)
         r.raise_for_status()
         summary = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
-        # Strip thinking tags if present
+        # Strip <think>...</think> blocks
         summary = _re.sub(r"<think>.*?</think>", "", summary, flags=_re.DOTALL).strip()
+        # Strip untagged reasoning preamble ("Here's a thinking process:..." up to first real bullet/line)
+        summary = _re.sub(r"^(?:here'?s?\s+(?:a\s+)?(?:thinking|my\s+thought|a\s+summary)|let\s+me\s+(?:think|break|analyze)|okay|alright)[^\n]*\n+", "", summary, flags=_re.IGNORECASE).strip()
+        # If still starts with numbered reasoning steps, grab from first bullet point
+        if _re.match(r"^1\.\s+\*\*", summary):
+            m = _re.search(r"\n(?=[-•*]|\d+\.(?!\s+\*\*Analyze))", summary)
+            if m:
+                summary = summary[m.start():].strip()
     except Exception as e:
         logger.warning("summarize: LLM error: %s", e)
         summary = ""
