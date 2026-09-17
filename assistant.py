@@ -59,7 +59,8 @@ SYSTEM_PROMPT = (
     "- The squad facts below are already in your head. Never call a tool just to "
     "joke about or roast somebody.\n"
     "- Match the source to the question: music -> Slapshare tools, who is on -> "
-    "PSN, what did X say -> WhatsApp, what is CRCMZ -> crcmz_website.\n"
+    "PSN, what did X say -> WhatsApp, what is CRCMZ -> crcmz_website, current "
+    "events / news / scores / anything live -> web_search.\n"
     "- A FOLLOW-UP STILL NEEDS THE TOOL. \"and who is second?\", \"what about "
     "last month?\", \"how about Samad?\" — you do not remember data between "
     "questions, and an earlier answer of yours is not a source. The only numbers "
@@ -198,6 +199,10 @@ def _wa():
 # Both live outside this app, so they are fetched server-side and cached: a
 # question can trigger several tool calls, and nobody needs eight HTTP round
 # trips to the same dashboard to answer "tell me about the squad".
+AI_CONTROLLER_SSH = os.environ.get("AI_CONTROLLER_SSH", "ai@100.68.46.42")
+AI_CONTROLLER_KEY = os.environ.get("AI_CONTROLLER_KEY",
+                                   "/home/opti3/.ssh/id_ed25519_aicontroller")
+
 SLAP_BASE = os.environ.get("SLAP_API_BASE", "https://slap.qureshi.io/api/v1/dashboard")
 SITE_URL = os.environ.get("CRCMZ_SITE_URL", "https://crcmz.me")
 _SLAP_TTL = 300.0
@@ -443,6 +448,43 @@ def _website() -> Any:
     text = _site_text()
     return {"url": "https://crcmz.me", "text": text} if text else {
         "error": "could not read crcmz.me right now"}
+
+
+@tool("web_search",
+      "Search the web for current events, news, sports scores, prices, weather, "
+      "or anything outside the squad data that needs live or recent information. "
+      "Returns titles, URLs and snippets from a self-hosted SearXNG (Google, "
+      "Bing, DuckDuckGo, Reddit, etc.).",
+      {"type": "object",
+       "properties": {
+           "query": {"type": "string", "description": "Search query. Be specific."},
+           "limit": {"type": "integer",
+                     "description": "Results to return, 1-12. Default 6."},
+       },
+       "required": ["query"]})
+def _web_search(query: str, limit: int = 6) -> Any:
+    import shlex
+    import subprocess
+    limit = max(1, min(int(limit or 6), 12))
+    ssh_args = [
+        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+        "-i", AI_CONTROLLER_KEY, AI_CONTROLLER_SSH,
+        f"/opt/ai-lab/bin/lab-search {shlex.quote(query)} --json --limit {limit}",
+    ]
+    try:
+        proc = subprocess.run(ssh_args, capture_output=True, text=True, timeout=35)
+    except subprocess.TimeoutExpired:
+        return {"error": "web search timed out"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"web search unavailable: {e}"}
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()[:300]
+        return {"error": f"search failed: {err}"}
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except ValueError:
+        return {"error": "could not parse search results", "raw": proc.stdout[:200]}
+    return data
 
 
 @tool("whatsapp_stats",
