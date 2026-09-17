@@ -728,17 +728,37 @@ def needs_tool(question: str) -> bool:
     return bool(_DATA_QUESTION.search(question or ""))
 
 
+_BUILD_QUESTION = re.compile(
+    r"\b(build|make|create|ship|deploy|launch|spin\s+up|set\s+up|put\s+together)\b"
+    r".{0,80}\b(site|website|web\s*app|app|tool|dashboard|page|landing|portfolio|game)\b"
+    r"|\b(site|website|web\s*app|app|tool|dashboard)\b.{0,80}"
+    r"\b(build|make|create|ship|deploy|launch)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def needs_build(question: str) -> bool:
+    """True when the message is asking Clawbot to build something."""
+    return bool(_BUILD_QUESTION.search(question or ""))
+
+
 def _chat(messages: list[dict], model: str, base: str, key: str,
-          force_tool: bool = False) -> dict:
+          force_tool: bool = False, force_tool_name: str = "") -> dict:
     """One /v1/chat/completions round trip with the tool registry attached."""
     headers = {"Authorization": f"Bearer {key}"} if key else {}
+    if force_tool_name:
+        tc: Any = {"type": "function", "function": {"name": force_tool_name}}
+    elif force_tool:
+        tc = "required"
+    else:
+        tc = "auto"
     payload = {
         "model": model,
         "messages": messages,
         "tools": tool_specs(),
         # "required" only ever on the first turn: leaving it on would make the
         # model call tools forever instead of writing the answer.
-        "tool_choice": "required" if force_tool else "auto",
+        "tool_choice": tc,
         "stream": False,
         # Comedy needs room to move; 0.2 produced a flat civil-servant voice.
         # Tool calls still land reliably here because the schemas are explicit.
@@ -876,10 +896,14 @@ def ask(question: str, history: list[dict] | None = None,
     trail: list[dict] = []
     started = time.time()
     force_first = needs_tool(question)
+    force_build = needs_build(question)
     retried_bare = False
     for step in range(MAX_STEPS):
-        data = _chat(messages, model, base, key,
-                     force_tool=(force_first and not trail))
+        if force_build and not trail:
+            data = _chat(messages, model, base, key, force_tool_name="clawbot_build")
+        else:
+            data = _chat(messages, model, base, key,
+                         force_tool=(force_first and not trail))
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         calls = _tool_calls_from(message)
