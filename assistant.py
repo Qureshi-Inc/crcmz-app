@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # The uncensored Heretic tune of Qwen3.6-35B — verified to still emit real
 # tool_calls, which abliterated models sometimes lose. Point OLLAMA_MODEL at the
 # same name to keep exactly one model resident on the Mac.
-DEFAULT_MODEL = "Qwen3.6-35B-A3B-MLX-8bit"
+DEFAULT_MODEL = "Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit"
 MAX_STEPS = 6                 # model turns per question (tool round-trips)
 MAX_ANSWER_TOKENS = 400       # ~300 words: a reply, not a briefing
 MAX_TOOL_CHARS = 6000         # per-tool result budget handed back to the model
