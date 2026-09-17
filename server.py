@@ -1880,15 +1880,14 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     logger.info("clawbot: job done in %dm%ds for task %r", elapsed // 60, elapsed % 60, task[:40])
 
 
-_SUBDOMAIN_RE = re.compile(r"\b([a-z][a-z0-9-]{1,38})[.\s]*buildanator[.\s]*com\b", re.IGNORECASE)
+_SUBDOMAIN_RE = _re.compile(r"\b([a-z][a-z0-9-]{1,38})[.\s]*buildanator[.\s]*com\b", _re.IGNORECASE)
 
 
 def _extract_subdomain(text: str) -> str:
     m = _SUBDOMAIN_RE.search(text)
     if m:
         return m.group(1).lower()
-    # Derive from first meaningful word in the task
-    words = re.findall(r"[a-zA-Z]{3,}", text)
+    words = _re.findall(r"[a-zA-Z]{3,}", text)
     skip = {"make","build","create","deploy","ship","launch","website","site",
             "app","tool","page","that","with","and","the","for","you","its"}
     slug = next((w.lower() for w in words if w.lower() not in skip), "squad-build")
