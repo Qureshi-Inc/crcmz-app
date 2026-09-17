@@ -2114,8 +2114,30 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "brain glitched trying to summarize, try again")
         return
 
-    # Try audio first (stub returns False until TTS is wired up)
-    if not _tts_and_send(summary, group_jid):
+    # For audio, convert bullets to 2-3 short spoken sentences
+    audio_sent = False
+    if WA_TTS_URL:
+        try:
+            base, model, key = assistant._config()
+            import httpx as _hx
+            r2 = _hx.post(f"{base}/chat/completions",
+                          headers={"Authorization": f"Bearer {key}"} if key else {},
+                          json={"model": model,
+                                "messages": [
+                                    {"role": "system", "content": "Convert bullet-point chat summaries into 2-3 short spoken sentences. Casual tone. No bullet points, no intro, no filler. Just the key things, like you're telling a friend quickly."},
+                                    {"role": "user", "content": summary},
+                                ],
+                                "max_tokens": 120, "temperature": 0.4},
+                          timeout=30)
+            r2.raise_for_status()
+            spoken = (r2.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+            spoken = _re.sub(r"<think>.*?</think>", "", spoken, flags=_re.DOTALL).strip()
+            if spoken:
+                audio_sent = _tts_and_send(spoken, group_jid)
+        except Exception as e:
+            logger.warning("summarize: audio script error: %s", e)
+
+    if not audio_sent:
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, f"📋 *Catchup for {author}:*\n\n{summary}")
 
     logger.info("summarize: sent %d-msg summary (%d chars) for %s", count, len(summary), author)
