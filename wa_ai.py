@@ -121,6 +121,11 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
         # We know our IDs but this mention isn't us — still catch "ai ..." in rest.
         return parse_trigger(rest)
 
+    # Path 4: @mention of us anywhere in the message (middle, end, etc.).
+    if _self_ids and set(_MENTION_ID.findall(text)) & _self_ids:
+        clean = re.sub(r"@(?:" + "|".join(re.escape(i) for i in _self_ids) + r")", "", text).strip()
+        return (clean or text)[:400]
+
     # Path 3: plain "ai ..." prefix.
     return parse_trigger(text)
 
