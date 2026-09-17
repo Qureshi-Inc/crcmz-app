@@ -23,7 +23,7 @@ from psn_ai import parse_trigger      # one trigger for every surface
 
 logger = logging.getLogger(__name__)
 
-MAX_REPLY_CHARS = 900     # WhatsApp is roomier than PSN, but still a chat
+MAX_REPLY_CHARS = 4000    # WhatsApp supports up to 65k; 4k is generous without being excessive
 _recent_replies: list[str] = []
 _RECENT_KEEP = 20
 
