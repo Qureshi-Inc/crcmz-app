@@ -885,6 +885,17 @@ def ask(question: str, history: list[dict] | None = None,
                                          "content": "(answered from a tool)"})
                     messages.append({"role": "user", "content": question})
                     continue
+                # Model twice declined to call a tool even when told to — it
+                # judged the question doesn't need data. If it wrote an answer
+                # use it; only return the error when there's nothing to say.
+                bare_answer = _strip_thinking(message.get("content") or "").strip()
+                if bare_answer:
+                    logger.info("assistant: no tool but model gave answer, using it")
+                    return {
+                        "answer": bare_answer,
+                        "tools_used": [], "steps": trail, "model": model,
+                        "elapsed_ms": int((time.time() - started) * 1000),
+                    }
                 logger.warning("assistant: refusing to answer %r without a tool",
                                question[:60])
                 return {
