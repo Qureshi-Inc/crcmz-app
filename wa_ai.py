@@ -12,6 +12,7 @@ just gets an extra background job. The reply goes back out through the bridge's
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -29,8 +30,35 @@ _RECENT_KEEP = 20
 # Message IDs of messages we've sent — learned from from_me echoes coming back
 # through ingest. When someone swipe-replies to one of these, reply_to will
 # match and we know it's directed at us.
+# Persisted to disk so docker restarts don't break swipe-reply.
 _recent_sent_ids: list[str] = []
 _SENT_IDS_KEEP = 60
+_SENT_IDS_FILE = os.path.join(os.path.dirname(__file__), "data", "sent_ids.json")
+
+
+def _load_sent_ids() -> None:
+    try:
+        with open(_SENT_IDS_FILE) as f:
+            ids = json.load(f)
+        if isinstance(ids, list):
+            _recent_sent_ids.extend(str(i) for i in ids[-_SENT_IDS_KEEP:])
+            logger.info("wa_ai: loaded %d sent ids from disk", len(_recent_sent_ids))
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning("wa_ai: could not load sent ids: %s", e)
+
+
+def _save_sent_ids() -> None:
+    try:
+        os.makedirs(os.path.dirname(_SENT_IDS_FILE), exist_ok=True)
+        with open(_SENT_IDS_FILE, "w") as f:
+            json.dump(_recent_sent_ids[-_SENT_IDS_KEEP:], f)
+    except Exception as e:
+        logger.warning("wa_ai: could not save sent ids: %s", e)
+
+
+_load_sent_ids()
 
 # On WhatsApp the natural way to talk to a bot is to @mention it, which puts the
 # mention ahead of everything: "@56767304183939 ai yo". So mentions are stripped
@@ -61,6 +89,7 @@ def learn_self(msg: dict) -> None:
     if msg_id and msg_id not in _recent_sent_ids:
         _recent_sent_ids.append(msg_id)
         del _recent_sent_ids[:-_SENT_IDS_KEEP]
+        _save_sent_ids()
 
 
 def self_ids() -> set[str]:
@@ -170,6 +199,7 @@ def send_reply(bridge_url: str, group_jid: str, text: str) -> bool:
         if msg_id and msg_id not in _recent_sent_ids:
             _recent_sent_ids.append(msg_id)
             del _recent_sent_ids[:-_SENT_IDS_KEEP]
+            _save_sent_ids()
             logger.info("wa_ai: recorded sent msg id %s", msg_id)
     except Exception:  # noqa: BLE001
         pass
