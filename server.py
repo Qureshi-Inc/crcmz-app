@@ -2114,7 +2114,7 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "brain glitched trying to summarize, try again")
         return
 
-    # For audio, convert bullets to 2-3 short spoken sentences
+    # For audio: rewrite bullets as natural spoken prose (no markdown read aloud)
     audio_sent = False
     if WA_TTS_URL:
         try:
@@ -2124,10 +2124,16 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
                           headers={"Authorization": f"Bearer {key}"} if key else {},
                           json={"model": model,
                                 "messages": [
-                                    {"role": "system", "content": "Convert bullet-point chat summaries into 2-3 short spoken sentences. Casual tone. No bullet points, no intro, no filler. Just the key things, like you're telling a friend quickly."},
+                                    {"role": "system", "content": (
+                                        "Rewrite this bullet-point chat summary as natural spoken audio. "
+                                        "Keep ALL the content and detail — nothing cut. "
+                                        "Use plain sentences, no bullet symbols, no asterisks, no markdown. "
+                                        "Write exactly as someone would say it out loud. "
+                                        "No intro like 'here is a summary', just start talking."
+                                    )},
                                     {"role": "user", "content": summary},
                                 ],
-                                "max_tokens": 120, "temperature": 0.4},
+                                "max_tokens": 600, "temperature": 0.4},
                           timeout=30)
             r2.raise_for_status()
             spoken = (r2.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
