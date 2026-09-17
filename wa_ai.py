@@ -131,6 +131,9 @@ def sender_name(msg: dict) -> str:
             or (jid.split("@")[0] if jid else "") or "someone")
 
 
+_MENTION_NUM = re.compile(r"@(\d{7,})")
+
+
 def send_reply(bridge_url: str, group_jid: str, text: str) -> bool:
     """Send the answer to the group through the Baileys bridge."""
     text = (text or "").strip()
@@ -138,9 +141,13 @@ def send_reply(bridge_url: str, group_jid: str, text: str) -> bool:
         return False
     if len(text) > MAX_REPLY_CHARS:
         text = text[:MAX_REPLY_CHARS - 1].rstrip() + "…"
+    # Build proper WhatsApp mention JIDs from any @<number> in the text so
+    # WhatsApp renders them as tappable name tags instead of raw numbers.
+    mention_jids = [f"{n}@s.whatsapp.net" for n in _MENTION_NUM.findall(text)]
     try:
         r = httpx.post(f"{bridge_url.rstrip('/')}/send",
-                       json={"message": text, "groupJid": group_jid}, timeout=30)
+                       json={"message": text, "groupJid": group_jid,
+                             "mentions": mention_jids}, timeout=30)
         r.raise_for_status()
     except Exception as e:  # noqa: BLE001
         logger.warning("wa_ai: could not send the reply: %s", e)
