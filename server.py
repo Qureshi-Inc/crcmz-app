@@ -2194,6 +2194,18 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         result = {}
     finally:
         _wa_typing(group_jid, False)
+    # If the AI called clawbot_build, run the actual job instead of sending its text
+    if "clawbot_build" in (result.get("tools_used") or []):
+        build_step = next((s for s in (result.get("steps") or []) if s.get("tool") == "clawbot_build"), None)
+        build_args = build_step.get("args", {}) if build_step else {}
+        task = build_args.get("task") or prompt
+        subdomain = build_args.get("subdomain") or _extract_subdomain(prompt)
+        _wa_typing(group_jid, False)
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
+        _threading.Thread(target=_run_clawbot_job, args=(task, subdomain, group_jid), daemon=True).start()
+        logger.info("wa_ai: build via tool-path subdomain=%r", subdomain)
+        return
+
     if not answer:
         return
     if wa_ai.send_reply(WA_BRIDGE_URL, group_jid, answer):
