@@ -1882,7 +1882,10 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     answer_text = ""
     try:
         data = json.loads((stdout or "").strip())
-        answer_text = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
+        payloads = (data.get("result") or {}).get("payloads") or []
+        answer_text = " ".join(p.get("text", "") for p in payloads if p.get("text")).strip()
+        if not answer_text:
+            answer_text = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
     except Exception:
         answer_text = (stdout or "").strip()[:400]
 
@@ -1965,7 +1968,11 @@ def _run_clawbot_ask(question: str, group_jid: str) -> None:
     answer = ""
     try:
         data = json.loads((stdout or "").strip())
-        answer = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
+        # openclaw returns result.payloads[0].text
+        payloads = (data.get("result") or {}).get("payloads") or []
+        answer = " ".join(p.get("text", "") for p in payloads if p.get("text")).strip()
+        if not answer:
+            answer = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
     except Exception:
         answer = (stdout or "").strip()[:1000]
 
