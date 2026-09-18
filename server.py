@@ -1920,6 +1920,24 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
 
 
 _ASK_CLAW_RE = _re.compile(r"^\s*(?:ask\s+claw|hey\s+claw|@claw)\b[,:]?\s*", _re.IGNORECASE)
+_RESET_CLAW_RE = _re.compile(r"^\s*reset\s+claw\b", _re.IGNORECASE)
+
+# Per-group Clawbot session: {group_jid: (session_key, last_used_timestamp)}
+_CLAW_SESSIONS: dict[str, tuple[str, float]] = {}
+_CLAW_SESSION_TTL = 2 * 3600  # 2 hours inactivity resets session
+
+
+def _claw_session_key(group_jid: str) -> str:
+    """Return current session key for group, rotating if idle >2h."""
+    import uuid as _uuid
+    now = _time.time()
+    entry = _CLAW_SESSIONS.get(group_jid)
+    if entry and (now - entry[1]) < _CLAW_SESSION_TTL:
+        _CLAW_SESSIONS[group_jid] = (entry[0], now)
+        return entry[0]
+    key = _uuid.uuid4().hex[:12]
+    _CLAW_SESSIONS[group_jid] = (key, now)
+    return key
 
 
 def _run_clawbot_ask(question: str, group_jid: str) -> None:
@@ -1927,13 +1945,15 @@ def _run_clawbot_ask(question: str, group_jid: str) -> None:
     import shlex, subprocess, uuid as _uuid
     import httpx as _hx
 
+    session_key = _claw_session_key(group_jid)
     wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "🤖 asking clawbot, give it a min…")
     _wa_typing(group_jid, True)
 
     out_file = f"/tmp/claw-ask-{_uuid.uuid4().hex[:8]}.json"
     remote_cmd = (
         f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(question)}"
-        f" --agent engineer --json --timeout 300"
+        f" --agent engineer --session-key {shlex.quote('agent:engineer:' + session_key)}"
+        f" --json --timeout 300"
         f" > {out_file} 2>&1; echo $? > {out_file}.exit"
     )
     ssh_base = [
@@ -2238,6 +2258,12 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
             daemon=True,
         ).start()
         logger.info("wa_ai: build fast-path for %r subdomain=%r", prompt[:60], subdomain)
+        return
+
+    # "reset claw" — clear the group's Clawbot session
+    if _RESET_CLAW_RE.match(prompt):
+        _CLAW_SESSIONS.pop(group_jid, None)
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "🔄 clawbot session reset — fresh start")
         return
 
     # "ask claw / hey claw / @claw" — route question directly to Clawbot
