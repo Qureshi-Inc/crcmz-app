@@ -1916,6 +1916,62 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     logger.info("clawbot: job done in %dm%ds for task %r", elapsed // 60, elapsed % 60, task[:40])
 
 
+_ASK_CLAW_RE = _re.compile(r"^\s*(?:ask\s+claw|hey\s+claw|@claw)\b[,:]?\s*", _re.IGNORECASE)
+
+
+def _run_clawbot_ask(question: str, group_jid: str) -> None:
+    """Ask Clawbot a general question (no build/deploy) and reply with its answer."""
+    import shlex, subprocess, uuid as _uuid
+    import httpx as _hx
+
+    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "🤖 asking clawbot, give it a min…")
+    _wa_typing(group_jid, True)
+
+    out_file = f"/tmp/claw-ask-{_uuid.uuid4().hex[:8]}.json"
+    remote_cmd = (
+        f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(question)}"
+        f" --json --timeout 300"
+        f" > {out_file} 2>&1; echo $? > {out_file}.exit"
+    )
+    ssh_base = [
+        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-n",
+        "-i", assistant.AI_CONTROLLER_KEY, assistant.AI_CONTROLLER_SSH,
+    ]
+    logger.info("clawbot-ask: question=%r", question[:120])
+    start = _time.time()
+    try:
+        proc = subprocess.Popen(ssh_base + [remote_cmd], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        while proc.poll() is None:
+            _time.sleep(5)
+            _wa_typing(group_jid, True)
+            if _time.time() - start > 5 * 60:
+                proc.kill()
+                break
+        proc.communicate(timeout=10)
+    except Exception as e:
+        logger.warning("clawbot-ask: SSH error: %s", e)
+
+    stdout = ""
+    try:
+        r = subprocess.run(ssh_base + [f"cat {out_file}; rm -f {out_file} {out_file}.exit"],
+                           capture_output=True, text=True, timeout=30)
+        stdout = r.stdout
+    except Exception:
+        pass
+
+    answer = ""
+    try:
+        data = json.loads((stdout or "").strip())
+        answer = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
+    except Exception:
+        answer = (stdout or "").strip()[:1000]
+
+    _wa_typing(group_jid, False)
+    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, answer or "clawbot didn't come back with anything, try again")
+    logger.info("clawbot-ask: done in %ds", int(_time.time() - start))
+
+
 _SUBDOMAIN_RE = _re.compile(r"\b([a-z][a-z0-9-]{1,38})[.\s]*buildanator[.\s]*com\b", _re.IGNORECASE)
 
 
@@ -2173,6 +2229,13 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
             daemon=True,
         ).start()
         logger.info("wa_ai: build fast-path for %r subdomain=%r", prompt[:60], subdomain)
+        return
+
+    # "ask claw / hey claw / @claw" — route question directly to Clawbot
+    claw_match = _ASK_CLAW_RE.match(prompt)
+    if claw_match:
+        question = prompt[claw_match.end():].strip()
+        _threading.Thread(target=_run_clawbot_ask, args=(question or prompt, group_jid), daemon=True).start()
         return
 
     # Summarize trigger — only fires on explicit catchup requests, not build messages
