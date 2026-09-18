@@ -1930,7 +1930,7 @@ def _run_clawbot_ask(question: str, group_jid: str) -> None:
     out_file = f"/tmp/claw-ask-{_uuid.uuid4().hex[:8]}.json"
     remote_cmd = (
         f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(question)}"
-        f" --json --timeout 300"
+        f" --agent engineer --json --timeout 300"
         f" > {out_file} 2>&1; echo $? > {out_file}.exit"
     )
     ssh_base = [
