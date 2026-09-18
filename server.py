@@ -1957,8 +1957,10 @@ def _run_clawbot_ask(question: str, group_jid: str) -> None:
         r = subprocess.run(ssh_base + [f"cat {out_file}; rm -f {out_file} {out_file}.exit"],
                            capture_output=True, text=True, timeout=30)
         stdout = r.stdout
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("clawbot-ask: cat failed: %s", e)
+
+    logger.info("clawbot-ask: raw stdout=%r", (stdout or "")[:500])
 
     answer = ""
     try:
