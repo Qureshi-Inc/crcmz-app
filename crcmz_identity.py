@@ -74,6 +74,32 @@ _PAGE_SIZE = 200
 
 _cache: dict[str, tuple[float, list[dict]]] = {}
 
+# The bot's own messages (`from_me = 1`) arrive with the *group's* JID as the
+# sender -- `120363406504549565` -- because Baileys echoes a send back with the
+# destination in the sender slot. Without this, 150 rows of the bot's own output
+# look like an unidentified human, and every "who talks most" answer includes a
+# phantom member. It is not a Zitadel account, so it gets a synthetic id.
+BOT_ID = "crcmz-bot"
+BOT_NAME = "CRCMZ Bot"
+
+
+def bot_person() -> dict:
+    """Person-shaped record for the bot itself, so callers need no special case."""
+    return {
+        "zitadel_id": BOT_ID,
+        "display_name": BOT_NAME,
+        "username": BOT_ID,
+        "email": "",
+        "state": "",
+        "mm_username": "",
+        "psn_id": "",
+        "wa_jid": "",
+        "wa_phone": "",
+        "wa_names": [],
+        "tags": {},
+        "is_bot": True,
+    }
+
 
 def configured() -> bool:
     """True when a service token exists; callers should skip identity work if not."""
@@ -304,6 +330,42 @@ def identify_sender_name(name: str, *, refresh: bool = False) -> dict | None:
     return by_wa_name(refresh=refresh).get(key) if key else None
 
 
+def attribute_message(
+    sender_name: str = "",
+    *,
+    from_me: int | bool = 0,
+    sender_jid: str = "",
+    refresh: bool = False,
+) -> dict | None:
+    """Who sent a `whatsapp_messages` row: a person, the bot, or nobody.
+
+    Tries the three available signals in order of reliability:
+
+    1. `from_me` -- unambiguous, so the bot wins before any name lookup. Its rows
+       carry the group JID as `sender_name`, which would otherwise resolve to
+       nothing and be counted as a mystery member.
+    2. `sender_jid` -- only present on ~11% of rows, and live rows carry an
+       `@lid` privacy id that matches no tag, so this rarely fires. Kept because
+       it is exact when it does.
+    3. `sender_name` -- the `wa_names` tag join, which covers everything else.
+
+    Returns None for a genuinely unknown sender rather than guessing. Callers
+    should still count those messages; see `unmapped_wa_names` for the gap list.
+    """
+    if from_me:
+        return bot_person()
+    # A sender_name that is a bare 15+ digit run is a JID, not a human: the group
+    # id leaks into that column on some Baileys paths even when from_me is unset.
+    stripped = (sender_name or "").strip()
+    if stripped.isdigit() and len(stripped) >= 15:
+        return bot_person()
+    if sender_jid:
+        hit = identify_jid(sender_jid, refresh=refresh)
+        if hit:
+            return hit
+    return identify_sender_name(stripped, refresh=refresh)
+
+
 def unmapped_wa_names(names: list[str], *, refresh: bool = False) -> list[str]:
     """Which of these WhatsApp display names resolve to nobody.
 
@@ -314,7 +376,11 @@ def unmapped_wa_names(names: list[str], *, refresh: bool = False) -> list[str]:
     known = by_wa_name(refresh=refresh)
     out: list[str] = []
     for n in names:
-        key = (n or "").strip().casefold()
+        stripped = (n or "").strip()
+        # The group JID is the bot, not a person missing a tag.
+        if stripped.isdigit() and len(stripped) >= 15:
+            continue
+        key = stripped.casefold()
         if key and key not in known and n not in out:
             out.append(n)
     return out

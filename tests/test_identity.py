@@ -270,6 +270,52 @@ def main():
         assert "" not in gaps, gaps
     check("unmapped_wa_names reports attribution gaps", gaps_reported)
 
+    def bot_attribution():
+        reset()
+        # from_me wins outright: the bot's rows carry the group JID as sender.
+        p = ident.attribute_message("120363406504549565", from_me=1)
+        assert p["zitadel_id"] == ident.BOT_ID, p
+        assert p["display_name"] == "CRCMZ Bot", p
+        assert p["is_bot"] is True, p
+        # Same shape as a real person, so callers need no special case.
+        for key in ("wa_names", "psn_id", "tags", "username"):
+            assert key in p, key
+    check("from_me messages attribute to CRCMZ Bot", bot_attribution)
+
+    def group_jid_is_bot_not_person():
+        reset()
+        # A bare long digit run in the sender column is a JID leak, not a human.
+        p = ident.attribute_message("120363406504549565", from_me=0)
+        assert p and p["zitadel_id"] == ident.BOT_ID, p
+        # A short number is a phone-shaped human name and must stay unknown.
+        assert ident.attribute_message("5551234", from_me=0) is None
+    check("group JID in sender column attributes to the bot", group_jid_is_bot_not_person)
+
+    def attribute_prefers_jid_then_name():
+        reset()
+        # Exact JID match wins even when the name says someone else.
+        p = ident.attribute_message("MQ", sender_jid="15875550002@s.whatsapp.net")
+        assert p["zitadel_id"] == "1002", p
+        # No JID (the 89% case) -> fall back to the wa_names join.
+        assert ident.attribute_message("MQ")["zitadel_id"] == "1001"
+        # An @lid privacy id matches no tag, so the name still decides.
+        assert ident.attribute_message("MQ", sender_jid="83571234@lid")["zitadel_id"] == "1001"
+    check("attribute_message tries jid then name", attribute_prefers_jid_then_name)
+
+    def unknown_sender_not_guessed():
+        reset()
+        assert ident.attribute_message("+1 (510) 520-2167") is None
+        assert ident.attribute_message("") is None
+        # Contested names stay unknown here too.
+        assert ident.attribute_message("Twinny") is None
+    check("unknown sender attributes to nobody", unknown_sender_not_guessed)
+
+    def bot_not_reported_as_gap():
+        reset()
+        gaps = ident.unmapped_wa_names(["120363406504549565", "MQ", "Stranger"])
+        assert gaps == ["Stranger"], gaps
+    check("group JID is not reported as a missing tag", bot_not_reported_as_gap)
+
     def no_credentials_leak():
         reset()
         blob = json.dumps(ident.people())
