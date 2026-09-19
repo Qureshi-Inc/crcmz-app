@@ -4275,12 +4275,7 @@ async def settings_mattermost_callback(request: Request, code: str = "", state: 
                             status_code=200)
 
     _mm_tokens.store(zid, access_token, refresh_token, expires_in)
-    return HTMLResponse("""
-<html><head><title>Mattermost Connected</title>
-<script>window.opener && window.opener.postMessage('mm_linked','*'); window.close();</script>
-</head><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0d0a1f;color:#fff">
-<h2>✅ Mattermost connected!</h2><p>You can close this window.</p>
-</body></html>""")
+    return RedirectResponse(url="/?mm=linked", status_code=302)
 
 
 @app.post("/auth/settings/mattermost/unlink")
@@ -8413,6 +8408,14 @@ function openSettings(tab){
 }
 function closeSettings(){ $('settingsOverlay').classList.remove('open'); }
 
+(function(){
+  const p = new URLSearchParams(window.location.search);
+  if(p.get('mm')==='linked'){
+    history.replaceState(null,'',window.location.pathname);
+    openSettings('mattermost');
+  }
+})();
+
 function switchTab(name){
   document.querySelectorAll('.stab').forEach(t=>{
     t.classList.toggle('active', t.dataset.tab===name);
@@ -8749,20 +8752,7 @@ async function loadMattermostStatus(){
 }
 
 function connectMattermost(){
-  const w = window.open('/auth/settings/mattermost/connect','mm_oauth',
-    'width=600,height=700,menubar=no,toolbar=no,location=no');
-  const poll = setInterval(async ()=>{
-    if(!w || w.closed){
-      clearInterval(poll);
-      loadMattermostStatus();
-      return;
-    }
-    try {
-      const r = await fetch('/auth/settings/mattermost');
-      const d = await r.json();
-      if(d.linked){ clearInterval(poll); w.close(); loadMattermostStatus(); }
-    } catch(e){}
-  }, 2000);
+  window.location.href = '/auth/settings/mattermost/connect';
 }
 
 async function disconnectMattermost(){
