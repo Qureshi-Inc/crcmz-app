@@ -1889,6 +1889,9 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     except Exception:
         answer_text = (stdout or "").strip()[:400]
 
+    # Strip openclaw's output-limit warning — build jobs don't need the continuation hint
+    answer_text = _re.sub(r"\s*⚠️\s*Reply truncated[^\n]*", "", answer_text, flags=_re.IGNORECASE).rstrip()
+
     if not answer_text:
         answer_text = "job finished"
 
