@@ -79,6 +79,8 @@ META = {
         {"key": "psn_id", "value": b64("moiiz41510")},
         {"key": "wa_jid", "value": b64("15105550001@s.whatsapp.net")},
         {"key": "wa_phone", "value": b64("+15105550001")},
+        # Comma-separated: this person posts under two WhatsApp names.
+        {"key": "wa_names", "value": b64("MQ, Moiz Q")},
         # An extra tag nobody has coded for: must survive under ["tags"].
         {"key": "favourite_gun", "value": b64("MCW")},
     ],
@@ -88,10 +90,13 @@ META = {
         {"key": "wa_jid", "value": b64("15875550002@s.whatsapp.net")},
         # Deliberately NOT base64: the literal-passthrough branch.
         {"key": "wa_phone", "value": "+15875550002"},
+        # Semicolon-separated, with padding to trim.
+        {"key": "wa_names", "value": b64("Zubair CRCMZ ; Zubair")},
     ],
     "1003": [],
-    "1004": [],
-    "1005": [],
+    # Both twins claim the same WhatsApp name, so it must map to neither.
+    "1004": [{"key": "wa_names", "value": b64("Twinny")}],
+    "1005": [{"key": "wa_names", "value": b64("Twinny")}],
 }
 
 
@@ -215,6 +220,55 @@ def main():
         assert ident.resolve("nobody-here") is None
         assert ident.identify_jid("") is None
     check("blank and unknown needles return None", unknown_and_blank)
+
+    def wa_names_parsed():
+        reset()
+        assert ident.by_zitadel_id()["1001"]["wa_names"] == ["MQ", "Moiz Q"]
+        # Semicolons split too, and padding is trimmed.
+        assert ident.by_zitadel_id()["1002"]["wa_names"] == ["Zubair CRCMZ", "Zubair"]
+        assert ident.by_zitadel_id()["1003"]["wa_names"] == []
+    check("wa_names splits on comma/semicolon and trims", wa_names_parsed)
+
+    def sender_name_join():
+        reset()
+        # This is the only join that works for stored messages.
+        assert ident.identify_sender_name("MQ")["zitadel_id"] == "1001"
+        assert ident.identify_sender_name("mq")["zitadel_id"] == "1001"
+        assert ident.identify_sender_name("Moiz Q")["zitadel_id"] == "1001"
+        assert ident.identify_sender_name("Zubair")["zitadel_id"] == "1002"
+        assert ident.identify_sender_name("  Zubair CRCMZ ")["zitadel_id"] == "1002"
+    check("identify_sender_name maps tagged WhatsApp names", sender_name_join)
+
+    def sender_name_fallbacks():
+        reset()
+        # Untagged people are still reachable by display name / username.
+        assert ident.identify_sender_name("Dark Souls")["zitadel_id"] == "1003"
+        assert ident.identify_sender_name("killerx096")["zitadel_id"] == "1002"
+    check("display name and psn id work as name fallbacks", sender_name_fallbacks)
+
+    def contested_name_dropped():
+        reset()
+        # Two people tagged "Twinny": mapping either would misattribute.
+        assert ident.identify_sender_name("Twinny") is None
+        assert "twinny" not in ident.by_wa_name()
+    check("a name claimed by two people maps to nobody", contested_name_dropped)
+
+    def resolve_via_wa_name():
+        reset()
+        assert ident.resolve("MQ")["zitadel_id"] == "1001"
+    check("resolve() also accepts a tagged WhatsApp name", resolve_via_wa_name)
+
+    def gaps_reported():
+        reset()
+        seen = ["MQ", "Mutasif", "Noor ul Amin", "Twinny", "Dark Souls", ""]
+        gaps = ident.unmapped_wa_names(seen)
+        assert "Mutasif" in gaps, gaps
+        assert "Noor ul Amin" in gaps, gaps
+        assert "Twinny" in gaps, "contested names must be reported as gaps"
+        assert "MQ" not in gaps, gaps
+        assert "Dark Souls" not in gaps, gaps
+        assert "" not in gaps, gaps
+    check("unmapped_wa_names reports attribution gaps", gaps_reported)
 
     def no_credentials_leak():
         reset()

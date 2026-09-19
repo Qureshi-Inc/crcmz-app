@@ -47,7 +47,24 @@ ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
 
 # The tag keys this app understands. Anything else a human adds in the Zitadel
 # console still surfaces under Person["tags"], it just gets no dedicated field.
-TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone")
+#
+# `wa_names` carries the comma-separated WhatsApp display names a person posts
+# under, and it is the only tag that can actually join `whatsapp_messages`.
+# `wa_jid` cannot, despite looking like it should:
+#
+#   * 89% of rows are `historical_export` and have no sender_jid at all -- a
+#     WhatsApp .txt export only ever contains the display name.
+#   * Every live row's sender_jid is WhatsApp's privacy id (`8357...@lid`), not
+#     a phone JID, and @lid is not derivable from a phone number.
+#
+# So wa_jid/wa_phone stay useful for resolving a person from an inbound webhook
+# or a human typing a number, while attribution of stored messages goes through
+# wa_names. People post under more than one name ("Zubair", "Zubair CRCMZ"), so
+# the tag is a list.
+TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone", "wa_names")
+
+# Separators accepted inside a multi-value tag.
+_TAG_SPLIT = ",;|"
 
 # Zitadel is a hard dependency for identity but not for the rest of the bot, so
 # a lookup failure degrades to "no people" instead of raising into a reply.
@@ -83,6 +100,23 @@ def _decode_tag(raw: str) -> str:
         return base64.b64decode(raw, validate=True).decode("utf-8").strip()
     except (binascii.Error, ValueError, UnicodeDecodeError):
         return raw.strip()
+
+
+def _split_tag(raw: str) -> list[str]:
+    """Split a multi-value tag on any of `,;|`, dropping blanks."""
+    out: list[str] = []
+    for chunk in _re_split(raw):
+        chunk = chunk.strip()
+        if chunk and chunk not in out:
+            out.append(chunk)
+    return out
+
+
+def _re_split(raw: str) -> list[str]:
+    parts = [raw or ""]
+    for sep in _TAG_SPLIT:
+        parts = [bit for p in parts for bit in p.split(sep)]
+    return parts
 
 
 def _normalise_jid(jid: str) -> str:
@@ -148,6 +182,7 @@ def _fetch_people() -> list[dict]:
                 "psn_id": tags.get("psn_id", ""),
                 "wa_jid": tags.get("wa_jid", ""),
                 "wa_phone": tags.get("wa_phone", ""),
+                "wa_names": _split_tag(tags.get("wa_names", "")),
                 "tags": tags,
             })
 
@@ -204,6 +239,7 @@ def resolve(needle: str, *, refresh: bool = False) -> dict | None:
             p["username"].casefold(),
             p["email"].casefold(),
         }
+        exact.update(n.casefold() for n in p["wa_names"])
         exact.discard("")
         if folded in exact:
             return p
@@ -231,6 +267,56 @@ def by_wa_jid(*, refresh: bool = False) -> dict[str, dict]:
             key = _normalise_jid(raw)
             if key:
                 out.setdefault(key, p)
+    return out
+
+
+def by_wa_name(*, refresh: bool = False) -> dict[str, dict]:
+    """Case-folded WhatsApp display name -> person, for `whatsapp_messages` rows.
+
+    Built from the explicit `wa_names` tag first, then from the other unique
+    identifiers as a convenience. A name claimed by two people is dropped
+    entirely rather than resolved to whichever was seen first -- misattributing
+    someone's messages is worse than admitting the name is unknown.
+    """
+    counts: dict[str, list[dict]] = {}
+
+    def claim(name: str, person: dict) -> None:
+        key = (name or "").strip().casefold()
+        if not key:
+            return
+        bucket = counts.setdefault(key, [])
+        if all(p["zitadel_id"] != person["zitadel_id"] for p in bucket):
+            bucket.append(person)
+
+    for p in people(refresh=refresh):
+        # Tagged names are authoritative; the rest are best-effort conveniences.
+        for name in p["wa_names"]:
+            claim(name, p)
+        for name in (p["display_name"], p["mm_username"], p["psn_id"], p["username"]):
+            claim(name, p)
+
+    return {k: v[0] for k, v in counts.items() if len(v) == 1}
+
+
+def identify_sender_name(name: str, *, refresh: bool = False) -> dict | None:
+    """Person behind a `whatsapp_messages.sender_name`, or None if unmapped."""
+    key = (name or "").strip().casefold()
+    return by_wa_name(refresh=refresh).get(key) if key else None
+
+
+def unmapped_wa_names(names: list[str], *, refresh: bool = False) -> list[str]:
+    """Which of these WhatsApp display names resolve to nobody.
+
+    Exists so attribution gaps are visible instead of silent: feed it the
+    distinct `sender_name` values and the result is exactly the list of
+    `wa_names` tags still missing from the Zitadel console.
+    """
+    known = by_wa_name(refresh=refresh)
+    out: list[str] = []
+    for n in names:
+        key = (n or "").strip().casefold()
+        if key and key not in known and n not in out:
+            out.append(n)
     return out
 
 
