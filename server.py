@@ -667,6 +667,8 @@ ZITADEL_ISSUER        = os.environ.get("ZITADEL_ISSUER", "https://auth.crcmz.me"
 ZITADEL_CLIENT_ID     = os.environ.get("ZITADEL_CLIENT_ID", "")
 ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
 SESSION_SECRET        = os.environ.get("SESSION_SECRET", "")
+MM_OAUTH_CLIENT_ID    = os.environ.get("MM_OAUTH_CLIENT_ID", "")
+MM_OAUTH_CLIENT_SECRET= os.environ.get("MM_OAUTH_CLIENT_SECRET", "")
 
 # WhatsApp import authorization — BOTH conditions must hold
 WHATSAPP_IMPORT_ALLOWED_ROLE = os.environ.get("WHATSAPP_IMPORT_ALLOWED_ROLE", "IAM Owner Viewer")
@@ -703,7 +705,10 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/oauth/login",
                "/oauth/token",
                "/oauth/revoke",
-               "/oauth/register"}
+               "/oauth/register",
+               # Mattermost OAuth callback — arrives from Mattermost, no session yet.
+               # The signed state parameter carries the user identity.
+               "/settings/mattermost/callback"}
 
 
 def _signer() -> _USTS:
@@ -4187,6 +4192,97 @@ async def settings_psn_claim(request: Request):
     return JSONResponse({"ok": True})
 
 
+@app.get("/auth/settings/mattermost")
+async def settings_mattermost_status(request: Request):
+    """Mattermost link status for the logged-in user."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    zid = session.get("sub", "")
+    linked = _mm_tokens.is_linked(zid)
+    ts = _mm_tokens.linked_at(zid)
+    return JSONResponse({"linked": linked, "linked_at": ts,
+                         "connect_available": bool(MM_OAUTH_CLIENT_ID)})
+
+
+@app.get("/auth/settings/mattermost/connect")
+async def settings_mattermost_connect(request: Request):
+    """Start Mattermost OAuth flow for the logged-in user."""
+    session = _get_session(request)
+    if not session:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    if not MM_OAUTH_CLIENT_ID:
+        return JSONResponse({"error": "Mattermost OAuth not configured"}, status_code=503)
+    zid = session.get("sub", "")
+    state = _USTS(SESSION_SECRET or "dev-insecure", salt="mm-oauth-state").dumps(zid)
+    mm_base = (os.environ.get("MATTERMOST_URL") or "").rstrip("/")
+    callback = f"https://{_PUBLIC_HOST}/settings/mattermost/callback"
+    params = _urlencode({
+        "client_id": MM_OAUTH_CLIENT_ID,
+        "redirect_uri": callback,
+        "response_type": "code",
+        "state": state,
+    })
+    return RedirectResponse(url=f"{mm_base}/oauth/authorize?{params}", status_code=302)
+
+
+@app.get("/settings/mattermost/callback")
+async def settings_mattermost_callback(request: Request, code: str = "", state: str = ""):
+    """Mattermost OAuth callback — exchange code for token and store it."""
+    if not code or not state:
+        return HTMLResponse("<h2>Missing code or state</h2>", status_code=400)
+    try:
+        zid = _USTS(SESSION_SECRET or "dev-insecure", salt="mm-oauth-state").loads(
+            state, max_age=600)
+    except (BadSignature, SignatureExpired):
+        return HTMLResponse("<h2>Invalid or expired state</h2>", status_code=400)
+
+    mm_base = (os.environ.get("MATTERMOST_URL") or "").rstrip("/")
+    callback = f"https://{_PUBLIC_HOST}/settings/mattermost/callback"
+    try:
+        r = httpx.post(
+            f"{mm_base}/oauth/access_token",
+            data={
+                "client_id": MM_OAUTH_CLIENT_ID,
+                "client_secret": MM_OAUTH_CLIENT_SECRET,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": callback,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:  # noqa: BLE001
+        logger.error("mm oauth callback failed: %s", e)
+        return HTMLResponse("<h2>Token exchange failed</h2>", status_code=502)
+
+    access_token  = data.get("access_token", "")
+    refresh_token = data.get("refresh_token", "")
+    expires_in    = int(data.get("expires_in") or 2592000)
+    if not access_token:
+        return HTMLResponse("<h2>No access token in response</h2>", status_code=502)
+
+    _mm_tokens.store(zid, access_token, refresh_token, expires_in)
+    return HTMLResponse("""
+<html><head><title>Mattermost Connected</title>
+<script>window.opener && window.opener.postMessage('mm_linked','*'); window.close();</script>
+</head><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0d0a1f;color:#fff">
+<h2>✅ Mattermost connected!</h2><p>You can close this window.</p>
+</body></html>""")
+
+
+@app.post("/auth/settings/mattermost/unlink")
+async def settings_mattermost_unlink(request: Request):
+    """Remove the stored Mattermost token for the logged-in user."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    _mm_tokens.unlink(session.get("sub", ""))
+    return JSONResponse({"ok": True})
+
+
 @app.get("/auth/logout")
 async def auth_logout():
     resp = RedirectResponse(url="/auth/login", status_code=302)
@@ -4377,11 +4473,13 @@ PSN_AI_POLL_SECONDS = max(10, int(os.environ.get("PSN_AI_POLL_SECONDS", "20")))
 # opt-in via PSN_AI_GROUPS=squad,main.
 PSN_AI_GROUPS = os.environ.get("PSN_AI_GROUPS", "squad").lower()
 import game_history as _games
+import mm_tokens as _mm_tokens
 _wa.init()
 _facts.init()
 _chat.init()
 _games.init()
 _mcp_oauth.init()
+_mm_tokens.init()
 
 _video_seen: set[str] = set()
 _video_initialized: bool = False
@@ -6535,6 +6633,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="stab active" data-tab="passkeys" onclick="switchTab('passkeys')">🔑 Passkeys</button>
       <button class="stab" data-tab="security" onclick="switchTab('security')">🔒 Security</button>
       <button class="stab" data-tab="psn" onclick="switchTab('psn')">🎮 PSN</button>
+      <button class="stab" data-tab="mattermost" onclick="switchTab('mattermost')">💬 Mattermost</button>
       <button class="stab" data-tab="mcp" onclick="switchTab('mcp')">🤖 MCP</button>
       <button class="stab" data-tab="users" id="tabUsersBtn" onclick="switchTab('users')" style="display:none">👥 Users</button>
     </div>
@@ -6621,6 +6720,20 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       </div>
 
       <button id="psnRelinkBtn" class="smodal-btn" style="display:none;background:none;border:1px solid rgba(255,255,255,.12);color:var(--dim);margin-top:4px" onclick="togglePsnRelink()">Re-link PSN account</button>
+    </div>
+
+    <!-- Mattermost tab -->
+    <div class="spanel" id="tab-mattermost">
+      <div class="smodal-sect">
+        <p class="smodal-sect-title">Mattermost account</p>
+        <div id="mmStatus" style="font-size:13.5px;color:var(--dim);margin-bottom:16px;line-height:1.6">Loading…</div>
+      </div>
+      <div id="mmActions">
+        <button class="smodal-btn" id="mmConnectBtn" onclick="connectMattermost()" style="display:none">🔗 Connect Mattermost</button>
+        <button class="smodal-btn" id="mmDisconnectBtn" onclick="disconnectMattermost()"
+          style="display:none;background:rgba(220,60,60,.18);border:1px solid rgba(220,60,60,.35);color:#f87171">Disconnect</button>
+      </div>
+      <div class="smsg" id="mmMsg"></div>
     </div>
 
     <!-- Users tab (admin only) -->
@@ -8297,6 +8410,7 @@ function switchTab(name){
     p.classList.toggle('active', p.id==='tab-'+name);
   });
   if(name==='psn') loadPsnStatus();
+  if(name==='mattermost') loadMattermostStatus();
   if(name==='mcp') loadMcpStatus();
   if(name==='users') loadAdminUsers();
 }
@@ -8593,6 +8707,50 @@ async function changePassword(){
   const d = await r.json();
   if(r.ok){ _pwMsg('Password updated!','ok'); $('pwCur').value=''; $('pwNew').value=''; $('pwConf').value=''; }
   else { _pwMsg(d.error||'Failed to update password.','err'); }
+}
+
+async function loadMattermostStatus(){
+  const el=$('mmStatus'), connectBtn=$('mmConnectBtn'), disconnectBtn=$('mmDisconnectBtn');
+  if(!el) return;
+  el.innerHTML='<span style="color:var(--dim)">Loading…</span>';
+  try {
+    const r = await fetch('/auth/settings/mattermost');
+    const d = await r.json();
+    if(d.linked){
+      const dt = d.linked_at ? new Date(d.linked_at*1000).toLocaleDateString() : null;
+      el.innerHTML=`<div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:28px">💬</span>
+        <div>
+          <div style="color:#fff;font-weight:700;font-size:16px">Mattermost</div>
+          ${dt?`<div style="font-size:11px;color:var(--dim)">Connected ${dt}</div>`:''}
+        </div>
+        <span style="margin-left:auto;font-size:12px;padding:3px 9px;border-radius:20px;font-weight:700;
+          background:rgba(0,220,120,.12);color:#00dc78;border:1px solid rgba(0,220,120,.3)">Active</span>
+      </div>`;
+      if(connectBtn) connectBtn.style.display='none';
+      if(disconnectBtn) disconnectBtn.style.display='block';
+    } else {
+      el.innerHTML='<span style="color:var(--dim)">Not connected. Link your Mattermost account so Claude can send messages as you.</span>';
+      if(connectBtn) connectBtn.style.display = d.connect_available ? 'block' : 'none';
+      if(disconnectBtn) disconnectBtn.style.display='none';
+    }
+  } catch(e){ el.innerHTML='<span style="color:#ff7070">Could not load Mattermost status.</span>'; }
+}
+
+function connectMattermost(){
+  const w = window.open('/auth/settings/mattermost/connect','mm_oauth',
+    'width=600,height=700,menubar=no,toolbar=no,location=no');
+  window.addEventListener('message', function onMsg(e){
+    if(e.data==='mm_linked'){ window.removeEventListener('message',onMsg); loadMattermostStatus(); }
+  });
+}
+
+async function disconnectMattermost(){
+  const msg=$('mmMsg');
+  try {
+    await fetch('/auth/settings/mattermost/unlink',{method:'POST'});
+    loadMattermostStatus();
+  } catch(e){ if(msg){ msg.textContent='Failed to disconnect.'; msg.style.display='block'; } }
 }
 
 async function loadMcpStatus(){

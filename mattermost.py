@@ -81,6 +81,38 @@ def dm_users(usernames: list[str], message: str) -> int:
     return sum(1 for u in usernames if dm_user(u, message))
 
 
+def dm_user_with_token(token: str, username: str, message: str) -> bool:
+    """DM a user using a per-user OAuth token (not the bot token)."""
+    if not _BASE or not token:
+        return False
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        with httpx.Client() as client:
+            me_r = client.get(f"{_BASE}/api/v4/users/me", headers=headers, timeout=15)
+            if me_r.status_code != 200:
+                return False
+            sender_id = me_r.json().get("id")
+            ur = client.get(f"{_BASE}/api/v4/users/username/{username}",
+                            headers=headers, timeout=15)
+            if ur.status_code != 200:
+                logger.warning("mm: user %s not found", username)
+                return False
+            uid = ur.json().get("id")
+            cr = client.post(f"{_BASE}/api/v4/channels/direct",
+                             headers=headers, json=[sender_id, uid], timeout=15)
+            if cr.status_code not in (200, 201):
+                return False
+            channel_id = cr.json().get("id")
+            pr = client.post(f"{_BASE}/api/v4/posts",
+                             headers=headers,
+                             json={"channel_id": channel_id, "message": message},
+                             timeout=15)
+            return pr.status_code in (200, 201)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mm: dm_user_with_token to %s failed: %s", username, exc)
+        return False
+
+
 def post_channel(channel_id: str, message: str) -> bool:
     """Post a message to a channel by id (bot must be a member). Best-effort."""
     if not available() or not channel_id:

@@ -1217,10 +1217,16 @@ def _send_mm_dm(to: str, message: str, caller: dict) -> dict:
 
     try:
         import mattermost
+        import mm_tokens
         if not mattermost.available():
             return {"ok": False, "error": "Mattermost not configured on this server"}
-        text = f"[via {name}] {message}"
-        ok = mattermost.dm_user(mm_username, text)
+        user_token = mm_tokens.get_token(zid)
+        if user_token:
+            text = f"[via Claude] {message}"
+            ok = mattermost.dm_user_with_token(user_token, mm_username, text)
+        else:
+            text = f"[via {name}] {message}"
+            ok = mattermost.dm_user(mm_username, text)
     except Exception as e:  # noqa: BLE001
         logger.warning("write tool %s: MM DM failed: %s", tool_n, e)
         mcp_oauth.audit_write(zid, tool_n,
