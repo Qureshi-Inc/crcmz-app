@@ -140,7 +140,13 @@ def reset(*script):
 # ── registry ──────────────────────────────────────────────────────────────────
 def t_registry_is_exposed_as_openai_specs():
     specs = assistant.tool_specs()
-    assert len(specs) == len(assistant.tool_names()) == 17, len(specs)
+    # Not a fixed count: adding a tool is routine and must not break this test.
+    # What matters is that the two views agree and the core tools are present.
+    assert len(specs) == len(assistant.tool_names()), (len(specs), len(assistant.tool_names()))
+    names = {s["function"]["name"] for s in specs}
+    for expected in ("platform_overview", "squad_members", "squad_facts",
+                     "whatsapp_stats", "recent_clips", "person_profile"):
+        assert expected in names, (expected, sorted(names))
     for s in specs:
         assert s["type"] == "function", s
         fn = s["function"]
@@ -450,7 +456,8 @@ def t_tools_and_system_prompt_are_sent():
     assistant.ask("hey")
     body = SEEN[0]
     assert body["tool_choice"] == "auto" and body["stream"] is False, body
-    assert len(body['tools']) == 17, len(body['tools'])
+    # Every registered tool must reach the model -- the number itself is free.
+    assert len(body["tools"]) == len(assistant.tool_names()), len(body["tools"])
     sys_msg = body["messages"][0]
     assert sys_msg["role"] == "system" and "Today is" in sys_msg["content"], sys_msg
 
@@ -573,7 +580,8 @@ def http_tests():
         d = r.json()
         assert d["available"] is True, d
         assert d["model"] == "Qwen3.6-35B-A3B-MLX-8bit", d
-        assert len(d['tools']) == 17, d
+        # Count is not pinned: the endpoint's job is to mirror the registry.
+        assert len(d["tools"]) == len(assistant.tool_names()), d
         assert {"name", "description"} <= set(d["tools"][0]), d["tools"][0]
 
     def wait_for_reply(timeout=10.0):

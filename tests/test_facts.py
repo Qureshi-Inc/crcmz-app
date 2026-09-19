@@ -231,7 +231,9 @@ def t_overview_reports_the_fact_count():
 
 def t_tool_registry_still_read_only():
     assert "squad_facts" in assistant.tool_names()
-    assert len(assistant.tool_names()) == 17, assistant.tool_names()
+    # Deliberately not a fixed count -- see test_assistant.py. The invariant here
+    # is that nothing in the registry can write, whatever its size.
+    assert len(assistant.tool_names()) >= 17, assistant.tool_names()
     banned = ("send", "post", "delete", "remove", "write", "create", "import")
     for n in assistant.tool_names():
         assert not any(b in n for b in banned), n

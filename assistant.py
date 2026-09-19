@@ -652,6 +652,184 @@ def _clips(limit: int = 10, sender: str = "", month: str = "") -> Any:
     return out
 
 
+# ── Buttons and people ────────────────────────────────────────────────────────
+# The soundboard is what the squad actually presses, so "what buttons do we have"
+# is one of the most asked questions -- and until `soundboard.py` existed the
+# store was inline in server.py, unreachable from here.
+
+
+def _sb():
+    import soundboard
+    return soundboard
+
+
+def _ident():
+    import crcmz_identity
+    return crcmz_identity
+
+
+def _mask_phone(phone: str) -> str:
+    """Last four digits only. Enough to confirm 'that's my number', not enough to
+    hand somebody's number to whoever is chatting with the bot."""
+    digits = "".join(c for c in (phone or "") if c.isdigit())
+    return f"···{digits[-4:]}" if len(digits) >= 4 else ""
+
+
+@tool("soundboard_buttons",
+      "The dashboard soundboard: the shared buttons everyone sees (label plus the "
+      "exact message each one posts), and which people have a private board and "
+      "how many buttons are on it. Use this to answer 'what buttons do we have' "
+      "or 'is there already a button for X'. Private button text is NOT included "
+      "here -- pass `who` to get one person's own board.",
+      {"type": "object",
+       "properties": {
+           "who": {"type": "string",
+                   "description": "Optional. A person's name, PSN id, or WhatsApp "
+                                  "name. Returns that person's private board "
+                                  "instead of the shared overview."},
+           "limit": {"type": "integer", "description": "Max buttons, 1-200, default 40."},
+       },
+       "required": []})
+def _soundboard_tool(who: str = "", limit: int = 40) -> dict:
+    limit = max(1, min(int(limit or 40), 200))
+    if (who or "").strip():
+        return _sb().person_buttons(who.strip(), limit=limit)
+    return _sb().overview(limit=limit)
+
+
+@tool("squad_roster",
+      "Everyone in the squad and the identities that belong to each of them: "
+      "display name, PSN online id, Mattermost username, and the names they post "
+      "under in WhatsApp. Call this first when a question names a person, so you "
+      "use their real identities rather than guessing. Phone numbers are masked "
+      "to the last four digits. `untagged` lists people whose identities are not "
+      "linked yet, which is why some questions about them cannot be answered.",
+      {"type": "object", "properties": {}, "required": []})
+def _squad_roster() -> dict:
+    ident = _ident()
+    if not ident.configured():
+        return {"error": "identity graph unavailable (no Zitadel service token)"}
+    people, untagged = [], []
+    for p in ident.people():
+        entry = {
+            "name": p["display_name"] or p["username"],
+            "username": p["username"],
+            "psn_id": p["psn_id"],
+            "mm_username": p["mm_username"],
+            "whatsapp_names": p["wa_names"],
+            "phone": _mask_phone(p["wa_phone"]),
+        }
+        people.append(entry)
+        if not (p["psn_id"] or p["wa_names"] or p["mm_username"]):
+            untagged.append(entry["name"])
+    return {"people": people, "count": len(people), "untagged": untagged}
+
+
+@tool("person_profile",
+      "Everything the app knows about one person in a single call: their linked "
+      "identities, WhatsApp totals (rolled up across every name they post under), "
+      "their private soundboard buttons, recent PSN clips, facts the squad has "
+      "recorded about them, and how many times they have asked the bot something. "
+      "Accepts any identifier -- display name, PSN id, WhatsApp name, or Zitadel "
+      "id. Prefer this over calling four separate tools. If `found` is false the "
+      "name is not linked to an account; say so rather than guessing.",
+      {"type": "object",
+       "properties": {
+           "who": {"type": "string", "description": "Name, PSN id, or WhatsApp name."},
+           "range": {"type": "string", "enum": _RANGES,
+                     "description": "Window for the WhatsApp numbers. Defaults to all_time."},
+       },
+       "required": ["who"]})
+def _person_profile(who: str, range: str = "all_time") -> dict:  # noqa: A002
+    ident = _ident()
+    person = ident.resolve(who)
+    if not person:
+        return {"found": False, "who": who,
+                "reason": "no account matches that name or id; it may just not be "
+                          "linked yet -- check squad_roster.untagged"}
+    sub = person["zitadel_id"]
+
+    # WhatsApp: one person can post under several names ("Zubair", "Zubair
+    # CRCMZ"), so roll the per-name rows up through the identity graph rather
+    # than matching a single string.
+    wa: dict[str, Any] = {"messages": 0, "photos": 0, "videos": 0, "audios": 0,
+                          "media_omitted": 0, "total_words": 0,
+                          "names_seen": [], "first_ts": None, "last_ts": None}
+    try:
+        for row in _wa().members(range).get("members", []):
+            hit = ident.identify_sender_name(row.get("name", ""))
+            if not hit or hit["zitadel_id"] != sub:
+                continue
+            wa["names_seen"].append(row["name"])
+            for k in ("messages", "photos", "videos", "audios",
+                      "media_omitted", "total_words"):
+                wa[k] += row.get(k) or 0
+            for k, pick in (("first_ts", min), ("last_ts", max)):
+                if row.get(k):
+                    wa[k] = row[k] if wa[k] is None else pick(wa[k], row[k])
+        wa["avg_words_per_msg"] = round(wa["total_words"] / (wa["messages"] or 1), 1)
+    except Exception as e:  # noqa: BLE001 - a profile is still useful without chat
+        logger.warning("person_profile: whatsapp rollup failed: %s", e)
+        wa = {"error": str(e)}
+
+    buttons = _sb().load_personal(sub)
+
+    clips_recent: list[dict] = []
+    if person["psn_id"]:
+        try:
+            import clips as clips_mod
+            clips_recent = clips_mod.list_clips(sender=person["psn_id"], limit=10)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("person_profile: clips lookup failed: %s", e)
+
+    about: list[str] = []
+    try:
+        import facts as facts_mod
+        # Facts are filed under a free-text subject, so try every name they go by.
+        seen: set[str] = set()
+        for name in [person["display_name"], person["username"], person["psn_id"],
+                     *person["wa_names"]]:
+            if not name or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            for f in facts_mod.list_facts(subject=name, limit=25):
+                text = f.get("text", "")
+                if text and text not in about:
+                    about.append(text)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("person_profile: facts lookup failed: %s", e)
+
+    turns = 0
+    try:
+        import chat_history
+        turns = chat_history.count(sub)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("person_profile: chat history count failed: %s", e)
+
+    return {
+        "found": True,
+        "identity": {
+            "name": person["display_name"] or person["username"],
+            "username": person["username"],
+            "psn_id": person["psn_id"],
+            "mm_username": person["mm_username"],
+            "whatsapp_names": person["wa_names"],
+            "phone": _mask_phone(person["wa_phone"]),
+        },
+        "whatsapp": wa,
+        "soundboard": {
+            "personal_buttons": len(buttons),
+            # The text is the point: "you already have a button for that".
+            "labels": [b.get("label", "") for b in buttons],
+        },
+        # A cap, not a total -- there is no per-sender clip count, so do not
+        # report this as "how many clips they have ever shared".
+        "recent_clips": len(clips_recent),
+        "facts_recorded": about,
+        "bot_questions_asked": turns,
+    }
+
+
 def tool_specs() -> list[dict]:
     """The registry in OpenAI function-calling form."""
     return [

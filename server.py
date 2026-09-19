@@ -691,7 +691,11 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # session cookie and authenticates with WA_INGEST_SECRET, which
                # the endpoint itself requires. Without this the auth gate 401s
                # every live message and the analytics silently stop updating.
-               "/api/whatsapp/ingest"}
+               "/api/whatsapp/ingest",
+               # Same deal: MCP clients send a bearer token, never a cookie. The
+               # handler checks MCP_TOKEN on every request and refuses outright
+               # when it is unset — see mcp_server.py.
+               "/mcp"}
 
 
 def _signer() -> _USTS:
@@ -2416,6 +2420,42 @@ def assistant_tools(request: Request):
     }
 
 
+# ── MCP ──────────────────────────────────────────────────────────────────────
+# The same tool registry as the bot, re-served as JSON-RPC so an external FastAPI
+# app or openclaw can ask about buttons, clips and WhatsApp history. `/mcp` is in
+# _OPEN_PATHS because MCP clients send a bearer token and never a cookie, so the
+# auth check below is the ONLY gate — the middleware would let a tailnet request
+# through untouched. See mcp_server.py.
+
+
+@app.post("/mcp")
+async def mcp_endpoint(request: Request):
+    if not _mcp.configured():
+        return JSONResponse(
+            {"error": "MCP disabled: set MCP_TOKEN to enable it"}, status_code=503)
+    if not _mcp.authorised(request.headers.get("authorization", "")):
+        # WWW-Authenticate so a client knows *how* to authenticate, not just that
+        # it failed.
+        return JSONResponse({"error": "invalid or missing bearer token"},
+                            status_code=401,
+                            headers={"WWW-Authenticate": 'Bearer realm="crcmz-mcp"'})
+
+    body, status = _mcp.handle_body(await request.body())
+    if body is None:
+        # Notification-only request: the spec wants 202 and an empty body.
+        return Response(status_code=status)
+    return JSONResponse(body, status_code=status)
+
+
+@app.get("/mcp")
+def mcp_probe():
+    """Liveness only. MCP itself is POST-only here (no SSE stream), and this
+    deliberately reveals nothing about the tools without a token."""
+    return {"protocol": "mcp", "transport": "http-post",
+            "enabled": _mcp.configured(),
+            "protocol_version": _mcp.PROTOCOL_VERSION}
+
+
 def _run_assistant_turn(user_sub: str, question: str, reply_id: int,
                         image_b64: str = "", image_type: str = "image/jpeg") -> None:
     """Answer and write the reply into the person's thread.
@@ -3870,6 +3910,7 @@ _clips.init()
 import whatsapp_analytics as _wa
 import giveaway as _giveaway
 import assistant
+import mcp_server as _mcp
 import facts as _facts
 import chat_history as _chat
 import psn_ai
@@ -4911,84 +4952,32 @@ def dashboard(request: Request):
 
 
 
-# The dashboard's "soundboard" buttons. Built-in defaults live here; custom ones
-# that anyone adds via the dashboard are AI-flavored and persisted to
-# /data/soundboard.json so they become permanent buttons for everyone.
-# Each posts a canned message to the squad PSN group via /v2/squad {message};
-# `path` instead of `msg` hits a non-message action. `cls` picks a color.
-_SOUNDBOARD_DEFAULTS = [
-    {"label": "👉👌 Have you ever?", "msg": "Have you ever? 👉👌", "cls": "c1"},
-    {"label": "🧊☕ Iced Cap STORY", "msg": "🧊☕ Iced Cap STORRYYY! 📖✨", "cls": "c2"},
-    {"label": "🙅‍♂️ Never", "msg": "Never 🙅‍♂️❌", "cls": "c3"},
-    {"label": "💧 Water Break", "msg": "💧 Water break! 🚰💦", "cls": "c4"},
-    {"label": "🎬 Zubi Clip It", "msg": "🎬 ZUBI CLIP IT!! 📸🔥 That was insane!", "cls": "c5"},
-    {"label": "🎮 Squad Up", "msg": "🎮🔥 SQUAD UP! Who's hopping on? 🕹️💥", "cls": "c1"},
-    {"label": "🕹️ Game Time", "msg": "🎮🔥 Let's party up y'all. It's GAME TIME! 🕹️💥", "cls": "c2"},
-]
+# The dashboard's "soundboard" buttons, and the private per-person boards behind
+# the swipe-left panel, both live in `soundboard.py`. They moved out of here so
+# `assistant.py` can read them: this module imports `assistant`, so `assistant`
+# cannot import it back. These wrappers keep the call sites below unchanged.
+import soundboard as _sb
 
-from pathlib import Path as _Path
+_SOUNDBOARD_DEFAULTS = _sb.DEFAULTS
+_CUSTOM_COLORS = _sb.COLORS
+_PERSONAL_MAX = _sb.PERSONAL_MAX
 
-_SOUNDBOARD_FILE = _Path("/data/soundboard.json")
-# Colors cycled through for new custom buttons.
-_CUSTOM_COLORS = ["c1", "c2", "c3", "c4", "c5"]
-
-
-def _load_custom_buttons() -> list[dict]:
-    try:
-        return json.loads(_SOUNDBOARD_FILE.read_text()).get("buttons", [])
-    except Exception:  # noqa: BLE001
-        return []
-
-
-def _save_custom_buttons(buttons: list[dict]) -> None:
-    _SOUNDBOARD_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _SOUNDBOARD_FILE.write_text(json.dumps({"buttons": buttons}, indent=2))
-
-
-def _soundboard() -> list[dict]:
-    """Built-in buttons followed by persisted custom ones."""
-    return _SOUNDBOARD_DEFAULTS + _load_custom_buttons()
+_load_custom_buttons = _sb.load_custom
+_save_custom_buttons = _sb.save_custom
+_soundboard = _sb.shared
+_load_personal_all = _sb.load_all_personal
+_load_personal_buttons = _sb.load_personal
+_save_personal_buttons = _sb.save_personal
 
 
 def _soundboard_json() -> str:
-    return json.dumps(_soundboard())
-
-
-# ── Personal boards ──────────────────────────────────────────────────────────
-# One private button list per signed-in person, keyed by their Zitadel `sub`
-# (the permanent identity — email can change). All of them live in one file:
-# {"boards": {"<sub>": [button, ...]}}.
-_PERSONAL_FILE = _Path("/data/soundboard_personal.json")
-_PERSONAL_MAX = 24
+    return json.dumps(_sb.shared())
 
 
 def _personal_key(request: Request) -> str:
     """Stable per-user key, or "" when nobody is signed in."""
     session = _get_session(request)
     return (session or {}).get("sub", "") or ""
-
-
-def _load_personal_all() -> dict[str, list[dict]]:
-    try:
-        return json.loads(_PERSONAL_FILE.read_text()).get("boards", {})
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-def _load_personal_buttons(key: str) -> list[dict]:
-    board = _load_personal_all().get(key, [])
-    # `mine` is what tells the dashboard this button is deletable by its owner.
-    return [{**b, "custom": True, "mine": True} for b in board]
-
-
-def _save_personal_buttons(key: str, buttons: list[dict]) -> None:
-    boards = _load_personal_all()
-    if buttons:
-        boards[key] = buttons
-    else:
-        boards.pop(key, None)
-    _PERSONAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _PERSONAL_FILE.write_text(json.dumps({"boards": boards}, indent=2))
 
 
 def _dashboard_html(user_email: str = "", psn_id: str = "",

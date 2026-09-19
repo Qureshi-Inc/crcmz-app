@@ -42,11 +42,14 @@ def http_tests():
     from fastapi.testclient import TestClient
     import roast_bot
     import server
+    import soundboard
 
     tmp = Path(tempfile.mkdtemp(prefix="board-test-"))
     # Never touch the real /data, and never call Bedrock for the flavor text.
-    server._PERSONAL_FILE = tmp / "soundboard_personal.json"
-    server._SOUNDBOARD_FILE = tmp / "soundboard.json"
+    # The paths live in `soundboard`, not `server` — server only wraps them, so
+    # patching server attributes here would silently write to the real /data.
+    soundboard.PERSONAL_FILE = tmp / "soundboard_personal.json"
+    soundboard.SHARED_FILE = tmp / "soundboard.json"
     roast_bot.flavor_message = lambda raw: raw.strip() + " 🔥"
 
     # Nothing here talks to PSN: the mod account is a recorder, and sending as
@@ -179,11 +182,11 @@ def http_tests():
 
     def t_board_full_is_rejected():
         sub = "zit-user-full"
-        boards = json.loads(server._PERSONAL_FILE.read_text())["boards"] \
-            if server._PERSONAL_FILE.exists() else {}
+        boards = json.loads(soundboard.PERSONAL_FILE.read_text())["boards"] \
+            if soundboard.PERSONAL_FILE.exists() else {}
         boards[sub] = [{"label": f"b{i}", "msg": f"b{i}", "cls": "c1"}
-                       for i in range(server._PERSONAL_MAX)]
-        server._PERSONAL_FILE.write_text(json.dumps({"boards": boards}))
+                       for i in range(soundboard.PERSONAL_MAX)]
+        soundboard.PERSONAL_FILE.write_text(json.dumps({"boards": boards}))
         as_user(sub)
         r = client.post("/api/soundboard/personal",
                         json={"text": "one too many", "send": False}, headers=HDR)
