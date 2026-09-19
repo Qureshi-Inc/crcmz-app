@@ -4265,12 +4265,7 @@ async def settings_mattermost_callback(request: Request, code: str = "", state: 
         return HTMLResponse("<h2>No access token in response</h2>", status_code=502)
 
     _mm_tokens.store(zid, access_token, refresh_token, expires_in)
-    return HTMLResponse("""
-<html><head><title>Mattermost Connected</title>
-<script>window.opener && window.opener.postMessage('mm_linked','*'); window.close();</script>
-</head><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0d0a1f;color:#fff">
-<h2>✅ Mattermost connected!</h2><p>You can close this window.</p>
-</body></html>""")
+    return RedirectResponse(url="/?mm=linked", status_code=302)
 
 
 @app.post("/auth/settings/mattermost/unlink")
@@ -8390,9 +8385,10 @@ async function registerPasskey(){
 
 // ── Settings modal ─────────────────────────────────────────────────────────
 let _adminChecked = false;
-function openSettings(){
+function openSettings(tab){
   $('userMenu')?.classList.remove('open');
   $('settingsOverlay').classList.add('open');
+  if(tab) switchTab(tab);
   loadPasskeys();
   if(!_adminChecked){ _adminChecked=true;
     fetch('/api/admin/check').then(r=>r.json()).then(d=>{
@@ -8401,6 +8397,14 @@ function openSettings(){
   }
 }
 function closeSettings(){ $('settingsOverlay').classList.remove('open'); }
+
+(function(){
+  const p = new URLSearchParams(window.location.search);
+  if(p.get('mm')==='linked'){
+    history.replaceState(null,'',window.location.pathname);
+    openSettings('mattermost');
+  }
+})();
 
 function switchTab(name){
   document.querySelectorAll('.stab').forEach(t=>{
@@ -8738,11 +8742,7 @@ async function loadMattermostStatus(){
 }
 
 function connectMattermost(){
-  const w = window.open('/auth/settings/mattermost/connect','mm_oauth',
-    'width=600,height=700,menubar=no,toolbar=no,location=no');
-  window.addEventListener('message', function onMsg(e){
-    if(e.data==='mm_linked'){ window.removeEventListener('message',onMsg); loadMattermostStatus(); }
-  });
+  window.location.href = '/auth/settings/mattermost/connect';
 }
 
 async function disconnectMattermost(){
