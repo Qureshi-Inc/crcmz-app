@@ -1941,64 +1941,89 @@ def _claw_session_key(group_jid: str) -> str:
 
 
 def _run_clawbot_ask(question: str, group_jid: str) -> None:
-    """Ask Clawbot a general question (no build/deploy) and reply with its answer."""
+    """Ask Clawbot a general question (no build/deploy) and reply with its answer.
+
+    Automatically continues if openclaw hits its output token limit, stitching
+    up to 3 continuation rounds into one reply before sending.
+    """
     import shlex, subprocess, uuid as _uuid
-    import httpx as _hx
 
     session_key = _claw_session_key(group_jid)
     wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "🤖 asking clawbot, give it a min…")
     _wa_typing(group_jid, True)
 
-    out_file = f"/tmp/claw-ask-{_uuid.uuid4().hex[:8]}.json"
-    remote_cmd = (
-        f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(question)}"
-        f" --agent engineer --session-key {shlex.quote('agent:engineer:' + session_key)}"
-        f" --json --timeout 300"
-        f" > {out_file} 2>&1; echo $? > {out_file}.exit"
-    )
     ssh_base = [
         "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-n",
         "-i", assistant.AI_CONTROLLER_KEY, assistant.AI_CONTROLLER_SSH,
     ]
+    _TRUNC_RE = _re.compile(r"\s*⚠️\s*Reply truncated[^\n]*", _re.IGNORECASE)
+
+    def _one_call(prompt_text: str) -> tuple[str, bool]:
+        out_file = f"/tmp/claw-ask-{_uuid.uuid4().hex[:8]}.json"
+        remote_cmd = (
+            f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(prompt_text)}"
+            f" --agent engineer --session-key {shlex.quote('agent:engineer:' + session_key)}"
+            f" --json --timeout 300"
+            f" > {out_file} 2>&1; echo $? > {out_file}.exit"
+        )
+        t0 = _time.time()
+        try:
+            proc = subprocess.Popen(ssh_base + [remote_cmd], stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL)
+            while proc.poll() is None:
+                _time.sleep(5)
+                _wa_typing(group_jid, True)
+                if _time.time() - t0 > 5 * 60:
+                    proc.kill()
+                    break
+            proc.communicate(timeout=10)
+        except Exception as e:
+            logger.warning("clawbot-ask: SSH error: %s", e)
+            return "", False
+
+        stdout = ""
+        try:
+            r = subprocess.run(
+                ssh_base + [f"cat {out_file}; rm -f {out_file} {out_file}.exit"],
+                capture_output=True, text=True, timeout=30,
+            )
+            stdout = r.stdout
+        except Exception as e:
+            logger.warning("clawbot-ask: cat failed: %s", e)
+
+        logger.info("clawbot-ask: raw stdout=%r", (stdout or "")[:500])
+
+        chunk = ""
+        try:
+            data = json.loads((stdout or "").strip())
+            payloads = (data.get("result") or {}).get("payloads") or []
+            chunk = " ".join(p.get("text", "") for p in payloads if p.get("text")).strip()
+            if not chunk:
+                chunk = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
+        except Exception:
+            chunk = (stdout or "").strip()[:1000]
+
+        truncated = bool(_TRUNC_RE.search(chunk))
+        chunk = _TRUNC_RE.sub("", chunk).rstrip()
+        return chunk, truncated
+
     logger.info("clawbot-ask: question=%r", question[:120])
     start = _time.time()
-    try:
-        proc = subprocess.Popen(ssh_base + [remote_cmd], stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL)
-        while proc.poll() is None:
-            _time.sleep(5)
-            _wa_typing(group_jid, True)
-            if _time.time() - start > 5 * 60:
-                proc.kill()
-                break
-        proc.communicate(timeout=10)
-    except Exception as e:
-        logger.warning("clawbot-ask: SSH error: %s", e)
 
-    stdout = ""
-    try:
-        r = subprocess.run(ssh_base + [f"cat {out_file}; rm -f {out_file} {out_file}.exit"],
-                           capture_output=True, text=True, timeout=30)
-        stdout = r.stdout
-    except Exception as e:
-        logger.warning("clawbot-ask: cat failed: %s", e)
-
-    logger.info("clawbot-ask: raw stdout=%r", (stdout or "")[:500])
-
-    answer = ""
-    try:
-        data = json.loads((stdout or "").strip())
-        # openclaw returns result.payloads[0].text
-        payloads = (data.get("result") or {}).get("payloads") or []
-        answer = " ".join(p.get("text", "") for p in payloads if p.get("text")).strip()
-        if not answer:
-            answer = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
-    except Exception:
-        answer = (stdout or "").strip()[:1000]
+    full_answer = ""
+    current_prompt = question
+    for round_num in range(4):  # initial call + up to 3 auto-continuations
+        chunk, truncated = _one_call(current_prompt)
+        if chunk:
+            full_answer = (full_answer + "\n\n" + chunk).strip() if full_answer else chunk
+        if not truncated or round_num >= 3:
+            break
+        logger.info("clawbot-ask: truncated, auto-continuing (round %d)", round_num + 1)
+        current_prompt = "continue"
 
     _wa_typing(group_jid, False)
-    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, answer or "clawbot didn't come back with anything, try again")
-    logger.info("clawbot-ask: done in %ds", int(_time.time() - start))
+    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, full_answer or "clawbot didn't come back with anything, try again")
+    logger.info("clawbot-ask: done in %ds, rounds=%d", int(_time.time() - start), round_num + 1)
 
 
 _SUBDOMAIN_RE = _re.compile(r"\b([a-z][a-z0-9-]{1,38})[.\s]*buildanator[.\s]*com\b", _re.IGNORECASE)
@@ -2270,6 +2295,13 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
     claw_match = _ASK_CLAW_RE.match(prompt)
     if claw_match:
         question = prompt[claw_match.end():].strip()
+        # If the question is actually a build request, redirect to the build job
+        if assistant.needs_build(question or prompt) and not image_b64:
+            subdomain = _extract_subdomain(question or prompt)
+            _wa_typing(group_jid, False)
+            wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
+            _threading.Thread(target=_run_clawbot_job, args=(question or prompt, subdomain, group_jid), daemon=True).start()
+            return
         _threading.Thread(target=_run_clawbot_ask, args=(question or prompt, group_jid), daemon=True).start()
         return
 
