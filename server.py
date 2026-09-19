@@ -1941,6 +1941,15 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
 _ASK_CLAW_RE = _re.compile(r"^\s*(?:ask\s+claw|hey\s+claw|hey\s+cl[ao]w|@claw|claw\s*[,:])\b[,:]?\s*", _re.IGNORECASE)
 _RESET_CLAW_RE = _re.compile(r"^\s*reset\s+claw\b", _re.IGNORECASE)
 
+# The model promising to dispatch the engineer, without having called the tool.
+_PROMISED_BUILD_RE = _re.compile(
+    r"\b(get(ting)?|put(ting)?|send(ing)?|tell(ing)?|ask(ing)?|hand(ing)?)\b[^.\n]{0,40}\bengineer\b"
+    r"|\bengineer\b[^.\n]{0,30}\b(on it|on this|will|is on)\b"
+    # Hinglish: the bot's persona often replies "engineer ko bol deta hoon".
+    r"|\bengineer\b[^.\n]{0,20}\bko\s+(bol|keh|kah|bata|bta)",
+    _re.IGNORECASE,
+)
+
 # Per-group Clawbot session: {group_jid: (session_key, last_used_timestamp)}
 _CLAW_SESSIONS: dict[str, tuple[str, float]] = {}
 _CLAW_SESSION_TTL = 2 * 3600  # 2 hours inactivity resets session
@@ -2359,6 +2368,15 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
         _threading.Thread(target=_run_clawbot_job, args=(task, subdomain, group_jid), daemon=True).start()
         logger.info("wa_ai: build via tool-path subdomain=%r", subdomain)
+        return
+
+    # Backstop: the model sometimes *says* it's dispatching the engineer without
+    # calling the tool, leaving the request silently dropped. Honour its promise.
+    if _PROMISED_BUILD_RE.search(answer):
+        subdomain = _extract_subdomain(prompt)
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
+        _threading.Thread(target=_run_clawbot_job, args=(prompt, subdomain, group_jid), daemon=True).start()
+        logger.info("wa_ai: build via promise-backstop subdomain=%r answer=%r", subdomain, answer[:80])
         return
 
     if not answer:

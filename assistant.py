@@ -728,11 +728,20 @@ def needs_tool(question: str) -> bool:
     return bool(_DATA_QUESTION.search(question or ""))
 
 
+_BUILD_VERBS = (r"build|make|create|ship|deploy|launch|spin\s+up|set\s+up|put\s+together"
+                r"|update|edit|change|fix|modify|rebuild|redo|tweak|improve")
+# Only safe beside an explicit buildanator target: bare "add"/"remove" are far too
+# common in group chat ("add the game to the list") to imply a build on their own.
+_EDIT_VERBS = _BUILD_VERBS + r"|add|remove|delete|swap|replace|pull"
+
 _BUILD_QUESTION = re.compile(
-    r"\b(build|make|create|ship|deploy|launch|spin\s+up|set\s+up|put\s+together)\b"
+    rf"\b({_BUILD_VERBS})\b"
     r".{0,80}\b(site|website|web\s*app|app|tool|dashboard|page|landing|portfolio|game)\b"
     r"|\b(site|website|web\s*app|app|tool|dashboard)\b.{0,80}"
     r"\b(build|make|create|ship|deploy|launch)\b"
+    # Any action verb aimed at a *.buildanator.com deploy target is a build/edit job.
+    rf"|\b({_EDIT_VERBS})\b.{{0,120}}\bbuildanator\b"
+    rf"|\bbuildanator\b.{{0,120}}\b({_EDIT_VERBS})\b"
     r"|\b(tell|ask|get|have|use|send)\b.{0,10}\b(my|the|an|your)\b.{0,20}\bengineer\b"
     r"|\bengineer\b.{0,30}\b(build|make|create|fix|update|deploy|add|change)\b",
     re.IGNORECASE | re.DOTALL,
