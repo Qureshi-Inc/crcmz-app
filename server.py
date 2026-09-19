@@ -8751,9 +8751,18 @@ async function loadMattermostStatus(){
 function connectMattermost(){
   const w = window.open('/auth/settings/mattermost/connect','mm_oauth',
     'width=600,height=700,menubar=no,toolbar=no,location=no');
-  window.addEventListener('message', function onMsg(e){
-    if(e.data==='mm_linked'){ window.removeEventListener('message',onMsg); loadMattermostStatus(); }
-  });
+  const poll = setInterval(async ()=>{
+    if(!w || w.closed){
+      clearInterval(poll);
+      loadMattermostStatus();
+      return;
+    }
+    try {
+      const r = await fetch('/auth/settings/mattermost');
+      const d = await r.json();
+      if(d.linked){ clearInterval(poll); w.close(); loadMattermostStatus(); }
+    } catch(e){}
+  }, 2000);
 }
 
 async function disconnectMattermost(){
