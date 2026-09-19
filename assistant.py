@@ -923,7 +923,7 @@ def call_tool(name: str, args: dict) -> tuple[str, bool]:
 #  - Destination hard-pinned (env var or validated roster, never model-free text)
 #  - Rate-limited via mcp_oauth.within_rate_limit
 #  - Every call appended to write_audit
-#  - Message prefixed [via Claude · <name>] so recipients see the source
+#  - Message prefixed [via <name>] 🤖 so recipients see the source
 
 _WRITE_TOOLS: dict[str, dict[str, Any]] = {}
 
@@ -982,7 +982,7 @@ def _caller_name(caller: dict) -> str:
     "Send a message to the PSN squad group thread as the authenticated user. "
     "This posts to the shared squad group on PlayStation — it is not a 1:1 DM. "
     "Requires the caller to have a linked PSN account. "
-    "The message is prefixed [via Claude · <name>] so recipients see the source. "
+    "The message is prefixed [via <name>] 🤖 so recipients see the source. "
     "Rate limit: 3 per 10 minutes.",
     {"type": "object",
      "properties": {
@@ -1026,7 +1026,7 @@ def _send_psn_group_message(message: str, caller: dict) -> dict:
             def access_token(self) -> str:
                 return token
 
-        text = f"[via Claude · {name}] {message}"
+        text = f"[via {name}] {message} 🤖"
         messenger = PSNMessenger(_Auth(), squad_group_id)
         ok = messenger.send_message(text)
     except Exception as e:  # noqa: BLE001
@@ -1043,7 +1043,7 @@ def _send_psn_group_message(message: str, caller: dict) -> dict:
 @write_tool(
     "send_whatsapp_group_message",
     "Post a message to the squad WhatsApp group as the authenticated user, "
-    "delivered by the CRCMZ bot. The message is prefixed [via Claude · <name>]. "
+    "delivered by the CRCMZ bot. The message is prefixed [via <name>] 🤖. "
     "Rate limit: 3 per 10 minutes.",
     {"type": "object",
      "properties": {
@@ -1075,7 +1075,7 @@ def _send_wa_group_message(message: str, caller: dict) -> dict:
 
     try:
         import wa_ai
-        text = f"[via Claude · {name}] {message}"
+        text = f"[via {name}] {message} 🤖"
         ok = wa_ai.send_reply(bridge_url, group_jid, text)
     except Exception as e:  # noqa: BLE001
         logger.warning("write tool %s: WA send failed: %s", tool_n, e)
@@ -1093,7 +1093,7 @@ def _send_wa_group_message(message: str, caller: dict) -> dict:
     "Send a direct WhatsApp message to a squad member, delivered by the CRCMZ bot. "
     "`to` can be a display name, PSN online ID, or Mattermost username — it is "
     "resolved through the identity graph. Fails if the recipient has no known "
-    "WhatsApp JID. Message is prefixed [DM from <name> via Claude]. "
+    "WhatsApp JID. Message is prefixed [DM from <name>] 🤖. "
     "Rate limit: 5 per 10 minutes.",
     {"type": "object",
      "properties": {
@@ -1146,7 +1146,7 @@ def _send_wa_dm(to: str, message: str, caller: dict) -> dict:
 
     try:
         import wa_ai
-        text = f"[DM from {name} via Claude] {message}"
+        text = f"[DM from {name}] {message} 🤖"
         ok = wa_ai.send_reply(bridge_url, jid, text)
     except Exception as e:  # noqa: BLE001
         logger.warning("write tool %s: WA DM send failed: %s", tool_n, e)
@@ -1170,7 +1170,7 @@ def _send_wa_dm(to: str, message: str, caller: dict) -> dict:
     "Send a direct message to a squad member on Mattermost. `to` can be a "
     "display name, PSN id, or Mattermost username — resolved via the identity graph. "
     "Requires MATTERMOST_URL and MATTERMOST_TOKEN to be configured. "
-    "Message is prefixed [via Claude · <name>]. Rate limit: 5 per 10 minutes.",
+    "Message is prefixed [via <name>] 🤖. Rate limit: 5 per 10 minutes.",
     {"type": "object",
      "properties": {
          "to":      {"type": "string",
@@ -1217,7 +1217,7 @@ def _send_mm_dm(to: str, message: str, caller: dict) -> dict:
         import mattermost
         if not mattermost.available():
             return {"ok": False, "error": "Mattermost not configured on this server"}
-        text = f"[via Claude · {name}] {message}"
+        text = f"[via {name}] {message} 🤖"
         ok = mattermost.dm_user(mm_username, text)
     except Exception as e:  # noqa: BLE001
         logger.warning("write tool %s: MM DM failed: %s", tool_n, e)
