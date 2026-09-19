@@ -3924,9 +3924,11 @@ PSN_AI_POLL_SECONDS = max(10, int(os.environ.get("PSN_AI_POLL_SECONDS", "20")))
 # Which PSN groups it listens in. The Squad only by default — the main group is
 # opt-in via PSN_AI_GROUPS=squad,main.
 PSN_AI_GROUPS = os.environ.get("PSN_AI_GROUPS", "squad").lower()
+import game_history as _games
 _wa.init()
 _facts.init()
 _chat.init()
+_games.init()
 
 _video_seen: set[str] = set()
 _video_initialized: bool = False

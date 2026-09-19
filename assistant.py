@@ -337,6 +337,11 @@ def _overview() -> dict:
     except Exception as e:  # noqa: BLE001
         out["psn_clips"] = {"error": str(e)}
     try:
+        import game_history
+        out["games"] = game_history.overview()
+    except Exception as e:  # noqa: BLE001
+        out["games"] = {"error": str(e)}
+    try:
         st = _slap("stats").get("stats") or {}
         out["music"] = {"songs": st.get("total_songs"),
                         "contributors": st.get("total_contributors"),
@@ -668,6 +673,38 @@ def _ident():
     return crcmz_identity
 
 
+def _games():
+    import game_history
+    return game_history
+
+
+@tool("games_played",
+      "What the squad actually plays, by PlayStation's own playtime counters: "
+      "hours per game, how many members own it, and the per-person split. This "
+      "is lifetime playtime per account, backfilled from PSN, so it answers "
+      "'what games do we play' and 'who has the most hours in Arc Raiders'. "
+      "`range` filters by when a title was last touched, NOT by hours inside "
+      "that window -- PSN gives no per-day breakdown, so use game_sessions for "
+      "'what did we play last night'. Empty means nothing has been recorded yet, "
+      "usually because PSN auth is down; say that rather than guessing a game.",
+      _range_param({"limit": {"type": "integer", "description": "1-100, default 20."}}))
+def _games_played(range: str = "all_time", limit: int = 20) -> Any:  # noqa: A002
+    return _games().top_games(range, limit=limit)
+
+
+@tool("game_sessions",
+      "Observed play sessions, newest first: who was in which game, when it "
+      "started and ended, and for how long. Built from presence samples taken "
+      "every three minutes, so this is the tool for 'what were we playing last "
+      "night' or 'were we on at the same time'. Minutes are accurate to roughly "
+      "three minutes and a break longer than twenty minutes is recorded as two "
+      "sessions. `who` must be an exact PSN online ID.",
+      _range_param({"who": {"type": "string", "description": "Exact PSN online ID."},
+                    "limit": {"type": "integer", "description": "1-100, default 20."}}))
+def _game_sessions(range: str = "all_time", who: str = "", limit: int = 20) -> Any:  # noqa: A002
+    return _games().sessions(range, who=who.strip(), limit=limit)
+
+
 def _mask_phone(phone: str) -> str:
     """Last four digits only. Enough to confirm 'that's my number', not enough to
     hand somebody's number to whoever is chatting with the bot."""
@@ -799,6 +836,14 @@ def _person_profile(who: str, range: str = "all_time") -> dict:  # noqa: A002
     except Exception as e:  # noqa: BLE001
         logger.warning("person_profile: facts lookup failed: %s", e)
 
+    games: dict[str, Any] = {"titles": 0, "top": [], "last_session": None}
+    if person["psn_id"]:
+        try:
+            games = _games().person_games(person["psn_id"])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("person_profile: game history lookup failed: %s", e)
+            games = {"error": str(e)}
+
     turns = 0
     try:
         import chat_history
@@ -822,6 +867,7 @@ def _person_profile(who: str, range: str = "all_time") -> dict:  # noqa: A002
             # The text is the point: "you already have a button for that".
             "labels": [b.get("label", "") for b in buttons],
         },
+        "games": games,
         # A cap, not a total -- there is no per-sender clip count, so do not
         # report this as "how many clips they have ever shared".
         "recent_clips": len(clips_recent),

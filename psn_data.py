@@ -286,24 +286,40 @@ def _is_whitelisted(name: str) -> bool:
     return any(g in n for g in GAME_WHITELIST)
 
 
-def _recent_game(client: httpx.Client, token: str) -> dict:
-    """Most recent WHITELISTED game (self-token only) with art + freshness.
+def _fetch_titles(client: httpx.Client, token: str) -> list[dict]:
+    """Raw PS4/PS5 title list for the token's own account, newest first.
+
+    Split out from _recent_game so one HTTP call can serve both the dashboard's
+    whitelisted pick and game_history's full library record. Each entry carries
+    PSN's own counters (playCount, playDuration, first/lastPlayedDateTime), which
+    is what makes the recorded history retroactive instead of starting from now.
+    """
+    try:
+        r = client.get(
+            f"{GAMELIST}/users/me/titles",
+            params={"categories": "ps4_game,ps5_native_game", "limit": "100"},
+            headers=_headers(token),
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return []
+        return r.json().get("titles") or []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _pick_recent_game(titles: list[dict]) -> dict:
+    """Most recent WHITELISTED game with art + freshness.
 
     Scans the recent-titles list and picks the newest entry whose name is in
     GAME_WHITELIST -- everything else (other games, media apps) is ignored, so a
     person is only ever 'playing'/'last game' for one of the approved titles.
     recent_active is True when that game was played within the window.
+
+    The whitelist governs only what the dashboard shows; game_history stores the
+    unfiltered list, so "what did we play" is not limited to approved titles.
     """
     try:
-        r = client.get(
-            f"{GAMELIST}/users/me/titles",
-            params={"categories": "ps4_game,ps5_native_game", "limit": "20"},
-            headers=_headers(token),
-            timeout=15,
-        )
-        if r.status_code != 200:
-            return {}
-        titles = r.json().get("titles") or []
         # Titles come newest-first; take the first whitelisted one.
         t = next((x for x in titles if _is_whitelisted(x.get("name"))), None)
         if not t:
@@ -328,6 +344,25 @@ def _recent_game(client: httpx.Client, token: str) -> dict:
         }
     except Exception:  # noqa: BLE001
         return {}
+
+
+def _recent_game(client: httpx.Client, token: str) -> dict:
+    """Fetch-and-pick, for callers that do not need the raw list."""
+    return _pick_recent_game(_fetch_titles(client, token))
+
+
+def _remember(online_id: str, titles: list[dict]) -> None:
+    """Persist a title list, never letting a storage problem break the sweep.
+
+    The dashboard and the poller both land here; recording is strictly a
+    side-effect, so a missing /data or a locked DB must degrade to "no history
+    written" rather than an empty squad list on the page.
+    """
+    try:
+        import game_history
+        game_history.record_titles(online_id, titles)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("game history: title record failed for %s: %s", online_id, e)
 
 
 def squad_status(auth, include_stats: bool = True) -> list[dict]:
@@ -399,7 +434,9 @@ def _squad_status_uncached(auth, include_stats: bool = True) -> list[dict]:
             entry.update(slow["trophy"])
             # Presence + current game are cheap and time-sensitive: always fresh.
             if own:
-                entry.update(_recent_game(client, tok))
+                titles = _fetch_titles(client, tok)
+                entry.update(_pick_recent_game(titles))
+                _remember(a.get("online_id"), titles)
             # The presence API often reports "offline" even while someone is in
             # a game (esp. cross-play titles). The game list's lastPlayedDateTime
             # is real-time, so if they played within the recent window we treat
@@ -410,6 +447,14 @@ def _squad_status_uncached(auth, include_stats: bool = True) -> list[dict]:
                 entry["game"] = entry.get("game") or entry.get("recent_game")
                 entry["game_icon"] = entry.get("game_icon") or entry.get("recent_game_icon")
             out.append(entry)
+    # Fold this observation into the session log before sorting matters. Guarded
+    # for the same reason as _remember: history is a side-effect of the sweep.
+    try:
+        import game_history
+        game_history.record_sweep(out)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("game history: session record failed: %s", e)
+
     # Sort: in-game first, then online-on-menus, then offline; then by name.
     out.sort(
         key=lambda x: (

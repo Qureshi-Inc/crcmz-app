@@ -45,6 +45,8 @@ STORES: dict[str, list[str] | None] = {
     "/data/soundboard.json": ["soundboard_buttons"],
     "/data/soundboard_personal.json": ["soundboard_buttons", "person_profile"],
     "/data/users": ["squad_members", "squad_roster", "person_profile"],
+    "/data/game_history.db": ["games_played", "game_sessions", "person_profile",
+                              "platform_overview"],
 
     # Deliberately not exposed:
     "/data/assistant_chat.db": None,   # the bot's own transcripts. person_profile
