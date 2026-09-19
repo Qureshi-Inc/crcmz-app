@@ -26,7 +26,7 @@ GROUP_ID = os.environ.get("GROUP_ID")
 GROUP_NAME = os.environ.get("GROUP_NAME", "crcmz-mod")
 # Auto-Squad: a separate PSN group (everyone except wolfie/IG_Juicy) that the
 # "Squad Up" Stream Deck button rallies. Created 2026-08-15; overridable via env.
-SQUAD_GROUP_ID = os.environ.get("SQUAD_GROUP_ID", "213250d833ccce334b651e2ee15e365c97468e02-869")
+SQUAD_GROUP_ID = os.environ.get("GROUP_ID") or os.environ.get("SQUAD_GROUP_ID", "213250d833ccce334b651e2ee15e365c97468e02-869")
 SQUAD_GROUP_NAME = os.environ.get("SQUAD_GROUP_NAME", "The Squad")
 
 if not NPSSO_TOKEN:
