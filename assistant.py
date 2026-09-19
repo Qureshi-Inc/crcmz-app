@@ -856,6 +856,7 @@ def _person_profile(who: str, range: str = "all_time") -> dict:  # noqa: A002
         "identity": {
             "name": person["display_name"] or person["username"],
             "username": person["username"],
+            "email": person["email"],
             "psn_id": person["psn_id"],
             "mm_username": person["mm_username"],
             "whatsapp_names": person["wa_names"],
