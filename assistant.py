@@ -1014,7 +1014,8 @@ def _send_psn_group_message(message: str, caller: dict) -> dict:
         return {"ok": False,
                 "error": "no linked PSN account — link your PlayStation at app.crcmz.me"}
 
-    squad_group_id = os.environ.get("GROUP_ID") or os.environ.get("SQUAD_GROUP_ID", "")
+    import server as _server
+    squad_group_id = _server.SQUAD_GROUP_ID
     if not squad_group_id:
         return {"ok": False, "error": "SQUAD_GROUP_ID not configured"}
 
