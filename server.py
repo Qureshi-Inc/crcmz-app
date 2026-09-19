@@ -4244,6 +4244,7 @@ async def settings_mattermost_callback(request: Request, code: str = "", state: 
     mm_public = (os.environ.get("MATTERMOST_PUBLIC_URL") or mm_base).rstrip("/")
     callback = f"https://{_PUBLIC_HOST}/settings/mattermost/callback"
     try:
+        import httpx as httpx
         r = httpx.post(
             f"{mm_public}/oauth/access_token",
             data={
