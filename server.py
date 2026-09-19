@@ -703,7 +703,8 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/oauth/login",
                "/oauth/token",
                "/oauth/revoke",
-               "/oauth/register"}
+               "/oauth/register",
+               "/oauth/done"}
 
 
 def _signer() -> _USTS:
@@ -2829,7 +2830,60 @@ async def oauth_authorize_post(request: Request):
         return JSONResponse({"error": "server_error"}, status_code=500)
 
     params = _up.urlencode({"code": code, "state": state})
-    return RedirectResponse(url=f"{redirect_uri}?{params}", status_code=302)
+    callback_url = f"{redirect_uri}?{params}"
+    # Relay via /oauth/done so the user sees a success screen and the browser
+    # can handle a failed localhost redirect gracefully.
+    done_params = _up.urlencode({"to": callback_url})
+    return RedirectResponse(url=f"/oauth/done?{done_params}", status_code=302)
+
+
+@app.get("/oauth/done", response_class=HTMLResponse)
+async def oauth_done(to: str = ""):
+    """Success relay — auto-redirects to the MCP client callback URL."""
+    import html as _html
+    safe_to = _html.escape(to, quote=True)
+    return HTMLResponse(f"""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Authorised — CRCMZ</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#0f0f13;color:#e2e2e8;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+       display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}}
+  .card{{background:#1a1a24;border:1px solid rgba(255,255,255,.1);border-radius:16px;
+         padding:40px 36px;max-width:400px;width:100%;text-align:center}}
+  .icon{{font-size:48px;margin-bottom:16px}}
+  h1{{font-size:22px;font-weight:600;margin-bottom:8px}}
+  p{{font-size:14px;color:#888;line-height:1.6;margin-bottom:20px}}
+  .btn{{display:inline-block;padding:11px 24px;background:#7c3aed;color:#fff;
+        border-radius:8px;text-decoration:none;font-size:14px;font-weight:500}}
+  .url{{font-size:11px;color:#555;word-break:break-all;margin-top:20px;
+        background:rgba(255,255,255,.04);border-radius:6px;padding:8px 10px}}
+  .spinner{{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.15);
+            border-top-color:#7c3aed;border-radius:50%;animation:spin .7s linear infinite;
+            vertical-align:middle;margin-right:6px}}
+  @keyframes spin{{to{{transform:rotate(360deg)}}}}
+  #done{{display:none}}
+</style></head><body>
+<div class="card">
+  <div class="icon">✅</div>
+  <h1>Authorised</h1>
+  <p id="status"><span class="spinner"></span>Sending you back to Claude…</p>
+  <div id="done">
+    <p>The redirect didn't open automatically. Click below or paste the URL into Claude.</p>
+    <a class="btn" href="{safe_to}" id="cbBtn">Open in Claude Code</a>
+    <div class="url" id="cbUrl">{safe_to}</div>
+  </div>
+</div>
+<script>
+const dest = "{safe_to}";
+if(dest) {{
+  window.location.href = dest;
+  setTimeout(()=>{{
+    document.getElementById('status').style.display='none';
+    document.getElementById('done').style.display='';
+  }}, 2500);
+}}
+</script></body></html>""")
 
 
 @app.post("/oauth/token")
