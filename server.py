@@ -1403,6 +1403,10 @@ async def settings_change_password(request: Request):
     import httpx as _hx
     try:
         async with _hx.AsyncClient(timeout=10) as c:
+            headers = {
+                "Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}",
+                "Connect-Protocol-Version": "1",
+            }
             r = await c.post(
                 f"{ZITADEL_ISSUER}/zitadel.user.v2.UserService/SetPassword",
                 json={
@@ -1410,11 +1414,18 @@ async def settings_change_password(request: Request):
                     "currentPassword": current,
                     "newPassword": {"password": new_pw, "changeRequired": False},
                 },
-                headers={
-                    "Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}",
-                    "Connect-Protocol-Version": "1",
-                },
+                headers=headers,
             )
+            # Account has no password yet (passkey/OIDC signup) — retry without currentPassword
+            if r.status_code not in (200, 201) and "Password not found" in r.text:
+                r = await c.post(
+                    f"{ZITADEL_ISSUER}/zitadel.user.v2.UserService/SetPassword",
+                    json={
+                        "userId": user_id,
+                        "newPassword": {"password": new_pw, "changeRequired": False},
+                    },
+                    headers=headers,
+                )
         if r.status_code not in (200, 201):
             d = r.json()
             msg = d.get("message", "")
