@@ -1938,7 +1938,7 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     logger.info("clawbot: job done in %dm%ds for task %r", elapsed // 60, elapsed % 60, task[:40])
 
 
-_ASK_CLAW_RE = _re.compile(r"^\s*(?:ask\s+claw|hey\s+claw|@claw)\b[,:]?\s*", _re.IGNORECASE)
+_ASK_CLAW_RE = _re.compile(r"^\s*(?:ask\s+claw|hey\s+claw|hey\s+cl[ao]w|@claw|claw\s*[,:])\b[,:]?\s*", _re.IGNORECASE)
 _RESET_CLAW_RE = _re.compile(r"^\s*reset\s+claw\b", _re.IGNORECASE)
 
 # Per-group Clawbot session: {group_jid: (session_key, last_used_timestamp)}
@@ -2041,7 +2041,13 @@ def _run_clawbot_ask(question: str, group_jid: str) -> None:
         current_prompt = "continue"
 
     _wa_typing(group_jid, False)
-    wa_ai.send_reply(WA_BRIDGE_URL, group_jid, full_answer or "clawbot didn't come back with anything, try again")
+    if not full_answer:
+        # Empty output usually means the session context overflowed — reset it so next try works
+        _CLAW_SESSIONS.pop(group_jid, None)
+        logger.warning("clawbot-ask: empty response, session reset for %s", group_jid)
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "clawbot timed out — session was reset, say it again and it'll work")
+    else:
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, full_answer)
     logger.info("clawbot-ask: done in %ds, rounds=%d", int(_time.time() - start), round_num + 1)
 
 
