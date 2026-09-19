@@ -4275,7 +4275,12 @@ async def settings_mattermost_callback(request: Request, code: str = "", state: 
                             status_code=200)
 
     _mm_tokens.store(zid, access_token, refresh_token, expires_in)
-    return RedirectResponse(url="/?mm=linked", status_code=302)
+    return HTMLResponse("""
+<html><head><title>Mattermost Connected</title></head>
+<body style="font-family:sans-serif;text-align:center;padding:60px;background:#0d0a1f;color:#fff">
+<h2>✅ Mattermost connected!</h2>
+<p style="color:#aaa">You can close this window and go back to app.crcmz.me.</p>
+</body></html>""")
 
 
 @app.post("/auth/settings/mattermost/unlink")
@@ -8408,13 +8413,6 @@ function openSettings(tab){
 }
 function closeSettings(){ $('settingsOverlay').classList.remove('open'); }
 
-document.addEventListener('DOMContentLoaded', function(){
-  const p = new URLSearchParams(window.location.search);
-  if(p.get('mm')==='linked'){
-    history.replaceState(null,'',window.location.pathname);
-    openSettings('mattermost');
-  }
-});
 
 function switchTab(name){
   document.querySelectorAll('.stab').forEach(t=>{
@@ -8752,7 +8750,8 @@ async function loadMattermostStatus(){
 }
 
 function connectMattermost(){
-  window.location.href = '/auth/settings/mattermost/connect';
+  window.open('/auth/settings/mattermost/connect','mm_oauth',
+    'width=600,height=700,menubar=no,toolbar=no,location=no');
 }
 
 async function disconnectMattermost(){
