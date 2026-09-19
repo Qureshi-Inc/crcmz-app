@@ -8584,15 +8584,26 @@ async function loadMcpStatus(){
       </div>`;
       acts.style.display='';
     } else {
-      el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      const cfg = JSON.stringify({"mcpServers":{"crcmz":{"type":"http","url":"https://app.crcmz.me/mcp"}}}, null, 2);
+      el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
         <span style="width:8px;height:8px;border-radius:50%;background:var(--dim);display:inline-block"></span>
         <span style="color:var(--dim)">Not connected</span>
       </div>
-      <div style="font-size:13px;color:var(--dim);line-height:1.7">
-        No MCP client is currently authorised. Connect Claude or another MCP client
-        to get write access (send messages on your behalf, etc.).<br><br>
-        MCP server: <code style="font-size:12px;color:#9d8fc4">https://app.crcmz.me/mcp</code>
-      </div>`;
+      <div style="font-size:13px;line-height:1.8;margin-bottom:14px">
+        <div style="font-weight:600;margin-bottom:8px;color:var(--fg)">How to connect</div>
+        <ol style="margin:0;padding-left:18px;color:var(--dim);display:flex;flex-direction:column;gap:6px">
+          <li>Add the config below to your MCP client (Claude Desktop: <code style="font-size:11px">claude_desktop_config.json</code>)</li>
+          <li>Restart the client — it will open a browser window automatically</li>
+          <li>Sign in with your CRCMZ account and click <strong style="color:var(--fg)">Allow</strong></li>
+          <li>Come back here and click 🔄 to confirm it's active</li>
+        </ol>
+      </div>
+      <div style="font-size:12px;color:var(--dim);margin-bottom:6px">Claude Desktop config</div>
+      <div style="position:relative">
+        <pre id="mcpCfgBlock" style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:12px 14px;font-size:12px;color:#9d8fc4;overflow-x:auto;margin:0;white-space:pre">${cfg}</pre>
+        <button onclick="copyMcpCfg()" style="position:absolute;top:8px;right:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:5px;color:var(--dim);font-size:11px;padding:3px 9px;cursor:pointer" id="mcpCopyBtn">Copy</button>
+      </div>
+      <button onclick="loadMcpStatus()" style="margin-top:12px;background:none;border:1px solid rgba(255,255,255,.12);border-radius:7px;color:var(--dim);font-size:12px;padding:5px 14px;cursor:pointer">🔄 Refresh status</button>`;
       acts.style.display='none';
     }
   } catch(e){ el.innerHTML='<span style="color:var(--dim)">Error loading MCP status.</span>'; }
@@ -8605,6 +8616,15 @@ async function revokeMcp(){
   if(r.ok){ el.className='smsg ok'; el.textContent='MCP access revoked.'; loadMcpStatus(); }
   else { el.className='smsg err'; el.textContent='Could not revoke — try again.'; }
   setTimeout(()=>{ el.textContent=''; el.className='smsg'; }, 4000);
+}
+
+function copyMcpCfg(){
+  const text = $('mcpCfgBlock')?.textContent||'';
+  navigator.clipboard.writeText(text).then(()=>{
+    const btn=$('mcpCopyBtn'); if(!btn) return;
+    btn.textContent='Copied!'; btn.style.color='#4ade80';
+    setTimeout(()=>{ btn.textContent='Copy'; btn.style.color=''; }, 2000);
+  });
 }
 
 // ── WhatsApp Analytics ────────────────────────────────────────────────────────
