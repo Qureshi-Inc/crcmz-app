@@ -1026,7 +1026,7 @@ def _send_psn_group_message(message: str, caller: dict) -> dict:
             def access_token(self) -> str:
                 return token
 
-        text = f"[via {name}] {message} 🤖"
+        text = f"[via {name}] {message}"
         messenger = PSNMessenger(_Auth(), squad_group_id)
         ok = messenger.send_message(text)
     except Exception as e:  # noqa: BLE001
@@ -1075,7 +1075,7 @@ def _send_wa_group_message(message: str, caller: dict) -> dict:
 
     try:
         import wa_ai
-        text = f"[via {name}] {message} 🤖"
+        text = f"[via {name}] {message}"
         ok = wa_ai.send_reply(bridge_url, group_jid, text)
     except Exception as e:  # noqa: BLE001
         logger.warning("write tool %s: WA send failed: %s", tool_n, e)
@@ -1146,7 +1146,7 @@ def _send_wa_dm(to: str, message: str, caller: dict) -> dict:
 
     try:
         import wa_ai
-        text = f"[DM from {name}] {message} 🤖"
+        text = f"[DM from {name}] {message}"
         ok = wa_ai.send_reply(bridge_url, jid, text)
     except Exception as e:  # noqa: BLE001
         logger.warning("write tool %s: WA DM send failed: %s", tool_n, e)
@@ -1217,7 +1217,7 @@ def _send_mm_dm(to: str, message: str, caller: dict) -> dict:
         import mattermost
         if not mattermost.available():
             return {"ok": False, "error": "Mattermost not configured on this server"}
-        text = f"[via {name}] {message} 🤖"
+        text = f"[via {name}] {message}"
         ok = mattermost.dm_user(mm_username, text)
     except Exception as e:  # noqa: BLE001
         logger.warning("write tool %s: MM DM failed: %s", tool_n, e)
