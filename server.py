@@ -8408,13 +8408,13 @@ function openSettings(tab){
 }
 function closeSettings(){ $('settingsOverlay').classList.remove('open'); }
 
-(function(){
+document.addEventListener('DOMContentLoaded', function(){
   const p = new URLSearchParams(window.location.search);
   if(p.get('mm')==='linked'){
     history.replaceState(null,'',window.location.pathname);
     openSettings('mattermost');
   }
-})();
+});
 
 function switchTab(name){
   document.querySelectorAll('.stab').forEach(t=>{
