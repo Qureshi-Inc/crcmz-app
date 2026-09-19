@@ -4215,7 +4215,8 @@ async def settings_mattermost_connect(request: Request):
         return JSONResponse({"error": "Mattermost OAuth not configured"}, status_code=503)
     zid = session.get("sub", "")
     state = _USTS(SESSION_SECRET or "dev-insecure", salt="mm-oauth-state").dumps(zid)
-    mm_base = (os.environ.get("MATTERMOST_URL") or "").rstrip("/")
+    mm_public = (os.environ.get("MATTERMOST_PUBLIC_URL")
+                 or os.environ.get("MATTERMOST_URL") or "").rstrip("/")
     callback = f"https://{_PUBLIC_HOST}/settings/mattermost/callback"
     params = _urlencode({
         "client_id": MM_OAUTH_CLIENT_ID,
@@ -4223,7 +4224,7 @@ async def settings_mattermost_connect(request: Request):
         "response_type": "code",
         "state": state,
     })
-    return RedirectResponse(url=f"{mm_base}/oauth/authorize?{params}", status_code=302)
+    return RedirectResponse(url=f"{mm_public}/oauth/authorize?{params}", status_code=302)
 
 
 @app.get("/settings/mattermost/callback")
@@ -4238,10 +4239,13 @@ async def settings_mattermost_callback(request: Request, code: str = "", state: 
         return HTMLResponse("<h2>Invalid or expired state</h2>", status_code=400)
 
     mm_base = (os.environ.get("MATTERMOST_URL") or "").rstrip("/")
+    # Always use the public URL for the token exchange so the redirect_uri
+    # matches exactly what was registered in Mattermost.
+    mm_public = (os.environ.get("MATTERMOST_PUBLIC_URL") or mm_base).rstrip("/")
     callback = f"https://{_PUBLIC_HOST}/settings/mattermost/callback"
     try:
         r = httpx.post(
-            f"{mm_base}/oauth/access_token",
+            f"{mm_public}/oauth/access_token",
             data={
                 "client_id": MM_OAUTH_CLIENT_ID,
                 "client_secret": MM_OAUTH_CLIENT_SECRET,
@@ -4252,17 +4256,22 @@ async def settings_mattermost_callback(request: Request, code: str = "", state: 
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=15,
         )
-        r.raise_for_status()
+        if not r.is_success:
+            logger.error("mm oauth token exchange failed: %s %s", r.status_code, r.text)
+            return HTMLResponse(
+                f"<h2>Mattermost returned {r.status_code}</h2><pre>{r.text}</pre>",
+                status_code=200)
         data = r.json()
     except Exception as e:  # noqa: BLE001
         logger.error("mm oauth callback failed: %s", e)
-        return HTMLResponse("<h2>Token exchange failed</h2>", status_code=502)
+        return HTMLResponse(f"<h2>Token exchange failed</h2><pre>{e}</pre>", status_code=200)
 
     access_token  = data.get("access_token", "")
     refresh_token = data.get("refresh_token", "")
     expires_in    = int(data.get("expires_in") or 2592000)
     if not access_token:
-        return HTMLResponse("<h2>No access token in response</h2>", status_code=502)
+        return HTMLResponse(f"<h2>No access token in response</h2><pre>{data}</pre>",
+                            status_code=200)
 
     _mm_tokens.store(zid, access_token, refresh_token, expires_in)
     return RedirectResponse(url="/?mm=linked", status_code=302)
