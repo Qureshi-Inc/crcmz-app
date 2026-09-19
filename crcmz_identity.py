@@ -8,17 +8,21 @@ keyed by display name alone, so "who sent this message" could not be answered.
 
 Reading the tags collapses every per-store id onto one person:
 
-    whatsapp_messages.sender_jid  == tags.wa_jid
+    whatsapp_messages.sender_name == tags.wa_names   (not wa_jid -- see below)
     clips.sender_online_id        == tags.psn_id
     soundboard boards[<key>]      == zitadel_id
     giveaway_entries.member_id    == zitadel_id
     facts.author_sub              == zitadel_id
     chat_history.messages.user_sub == zitadel_id
 
-Two deliberate choices:
+Three deliberate choices:
 
 * Metadata values arrive base64-encoded from Zitadel and are decoded here, so
   callers never deal with the encoding.
+* `psn_id` falls back to the portal's own PSN link when the tag is unset, so a
+  person who links their account through the portal appears here without anyone
+  editing the Zitadel console (see `_portal_links`). Every other tag is
+  console-only, because nothing else in the app knows those identities.
 * Nothing in this module returns a credential. The per-user PSN files hold live
   NPSSO/access/refresh tokens, so profiles are assembled from an explicit
   allowlist rather than by dropping known-bad keys -- a denylist silently leaks
@@ -159,12 +163,43 @@ def _normalise_jid(jid: str) -> str:
     return local.split(":", 1)[0].lstrip("+")
 
 
+def _portal_links() -> dict[str, dict]:
+    """zitadel_id -> the PSN link the portal already stores, or {} if unreadable.
+
+    The `psn_id` tag is maintained by hand in the Zitadel console, but linking a
+    PSN account through the portal writes `/data/users/<key>.json` and never
+    touches Zitadel -- so a freshly linked account would sit here with an empty
+    `psn_id` and zero clips until somebody remembered to edit the console. This
+    closes that gap: the tag still wins when set, and the portal fills the blank.
+
+    `portal.list_users()` is one directory scan for the whole squad (cheaper than
+    a per-person `find_by_zitadel_id`) and its projection is a fixed allowlist, so
+    no NPSSO or refresh token can ride along. Imported lazily and wrapped because
+    identity must degrade to tags-only rather than fail: `/data/users` does not
+    exist in tests, and this module is imported by tools that never touch PSN.
+    """
+    try:
+        import portal
+        rows = portal.list_users()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("identity: portal links unavailable (%s), tags only", e)
+        return {}
+
+    out: dict[str, dict] = {}
+    for row in rows:
+        uid = (row.get("zitadel_user_id") or "").strip()
+        if uid:
+            out[uid] = row
+    return out
+
+
 def _fetch_people() -> list[dict]:
     """One Zitadel user search plus a metadata read per human."""
     if not configured():
         logger.info("identity: no ZITADEL_SERVICE_TOKEN, identity graph disabled")
         return []
 
+    links = _portal_links()
     people: list[dict] = []
     with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
         r = client.post(
@@ -198,14 +233,24 @@ def _fetch_people() -> list[dict]:
             else:
                 logger.debug("identity: metadata read failed for %s: %s", uid, m.status_code)
 
+            # A hand-set tag is authoritative; the portal's own link fills a blank
+            # so that linking PSN is enough to show up here (see _portal_links).
+            link = links.get(uid) or {}
+            psn_id = tags.get("psn_id", "") or (link.get("online_id") or "").strip()
+            mm_username = (tags.get("mm_username", "")
+                           or (link.get("mm_username") or "").strip())
+            if psn_id and not tags.get("psn_id"):
+                logger.info("identity: psn_id for %s came from the portal link (%s), "
+                            "no psn_id tag set", uid, psn_id)
+
             people.append({
                 "zitadel_id": uid,
                 "display_name": (profile.get("displayName") or "").strip(),
                 "username": (u.get("userName") or "").strip(),
                 "email": ((human.get("email") or {}).get("email") or "").strip(),
                 "state": u.get("state") or "",
-                "mm_username": tags.get("mm_username", ""),
-                "psn_id": tags.get("psn_id", ""),
+                "mm_username": mm_username,
+                "psn_id": psn_id,
                 "wa_jid": tags.get("wa_jid", ""),
                 "wa_phone": tags.get("wa_phone", ""),
                 "wa_names": _split_tag(tags.get("wa_names", "")),

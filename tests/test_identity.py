@@ -347,6 +347,98 @@ def main():
             RETURN_EMPTY = False
     check("empty fetch does not erase a good cache", empty_fetch_keeps_cache)
 
+    # ── the portal fallback for psn_id ────────────────────────────────────────
+    # User 1003 ("Dark Souls") carries no tags at all, which is the real-world
+    # case: somebody links PSN through the portal and nobody edits the Zitadel
+    # console, so their clips stayed invisible.
+
+    def portal_dir(records: dict[str, dict]):
+        """Point portal at a temp /data/users holding the given records."""
+        import json as _json
+        import tempfile
+        from pathlib import Path
+        tmp = Path(tempfile.mkdtemp(prefix="ident-portal-"))
+        for key, rec in records.items():
+            (tmp / f"{key}.json").write_text(_json.dumps(rec))
+        return tmp
+
+    def portal_link_fills_a_missing_psn_id():
+        import json as _json
+        import portal
+        saved = portal.USERS_DIR
+        portal.USERS_DIR = portal_dir({"noor": {
+            "zitadel_user_id": "1003",
+            "online_id": "kaptaannoor",
+            "mm_username": "noor",
+            # Live credentials sit in the same file as the harmless fields.
+            "npsso": "LIVE-NPSSO", "access_token": "LIVE-ACCESS",
+            "refresh_token": "LIVE-REFRESH",
+        }})
+        try:
+            reset()
+            p = ident.by_zitadel_id()["1003"]
+            assert p["psn_id"] == "kaptaannoor", p
+            assert p["mm_username"] == "noor", p
+            # ...and the person is now reachable by that PSN id, which is what
+            # makes their clips join.
+            assert ident.by_psn_id()["kaptaannoor"]["display_name"] == "Dark Souls"
+            assert ident.resolve("kaptaannoor")["zitadel_id"] == "1003"
+            # The tag itself is still empty -- the fallback must not pretend
+            # otherwise, or a reader cannot tell what needs setting in Zitadel.
+            assert p["tags"].get("psn_id", "") == "", p["tags"]
+            blob = _json.dumps(p)
+            for secret in ("LIVE-NPSSO", "LIVE-ACCESS", "LIVE-REFRESH"):
+                assert secret not in blob, f"{secret} reached the identity graph"
+        finally:
+            portal.USERS_DIR = saved
+            reset()
+    check("a portal PSN link fills an unset psn_id tag",
+          portal_link_fills_a_missing_psn_id)
+
+    def tag_wins_over_the_portal():
+        import portal
+        saved = portal.USERS_DIR
+        # A stale or duplicate portal record must never rename a tagged person.
+        portal.USERS_DIR = portal_dir({"stale": {
+            "zitadel_user_id": "1001", "online_id": "WRONG-ID",
+            "mm_username": "wrong-mm",
+        }})
+        try:
+            reset()
+            p = ident.by_zitadel_id()["1001"]
+            assert p["psn_id"] == "moiiz41510", p
+            assert p["mm_username"] == "moiz", p
+        finally:
+            portal.USERS_DIR = saved
+            reset()
+    check("a hand-set tag beats the portal link", tag_wins_over_the_portal)
+
+    def no_portal_data_degrades_quietly():
+        import portal
+        saved = portal.USERS_DIR
+        portal.USERS_DIR = portal_dir({})          # exists but empty
+        try:
+            assert ident._portal_links() == {}
+            from pathlib import Path
+            portal.USERS_DIR = Path("/nope/not/here")
+            assert ident._portal_links() == {}     # missing dir is not an error
+            reset()
+            assert len(ident.people()) == 5, "graph must still load from tags"
+        finally:
+            portal.USERS_DIR = saved
+            reset()
+    check("missing portal data falls back to tags only",
+          no_portal_data_degrades_quietly)
+
+    def unlinked_person_keeps_an_empty_psn_id():
+        # No portal record and no tag: still empty, never guessed from a name.
+        reset()
+        p = ident.by_zitadel_id()["1003"]
+        assert p["psn_id"] == "", p
+        assert "kaptaannoor" not in ident.by_psn_id()
+    check("no tag and no link leaves psn_id empty",
+          unlinked_person_keeps_an_empty_psn_id)
+
     def disabled_without_token():
         reset()
         saved = ident.ZITADEL_SERVICE_TOKEN
