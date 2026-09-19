@@ -1,0 +1,250 @@
+"""Cross-system identity graph: Zitadel tags -> PSN, Mattermost, WhatsApp.
+
+Every human in the org carries metadata tags set in the Zitadel console --
+`mm_username`, `psn_id`, `wa_jid`, `wa_phone`. Those tags are the only place the
+four identities are tied together, and until this module nothing in the app read
+them: `/data/users/*.json` links Zitadel to PSN, but WhatsApp was an island
+keyed by display name alone, so "who sent this message" could not be answered.
+
+Reading the tags collapses every per-store id onto one person:
+
+    whatsapp_messages.sender_jid  == tags.wa_jid
+    clips.sender_online_id        == tags.psn_id
+    soundboard boards[<key>]      == zitadel_id
+    giveaway_entries.member_id    == zitadel_id
+    facts.author_sub              == zitadel_id
+    chat_history.messages.user_sub == zitadel_id
+
+Two deliberate choices:
+
+* Metadata values arrive base64-encoded from Zitadel and are decoded here, so
+  callers never deal with the encoding.
+* Nothing in this module returns a credential. The per-user PSN files hold live
+  NPSSO/access/refresh tokens, so profiles are assembled from an explicit
+  allowlist rather than by dropping known-bad keys -- a denylist silently leaks
+  whatever field gets added next.
+
+Requests go through httpx, not urllib: auth.crcmz.me sits behind Cloudflare,
+which answers urllib's default User-Agent with a 1010 "banned browser
+signature" instead of the real response.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import logging
+import os
+import time
+from typing import Any
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+ZITADEL_ISSUER = os.environ.get("ZITADEL_ISSUER", "https://auth.crcmz.me").rstrip("/")
+ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
+
+# The tag keys this app understands. Anything else a human adds in the Zitadel
+# console still surfaces under Person["tags"], it just gets no dedicated field.
+TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone")
+
+# Zitadel is a hard dependency for identity but not for the rest of the bot, so
+# a lookup failure degrades to "no people" instead of raising into a reply.
+_TTL = 300.0
+_HTTP_TIMEOUT = 15.0
+_PAGE_SIZE = 200
+
+_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+def configured() -> bool:
+    """True when a service token exists; callers should skip identity work if not."""
+    return bool(ZITADEL_SERVICE_TOKEN)
+
+
+def _headers() -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+
+def _decode_tag(raw: str) -> str:
+    """Zitadel returns metadata values base64-encoded; fall back to the literal.
+
+    A value that is not valid base64 (or not UTF-8 once decoded) is far more
+    likely to be a plain string written by some other tool than a corrupt blob,
+    so it is passed through rather than dropped.
+    """
+    if not raw:
+        return ""
+    try:
+        return base64.b64decode(raw, validate=True).decode("utf-8").strip()
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return raw.strip()
+
+
+def _normalise_jid(jid: str) -> str:
+    """Strip a WhatsApp JID down to its comparable core.
+
+    Baileys hands back several shapes for the same person -- `1555…@s.whatsapp.net`,
+    `1555…@c.us`, and device-suffixed `1555…:12@s.whatsapp.net`. Comparing the
+    bare number is the only form that matches across all of them.
+    """
+    jid = (jid or "").strip().lower()
+    if not jid:
+        return ""
+    local = jid.split("@", 1)[0]
+    return local.split(":", 1)[0].lstrip("+")
+
+
+def _fetch_people() -> list[dict]:
+    """One Zitadel user search plus a metadata read per human."""
+    if not configured():
+        logger.info("identity: no ZITADEL_SERVICE_TOKEN, identity graph disabled")
+        return []
+
+    people: list[dict] = []
+    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+        r = client.post(
+            f"{ZITADEL_ISSUER}/management/v1/users/_search",
+            json={"queries": [{"typeQuery": {"type": "TYPE_HUMAN"}}], "pageSize": _PAGE_SIZE},
+            headers=_headers(),
+        )
+        if r.status_code != 200:
+            logger.warning("identity: user search failed %s %s", r.status_code, r.text[:200])
+            return []
+
+        for u in r.json().get("result", []):
+            # Management v1 calls the field "id"; some responses also carry
+            # "userId". Preferring "id" matches the fix in commit d11a972.
+            uid = u.get("id") or u.get("userId") or ""
+            if not uid:
+                continue
+            human = u.get("human") or {}
+            profile = human.get("profile") or {}
+
+            tags: dict[str, str] = {}
+            m = client.post(
+                f"{ZITADEL_ISSUER}/management/v1/users/{uid}/metadata/_search",
+                json={}, headers=_headers(),
+            )
+            if m.status_code == 200:
+                for entry in m.json().get("result", []):
+                    key = (entry.get("key") or "").strip()
+                    if key:
+                        tags[key] = _decode_tag(entry.get("value", ""))
+            else:
+                logger.debug("identity: metadata read failed for %s: %s", uid, m.status_code)
+
+            people.append({
+                "zitadel_id": uid,
+                "display_name": (profile.get("displayName") or "").strip(),
+                "username": (u.get("userName") or "").strip(),
+                "email": ((human.get("email") or {}).get("email") or "").strip(),
+                "state": u.get("state") or "",
+                "mm_username": tags.get("mm_username", ""),
+                "psn_id": tags.get("psn_id", ""),
+                "wa_jid": tags.get("wa_jid", ""),
+                "wa_phone": tags.get("wa_phone", ""),
+                "tags": tags,
+            })
+
+    logger.info("identity: loaded %d people, %d fully tagged",
+                len(people), sum(1 for p in people if p["wa_jid"] and p["psn_id"]))
+    return people
+
+
+def people(*, refresh: bool = False) -> list[dict]:
+    """Every human in Zitadel with their tags, cached for five minutes.
+
+    Tags change by hand in the Zitadel console, so a short TTL is plenty and
+    keeps a chatty group from issuing one HTTP call per member per message.
+    """
+    hit = _cache.get("people")
+    if hit and not refresh and time.time() - hit[0] < _TTL:
+        return hit[1]
+    try:
+        found = _fetch_people()
+    except Exception as e:  # noqa: BLE001 - identity must never sink a reply
+        logger.warning("identity: fetch failed: %s", e)
+        return hit[1] if hit else []
+    # Only replace a good cache with a good result; an empty fetch during a
+    # Zitadel blip should not erase a working graph.
+    if found or not hit:
+        _cache["people"] = (time.time(), found)
+        return found
+    return hit[1]
+
+
+def resolve(needle: str, *, refresh: bool = False) -> dict | None:
+    """Find one person by any identifier they are known by.
+
+    Accepts a Zitadel id, PSN online id, Mattermost username, WhatsApp JID or
+    phone number, login name, email, or display name. Exact identifier matches
+    win over name matches, and a name match only counts when it is unambiguous
+    -- "who is moiz" should not silently pick one of two Moizes.
+    """
+    needle = (needle or "").strip()
+    if not needle:
+        return None
+    folded = needle.casefold()
+    digits = _normalise_jid(needle)
+    roster = people(refresh=refresh)
+
+    for p in roster:
+        if needle == p["zitadel_id"]:
+            return p
+
+    for p in roster:
+        exact = {
+            p["psn_id"].casefold(),
+            p["mm_username"].casefold(),
+            p["username"].casefold(),
+            p["email"].casefold(),
+        }
+        exact.discard("")
+        if folded in exact:
+            return p
+        if digits and digits in {_normalise_jid(p["wa_jid"]), _normalise_jid(p["wa_phone"])}:
+            return p
+
+    # Display names are free text, so fall back to them last and only when the
+    # match is unique in both the exact and the substring pass.
+    named = [p for p in roster if p["display_name"].casefold() == folded]
+    if len(named) == 1:
+        return named[0]
+    partial = [p for p in roster
+               if folded in p["display_name"].casefold()
+               or folded in p["username"].casefold()]
+    if len(partial) == 1:
+        return partial[0]
+    return None
+
+
+def by_wa_jid(*, refresh: bool = False) -> dict[str, dict]:
+    """Normalised WhatsApp JID -> person, for joining `whatsapp_messages` rows."""
+    out: dict[str, dict] = {}
+    for p in people(refresh=refresh):
+        for raw in (p["wa_jid"], p["wa_phone"]):
+            key = _normalise_jid(raw)
+            if key:
+                out.setdefault(key, p)
+    return out
+
+
+def by_psn_id(*, refresh: bool = False) -> dict[str, dict]:
+    """Case-folded PSN online id -> person, for joining `clips` rows."""
+    return {p["psn_id"].casefold(): p for p in people(refresh=refresh) if p["psn_id"]}
+
+
+def by_zitadel_id(*, refresh: bool = False) -> dict[str, dict]:
+    """Zitadel id -> person, for soundboards, giveaways, facts and chat history."""
+    return {p["zitadel_id"]: p for p in people(refresh=refresh)}
+
+
+def identify_jid(jid: str, *, refresh: bool = False) -> dict | None:
+    """Person behind a raw WhatsApp JID, tolerating device suffixes and domains."""
+    key = _normalise_jid(jid)
+    return by_wa_jid(refresh=refresh).get(key) if key else None
