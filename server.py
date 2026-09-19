@@ -1831,10 +1831,15 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
     # Write output to a temp file on remote so SSH closes as soon as openclaw
     # exits — otherwise lab-ship's persistent server keeps the pipe open forever.
     import uuid as _uuid
-    out_file = f"/tmp/claw-{_uuid.uuid4().hex[:8]}.json"
+    job_id = _uuid.uuid4().hex[:12]
+    out_file = f"/tmp/claw-{job_id}.json"
+    # Each build job gets its own session key so it starts with a clean context
+    # instead of inheriting 460+ messages from the shared main session.
+    session_key = f"agent:engineer:job-{job_id}"
     remote_cmd = (
         f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(prompt)}"
-        f" --agent engineer --json --timeout 7200"
+        f" --agent engineer --session-key {shlex.quote(session_key)}"
+        f" --json --timeout 7200"
         f" > {out_file} 2>&1; echo $? > {out_file}.exit"
     )
     ssh_base = [
