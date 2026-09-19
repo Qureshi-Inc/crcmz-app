@@ -9,11 +9,13 @@ Token prefixes
   mcpc-  authorization code  (60 s, single-use)
   mcpa-  access token        (1 h)
   mcpr-  refresh token       (30 days, rotated on every use)
+  mcp-client-  dynamic client registration (RFC 7591)
 """
 from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 import secrets
 import sqlite3
@@ -74,6 +76,12 @@ def init() -> None:
                 result          TEXT,
                 called_at       INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS client_registrations (
+                client_id       TEXT PRIMARY KEY,
+                redirect_uris   TEXT NOT NULL,
+                client_name     TEXT DEFAULT '',
+                registered_at   INTEGER NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_at_zid  ON access_tokens(zitadel_id);
             CREATE INDEX IF NOT EXISTS idx_rt_zid  ON refresh_tokens(zitadel_id);
             CREATE INDEX IF NOT EXISTS idx_aud_zid ON write_audit(zitadel_id);
@@ -82,6 +90,36 @@ def init() -> None:
 
 def _tok(prefix: str) -> str:
     return prefix + secrets.token_urlsafe(32)
+
+
+# ── Dynamic client registration (RFC 7591) ────────────────────────────────────
+
+def register_client(redirect_uris: list[str], client_name: str = "") -> str:
+    """Store a client registration and return the client_id."""
+    client_id = "mcp-client-" + secrets.token_urlsafe(16)
+    with _connect() as db:
+        db.execute(
+            "INSERT INTO client_registrations(client_id,redirect_uris,client_name,registered_at) "
+            "VALUES(?,?,?,?)",
+            (client_id, json.dumps(redirect_uris), client_name, int(time.time())),
+        )
+    return client_id
+
+
+def get_client_redirect_uris(client_id: str) -> list[str] | None:
+    """Return registered redirect_uris for a client_id, or None if unknown."""
+    if not client_id:
+        return None
+    try:
+        with _connect() as db:
+            row = db.execute(
+                "SELECT redirect_uris FROM client_registrations WHERE client_id=?",
+                (client_id,),
+            ).fetchone()
+        return json.loads(row["redirect_uris"]) if row else None
+    except Exception as e:  # noqa: BLE001
+        logger.debug("mcp_oauth: get_client_redirect_uris: %s", e)
+        return None
 
 
 # ── Authorization codes ───────────────────────────────────────────────────────

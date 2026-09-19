@@ -702,7 +702,8 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/oauth/authorize",
                "/oauth/login",
                "/oauth/token",
-               "/oauth/revoke"}
+               "/oauth/revoke",
+               "/oauth/register"}
 
 
 def _signer() -> _USTS:
@@ -2644,7 +2645,33 @@ def oauth_metadata():
         "response_types_supported":          ["code"],
         "grant_types_supported":             ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported":  ["S256"],
+        "registration_endpoint":             f"{base}/oauth/register",
     })
+
+
+@app.post("/oauth/register")
+async def oauth_register(request: Request):
+    """RFC 7591 dynamic client registration — lets MCP clients self-register."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid_client_metadata"}, status_code=400)
+    redirect_uris = body.get("redirect_uris", [])
+    if not redirect_uris or not isinstance(redirect_uris, list):
+        return JSONResponse({"error": "invalid_redirect_uri"}, status_code=400)
+    client_name = str(body.get("client_name", ""))[:128]
+    client_id = _mcp_oauth.register_client(redirect_uris, client_name)
+    base = f"https://{_PUBLIC_HOST}"
+    return JSONResponse({
+        "client_id":                    client_id,
+        "client_id_issued_at":          int(__import__("time").time()),
+        "redirect_uris":                redirect_uris,
+        "client_name":                  client_name,
+        "grant_types":                  ["authorization_code", "refresh_token"],
+        "response_types":               ["code"],
+        "token_endpoint_auth_method":   "none",
+        "registration_client_uri":      f"{base}/oauth/register/{client_id}",
+    }, status_code=201)
 
 
 @app.get("/oauth/authorize", response_class=HTMLResponse)
@@ -2662,6 +2689,10 @@ async def oauth_authorize_get(
         return HTMLResponse("unsupported_response_type", status_code=400)
     if not redirect_uri:
         return HTMLResponse("redirect_uri is required", status_code=400)
+    if client_id:
+        allowed = _mcp_oauth.get_client_redirect_uris(client_id)
+        if allowed is not None and redirect_uri not in allowed:
+            return HTMLResponse("redirect_uri not registered for this client", status_code=400)
 
     session = _get_session(request)
     return HTMLResponse(_oauth_consent_page(
