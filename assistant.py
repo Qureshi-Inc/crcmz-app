@@ -972,7 +972,7 @@ def _caller_name(caller: dict) -> str:
     try:
         import crcmz_identity
         person = crcmz_identity.by_zitadel_id().get(caller.get("zitadel_id", ""))
-        return (person or {}).get("name", "") or "unknown"
+        return (person or {}).get("display_name", "") or "unknown"
     except Exception:  # noqa: BLE001
         return "unknown"
 
