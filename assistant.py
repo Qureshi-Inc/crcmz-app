@@ -914,6 +914,328 @@ def call_tool(name: str, args: dict) -> tuple[str, bool]:
     return payload, True
 
 
+# ── Write tools (per-user OAuth tokens only) ──────────────────────────────────
+# All write tools are gated on a caller dict from a per-user MCP OAuth token.
+# They are served separately so they never appear in the read-only tools/list
+# and so the read-only name guard stays clean.
+#
+# Constraints hard-coded in every write tool:
+#  - Destination hard-pinned (env var or validated roster, never model-free text)
+#  - Rate-limited via mcp_oauth.within_rate_limit
+#  - Every call appended to write_audit
+#  - Message prefixed [via Claude · <name>] so recipients see the source
+
+_WRITE_TOOLS: dict[str, dict[str, Any]] = {}
+
+
+def write_tool(name: str, description: str, parameters: dict) -> Callable:
+    def register(fn: Callable) -> Callable:
+        _WRITE_TOOLS[name] = {"description": description, "parameters": parameters, "fn": fn}
+        return fn
+    return register
+
+
+def write_tool_specs() -> list[dict]:
+    return [
+        {"type": "function",
+         "function": {"name": name, "description": t["description"],
+                      "parameters": t["parameters"]}}
+        for name, t in _WRITE_TOOLS.items()
+    ]
+
+
+def write_tool_names() -> list[str]:
+    return list(_WRITE_TOOLS)
+
+
+def call_write_tool(name: str, args: dict, caller: dict) -> tuple[str, bool]:
+    """Run one write tool on behalf of caller. Returns (json_text, ok)."""
+    spec = _WRITE_TOOLS.get(name)
+    if spec is None:
+        return json.dumps({"error": f"no such write tool: {name}",
+                           "available": write_tool_names()}), False
+    allowed = set(spec["parameters"].get("properties", {}))
+    clean = {k: v for k, v in (args or {}).items() if k in allowed}
+    try:
+        result = spec["fn"](caller=caller, **clean)
+    except TypeError as e:
+        return json.dumps({"error": f"bad arguments for {name}: {e}"}), False
+    except Exception as e:  # noqa: BLE001
+        logger.warning("write tool %s failed: %s", name, e)
+        return json.dumps({"error": f"{name} failed: {e}"}), False
+    payload = json.dumps(result, default=str)
+    return payload, True
+
+
+def _caller_name(caller: dict) -> str:
+    """Display name for the caller, from the identity graph."""
+    try:
+        import crcmz_identity
+        person = crcmz_identity.by_zitadel_id().get(caller.get("zitadel_id", ""))
+        return (person or {}).get("name", "") or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+@write_tool(
+    "send_psn_group_message",
+    "Send a message to the PSN squad group thread as the authenticated user. "
+    "This posts to the shared squad group on PlayStation — it is not a 1:1 DM. "
+    "Requires the caller to have a linked PSN account. "
+    "The message is prefixed [via Claude · <name>] so recipients see the source. "
+    "Rate limit: 3 per 10 minutes.",
+    {"type": "object",
+     "properties": {
+         "message": {"type": "string",
+                     "description": "The message text to send. Max 500 chars."},
+     },
+     "required": ["message"]})
+def _send_psn_group_message(message: str, caller: dict) -> dict:
+    import json as _json
+    import mcp_oauth
+    zid = caller.get("zitadel_id", "")
+    name = _caller_name(caller)
+    tool_n = "send_psn_group_message"
+
+    message = (message or "").strip()[:500]
+    if not message:
+        return {"ok": False, "error": "message cannot be empty"}
+
+    if not mcp_oauth.within_rate_limit(zid, tool_n, 3, 600):
+        mcp_oauth.audit_write(zid, tool_n, _json.dumps({"message": message[:80]}),
+                              "rate_limited")
+        return {"ok": False, "error": "rate limit: 3 messages per 10 minutes"}
+
+    import portal
+    token = portal.get_fresh_access_token(zid)
+    if not token:
+        mcp_oauth.audit_write(zid, tool_n, _json.dumps({"message": message[:80]}),
+                              "no_psn_token")
+        return {"ok": False,
+                "error": "no linked PSN account — link your PlayStation at app.crcmz.me"}
+
+    squad_group_id = os.environ.get("SQUAD_GROUP_ID", "")
+    if not squad_group_id:
+        return {"ok": False, "error": "SQUAD_GROUP_ID not configured"}
+
+    try:
+        from psn_messaging import PSNMessenger
+
+        class _Auth:
+            @property
+            def access_token(self) -> str:
+                return token
+
+        text = f"[via Claude · {name}] {message}"
+        messenger = PSNMessenger(_Auth(), squad_group_id)
+        ok = messenger.send_message(text)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("write tool %s: PSN send failed: %s", tool_n, e)
+        mcp_oauth.audit_write(zid, tool_n, _json.dumps({"message": message[:80]}),
+                              f"error:{e}")
+        return {"ok": False, "error": f"PSN send failed: {e}"}
+
+    result = "sent" if ok else "failed"
+    mcp_oauth.audit_write(zid, tool_n, _json.dumps({"message": message[:80]}), result)
+    return {"ok": ok, "detail": "Message sent to PSN squad group" if ok else "Send failed"}
+
+
+@write_tool(
+    "send_whatsapp_group_message",
+    "Post a message to the squad WhatsApp group as the authenticated user, "
+    "delivered by the CRCMZ bot. The message is prefixed [via Claude · <name>]. "
+    "Rate limit: 3 per 10 minutes.",
+    {"type": "object",
+     "properties": {
+         "message": {"type": "string",
+                     "description": "The message text to post. Max 500 chars."},
+     },
+     "required": ["message"]})
+def _send_wa_group_message(message: str, caller: dict) -> dict:
+    import json as _json
+    import mcp_oauth
+    zid    = caller.get("zitadel_id", "")
+    name   = _caller_name(caller)
+    tool_n = "send_whatsapp_group_message"
+
+    message = (message or "").strip()[:500]
+    if not message:
+        return {"ok": False, "error": "message cannot be empty"}
+
+    if not mcp_oauth.within_rate_limit(zid, tool_n, 3, 600):
+        mcp_oauth.audit_write(zid, tool_n, _json.dumps({"message": message[:80]}),
+                              "rate_limited")
+        return {"ok": False, "error": "rate limit: 3 messages per 10 minutes"}
+
+    bridge_url = os.environ.get("WA_BRIDGE_URL", "")
+    group_jid  = os.environ.get("WA_GOOPERS_JID", "")
+    if not bridge_url or not group_jid:
+        return {"ok": False,
+                "error": "WhatsApp bridge not configured on this server"}
+
+    try:
+        import wa_ai
+        text = f"[via Claude · {name}] {message}"
+        ok = wa_ai.send_reply(bridge_url, group_jid, text)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("write tool %s: WA send failed: %s", tool_n, e)
+        mcp_oauth.audit_write(zid, tool_n, _json.dumps({"message": message[:80]}),
+                              f"error:{e}")
+        return {"ok": False, "error": f"WhatsApp send failed: {e}"}
+
+    result = "sent" if ok else "failed"
+    mcp_oauth.audit_write(zid, tool_n, _json.dumps({"message": message[:80]}), result)
+    return {"ok": ok, "detail": "Message posted to squad WhatsApp group" if ok else "Send failed"}
+
+
+@write_tool(
+    "send_whatsapp_dm",
+    "Send a direct WhatsApp message to a squad member, delivered by the CRCMZ bot. "
+    "`to` can be a display name, PSN online ID, or Mattermost username — it is "
+    "resolved through the identity graph. Fails if the recipient has no known "
+    "WhatsApp JID. Message is prefixed [DM from <name> via Claude]. "
+    "Rate limit: 5 per 10 minutes.",
+    {"type": "object",
+     "properties": {
+         "to":      {"type": "string",
+                     "description": "Recipient — display name, PSN id, or mm_username."},
+         "message": {"type": "string",
+                     "description": "The message text. Max 500 chars."},
+     },
+     "required": ["to", "message"]})
+def _send_wa_dm(to: str, message: str, caller: dict) -> dict:
+    import json as _json
+    import mcp_oauth
+    zid    = caller.get("zitadel_id", "")
+    name   = _caller_name(caller)
+    tool_n = "send_whatsapp_dm"
+
+    to      = (to or "").strip()
+    message = (message or "").strip()[:500]
+    if not to or not message:
+        return {"ok": False, "error": "both 'to' and 'message' are required"}
+
+    if not mcp_oauth.within_rate_limit(zid, tool_n, 5, 600):
+        mcp_oauth.audit_write(zid, tool_n,
+                              _json.dumps({"to": to, "message": message[:80]}),
+                              "rate_limited")
+        return {"ok": False, "error": "rate limit: 5 DMs per 10 minutes"}
+
+    # Resolve recipient via identity graph.
+    try:
+        import crcmz_identity
+        person = crcmz_identity.resolve(to)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"identity lookup failed: {e}"}
+
+    if not person:
+        return {"ok": False,
+                "error": f"'{to}' not found in the squad roster. "
+                         "Try squad_roster to see exact names."}
+
+    jid = person.get("wa_jid", "")
+    if not jid:
+        return {"ok": False,
+                "error": f"{person.get('name', to)} has no known WhatsApp JID — "
+                         "DMs require a live group member whose JID has been learned "
+                         "from the WhatsApp bridge."}
+
+    bridge_url = os.environ.get("WA_BRIDGE_URL", "")
+    if not bridge_url:
+        return {"ok": False, "error": "WhatsApp bridge not configured on this server"}
+
+    try:
+        import wa_ai
+        text = f"[DM from {name} via Claude] {message}"
+        ok = wa_ai.send_reply(bridge_url, jid, text)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("write tool %s: WA DM send failed: %s", tool_n, e)
+        mcp_oauth.audit_write(zid, tool_n,
+                              _json.dumps({"to": to, "message": message[:80]}),
+                              f"error:{e}")
+        return {"ok": False, "error": f"WhatsApp DM failed: {e}"}
+
+    result = "sent" if ok else "failed"
+    mcp_oauth.audit_write(zid, tool_n,
+                          _json.dumps({"to": to, "message": message[:80]}), result)
+    return {
+        "ok": ok,
+        "detail": f"DM sent to {person.get('name', to)}" if ok else "Send failed",
+        "recipient_name": person.get("name", to),
+    }
+
+
+@write_tool(
+    "send_mattermost_dm",
+    "Send a direct message to a squad member on Mattermost. `to` can be a "
+    "display name, PSN id, or Mattermost username — resolved via the identity graph. "
+    "Requires MATTERMOST_URL and MATTERMOST_TOKEN to be configured. "
+    "Message is prefixed [via Claude · <name>]. Rate limit: 5 per 10 minutes.",
+    {"type": "object",
+     "properties": {
+         "to":      {"type": "string",
+                     "description": "Recipient — display name, PSN id, or mm_username."},
+         "message": {"type": "string",
+                     "description": "The message text. Max 500 chars."},
+     },
+     "required": ["to", "message"]})
+def _send_mm_dm(to: str, message: str, caller: dict) -> dict:
+    import json as _json
+    import mcp_oauth
+    zid    = caller.get("zitadel_id", "")
+    name   = _caller_name(caller)
+    tool_n = "send_mattermost_dm"
+
+    to      = (to or "").strip()
+    message = (message or "").strip()[:500]
+    if not to or not message:
+        return {"ok": False, "error": "both 'to' and 'message' are required"}
+
+    if not mcp_oauth.within_rate_limit(zid, tool_n, 5, 600):
+        mcp_oauth.audit_write(zid, tool_n,
+                              _json.dumps({"to": to, "message": message[:80]}),
+                              "rate_limited")
+        return {"ok": False, "error": "rate limit: 5 DMs per 10 minutes"}
+
+    try:
+        import crcmz_identity
+        person = crcmz_identity.resolve(to)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"identity lookup failed: {e}"}
+
+    if not person:
+        return {"ok": False,
+                "error": f"'{to}' not found in the squad roster. "
+                         "Try squad_roster to see exact names."}
+
+    mm_username = person.get("mm_username", "")
+    if not mm_username:
+        return {"ok": False,
+                "error": f"{person.get('name', to)} has no linked Mattermost username."}
+
+    try:
+        import mattermost
+        if not mattermost.available():
+            return {"ok": False, "error": "Mattermost not configured on this server"}
+        text = f"[via Claude · {name}] {message}"
+        ok = mattermost.dm_user(mm_username, text)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("write tool %s: MM DM failed: %s", tool_n, e)
+        mcp_oauth.audit_write(zid, tool_n,
+                              _json.dumps({"to": to, "message": message[:80]}),
+                              f"error:{e}")
+        return {"ok": False, "error": f"Mattermost DM failed: {e}"}
+
+    result = "sent" if ok else "failed"
+    mcp_oauth.audit_write(zid, tool_n,
+                          _json.dumps({"to": to, "message": message[:80]}), result)
+    return {
+        "ok": ok,
+        "detail": f"DM sent to @{mm_username} on Mattermost" if ok else "Send failed",
+        "recipient_mm_username": mm_username,
+    }
+
+
 # ── Model plumbing ─────────────────────────────────────────────────────────────
 
 def _config() -> tuple[str, str, str]:

@@ -693,9 +693,16 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # every live message and the analytics silently stop updating.
                "/api/whatsapp/ingest",
                # Same deal: MCP clients send a bearer token, never a cookie. The
-               # handler checks MCP_TOKEN on every request and refuses outright
-               # when it is unset — see mcp_server.py.
-               "/mcp"}
+               # handler does its own auth check — see mcp_server.py.
+               "/mcp",
+               # OAuth Authorization Server for per-user MCP tokens.  All of
+               # these are browser-facing or machine-facing endpoints that must
+               # be reachable before authentication.
+               "/.well-known/oauth-authorization-server",
+               "/oauth/authorize",
+               "/oauth/login",
+               "/oauth/token",
+               "/oauth/revoke"}
 
 
 def _signer() -> _USTS:
@@ -2430,17 +2437,29 @@ def assistant_tools(request: Request):
 
 @app.post("/mcp")
 async def mcp_endpoint(request: Request):
-    if not _mcp.configured():
-        return JSONResponse(
-            {"error": "MCP disabled: set MCP_TOKEN to enable it"}, status_code=503)
-    if not _mcp.authorised(request.headers.get("authorization", "")):
-        # WWW-Authenticate so a client knows *how* to authenticate, not just that
-        # it failed.
-        return JSONResponse({"error": "invalid or missing bearer token"},
-                            status_code=401,
-                            headers={"WWW-Authenticate": 'Bearer realm="crcmz-mcp"'})
+    auth_header = request.headers.get("authorization", "")
+    # Path 1: shared read-only token (MCP_TOKEN env var).
+    if _mcp.authorised(auth_header):
+        caller = None
+    else:
+        # Path 2: per-user OAuth access token (mcpa-...).
+        caller = _mcp.resolve_caller(auth_header)
+        if caller is None:
+            # Tell clients exactly where to authenticate.
+            return JSONResponse(
+                {"error": "invalid or missing bearer token — use the shared "
+                           "MCP_TOKEN or authenticate via OAuth at "
+                           "https://app.crcmz.me/oauth/authorize"},
+                status_code=401,
+                headers={
+                    "WWW-Authenticate": (
+                        'Bearer realm="crcmz-mcp",'
+                        ' resource_metadata="https://app.crcmz.me/'
+                        '.well-known/oauth-authorization-server"'
+                    )
+                })
 
-    body, status = _mcp.handle_body(await request.body())
+    body, status = _mcp.handle_body(await request.body(), caller=caller)
     if body is None:
         # Notification-only request: the spec wants 202 and an empty body.
         return Response(status_code=status)
@@ -2452,8 +2471,410 @@ def mcp_probe():
     """Liveness only. MCP itself is POST-only here (no SSE stream), and this
     deliberately reveals nothing about the tools without a token."""
     return {"protocol": "mcp", "transport": "http-post",
-            "enabled": _mcp.configured(),
-            "protocol_version": _mcp.PROTOCOL_VERSION}
+            "enabled": True,
+            "protocol_version": _mcp.PROTOCOL_VERSION,
+            "oauth_authorization_server": f"https://{_PUBLIC_HOST}/.well-known/oauth-authorization-server"}
+
+
+# ── OAuth Authorization Server (per-user MCP tokens) ─────────────────────────
+# app.crcmz.me IS the OAuth server.  Zitadel handles user identity; this app
+# issues its own access + refresh tokens after the user consents.  All paths
+# are in _OPEN_PATHS because they must be browser/machine-reachable without a
+# prior session.
+
+import mcp_oauth as _mcp_oauth
+
+
+def _oauth_consent_page(
+    *,
+    client_id: str = "",
+    redirect_uri: str = "",
+    state: str = "",
+    code_challenge: str = "",
+    code_challenge_method: str = "S256",
+    session: dict | None = None,
+    error: str = "",
+) -> str:
+    """Render the consent page in one of two states:
+    - State 1 (no session): inline login form.
+    - State 2 (session):    allow / deny buttons.
+    """
+    err_html = f'<div class="msg err">⚠️ {error}</div>' if error else ""
+    # Query params to forward through login so /oauth/authorize stays the
+    # one canonical URL for the whole flow.
+    import urllib.parse as _up
+    qp = _up.urlencode({
+        "client_id": client_id, "redirect_uri": redirect_uri,
+        "state": state, "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+    })
+    if session:
+        user_label = (session.get("preferred_username")
+                      or session.get("email") or "you")
+        body = f"""
+  {err_html}
+  <div class="who">Signed in as <strong>{user_label}</strong> ✓</div>
+  <div class="scope-list">
+    <p class="scope-head">This will allow Claude to:</p>
+    <ul>
+      <li>✓ Read squad status, games, WhatsApp history</li>
+      <li>✓ Send messages as you (PSN, WhatsApp, Mattermost)</li>
+    </ul>
+    <p class="caveat">Messages sent via Claude are prefixed <code>[via Claude]</code>
+       so recipients see the source.</p>
+  </div>
+  <form method="post" action="/oauth/authorize" id="cf">
+    <input type="hidden" name="client_id"             value="{client_id}">
+    <input type="hidden" name="redirect_uri"          value="{redirect_uri}">
+    <input type="hidden" name="state"                 value="{state}">
+    <input type="hidden" name="code_challenge"        value="{code_challenge}">
+    <input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
+    <button type="submit" class="btn" id="btn">Allow access →</button>
+  </form>
+  <a href="{redirect_uri}?error=access_denied&state={state}" class="deny">Not now</a>
+  <p class="revoke-note">You can revoke this at any time in Settings.</p>"""
+    else:
+        body = f"""
+  {err_html}
+  <p class="sub-lede">Sign in to your CRCMZ account to continue.</p>
+  <form method="post" action="/oauth/login?{qp}" id="f">
+    <label for="em">Email or username</label>
+    <input type="text" name="email" id="em" autocomplete="username"
+      placeholder="Email or username" inputmode="email">
+    <label for="pw">Password</label>
+    <input type="password" name="pw" id="pw" required
+      autocomplete="current-password" placeholder="Your password">
+    <button type="submit" class="btn" id="btn">Sign in →</button>
+  </form>"""
+
+    return f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" type="image/png" href="/favicon.png">
+<title>Connect Claude · CRCMZ</title>
+<style>
+  :root{{color-scheme:dark;}}
+  *{{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}}
+  html,body{{margin:0;}}
+  body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:#f3ecff;min-height:100dvh;display:flex;align-items:center;
+    justify-content:center;padding:24px 16px;background:#05030f;
+    position:relative;overflow:hidden;}}
+  body::before{{content:"";position:fixed;inset:-30% -10%;z-index:-1;
+    background:
+      radial-gradient(38% 40% at 18% 12%,rgba(255,47,214,.34),transparent 60%),
+      radial-gradient(40% 40% at 84% 18%,rgba(34,230,255,.30),transparent 60%),
+      radial-gradient(46% 42% at 55% 96%,rgba(157,92,255,.28),transparent 62%);
+    filter:blur(34px);animation:drift 22s ease-in-out infinite alternate;}}
+  @keyframes drift{{to{{transform:translate3d(4%,3%,0) scale(1.12);}}}}
+  .card{{width:100%;max-width:420px;background:rgba(18,10,38,.76);
+    border:1px solid rgba(255,60,200,.24);border-radius:24px;padding:32px 28px 28px;
+    box-shadow:0 30px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.06);
+    backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+    animation:rise .5s cubic-bezier(.2,.8,.2,1) both;}}
+  @keyframes rise{{from{{opacity:0;transform:translateY(18px) scale(.97);}}}}
+  .brand{{display:flex;align-items:center;gap:13px;margin-bottom:6px;}}
+  .logo{{width:50px;height:50px;border-radius:14px;flex:none;display:grid;
+    place-items:center;font-size:26px;
+    background-image:url('/footer-avatar.png');background-size:90%;
+    background-position:center;background-repeat:no-repeat;
+    background-color:rgba(255,47,214,.15);border:1px solid rgba(255,255,255,.15);}}
+  h1{{font-size:22px;margin:0;font-weight:800;letter-spacing:.5px;
+    background:linear-gradient(90deg,#22e6ff,#ff2fd6);
+    -webkit-background-clip:text;background-clip:text;color:transparent;}}
+  .brand-sub{{color:#9d8fc4;font-size:12px;margin:2px 0 0;letter-spacing:1px;
+    text-transform:uppercase;}}
+  h2{{font-size:17px;font-weight:700;margin:20px 0 4px;color:#f3ecff;}}
+  .sub-lede{{color:#9d8fc4;font-size:13px;margin:0 0 16px;}}
+  .who{{background:rgba(34,230,255,.08);border:1px solid rgba(34,230,255,.22);
+    border-radius:12px;padding:10px 14px;font-size:13px;color:#b0f0ff;margin:16px 0;}}
+  .scope-head{{font-size:13px;font-weight:600;color:#9d8fc4;margin:12px 0 6px;
+    text-transform:uppercase;letter-spacing:.4px;}}
+  .scope-list ul{{margin:0 0 10px;padding:0 0 0 18px;}}
+  .scope-list li{{font-size:14px;color:#d0c8ee;margin-bottom:4px;}}
+  .caveat{{font-size:12px;color:#6a5d8a;margin:8px 0 0;}}
+  .caveat code{{background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;
+    font-size:11px;}}
+  label{{display:block;font-size:11.5px;color:#9d8fc4;margin:18px 0 7px;
+    font-weight:700;letter-spacing:.4px;text-transform:uppercase;}}
+  input{{width:100%;padding:14px;border-radius:13px;
+    border:1px solid rgba(140,160,255,.22);background:rgba(6,4,18,.7);
+    color:#f3ecff;font-size:15px;-webkit-appearance:none;appearance:none;
+    transition:border .15s,box-shadow .15s;}}
+  input:focus{{outline:none;border-color:#22e6ff;
+    box-shadow:0 0 0 3px rgba(34,230,255,.18);}}
+  .btn{{display:flex;align-items:center;justify-content:center;width:100%;
+    margin-top:22px;padding:15px;border-radius:14px;border:none;
+    font-size:15.5px;font-weight:800;cursor:pointer;letter-spacing:.5px;
+    background:linear-gradient(135deg,#ff2fd6,#9d5cff);color:#fff;
+    box-shadow:0 10px 28px rgba(255,47,214,.45);
+    transition:filter .15s,transform .07s;}}
+  .btn:hover{{filter:brightness(1.12);}}
+  .btn:active{{transform:scale(.975);}}
+  .deny{{display:block;text-align:center;margin-top:14px;font-size:13px;
+    color:#6a5d8a;text-decoration:none;}}
+  .deny:hover{{color:#9d8fc4;}}
+  .revoke-note{{font-size:12px;color:#4a3d6a;text-align:center;margin:16px 0 0;}}
+  .msg{{padding:13px 15px;border-radius:13px;font-size:13.5px;
+    margin-bottom:10px;display:flex;gap:10px;align-items:center;line-height:1.45;}}
+  .err{{background:rgba(255,107,139,.12);border:1px solid rgba(255,107,139,.4);
+    color:#ffc0cd;}}
+</style></head>
+<body><div class="card">
+  <div class="brand">
+    <div class="logo"></div>
+    <div><h1>CRCMZ</h1><p class="brand-sub">Squad platform</p></div>
+  </div>
+  <h2>Claude is requesting access<br>to your squad data</h2>
+  {body}
+</div></body></html>"""
+
+
+@app.get("/.well-known/oauth-authorization-server")
+def oauth_metadata():
+    """RFC 8414 Authorization Server Metadata — tells MCP clients how to auth."""
+    base = f"https://{_PUBLIC_HOST}"
+    return JSONResponse({
+        "issuer":                            base,
+        "authorization_endpoint":            f"{base}/oauth/authorize",
+        "token_endpoint":                    f"{base}/oauth/token",
+        "revocation_endpoint":               f"{base}/oauth/revoke",
+        "scopes_supported":                  ["openid"],
+        "response_types_supported":          ["code"],
+        "grant_types_supported":             ["authorization_code", "refresh_token"],
+        "code_challenge_methods_supported":  ["S256"],
+    })
+
+
+@app.get("/oauth/authorize", response_class=HTMLResponse)
+async def oauth_authorize_get(
+    request: Request,
+    client_id: str = "",
+    redirect_uri: str = "",
+    state: str = "",
+    code_challenge: str = "",
+    code_challenge_method: str = "S256",
+    response_type: str = "code",
+):
+    """Consent page — State 1 (login) or State 2 (allow/deny)."""
+    if response_type != "code":
+        return HTMLResponse("unsupported_response_type", status_code=400)
+    if not redirect_uri:
+        return HTMLResponse("redirect_uri is required", status_code=400)
+
+    session = _get_session(request)
+    return HTMLResponse(_oauth_consent_page(
+        client_id=client_id, redirect_uri=redirect_uri,
+        state=state, code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+        session=session,
+    ))
+
+
+@app.post("/oauth/login")
+async def oauth_login_post(
+    request: Request,
+    client_id: str = "",
+    redirect_uri: str = "",
+    state: str = "",
+    code_challenge: str = "",
+    code_challenge_method: str = "S256",
+):
+    """Inline login form handler.  On success, redirects back to GET /oauth/authorize
+    with the same query params (now showing State 2).  On failure, re-renders State 1.
+    """
+    import urllib.parse as _up
+    form = await request.form()
+    email    = (form.get("email") or "").strip()
+    password = (form.get("pw")    or "").strip()
+
+    qp = _up.urlencode({
+        "client_id": client_id, "redirect_uri": redirect_uri,
+        "state": state, "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+    })
+
+    def _bad(err: str) -> HTMLResponse:
+        return HTMLResponse(
+            _oauth_consent_page(
+                client_id=client_id, redirect_uri=redirect_uri,
+                state=state, code_challenge=code_challenge,
+                code_challenge_method=code_challenge_method,
+                error=err,
+            ),
+            status_code=401,
+        )
+
+    if not email or not password:
+        return _bad("Email and password are required.")
+    if not ZITADEL_SERVICE_TOKEN:
+        return _bad("Auth service not configured.")
+
+    import httpx as _hx
+
+    async def _resolve(identifier: str) -> str:
+        if "@" not in identifier:
+            return identifier
+        try:
+            async with _hx.AsyncClient(timeout=10) as c:
+                sr = await c.post(
+                    f"{ZITADEL_ISSUER}/management/v1/users/_search",
+                    json={"queries": [{"emailQuery": {"emailAddress": identifier,
+                                                      "method": "TEXT_QUERY_METHOD_EQUALS"}}]},
+                    headers={"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"},
+                )
+            if sr.status_code == 200:
+                results = sr.json().get("result", [])
+                if results:
+                    return results[0].get("preferredLoginName", identifier)
+        except Exception:
+            pass
+        return identifier
+
+    try:
+        login_name = await _resolve(email)
+        async with _hx.AsyncClient(timeout=15) as c:
+            r = await c.post(
+                f"{ZITADEL_ISSUER}/v2/sessions",
+                json={"checks": {"user": {"loginName": login_name},
+                                 "password": {"password": password}}},
+                headers={"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"},
+            )
+        if r.status_code not in (200, 201):
+            return _bad("Invalid email or password.")
+        session_id = r.json().get("sessionId", "")
+        async with _hx.AsyncClient(timeout=10) as c:
+            sr = await c.get(
+                f"{ZITADEL_ISSUER}/v2/sessions/{session_id}",
+                headers={"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"},
+            )
+        user_f    = sr.json().get("session", {}).get("factors", {}).get("user", {})
+        sub       = user_f.get("id", "")
+        disp_name = user_f.get("displayName", "")
+        login_nm  = user_f.get("loginName", "")
+    except Exception as e:
+        logger.error("oauth/login: %s", e)
+        return _bad("Auth service unavailable.")
+
+    if not sub:
+        return _bad("Invalid email or password.")
+
+    session = _make_session(sub, email, name=disp_name, preferred_username=login_nm)
+    resp = RedirectResponse(url=f"/oauth/authorize?{qp}", status_code=302)
+    resp.set_cookie(_SESSION_COOKIE, _signer().dumps(session),
+                    httponly=True, samesite="lax", secure=True,
+                    max_age=_SESSION_MAX_AGE, path="/")
+    return resp
+
+
+@app.post("/oauth/authorize")
+async def oauth_authorize_post(request: Request):
+    """Allow button handler.  Issues an auth code and redirects to the client."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "unauthenticated"}, status_code=401)
+
+    form               = await request.form()
+    client_id          = (form.get("client_id")             or "").strip()
+    redirect_uri       = (form.get("redirect_uri")          or "").strip()
+    state              = (form.get("state")                 or "").strip()
+    code_challenge     = (form.get("code_challenge")        or "").strip()
+    code_challenge_method = (form.get("code_challenge_method") or "S256").strip()
+
+    if not redirect_uri or not code_challenge:
+        return JSONResponse({"error": "missing required params"}, status_code=400)
+
+    if code_challenge_method != "S256":
+        return JSONResponse({"error": "only S256 PKCE is supported"}, status_code=400)
+
+    import urllib.parse as _up
+    try:
+        code = _mcp_oauth.generate_auth_code(
+            session["sub"], code_challenge, redirect_uri
+        )
+    except Exception as e:
+        logger.error("oauth/authorize: generate_auth_code: %s", e)
+        return JSONResponse({"error": "server_error"}, status_code=500)
+
+    params = _up.urlencode({"code": code, "state": state})
+    return RedirectResponse(url=f"{redirect_uri}?{params}", status_code=302)
+
+
+@app.post("/oauth/token")
+async def oauth_token(request: Request):
+    """Token endpoint — authorization_code and refresh_token grants."""
+    form       = await request.form()
+    grant_type = (form.get("grant_type") or "").strip()
+
+    if grant_type == "authorization_code":
+        code          = (form.get("code")          or "").strip()
+        code_verifier = (form.get("code_verifier") or "").strip()
+        redirect_uri  = (form.get("redirect_uri")  or "").strip()
+        if not code or not code_verifier or not redirect_uri:
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+        try:
+            access, refresh = _mcp_oauth.exchange_code(code, code_verifier, redirect_uri)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        except Exception as e:
+            logger.error("oauth/token: exchange_code: %s", e)
+            return JSONResponse({"error": "server_error"}, status_code=500)
+
+    elif grant_type == "refresh_token":
+        rt = (form.get("refresh_token") or "").strip()
+        if not rt:
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+        try:
+            access, refresh = _mcp_oauth.refresh_access_token(rt)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        except Exception as e:
+            logger.error("oauth/token: refresh: %s", e)
+            return JSONResponse({"error": "server_error"}, status_code=500)
+
+    else:
+        return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
+
+    return JSONResponse({
+        "access_token":  access,
+        "token_type":    "Bearer",
+        "expires_in":    _mcp_oauth.ACCESS_TOKEN_TTL,
+        "refresh_token": refresh,
+    })
+
+
+@app.post("/oauth/revoke")
+async def oauth_revoke(request: Request):
+    """RFC 7009 token revocation.  Always 200 per spec (even for unknown tokens)."""
+    form  = await request.form()
+    token = (form.get("token") or "").strip()
+    if token:
+        _mcp_oauth.revoke_token(token)
+    return JSONResponse({"ok": True})
+
+
+# ── MCP status for settings page ──────────────────────────────────────────────
+
+@app.get("/auth/settings/mcp")
+async def settings_mcp_status(request: Request):
+    """Whether the logged-in user has an active MCP OAuth session."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    zid = session.get("sub", "")
+    return JSONResponse(_mcp_oauth.user_status(zid))
+
+
+@app.post("/auth/settings/mcp/revoke")
+async def settings_mcp_revoke(request: Request):
+    """Revoke all MCP OAuth tokens for the logged-in user."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    zid = session.get("sub", "")
+    _mcp_oauth.revoke_by_zitadel_id(zid)
+    return JSONResponse({"ok": True})
 
 
 def _run_assistant_turn(user_sub: str, question: str, reply_id: int,
@@ -3929,6 +4350,7 @@ _wa.init()
 _facts.init()
 _chat.init()
 _games.init()
+_mcp_oauth.init()
 
 _video_seen: set[str] = set()
 _video_initialized: bool = False

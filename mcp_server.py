@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "")
 
+# ── Caller identity (per-request, set for user tokens only) ───────────────────
+# The write tools read this to know who is calling.  It is set in handle_body()
+# and cleared automatically when the context exits (contextvars semantics).
+import contextvars as _cv
+_caller: _cv.ContextVar[dict | None] = _cv.ContextVar("_mcp_caller", default=None)
+
 SERVER_NAME = "crcmz"
 SERVER_VERSION = "1.0.0"
 
@@ -52,8 +58,8 @@ INTERNAL_ERROR = -32603
 
 
 def configured() -> bool:
-    """False when no token is set, in which case the endpoint serves nothing."""
-    return bool(MCP_TOKEN)
+    """True — the endpoint is always active; either a shared token or OAuth works."""
+    return True  # per-user OAuth is always available; shared MCP_TOKEN is optional
 
 
 def authorised(header: str) -> bool:
@@ -72,11 +78,48 @@ def authorised(header: str) -> bool:
     return hmac.compare_digest(value, MCP_TOKEN)
 
 
+def resolve_caller(header: str) -> dict | None:
+    """Return a caller dict for a valid user access token, or None to reject.
+
+    A caller dict has at minimum {"zitadel_id": str}.  Used by the /mcp
+    endpoint after the shared MCP_TOKEN check has already failed.
+    """
+    value = (header or "").strip()
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    if not value:
+        return None
+    try:
+        import mcp_oauth
+        zid = mcp_oauth.lookup_access_token(value)
+        if not zid:
+            return None
+        return {"zitadel_id": zid}
+    except Exception as e:  # noqa: BLE001
+        logger.debug("mcp: resolve_caller failed: %s", e)
+        return None
+
+
 def _tools() -> list[dict]:
-    """The assistant registry in MCP's shape (`inputSchema`, not `parameters`)."""
+    """The assistant read registry in MCP's shape (`inputSchema`, not `parameters`)."""
     import assistant
     out = []
     for spec in assistant.tool_specs():
+        fn = spec.get("function", {})
+        out.append({
+            "name": fn.get("name", ""),
+            "description": fn.get("description", ""),
+            "inputSchema": fn.get("parameters")
+                           or {"type": "object", "properties": {}},
+        })
+    return out
+
+
+def _write_tools() -> list[dict]:
+    """Write-capable tools, only served to user-token callers."""
+    import assistant
+    out = []
+    for spec in assistant.write_tool_specs():
         fn = spec.get("function", {})
         out.append({
             "name": fn.get("name", ""),
@@ -95,8 +138,12 @@ def _error(rid: Any, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
 
 
-def handle(message: dict) -> dict | None:
+def handle(message: dict, caller: dict | None = None) -> dict | None:
     """Dispatch one JSON-RPC message. Returns None for a notification.
+
+    `caller` is None for the shared read-only token, or a dict with at least
+    {"zitadel_id": str} for a per-user token.  Write tools are only reachable
+    when caller is not None.
 
     Never raises: a tool blowing up comes back as an MCP tool error (`isError`)
     so the model can see what went wrong and try something else, while a protocol
@@ -118,24 +165,35 @@ def handle(message: dict) -> dict | None:
 
     if method == "initialize":
         asked = (params.get("protocolVersion") or "").strip()
+        instructions = (
+            "CRCMZ squad data: WhatsApp group history and analytics, PSN "
+            "presence and clips, the dashboard soundboard buttons, and the "
+            "identity graph tying each person's PSN / Mattermost / WhatsApp "
+            "names together. Call squad_roster first when a question names a "
+            "person, then person_profile for everything about them."
+        )
+        if caller:
+            instructions += (
+                " You are authenticated as a squad member and have write access: "
+                "you can send messages to the PSN group, the WhatsApp group, "
+                "WhatsApp DMs, and Mattermost. All writes are prefixed [via Claude] "
+                "and logged. Always confirm with the user before sending."
+            )
         return _result(rid, {
             "protocolVersion": asked if asked in SUPPORTED_PROTOCOLS else PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
-            "instructions": (
-                "CRCMZ squad data: WhatsApp group history and analytics, PSN "
-                "presence and clips, the dashboard soundboard buttons, and the "
-                "identity graph tying each person's PSN / Mattermost / WhatsApp "
-                "names together. Call squad_roster first when a question names a "
-                "person, then person_profile for everything about them."
-            ),
+            "instructions": instructions,
         })
 
     if method == "ping":
         return _result(rid, {})
 
     if method == "tools/list":
-        return _result(rid, {"tools": _tools()})
+        tools = _tools()
+        if caller:
+            tools = tools + _write_tools()
+        return _result(rid, {"tools": tools})
 
     if method == "tools/call":
         import assistant
@@ -143,7 +201,26 @@ def handle(message: dict) -> dict | None:
         args = params.get("arguments") or {}
         if not isinstance(args, dict):
             return _error(rid, INVALID_REQUEST, "arguments must be an object")
-        text, ok = assistant.call_tool(name, args)
+
+        # Write tools: only available with a user token.
+        write_names = {t["name"] for t in _write_tools()}
+        if name in write_names:
+            if not caller:
+                return _result(rid, {
+                    "content": [{"type": "text", "text":
+                                 f"'{name}' is a write tool and requires a personal "
+                                 "user token. Connect via OAuth at app.crcmz.me/mcp "
+                                 "to get write access."}],
+                    "isError": True,
+                })
+            tok = _caller.set(caller)
+            try:
+                text, ok = assistant.call_write_tool(name, args, caller)
+            finally:
+                _caller.reset(tok)
+        else:
+            text, ok = assistant.call_tool(name, args)
+
         # A failed tool is a *result* with isError, not a JSON-RPC error: the
         # model is meant to read the message and recover, not see a dead channel.
         return _result(rid, {
@@ -154,10 +231,13 @@ def handle(message: dict) -> dict | None:
     return _error(rid, METHOD_NOT_FOUND, f"unknown method: {method}")
 
 
-def handle_body(raw: bytes | str) -> tuple[Any, int]:
+def handle_body(
+    raw: bytes | str, caller: dict | None = None
+) -> tuple[Any, int]:
     """Parse and dispatch a raw request body. Returns (json_body_or_None, status).
 
-    Handles the batch form too, since the 2025-03-26 spec allows an array. A
+    `caller` is None for the shared read-only token and a dict for user tokens.
+    Handles the batch form too, since the 2025-03-26 spec allows an array.  A
     batch of nothing but notifications yields 202 with no body.
     """
     try:
@@ -169,9 +249,11 @@ def handle_body(raw: bytes | str) -> tuple[Any, int]:
         if isinstance(payload, list):
             if not payload:
                 return _error(None, INVALID_REQUEST, "empty batch"), 400
-            replies = [r for r in (handle(m) for m in payload) if r is not None]
+            replies = [
+                r for r in (handle(m, caller) for m in payload) if r is not None
+            ]
             return (replies, 200) if replies else (None, 202)
-        reply = handle(payload)
+        reply = handle(payload, caller)
         return (reply, 200) if reply is not None else (None, 202)
     except Exception as e:  # noqa: BLE001 - a bug here must not 500 the app
         logger.exception("mcp: dispatch failed")

@@ -48,6 +48,10 @@ STORES: dict[str, list[str] | None] = {
     "/data/game_history.db": ["games_played", "game_sessions", "person_profile",
                               "platform_overview"],
 
+    "/data/mcp_user_tokens.db": None,   # OAuth token state for per-user MCP access.
+                                       # Internal auth DB — no tool should ever
+                                       # read tokens, codes, or audit rows.
+
     # Deliberately not exposed:
     "/data/assistant_chat.db": None,   # the bot's own transcripts. person_profile
                                        # reports a count; the text is nobody
