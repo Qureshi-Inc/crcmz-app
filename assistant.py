@@ -1244,6 +1244,63 @@ def _send_mm_dm(to: str, message: str, caller: dict) -> dict:
     }
 
 
+@write_tool(
+    "send_mattermost_channel_message",
+    "Post a message to a Mattermost channel by name. The caller must be a member "
+    "of the channel. Message is prefixed [via <name>] when sent as the bot, or "
+    "[via Claude] when the caller has a linked Mattermost account. "
+    "Rate limit: 5 per 10 minutes.",
+    {"type": "object",
+     "properties": {
+         "channel": {"type": "string",
+                     "description": "Channel name or display name (e.g. 'townshare', 'general')."},
+         "message": {"type": "string",
+                     "description": "The message text. Max 500 chars."},
+     },
+     "required": ["channel", "message"]})
+def _send_mm_channel(channel: str, message: str, caller: dict) -> dict:
+    import json as _json
+    import mcp_oauth
+    zid    = caller.get("zitadel_id", "")
+    name   = _caller_name(caller)
+    tool_n = "send_mattermost_channel_message"
+
+    channel = (channel or "").strip()
+    message = (message or "").strip()[:500]
+    if not channel or not message:
+        return {"ok": False, "error": "both 'channel' and 'message' are required"}
+
+    if not mcp_oauth.within_rate_limit(zid, tool_n, 5, 600):
+        mcp_oauth.audit_write(zid, tool_n,
+                              _json.dumps({"channel": channel, "message": message[:80]}),
+                              "rate_limited")
+        return {"ok": False, "error": "rate limit: 5 messages per 10 minutes"}
+
+    try:
+        import mattermost
+        import mm_tokens
+        if not mattermost.available():
+            return {"ok": False, "error": "Mattermost not configured on this server"}
+        user_token = mm_tokens.get_token(zid)
+        text = f"[via Claude] {message}" if user_token else f"[via {name}] {message}"
+        ok, detail = mattermost.post_channel_by_name(channel, text,
+                                                     token=user_token or None)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("write tool %s failed: %s", tool_n, e)
+        mcp_oauth.audit_write(zid, tool_n,
+                              _json.dumps({"channel": channel, "message": message[:80]}),
+                              f"error:{e}")
+        return {"ok": False, "error": f"Mattermost channel post failed: {e}"}
+
+    result = "sent" if ok else f"failed:{detail}"
+    mcp_oauth.audit_write(zid, tool_n,
+                          _json.dumps({"channel": channel, "message": message[:80]}), result)
+    return {
+        "ok": ok,
+        "detail": f"Posted to #{channel} on Mattermost" if ok else detail,
+    }
+
+
 # ── Model plumbing ─────────────────────────────────────────────────────────────
 
 def _config() -> tuple[str, str, str]:

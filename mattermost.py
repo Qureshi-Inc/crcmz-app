@@ -129,3 +129,55 @@ def post_channel(channel_id: str, message: str) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("mm: channel post failed: %s", exc)
         return False
+
+
+def find_channel_id(name: str) -> str | None:
+    """Find a channel ID by display name or channel name the bot is a member of."""
+    if not available():
+        return None
+    try:
+        with httpx.Client() as client:
+            r = client.get(f"{_BASE}/api/v4/users/me/channels",
+                           headers=_headers(), timeout=15)
+            if r.status_code != 200:
+                return None
+            name_lower = name.lower()
+            for ch in r.json():
+                if (ch.get("name", "").lower() == name_lower
+                        or ch.get("display_name", "").lower() == name_lower):
+                    return ch.get("id")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mm: channel lookup failed: %s", exc)
+    return None
+
+
+def post_channel_by_name(name: str, message: str, token: str | None = None) -> tuple[bool, str]:
+    """Post to a channel by name. Returns (ok, error_or_channel_id)."""
+    headers = ({"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+               if token else _headers())
+    base = _BASE
+    if not base:
+        return False, "Mattermost not configured"
+    try:
+        with httpx.Client() as client:
+            r = client.get(f"{base}/api/v4/users/me/channels",
+                           headers=headers, timeout=15)
+            if r.status_code != 200:
+                return False, f"channel list failed: {r.status_code}"
+            name_lower = name.lower()
+            channel_id = None
+            for ch in r.json():
+                if (ch.get("name", "").lower() == name_lower
+                        or ch.get("display_name", "").lower() == name_lower):
+                    channel_id = ch.get("id")
+                    break
+            if not channel_id:
+                return False, f"channel '{name}' not found"
+            pr = client.post(f"{base}/api/v4/posts",
+                             headers=headers,
+                             json={"channel_id": channel_id, "message": message},
+                             timeout=15)
+            return pr.status_code in (200, 201), channel_id
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mm: post_channel_by_name failed: %s", exc)
+        return False, str(exc)
