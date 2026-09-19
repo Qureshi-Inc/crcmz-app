@@ -6504,6 +6504,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="stab active" data-tab="passkeys" onclick="switchTab('passkeys')">🔑 Passkeys</button>
       <button class="stab" data-tab="security" onclick="switchTab('security')">🔒 Security</button>
       <button class="stab" data-tab="psn" onclick="switchTab('psn')">🎮 PSN</button>
+      <button class="stab" data-tab="mcp" onclick="switchTab('mcp')">🤖 MCP</button>
       <button class="stab" data-tab="users" id="tabUsersBtn" onclick="switchTab('users')" style="display:none">👥 Users</button>
     </div>
 
@@ -6592,6 +6593,18 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     </div>
 
     <!-- Users tab (admin only) -->
+    <!-- MCP tab -->
+    <div class="spanel" id="tab-mcp">
+      <div class="smodal-sect">
+        <p class="smodal-sect-title">Claude / MCP access</p>
+        <div id="mcpStatus"><span style="color:var(--dim)">Loading…</span></div>
+      </div>
+      <div id="mcpActions" style="display:none">
+        <button class="smodal-btn" style="background:rgba(220,60,60,.18);border:1px solid rgba(220,60,60,.35);color:#f87171" onclick="revokeMcp()">Disconnect MCP</button>
+      </div>
+      <div class="smsg" id="mcpMsg"></div>
+    </div>
+
     <div class="spanel" id="tab-users">
       <div class="smodal-sect">
         <p class="smodal-sect-title">User management</p>
@@ -8253,6 +8266,7 @@ function switchTab(name){
     p.classList.toggle('active', p.id==='tab-'+name);
   });
   if(name==='psn') loadPsnStatus();
+  if(name==='mcp') loadMcpStatus();
   if(name==='users') loadAdminUsers();
 }
 
@@ -8548,6 +8562,49 @@ async function changePassword(){
   const d = await r.json();
   if(r.ok){ _pwMsg('Password updated!','ok'); $('pwCur').value=''; $('pwNew').value=''; $('pwConf').value=''; }
   else { _pwMsg(d.error||'Failed to update password.','err'); }
+}
+
+async function loadMcpStatus(){
+  const el=$('mcpStatus'), acts=$('mcpActions');
+  if(!el) return;
+  el.innerHTML='<span style="color:var(--dim)">Loading…</span>';
+  try {
+    const r = await fetch('/auth/settings/mcp');
+    if(!r.ok){ el.innerHTML='<span style="color:var(--dim)">Could not load MCP status.</span>'; return; }
+    const d = await r.json();
+    if(d.active){
+      const lu = d.last_used_at ? new Date(d.last_used_at*1000).toLocaleString() : 'never';
+      el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="width:8px;height:8px;border-radius:50%;background:#4ade80;display:inline-block"></span>
+        <strong style="color:#4ade80">Connected</strong>
+      </div>
+      <div style="font-size:13px;color:var(--dim);line-height:1.7">
+        An MCP client has authorised write access to your account.<br>
+        Last used: ${lu}
+      </div>`;
+      acts.style.display='';
+    } else {
+      el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="width:8px;height:8px;border-radius:50%;background:var(--dim);display:inline-block"></span>
+        <span style="color:var(--dim)">Not connected</span>
+      </div>
+      <div style="font-size:13px;color:var(--dim);line-height:1.7">
+        No MCP client is currently authorised. Connect Claude or another MCP client
+        to get write access (send messages on your behalf, etc.).<br><br>
+        MCP server: <code style="font-size:12px;color:#9d8fc4">https://app.crcmz.me/mcp</code>
+      </div>`;
+      acts.style.display='none';
+    }
+  } catch(e){ el.innerHTML='<span style="color:var(--dim)">Error loading MCP status.</span>'; }
+}
+
+async function revokeMcp(){
+  if(!confirm('Disconnect MCP? Any active client tokens will stop working immediately.')) return;
+  const r = await fetch('/auth/settings/mcp/revoke', {method:'POST'});
+  const el=$('mcpMsg');
+  if(r.ok){ el.className='smsg ok'; el.textContent='MCP access revoked.'; loadMcpStatus(); }
+  else { el.className='smsg err'; el.textContent='Could not revoke — try again.'; }
+  setTimeout(()=>{ el.textContent=''; el.className='smsg'; }, 4000);
 }
 
 // ── WhatsApp Analytics ────────────────────────────────────────────────────────
