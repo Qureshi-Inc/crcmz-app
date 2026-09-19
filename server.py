@@ -1481,7 +1481,7 @@ async def admin_list_users(request: Request):
                 or u.get("userName", "")
             )
             users.append({
-                "userId": u.get("userId", ""),
+                "userId": u.get("id") or u.get("userId", ""),
                 "userName": u.get("userName", ""),
                 "displayName": display,
                 "email": email_obj.get("email", ""),
