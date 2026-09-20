@@ -354,7 +354,18 @@ def _run_index_cycle() -> None:
     _index_whatsapp()
     _index_psn_clips()
     _index_facts()
-    _stats["last_index_ts"] = int(time.time())
+    ts = int(time.time())
+    _stats["last_index_ts"] = ts
+    # Persist so status() survives container restarts.
+    try:
+        with _lock, _conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO memory_config(key, value) VALUES ('last_index_run', ?)",
+                (str(ts),),
+            )
+            conn.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("memory: could not persist last_index_run: %s", e)
 
 
 def _flush_reindex_requests() -> None:
@@ -1085,8 +1096,15 @@ def status() -> dict:
                ORDER BY ts DESC LIMIT 5"""
         ).fetchall()
 
+        # Persist last_index_run so status() survives container restarts.
+        _lr = conn.execute(
+            "SELECT value FROM memory_config WHERE key='last_index_run'"
+        ).fetchone()
+        persisted_last_run = int(_lr["value"]) if _lr else 0
+
     import datetime as _dt
-    last_ts = _stats["last_index_ts"]
+    # In-memory value resets on restart; persisted value is the fallback.
+    last_ts = _stats["last_index_ts"] or persisted_last_run
 
     return {
         **base_info,

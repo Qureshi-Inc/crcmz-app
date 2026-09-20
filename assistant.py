@@ -1102,15 +1102,21 @@ def call_write_tool(name: str, args: dict, caller: dict) -> tuple[str, bool]:
      "required": ["source"]})
 def _memory_reindex(source: str, since_ts: float | None = None,
                     caller: dict | None = None) -> dict:
+    import json as _json
     import mcp_oauth
     import memory_store
     caller = caller or {}
-    if not mcp_oauth.within_rate_limit(caller.get("zitadel_id", ""),
-                                       "memory_reindex", 5, 3600):
+    zid = caller.get("zitadel_id", "")
+    if not mcp_oauth.within_rate_limit(zid, "memory_reindex", 5, 3600):
+        mcp_oauth.audit_write(zid, "memory_reindex",
+                              _json.dumps({"source": source, "since_ts": since_ts}),
+                              "rate_limited")
         return {"error": "rate limit exceeded", "limit": "5 per hour"}
-    mcp_oauth.audit_write(caller.get("zitadel_id", ""), "memory_reindex",
-                          {"source": source, "since_ts": since_ts})
-    return memory_store.queue_reindex(source, since_ts=since_ts)
+    result = memory_store.queue_reindex(source, since_ts=since_ts)
+    mcp_oauth.audit_write(zid, "memory_reindex",
+                          _json.dumps({"source": source, "since_ts": since_ts}),
+                          "queued" if result.get("ok") else f"error:{result.get('error','')[:60]}")
+    return result
 
 
 def _caller_name(caller: dict) -> str:

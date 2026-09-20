@@ -456,6 +456,69 @@ def test_reindex_queues_correctly():
         assert "error" in bad
 
 
+def test_audit_write_signature():
+    """memory_reindex calls audit_write with the correct 4-argument signature.
+
+    Regression test for the bug where audit_write() was called with 3 args
+    (missing `result`) and a dict instead of a JSON string for args_json.
+    """
+    import inspect
+    import re
+    import assistant
+
+    src = inspect.getsource(assistant._memory_reindex)
+
+    # Must call audit_write with 4 positional arguments.
+    # Pattern: audit_write(zid, "memory_reindex", json.dumps(...), "...")
+    calls = re.findall(r'audit_write\(([^)]+)\)', src, re.DOTALL)
+    assert calls, "no audit_write call found in _memory_reindex"
+    for call in calls:
+        args = [a.strip() for a in call.split(',')]
+        assert len(args) >= 4, (
+            f"audit_write needs 4 args but got {len(args)} in: {call!r}"
+        )
+
+    # args_json must be a json.dumps(...) call, not a raw dict literal.
+    assert "_json.dumps(" in src or "json.dumps(" in src, (
+        "audit_write args_json must be json.dumps(...), not a raw dict"
+    )
+
+    # Must audit both the rate-limit case and the success case.
+    assert src.count("audit_write") >= 2, (
+        "expected audit_write on both rate-limited and success paths"
+    )
+
+
+def test_last_index_run_persisted():
+    """status() returns last_index_run from memory_config after a simulated restart."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _patch_module(tmp, EMBED_URL)
+        import memory_store as ms
+        ms.init()
+
+        # Simulate a run cycle completing and persisting the timestamp.
+        fake_ts = 1751234567
+        import sqlite3
+        with sqlite3.connect(tmp / "memory.db") as c:
+            c.execute(
+                "INSERT OR REPLACE INTO memory_config(key, value) VALUES ('last_index_run', ?)",
+                (str(fake_ts),),
+            )
+
+        # Wipe the in-memory stat (simulates restart).
+        ms._stats["last_index_ts"] = 0
+
+        s = ms.status()
+        assert s["last_index_run"] is not None, (
+            "last_index_run should read from memory_config after restart"
+        )
+        assert "2025" in s["last_index_run"] or "2024" in s["last_index_run"] \
+            or str(fake_ts)[:4] in s["last_index_run"], (
+            f"unexpected last_index_run value: {s['last_index_run']}"
+        )
+
+
 def test_limit_clamping():
     """search() clamps limit to [1, 30]."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -580,6 +643,8 @@ def main() -> int:
     check("10. no credential fields in results", test_no_credential_fields_in_results)
     check("11. reindex queues correctly", test_reindex_queues_correctly)
     check("12. limit clamping", test_limit_clamping)
+    check("13. audit_write called with correct signature", test_audit_write_signature)
+    check("14. last_index_run persists across restarts", test_last_index_run_persisted)
     check("A. acceptance: 3 synthetic queries", test_acceptance_synthetic_queries)
 
     print(f"\n{PASSED} passed, {len(FAILED)} failed")
