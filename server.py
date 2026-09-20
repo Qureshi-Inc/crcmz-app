@@ -2455,6 +2455,17 @@ _SUMMARIZE_RE = _re.compile(
 _WA_DB_PATH = "/data/whatsapp.db"
 
 
+def _bot_label() -> str:
+    try:
+        import crcmz_identity
+        return (crcmz_identity.bot_person().get("display_name") or "Hasaan").strip()
+    except Exception:  # noqa: BLE001
+        return "Hasaan"
+
+
+_BOT_LABEL = _bot_label()
+
+
 def _messages_since_sender(sender_jid: str, group_jid: str) -> list[dict]:
     """Return all messages in the group after sender's last message before this one."""
     import sqlite3 as _sq
@@ -2480,10 +2491,15 @@ def _messages_since_sender(sender_jid: str, group_jid: str) -> list[dict]:
             since_ts = int(_t.time()) - 7200
         else:
             since_ts = row["timestamp"]
+        # from_me rows are the BOT's own messages, and they must be included. Without
+        # them the transcript has a missing participant: "can you search the web" reads
+        # as aimed at whichever human is nearest in the window, which is how a request
+        # made to the bot got summarised as one member telling another what to build.
         msgs = conn.execute("""
-            SELECT sender_name, timestamp, text, has_photo, has_video, has_audio
+            SELECT sender_name, timestamp, text, has_photo, has_video, has_audio,
+                   from_me
             FROM whatsapp_messages
-            WHERE group_jid = ? AND timestamp > ? AND from_me = 0
+            WHERE group_jid = ? AND timestamp > ?
             ORDER BY timestamp ASC
         """, (group_jid, since_ts)).fetchall()
         conn.close()
@@ -2493,14 +2509,59 @@ def _messages_since_sender(sender_jid: str, group_jid: str) -> list[dict]:
         return []
 
 
+def _summary_speaker(row: dict, cache: dict) -> str:
+    """Who to call this row's author in the transcript.
+
+    Three things the raw `sender_name` cannot express:
+      * the bot's own rows carry the group JID as their name, not a name
+      * people post under several display names ("Samad", "AbdulSamad Baw")
+      * an unmapped name is still better shown verbatim than dropped
+    So the bot is labelled explicitly and everyone else goes through the identity
+    graph, which is what it was built for.
+    """
+    if row.get("from_me"):
+        return f"{_BOT_LABEL} (this group's AI bot, not a person)"
+    raw = (row.get("sender_name") or "").strip() or "unknown"
+    if raw in cache:          # one identity lookup per name, not per message
+        return cache[raw]
+    try:
+        import crcmz_identity
+        person = crcmz_identity.identify_sender_name(raw)
+        if person:
+            label = (person.get("display_name")
+                     or person.get("username") or raw).strip()
+            # Zitadel display names are often the username twice ("asamad89
+            # asamad89") because first and last name were both set to it. Reads badly
+            # in a summary, so collapse repeated words, keeping order.
+            seen, words = set(), []
+            for w in label.split():
+                if w.casefold() not in seen:
+                    seen.add(w.casefold())
+                    words.append(w)
+            cache[raw] = " ".join(words) or raw
+            return cache[raw]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("summarize: identity lookup failed for %r: %s", raw, e)
+    cache[raw] = raw
+    return raw
+
+
 def _format_messages_for_summary(msgs: list[dict]) -> str:
     """Format messages into a readable block for the LLM."""
     import datetime as _dt
-    lines = []
+    lines: list[str] = []
+    speakers: dict[str, str] = {}
     for m in msgs:
         ts = _dt.datetime.fromtimestamp(m["timestamp"]).strftime("%H:%M")
-        name = m.get("sender_name") or "unknown"
+        name = _summary_speaker(m, speakers)
         text = (m.get("text") or "").strip()
+        # "@56767304183939 catch me up" is the single clearest signal that a message
+        # was aimed at the bot. Left as a bare number the model cannot see it, so
+        # resolve known members to @Name and the bot's own ids to its name.
+        if text:
+            text = wa_ai.resolve_inbound_mentions(text)
+            for me in wa_ai.self_ids():
+                text = text.replace("@" + me, "@" + _BOT_LABEL)
         media = []
         if m.get("has_photo"): media.append("📷 photo")
         if m.get("has_video"): media.append("🎬 video")
@@ -2566,7 +2627,15 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
     count = len(msgs)
     span_mins = (msgs[-1]["timestamp"] - msgs[0]["timestamp"]) // 60 if count > 1 else 0
 
-    system = "Summarize this WhatsApp chat for someone who missed it. Casual, plain sentences, no bullet points, no markdown. Just tell them what happened."
+    system = (
+        "Summarize this WhatsApp chat for someone who missed it. Casual, plain "
+        "sentences, no bullet points, no markdown. Just tell them what happened.\n"
+        f"\n{_BOT_LABEL} is the group's AI bot, not one of the people. When somebody "
+        f"@mentions {_BOT_LABEL} or asks for something to be built, searched or "
+        f"summarised, they are talking TO THE BOT. Never report that as one member "
+        "asking another member — say they asked the bot. Only describe a message as "
+        "directed at a person when it names that person."
+    )
     user_msg = f"{author} missed {count} messages over the last {span_mins} minutes.\n\n{block}"
 
     # Show typing immediately, then keepalive every 8s (WhatsApp clears composing after ~10s)
