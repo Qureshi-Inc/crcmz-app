@@ -1842,12 +1842,182 @@ def _wa_edit(msg_id: str, group_jid: str, text: str) -> None:
 
 _JOBS_API = "https://jobs.buildanator.com"
 
+# ── Which site is a build request actually about? ─────────────────────────────
+# "update the gta6 countdown site" used to deploy to update.buildanator.com: the
+# subdomain was guessed from the first long word in the message and the edit
+# verbs were never skipped, so every edit silently became a brand new site while
+# the real one stayed untouched. The cure is to check the message against the
+# sites that already exist before inventing a name, and to tell the engineer to
+# modify in place when it matches one.
+_DEPLOY_REGISTRY = "/opt/ai-lab/deployments.json"
+_DEPLOY_TTL = 300.0
+_deploy_cache: tuple[float, list[dict]] = (0.0, [])
+# The jobs dashboard is lab-shipped like any other site. Never let a chat
+# message aim an edit at the thing that reports on the edits.
+_NEVER_EDIT = {"jobs"}
+# Aliases that are verbs or generic nouns match half of every sentence, so they
+# can never stand in for a site name (wzstats-rebuild is deployed at both
+# `wzstats-rebuild` and `rebuild`, and "rebuild the plant site" is not about it).
+_ALIAS_STOP = {"build", "rebuild", "update", "edit", "change", "fix", "make",
+               "create", "deploy", "ship", "launch", "new", "site", "website",
+               "app", "page", "tool", "dashboard", "jobs", "test", "demo"}
+_SITE_NOUN = r"(?:site|website|page|app|dashboard|tool|thing)"
 
-def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
-    """SSH to ai-controller, run openclaw engineer, track via jobs.buildanator.com."""
+
+def _known_deployments() -> list[dict]:
+    """Live *.buildanator.com deployments from the lab registry, cached 5 min.
+
+    Returns the last known list when the controller is unreachable: an empty
+    list means "nothing is deployed", which would turn every edit back into a
+    new site. Newest registry entry per subdomain wins — `lab-ship` appends on
+    every redeploy.
+    """
+    global _deploy_cache
+    now = _time.time()
+    if _deploy_cache[1] and (now - _deploy_cache[0]) < _DEPLOY_TTL:
+        return _deploy_cache[1]
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-n",
+             "-i", assistant.AI_CONTROLLER_KEY, assistant.AI_CONTROLLER_SSH,
+             f"cat {_DEPLOY_REGISTRY}"],
+            capture_output=True, text=True, timeout=25)
+        rows = json.loads(proc.stdout or "[]")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("clawbot: could not read the deployment registry: %s", e)
+        return _deploy_cache[1]
+    out: list[dict] = []
+    seen: set[str] = set()
+    for row in reversed(rows if isinstance(rows, list) else []):
+        sub = str((row or {}).get("subdomain") or "").strip().lower()
+        if not sub or sub in seen or sub in _NEVER_EDIT:
+            continue
+        seen.add(sub)
+        out.append({"subdomain": sub,
+                    "project": str(row.get("project") or "").strip(),
+                    "url": str(row.get("url") or f"https://{sub}.buildanator.com")})
+    _deploy_cache = (now, out)
+    logger.info("clawbot: %d live deployments known", len(out))
+    return out
+
+
+def _invalidate_deploy_cache() -> None:
+    """Force the next _known_deployments() to re-read the registry.
+
+    Keeps the current list as the fallback: clearing it would mean a failed
+    re-read reports "nothing is deployed", turning every edit back into a new site.
+    """
+    global _deploy_cache
+    _deploy_cache = (0.0, _deploy_cache[1])
+
+
+def _deploy_aliases(dep: dict) -> list[str]:
+    """Phrases in a chat message that should be read as naming this site."""
+    sub = dep["subdomain"]
+    names = {sub, sub.replace("-", " ")}
+    proj = (dep.get("project") or "").strip().lower().strip("./ ")
+    if proj:
+        for cand in (proj, _re.sub(r"-(site|app|dashboard)$", "", proj)):
+            cand = cand.strip("-. ")
+            if cand:
+                names.add(cand)
+                names.add(_re.sub(r"[-.]+", " ", cand))
+    # Under 3 chars an alias is noise, and verbs/generic nouns are never names.
+    return [n for n in names if len(n) >= 3 and n not in _ALIAS_STOP]
+
+
+def _resolve_existing_site(text: str) -> dict | None:
+    """The already-deployed site this message names, or None.
+
+    Longest alias wins, so "gta6 countdown" beats a bare "gta6"; an alias sitting
+    next to a site noun ("the plant site") outranks a longer incidental match
+    elsewhere in the sentence.
+
+    Short names must earn it. Sites get called things like `only`, `bro` and
+    `mcp`, and "change the site so it ONLY shows 5 rows" is not a request to edit
+    only.buildanator.com — so a name under 5 characters counts only when a site
+    noun follows it. Those messages fall through to the "which site?" question,
+    which is the safe answer.
+    """
+    hay = " " + _re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip() + " "
+    best: tuple[int, dict] | None = None
+    for dep in _known_deployments():
+        for alias in _deploy_aliases(dep):
+            if f" {alias} " not in hay:
+                continue
+            named = bool(_re.search(
+                rf" {_re.escape(alias)} (?:\w+ ){{0,2}}{_SITE_NOUN} ", hay))
+            if not named and len(alias) < 5:
+                continue
+            score = len(alias) + (100 if named else 0)
+            if best is None or score > best[0]:
+                best = (score, dep)
+    return best[1] if best else None
+
+
+# Verbs that mean "act on something that already exists". Create verbs (make,
+# build, create, launch) are deliberately absent — a create request that happens
+# to name a live site is caught by the subdomain-collision check instead.
+_EDIT_INTENT_RE = _re.compile(
+    r"\b(updat\w+|edit\w*|chang\w+|fix\w*|modif\w+|rebuild\w*|redo|redesign\w*|"
+    r"restyle\w*|tweak\w*|improv\w+|adjust\w*|renam\w+|add|adding|remove\w*|"
+    r"delete\w*|swap\w*|replac\w+)\b",
+    _re.IGNORECASE)
+
+# Asked for something to be built from scratch. Used only as a veto: "build a
+# site that adds up scores" trips the edit regex on "add", and asking "which
+# site?" when somebody clearly wants a new one is worse than just building it.
+_CREATE_INTENT_RE = _re.compile(
+    r"\b(build|builds|building|make|makes|making|creat\w+|launch\w*|ship|"
+    r"spin\s+up|set\s+up|put\s+together)\b",
+    _re.IGNORECASE)
+
+
+def _run_clawbot_job(task: str, subdomain: str, group_jid: str,
+                     raw_text: str = "") -> None:
+    """SSH to ai-controller, run openclaw engineer, track via jobs.buildanator.com.
+
+    `subdomain` is only the caller's guess. When the message names a site that is
+    already deployed, that site wins and the engineer is told to edit it in place.
+    `raw_text` is the member's original message when `task` has been rewritten by
+    the model — the site name often survives only in the original.
+    """
     import shlex
     import subprocess
+    import uuid as _uuid
     import httpx as _hx
+
+    # ── Resolve the target before touching the dashboard ──────────────────────
+    raw = raw_text or task
+    explicit = bool(_SUBDOMAIN_RE.search(raw))
+    existing: dict | None = None
+    if explicit or _EDIT_INTENT_RE.search(raw):
+        existing = _resolve_existing_site(raw)
+        if existing is None and not explicit and not _CREATE_INTENT_RE.search(raw):
+            # An edit of something we cannot identify. Guessing produces a new
+            # site at a nonsense subdomain, so ask rather than invent. The
+            # handler has already said "I'll get my engineer on it", hence the
+            # lead-in.
+            sites = [d["subdomain"] for d in _known_deployments()]
+            if sites:
+                wa_ai.send_reply(
+                    WA_BRIDGE_URL, group_jid,
+                    "hold up — which site do you want changed? I've got: "
+                    + ", ".join(sites[:12])
+                    + "\n(or just say the full url and I'll go straight there)")
+                logger.info("clawbot: edit with no resolvable target for %r", raw[:100])
+                return
+    if existing is None:
+        # Phrased as a build, but if the name we picked is already live it is
+        # still an edit — otherwise a fresh scaffold overwrites whatever is
+        # sitting on that subdomain today.
+        existing = next((d for d in _known_deployments()
+                         if d["subdomain"] == (subdomain or "").strip().lower()), None)
+    if existing:
+        subdomain = existing["subdomain"]
+        logger.info("clawbot: edit mode for %s (project=%r)",
+                    subdomain, existing.get("project"))
 
     # Create job in dashboard — get back a job ID + URL
     job_id = ""
@@ -1862,6 +2032,11 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
 
     job_url = f"{_JOBS_API}" + (f"?job={job_id}" if job_id else "")
     wa_ai.send_reply(WA_BRIDGE_URL, group_jid, f"🛠️ Track progress: {job_url}")
+    # Say out loud which site is being touched. A wrong guess is then obvious in
+    # the group instead of showing up as a mystery site nobody asked for.
+    if existing:
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid,
+                         f"✏️ editing the existing {existing['url']} — not building a new one")
 
     def _patch(status: str, logs: str = "", result_url: str = "") -> None:
         if not job_id:
@@ -1873,20 +2048,42 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
         except Exception as e:
             logger.warning("clawbot: patch job failed: %s", e)
 
-    _patch("running", f"🚀 Starting job — deploying to {subdomain}.buildanator.com" if subdomain else "🚀 Starting job")
+    if not subdomain:
+        _patch("running", "🚀 Starting job")
+    elif existing:
+        _patch("running", f"✏️ Editing existing site {subdomain}.buildanator.com")
+    else:
+        _patch("running", f"🚀 Starting job — deploying to {subdomain}.buildanator.com")
 
-    prompt = task
-    if subdomain:
-        prompt += f". Deploy to {subdomain}.buildanator.com"
+    if existing:
+        proj = (existing.get("project") or "").strip("./ ")
+        hint = (f" Its source is most likely ~/.openclaw/workspace-engineer/{proj}"
+                f" or ~/{proj} —" if proj else "")
+        prompt = (
+            f"{task}\n\n"
+            f"IMPORTANT: https://{subdomain}.buildanator.com ALREADY EXISTS and is "
+            f"live. This is an edit to that existing site, not a new project."
+            f"{hint} check {_DEPLOY_REGISTRY} to confirm the project directory, "
+            f"then change that source in place and redeploy it with "
+            f"`lab-ship <dir> {subdomain}` (idempotent — it replaces the running "
+            f"container on the same URL). Do NOT scaffold a new project, and do "
+            f"NOT deploy to any other subdomain.")
+    else:
+        prompt = task
+        if subdomain:
+            prompt += f". Deploy to {subdomain}.buildanator.com"
 
     # Write output to a temp file on remote so SSH closes as soon as openclaw
     # exits — otherwise lab-ship's persistent server keeps the pipe open forever.
-    import uuid as _uuid
-    job_id = _uuid.uuid4().hex[:12]
-    out_file = f"/tmp/claw-{job_id}.json"
-    # Each build job gets its own session key so it starts with a clean context
-    # instead of inheriting 460+ messages from the shared main session.
-    session_key = f"agent:engineer:job-{job_id}"
+    # Keep this separate from job_id: reassigning that one broke every later
+    # _patch(), so the dashboard never saw a job reach "done".
+    run_id = _uuid.uuid4().hex[:12]
+    out_file = f"/tmp/claw-{run_id}.json"
+    # One session per site for edits, so the engineer still remembers the project
+    # it built last time. A brand new site gets a fresh key instead of inheriting
+    # 460+ messages from the shared main session.
+    session_key = (f"agent:engineer:site-{subdomain}" if existing
+                   else f"agent:engineer:job-{run_id}")
     remote_cmd = (
         f"/home/ai/.npm-global/bin/openclaw agent -m {shlex.quote(prompt)}"
         f" --agent engineer --session-key {shlex.quote(session_key)}"
@@ -1967,15 +2164,21 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str) -> None:
         if len(first) > 10:
             summary = first[:180]
 
+    done_label = "✅ updated —" if existing else "✅ engineer's done —"
     if result_url and summary:
-        final_msg = f"✅ engineer's done — {result_url}\n\n{summary}"
+        final_msg = f"{done_label} {result_url}\n\n{summary}"
     elif result_url:
-        final_msg = f"✅ engineer's done — {result_url}"
+        final_msg = f"{done_label} {result_url}"
     else:
         final_msg = f"✅ done! {summary or answer_text[:200]}"
     wa_ai.send_reply(WA_BRIDGE_URL, group_jid, final_msg)
+    if not existing and result_url:
+        # A new site just appeared. Drop the cache so "update the X site" a
+        # minute later resolves to it instead of inventing a second one.
+        _invalidate_deploy_cache()
 
-    logger.info("clawbot: job done in %dm%ds for task %r", elapsed // 60, elapsed % 60, task[:40])
+    logger.info("clawbot: %s done in %dm%ds for task %r",
+                "edit" if existing else "job", elapsed // 60, elapsed % 60, task[:40])
 
 
 _ASK_CLAW_RE = _re.compile(r"^\s*(?:ask\s+claw|hey\s+claw|hey\s+cl[ao]w|@claw|claw\s*[,:])\b[,:]?\s*", _re.IGNORECASE)
@@ -2111,12 +2314,20 @@ def _extract_subdomain(text: str) -> str:
     m2 = _re.search(r'\b(?:called|named)\s+([a-z][a-z0-9-]{1,38})\b', text, _re.IGNORECASE)
     if m2:
         return m2.group(1).lower()[:30]
-    # Only derive from longer meaningful words — avoids slang like "bro", "man"
+    # Only derive from longer meaningful words — avoids slang like "bro", "man".
+    # The edit verbs belong here as much as the create verbs: without them
+    # "update the gta6 countdown site" picked "update" and shipped a new site.
     words = _re.findall(r"[a-zA-Z]{4,}", text)
     skip = {"make","build","create","deploy","ship","launch","website","site",
             "app","tool","page","that","with","and","the","for","you","its",
             "tell","your","engineer","have","want","need","just","like","this",
-            "single","whole","world","about","every","time","visit","grows","live"}
+            "single","whole","world","about","every","time","visit","grows","live",
+            # edit verbs — an edit is never its own site name
+            "update","updated","updates","edit","edits","change","changed",
+            "changes","modify","modified","rebuild","redo","redesign","restyle",
+            "tweak","tweaks","improve","adjust","rename","remove","delete",
+            "swap","replace","again","also","please","from","into","then","when",
+            "same","more","less","dark","mode","instead","should","would","could"}
     slug = next((w.lower() for w in words if w.lower() not in skip), "squad-build")
     return slug[:30]
 
@@ -2406,7 +2617,11 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         subdomain = build_args.get("subdomain") or _extract_subdomain(prompt)
         _wa_typing(group_jid, False)
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
-        _threading.Thread(target=_run_clawbot_job, args=(task, subdomain, group_jid), daemon=True).start()
+        # Pass the member's own words too: the model's rewritten `task` often
+        # drops the site name that tells us this is an edit.
+        _threading.Thread(target=_run_clawbot_job,
+                          args=(task, subdomain, group_jid, prompt),
+                          daemon=True).start()
         logger.info("wa_ai: build via tool-path subdomain=%r", subdomain)
         return
 
