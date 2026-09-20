@@ -1,0 +1,602 @@
+[
+  {
+    "hash": "afd07de0dbf90094acd8768ad4f03eb053b5e9f6",
+    "date": "2026-09-20T18:30:42+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(docker): collapse git-meta python one-liner to avoid Dockerfile parse error"
+  },
+  {
+    "hash": "42dfa7ce963b13961de4964fef1dc5a4411d2554",
+    "date": "2026-09-20T18:26:19+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(memory): timestamp normalization + app events git manifest + source filter"
+  },
+  {
+    "hash": "3f3026f682713b362aa0dea978f002039bb4f110",
+    "date": "2026-09-20T18:04:35+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(memory): durable stores for coach, app_events, watchparty_events + real adapters"
+  },
+  {
+    "hash": "10e1d92837e6021e520e4229d741725eda8c9c09",
+    "date": "2026-09-20T17:50:59+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(memory): expand source coverage to 7 namespaces + per-source status"
+  },
+  {
+    "hash": "b8c69f6556e597c02297cbd00e71b7768f69ec79",
+    "date": "2026-09-20T17:39:16+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(memory): audit_write missing result arg + last_index_run persistence"
+  },
+  {
+    "hash": "f9ca03493f64ae72644e044f3e21accfc07c84c5",
+    "date": "2026-09-20T17:30:24+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(memory): semantic search layer over WhatsApp, PSN clips, and facts"
+  },
+  {
+    "hash": "77ea22de691e10978f57412585e82d69ea1dcad8",
+    "date": "2026-09-20T14:03:59+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "docs(ux): the six handoff documents, with the honest gaps"
+  },
+  {
+    "hash": "ed7d70928809c8cef1fb4471e010d1b997505867",
+    "date": "2026-09-20T13:50:46+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(app): a React interface at /app, additive and opt-in"
+  },
+  {
+    "hash": "be017bcb632e38fa138aafbbac0315d6dcb6e3d5",
+    "date": "2026-09-20T13:01:47+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(ui): deep links, duplicate sends, dead panels, and Host-header auth"
+  },
+  {
+    "hash": "d2804eff089d7f39c50813e1561c6a23a4bec7c2",
+    "date": "2026-09-20T11:08:34+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(wa): stop cutting build briefs off at 400 characters"
+  },
+  {
+    "hash": "479ffa875dd4157e8fb6633a3715762a7de12fda",
+    "date": "2026-09-20T11:00:48+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): strip <tool_call> leak and ban controller-hosted deploys"
+  },
+  {
+    "hash": "eb2b209ff245d48787d2c3486c00b93a656324c7",
+    "date": "2026-09-20T08:59:15+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(summary): stop attributing the bot's conversations to members"
+  },
+  {
+    "hash": "5d83b837f0b9e9e6ac7145cbffe82b6040716f03",
+    "date": "2026-09-20T08:33:18+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): a build request must never end in nothing"
+  },
+  {
+    "hash": "f0d2ed05fe45849fba18ba591081dffeade84eed",
+    "date": "2026-09-20T08:23:43+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(mcp)!: clawbot_build is a write tool \u2014 read-only means read-only"
+  },
+  {
+    "hash": "2e5dbd36283a1547a4a2d5cd5129cdac661626ac",
+    "date": "2026-09-20T07:01:15+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): one code path for builds, and no more double dispatch"
+  },
+  {
+    "hash": "6712f2597cd6d2cc42d4e688196f98286d818ab7",
+    "date": "2026-09-20T06:51:29+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): edit the existing site instead of deploying a new one"
+  },
+  {
+    "hash": "c84c6932bc4b63b38fabd2ed54d203f0c6cebab8",
+    "date": "2026-09-20T06:20:21+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "chore: rename psn-messenger references to crcmz-app"
+  },
+  {
+    "hash": "a5e0e64a04a85f0a8bf76cf57db26012a0039422",
+    "date": "2026-09-20T01:29:17+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "docs: document PSN auto-refresh logic in README"
+  },
+  {
+    "hash": "a605cc7e328aeb241eeed6daacdda68e9c6daead",
+    "date": "2026-09-20T01:25:59+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "docs: revamp README to reflect current app"
+  },
+  {
+    "hash": "17bce8109b9b38bf78c9f7e4c36bc58fdc70b647",
+    "date": "2026-09-20T00:46:24+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(dm): fall back to whatsapp_messages for JID when tag unset"
+  },
+  {
+    "hash": "3418986149e13ed002053b01fe3f015c02c351e4",
+    "date": "2026-09-20T00:41:55+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(dm-relay): WhatsApp DM relay via Baileys bot"
+  },
+  {
+    "hash": "b98d1ccfaf29ffb49ee2b4422ca1abb2830998e1",
+    "date": "2026-09-19T15:37:57+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Add send_mattermost_channel_message MCP tool"
+  },
+  {
+    "hash": "d362c096bdee13391bb1bfc9898c6e7eb169d920",
+    "date": "2026-09-19T15:31:03+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Revert to popup with polling (5a827b3)"
+  },
+  {
+    "hash": "59631d78f7c40041f75d2d0e418aa2ba83c55a95",
+    "date": "2026-09-19T15:28:43+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Switch back to popup for Mattermost OAuth connect"
+  },
+  {
+    "hash": "34fa3065f800e710a86d3c0a4fc99989ffdc6c83",
+    "date": "2026-09-19T15:25:17+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Defer mm=linked settings open to DOMContentLoaded"
+  },
+  {
+    "hash": "e307b5f8e3c73e9f94c1ef81b63f7ec10becdb0a",
+    "date": "2026-09-19T15:23:08+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Switch back to full-page redirect for Mattermost OAuth"
+  },
+  {
+    "hash": "26afd84281a3f5bfc08301701b213dc18e4d4f74",
+    "date": "2026-09-19T15:15:48+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Poll for Mattermost link status instead of relying on postMessage"
+  },
+  {
+    "hash": "5a827b3d65f9ca59df1459290deff1223f708b85",
+    "date": "2026-09-19T15:12:42+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Switch Mattermost OAuth connect back to popup window"
+  },
+  {
+    "hash": "5b6f9e613fd98a2c9fc7626da34d7da4f33f2b22",
+    "date": "2026-09-19T15:10:29+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Fix missing httpx import in Mattermost OAuth callback"
+  },
+  {
+    "hash": "0701eed0a41c140a5beec828336b65c072928e23",
+    "date": "2026-09-19T15:09:10+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Fix Mattermost OAuth token exchange errors"
+  },
+  {
+    "hash": "5c3228c1eb61bae7c387502f4fc976210627f24c",
+    "date": "2026-09-19T15:06:35+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Switch Mattermost OAuth connect to full-page redirect"
+  },
+  {
+    "hash": "80409bb3be37bc13926bc63297329af04e868b2b",
+    "date": "2026-09-19T14:52:09+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Add per-user Mattermost OAuth linking"
+  },
+  {
+    "hash": "338e7cca4dc5830f178b78a01c619207fc56b925",
+    "date": "2026-09-19T14:25:05+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(tools): expose email in person_profile identity block"
+  },
+  {
+    "hash": "7b53cf4b496b1f8c9d7598c0d3760cb097b9dbd8",
+    "date": "2026-09-19T13:45:20+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Fix MCP send_psn_group_message using wrong group"
+  },
+  {
+    "hash": "ff5df2a9adf7c865379b3671065cc5ceddac4eab",
+    "date": "2026-09-19T13:38:48+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "Read GROUP_ID env var for PSN squad group ID"
+  },
+  {
+    "hash": "761851f74955f957da4bc837c6aee198f2b3ccde",
+    "date": "2026-09-19T13:34:25+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(mcp): drop emoji from message attribution"
+  },
+  {
+    "hash": "84e69534b4ee2d2dc065c812916874186d690424",
+    "date": "2026-09-19T13:33:04+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(mcp): change message attribution format to [via/DM from <name>] + \ud83e\udd16"
+  },
+  {
+    "hash": "d0d675413fffc8ccf884482305654b68ac83fbfd",
+    "date": "2026-09-19T13:31:43+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(mcp): use display_name not name for caller attribution"
+  },
+  {
+    "hash": "8985da2c38e7f6e24713580c356f6b2c5fdeba6e",
+    "date": "2026-09-19T13:30:08+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "revert(oauth): remove done relay page, restore direct redirect"
+  },
+  {
+    "hash": "d644e55040816c78fa14b19840136cb8c9dec430",
+    "date": "2026-09-19T13:27:39+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(oauth): success relay page with graceful fallback"
+  },
+  {
+    "hash": "e7738e61a055360cfdec3076992c65992d283c56",
+    "date": "2026-09-19T13:24:09+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(oauth): add dynamic client registration (RFC 7591)"
+  },
+  {
+    "hash": "04e2a3e0c69b22c7c1fa18f7cc830152165b95c2",
+    "date": "2026-09-19T13:19:39+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(settings): MCP tab shows setup steps and copyable config"
+  },
+  {
+    "hash": "eac3d48025c15298d3d8f6988c289a34a263ad69",
+    "date": "2026-09-19T13:10:26+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(settings): add MCP tab to account settings"
+  },
+  {
+    "hash": "10b009646ac5086eba501c61b0d23579fd665807",
+    "date": "2026-09-19T12:59:12+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(mcp): per-user OAuth tokens with write access (all 4 phases)"
+  },
+  {
+    "hash": "56b1d2e82aaa67d595fa84498ae0e81379e868d7",
+    "date": "2026-09-19T11:37:02+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(games): record what the squad plays, and expose it as data"
+  },
+  {
+    "hash": "7de4752b015c52bb474a7d2a9e9a99448f877dbf",
+    "date": "2026-09-19T11:03:09+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(identity): fill an unset psn_id tag from the portal's PSN link"
+  },
+  {
+    "hash": "d25ff05fa3a642c9c80f58dfaab9e0a4e0bc9a12",
+    "date": "2026-09-19T10:26:49+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "test(mcp): fail the build when a data store has no tool"
+  },
+  {
+    "hash": "73fb162da6fc673c1d465f654ebc876e9dcccae3",
+    "date": "2026-09-19T10:24:20+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(mcp): expose the assistant's tools as an MCP server"
+  },
+  {
+    "hash": "921fbb19f51efcf53e19eba6232af02978d2b0aa",
+    "date": "2026-09-19T10:14:12+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(identity): attribute the bot's own messages to CRCMZ Bot"
+  },
+  {
+    "hash": "dbce481bbe43c13034fe471396b5b6cb94e0344d",
+    "date": "2026-09-19T10:05:06+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(identity): join WhatsApp messages by name, since wa_jid cannot"
+  },
+  {
+    "hash": "19bf1b77f0703320808fe022fd315bb55b51c64d",
+    "date": "2026-09-19T10:02:23+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(identity): cross-system identity graph from Zitadel tags"
+  },
+  {
+    "hash": "15bcf9b851d368403230a0ef3838161868a867ed",
+    "date": "2026-09-19T08:52:27+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): detect edit requests and honour promised builds"
+  },
+  {
+    "hash": "44014826946b8107183a97bc97171a666bbcd112",
+    "date": "2026-09-19T08:43:16+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot-ask): auto-reset session on timeout + fuzzy trigger matching"
+  },
+  {
+    "hash": "d11a972e034980280bd141f138fc187247106768",
+    "date": "2026-09-19T07:58:43+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(admin): use correct Zitadel user id field (id not userId)"
+  },
+  {
+    "hash": "bda98290fb4afb3ff923673470d7c105218a8ada",
+    "date": "2026-09-19T07:53:58+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(auth): allow setting password on accounts with no existing password"
+  },
+  {
+    "hash": "6d6cbc670f4657d43d5913de48aacf9db6e62eff",
+    "date": "2026-09-19T07:28:34+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot-job): isolate each build in its own session key"
+  },
+  {
+    "hash": "546585b95062691bb0fe9b07edde795452d210fe",
+    "date": "2026-09-19T07:23:52+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot-job): strip openclaw truncation warning from build completion message"
+  },
+  {
+    "hash": "4ff63c3293db2e40d9fc875a327127e19aa6fdec",
+    "date": "2026-09-19T06:53:37+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot-ask): auto-continue on truncation; redirect build intents to job"
+  },
+  {
+    "hash": "06b4b95c526b18ac80ec4c3c49804e63630dc906",
+    "date": "2026-09-18T01:59:47+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(clawbot): persistent session per group with 2h inactivity reset"
+  },
+  {
+    "hash": "894bd899c10feeac2703a643bac017e44ed7293d",
+    "date": "2026-09-18T01:52:42+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): parse result.payloads[0].text from openclaw JSON response"
+  },
+  {
+    "hash": "9eb5c8f3ccee9ce6fdc811086bbc37067985fc36",
+    "date": "2026-09-18T01:50:27+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "debug(clawbot-ask): log raw stdout to diagnose empty response"
+  },
+  {
+    "hash": "cbd7910accf5cf4c4502bf1d06bc2bc7fd5eb6b2",
+    "date": "2026-09-18T01:46:39+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot-ask): add --agent engineer flag to avoid 'no explicit owner' error"
+  },
+  {
+    "hash": "940f7d20a6ed0b68092c212fdebeef64faf8b70b",
+    "date": "2026-09-18T01:40:01+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(clawbot): add 'ask claw' trigger for general Clawbot questions"
+  },
+  {
+    "hash": "e30013baa870bafc38b88bbdc559b22f4ed94bc5",
+    "date": "2026-09-17T23:56:38+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(build): actually run clawbot job when AI calls clawbot_build tool"
+  },
+  {
+    "hash": "a1b562adad3d531302e9410f747fd098aa027150",
+    "date": "2026-09-17T23:52:44+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(build): require article before 'engineer' to avoid false trigger"
+  },
+  {
+    "hash": "881dcba0f9c389c7911444614d36c2e228e9ba5f",
+    "date": "2026-09-17T22:53:27+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(wa): raise MAX_REPLY_CHARS from 900 to 4000"
+  },
+  {
+    "hash": "d8c30c64de4a87fd599015802e82761284dc5f1d",
+    "date": "2026-09-17T21:24:34+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(tts): transcode Kokoro's OGG Vorbis to real OGG Opus for iOS"
+  },
+  {
+    "hash": "318bdb22dad05df47129becda2aceba23bf3ce1b",
+    "date": "2026-09-17T21:18:23+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(tts): request opus format so voice notes play on iOS"
+  },
+  {
+    "hash": "335d25a5024b9608532b7e914f8a195d0d4630a5",
+    "date": "2026-09-17T20:55:57+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(typing): show indicator immediately for summarize and build paths"
+  },
+  {
+    "hash": "dc45854d09fc0b65487663f1e5ddde275ca17464",
+    "date": "2026-09-17T20:24:48+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): accumulate job logs so they don't disappear + more verbose server logging"
+  },
+  {
+    "hash": "2a49197cd7b397cbba24c411a576a70b50da3475",
+    "date": "2026-09-17T20:19:52+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): extract subdomain from 'called X' / 'named X' in build prompt"
+  },
+  {
+    "hash": "8d8d6a1d6a9219e648848ca23fe7edb7b0166f86",
+    "date": "2026-09-17T20:11:32+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(wa): build requests take priority over summarize trigger; tighten summarize regex"
+  },
+  {
+    "hash": "707b952c34ef898c2ce44cf0b146d02135b3c1e5",
+    "date": "2026-09-17T18:48:33+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(summarize): use gemma (non-reasoning) + typing keepalive loop"
+  },
+  {
+    "hash": "7f2f19f66df7e406af0e5bb9cb939d7817465c6b",
+    "date": "2026-09-17T18:42:03+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(summarize): use assistant prefill to prevent thinking preamble"
+  },
+  {
+    "hash": "785bd36aa9d7ee9988679b94edad4d15805e7d1f",
+    "date": "2026-09-17T18:37:50+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(summarize): plain prose output + disable thinking, remove audio rewrite pass"
+  },
+  {
+    "hash": "894067cee03724a1c49e8332241e5fea1ecee9c8",
+    "date": "2026-09-17T18:33:40+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(summarize): force bullet-first output, strip numbered reasoning blocks"
+  },
+  {
+    "hash": "4ea78f0cc35c1eb48dbd1772a963fa9a4715bda9",
+    "date": "2026-09-17T18:31:57+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(wa): show typing indicator during summarize flow"
+  },
+  {
+    "hash": "77ceedc6085787ca7a781e228a778689706de577",
+    "date": "2026-09-17T18:30:05+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(summarize): always send both audio voice note and text summary"
+  },
+  {
+    "hash": "96dd4d99911d4bc5cec0e4460974eec7913f72a2",
+    "date": "2026-09-17T18:28:50+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(tts): rewrite summary as full spoken prose, keep all content"
+  },
+  {
+    "hash": "2d5100679ccb1b0459608fbc6f850823d0217996",
+    "date": "2026-09-17T18:27:35+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(tts): convert bullets to short spoken sentences before TTS"
+  },
+  {
+    "hash": "172d40679bace196e548d7cafc74c8ebd2c170dd",
+    "date": "2026-09-17T18:14:19+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(tts): wire _tts_and_send to Kokoro server at WA_TTS_URL"
+  },
+  {
+    "hash": "a8ba78c115c8e179f143cb5feac205b329a9f8f2",
+    "date": "2026-09-17T18:04:28+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(summarize): force bullet-only output to stop thinking preamble leaking"
+  },
+  {
+    "hash": "a0ed271842e2efbeb7acf5ea9f4be84fde092093",
+    "date": "2026-09-17T18:01:27+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(summarize): suppress model thinking output in chat summary"
+  },
+  {
+    "hash": "75084346fcbf5d894d78bb3a810f84c228949542",
+    "date": "2026-09-17T17:55:07+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(summarize): replace REGEXP with LIKE (SQLite has no REGEXP by default)"
+  },
+  {
+    "hash": "2ddd412850aee53f8db75d77bd1e89cd6523f936",
+    "date": "2026-09-17T17:52:55+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(summarize): exclude the trigger message when finding sender's last message"
+  },
+  {
+    "hash": "11ccf12284ab2859be5074f87e2be41035ad6e33",
+    "date": "2026-09-17T17:47:57+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(wa): chat summary \u2014 @crcmz-bot summarize/catch me up"
+  },
+  {
+    "hash": "a3bbf147d6eed80aa0e391df9ac593c06bfe794e",
+    "date": "2026-09-17T17:13:55+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(diagnostic): _config() returns (base, model, key) \u2014 use index [1] for model"
+  },
+  {
+    "hash": "ae56418ba051891d4a79d38a17a43f9e2183ebaf",
+    "date": "2026-09-17T17:11:17+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(server): escape \\+ in JS regex inside Python strings (SyntaxWarning)"
+  },
+  {
+    "hash": "6e0e747afdcb0dcf24273803de32e15f0c75fc70",
+    "date": "2026-09-17T17:08:48+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(wa): resolve @number\u2192@Name in inbound prompts; creator mode single-use"
+  },
+  {
+    "hash": "91a39f1809b5618037da8dd07e9ff184084c002e",
+    "date": "2026-09-17T17:04:49+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(wa): creator diagnostic mode \u2014 \"i am your creator\" unlocks diagnostics"
+  },
+  {
+    "hash": "535a7bd477e75c50be00b1c5cd0debad92535de6",
+    "date": "2026-09-17T17:02:24+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "chore: switch Hasaan to Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit"
+  },
+  {
+    "hash": "51dc036a44af795e9df77532202999cf51365224",
+    "date": "2026-09-17T10:26:37+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): better completion message with engineer summary and URL"
+  },
+  {
+    "hash": "b7f5404b253c357847da3e9889eddd8b928388e5",
+    "date": "2026-09-17T10:24:11+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): catch engineer delegation phrases, tighten subdomain fallback"
+  },
+  {
+    "hash": "d349bb982dd78de15f7edb1babaf6ca23b70158d",
+    "date": "2026-09-17T09:47:10+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): write openclaw output to remote file to prevent SSH hang"
+  },
+  {
+    "hash": "96ffbc6616d171135b7ddf9139df387eb999eaaa",
+    "date": "2026-09-17T09:30:49+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): add ssh -n to prevent pipe hang from remote child processes"
+  },
+  {
+    "hash": "9cac5c1971474477c925fa6a7feae033f5e38649",
+    "date": "2026-09-17T09:13:59+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(server): use _re alias in _SUBDOMAIN_RE (re is imported as _re)"
+  },
+  {
+    "hash": "9bc22bbfc4536ef56583239ca7607723847770c6",
+    "date": "2026-09-17T09:05:55+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(clawbot): bypass tool calling for build requests (oMLX ignores tool_choice)"
+  },
+  {
+    "hash": "8ab2e192dafe4e1ba2af319588c7f25b8ebdd880",
+    "date": "2026-09-17T09:03:58+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(assistant): use tool_choice=required for build requests (oMLX compat)"
+  },
+  {
+    "hash": "d07e5bc8cc095e7ed1c8dc243378785a412b07e3",
+    "date": "2026-09-17T08:52:21+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "fix(assistant): force clawbot_build tool for build requests"
+  },
+  {
+    "hash": "7ed6856cf0744ce42cc0a25e4d53e59c2e3692e7",
+    "date": "2026-09-17T08:45:19+00:00",
+    "author": "opencode-agent[bot]",
+    "subject": "feat(clawbot): replace WA edit checklist with jobs.buildanator.com API"
+  }
+]
