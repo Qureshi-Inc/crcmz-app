@@ -1225,10 +1225,25 @@ def _send_wa_dm(to: str, message: str, caller: dict) -> dict:
 
     jid = person.get("wa_jid", "")
     if not jid:
+        # Fall back to the most recent sender_jid for any of this person's known
+        # WhatsApp names — Baileys populates this even when the tag isn't set.
+        try:
+            import sqlite3 as _sq
+            wa_names = person.get("wa_names") or []
+            if wa_names:
+                placeholders = ",".join("?" * len(wa_names))
+                row = _sq.connect("/data/whatsapp.db").execute(
+                    f"SELECT sender_jid FROM whatsapp_messages "
+                    f"WHERE sender_name IN ({placeholders}) AND sender_jid IS NOT NULL "
+                    f"ORDER BY timestamp DESC LIMIT 1",
+                    wa_names,
+                ).fetchone()
+                jid = row[0] if row else ""
+        except Exception:  # noqa: BLE001
+            pass
+    if not jid:
         return {"ok": False,
-                "error": f"{person.get('name', to)} has no known WhatsApp JID — "
-                         "DMs require a live group member whose JID has been learned "
-                         "from the WhatsApp bridge."}
+                "error": f"{person.get('display_name', to)} has no known WhatsApp JID."}
 
     bridge_url = os.environ.get("WA_BRIDGE_URL", "")
     if not bridge_url:
