@@ -16,11 +16,24 @@ import { Button, Card, cx } from './index'
  * space is reserved so the layout does not jump when data lands (CLS), and the shape
  * tells the user what to expect.
  */
-export function SkeletonRows({ rows = 3, className }: { rows?: number; className?: string }) {
+export function SkeletonRows({
+  rows = 3,
+  /**
+   * Match the real row's height. The point of a skeleton is to reserve the space the
+   * content will take; a placeholder that is the wrong height is a layout shift with
+   * extra steps.
+   */
+  height = 68,
+  className,
+}: {
+  rows?: number
+  height?: number
+  className?: string
+}) {
   return (
     <div className={cx('flex flex-col gap-2', className)} aria-hidden="true">
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="skeleton h-[68px]" />
+        <div key={i} className="skeleton" style={{ height: `${height}px` }} />
       ))}
     </div>
   )

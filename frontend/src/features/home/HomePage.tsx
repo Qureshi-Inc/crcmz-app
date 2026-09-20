@@ -68,7 +68,9 @@ export function HomePage() {
         </SectionHeading>
 
         {squad.isPending && !squad.data ? (
-          <SkeletonRows rows={4} />
+          // 7 rows at the real row height: the squad is seven people, and a member row is
+          // two lines of text plus a 44px avatar inside py-3, which measures ~72px.
+          <SkeletonRows rows={7} height={72} />
         ) : squad.isError && !squad.data ? (
           <SectionError error={squad.error} what="the squad" onRetry={() => void squad.refetch()} />
         ) : squad.data?.error ? (

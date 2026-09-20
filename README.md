@@ -34,8 +34,15 @@ app.crcmz.me (Cloudflare) → Coolify reverse proxy → this container (port 300
 ```
 
 **Auth:** Zitadel at `auth.crcmz.me`. Sessions are signed cookies (itsdangerous).
-The session middleware only enforces auth when `Host == PORTAL_PUBLIC_HOST` — LAN/Tailnet
-requests bypass it, so any new private endpoint needs its own check.
+`SESSION_SECRET` is mandatory: without it the app answers 503 on the public host rather
+than signing cookies with a guessable key.
+
+The middleware enforces auth when `Host == PORTAL_PUBLIC_HOST`. A request for any other
+Host may skip it, but only if it *also* comes from a genuinely local address
+(loopback/RFC1918/link-local/Tailscale) and was not relayed by a proxy — the Host header
+alone is caller-supplied and is not a credential. `CRCMZ_MACHINE_TOKEN` is the explicit
+alternative. Any new private endpoint still needs its own check. Detail in
+`docs/ux/ROUTES.md`.
 
 **Data:** Everything lives in `/data/` (mounted volume). SQLite for structured data,
 JSON for small config. See the table below.
@@ -139,6 +146,7 @@ Requires: Baileys bridge (`whatsapp-worker`) redeployed with DM forwarding enabl
 | Var | Default | Purpose |
 |---|---|---|
 | `PORTAL_PUBLIC_HOST` | `app.crcmz.me` | Host header used to enforce session auth |
+| `CRCMZ_MACHINE_TOKEN` | — | Explicit credential for machine callers (Stream Deck, scripts), over any Host. The migration path off the private-network bypass — see `docs/ux/ROUTES.md` |
 | `ZITADEL_ISSUER` | `https://auth.crcmz.me` | Zitadel OIDC issuer |
 | `OLLAMA_BASE_URL` | — | Local LLM base URL (OpenAI-compatible) |
 | `OLLAMA_MODEL` | `llama3.2` | Model name for the AI assistant |
@@ -204,19 +212,61 @@ After any config change to env vars: **Restart** (not redeploy) is enough unless
 
 ---
 
+## The web interface
+
+Two interfaces are served:
+
+| Path | What |
+|---|---|
+| `/`, `/dashboard` | the original dashboard, inlined in `server.py`. **Still the default.** |
+| `/app` | a React + TypeScript interface in `frontend/`, built into the image |
+
+`/app` is additive and opt-in — nothing redirects to it and no existing route changed. See
+**`docs/ux/STATUS.md`** for what is migrated, what is not, and why; `docs/ux/RELEASE.md`
+for deploying it and for the gates on switching the default.
+
+Watch Party and Huddle are **not** migrated: `/app/watch` and `/app/huddle` hand off to the
+classic interface.
+
+```bash
+cd frontend
+npm ci
+npm run build       # tsc then vite; the Dockerfile runs this in a build stage
+npm run dev         # component work; API calls proxy to CRCMZ_BACKEND
+```
+
+Two traps, both of which were live bugs:
+
+* Use `text-sm`, never `text-[var(--text-sm)]` — Tailwind cannot tell a length from a
+  colour inside `var()`, so the arbitrary form compiles to `color:` and silently removes
+  the font size *and* the text colour.
+* `to()` in `app/routes.ts` returns **router-relative** paths. `basename` is `/app`, so
+  returning `/app/clips` gives `href="/app/app/clips"`.
+
+---
+
 ## Running tests
 
 ```bash
-# No app deps needed — runs on host
-python3 tests/test_mcp_coverage.py
-
-# Needs app image built
-python3 tests/test_mcp_oauth.py
+tests/run-all.sh                          # every Python suite
+tests/run-all.sh test_auth_gate           # one suite
+tests/browser/run.sh dashboard.spec.mjs   # the legacy dashboard, real browser
+tests/browser/run.sh app.spec.mjs         # the React interface
+tests/browser/run.sh a11y.spec.mjs        # axe-core over every screen
+node tests/browser/contrast.mjs           # colour contrast, computed from the tokens
 ```
 
-`test_mcp_coverage.py` enforces the rule: every `/data/` store referenced in source
-must be declared with its tool (or `None` with a reason). Build fails if a new store
-is added without updating it.
+**Do not run the Python suites directly on the host.** Every module hardcodes its store
+under `/data`, `/data` here is root-owned, and nine suites die at boot with `unable to open
+database file`. `tests/run-all.sh` runs them inside the app image with a tmpfs `/data`.
+
+The browser specs boot a throwaway container with a tmpfs `/data` and intercept every API
+call, so no test sends a message to a real PSN or WhatsApp group or mutates a real giveaway.
+
+Five suites have failed since before the UI work — each is listed with its cause in
+`docs/ux/VALIDATION.md`. `test_mcp_coverage.py` enforces the rule that every `/data/` store
+must be declared with its tool (or `None` with a reason); it currently fails because
+`/data/mm_tokens.db` has no entry.
 
 ---
 
