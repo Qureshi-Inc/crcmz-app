@@ -173,6 +173,39 @@ check("cache invalidation keeps the fallback list", lambda: (
                        "then report nothing deployed"))),
 )[-1])
 
+
+# ── One job per request ──────────────────────────────────────────────────────
+# The WhatsApp handler dispatches builds itself (it has the group and the
+# member's original wording). It used to do that *after* the tool had already
+# fired its own job, so one request built twice. `builds_deferred()` is the
+# contract that prevents it, and these checks fail if it is ever broken.
+import assistant  # noqa: E402
+
+
+def _deferred_tool_does_not_run_the_job():
+    with assistant.builds_deferred():
+        text, ok = assistant.call_tool("clawbot_build",
+                                       {"task": "make a site", "subdomain": "Some Site!"})
+    assert ok, text
+    payload = json.loads(text)
+    assert payload.get("deferred") is True, f"tool ran the job anyway: {payload}"
+    # Still normalises the subdomain, so the caller can trust the value.
+    assert payload.get("subdomain") == "some-site", payload
+
+
+def _deferral_does_not_leak():
+    assert assistant._BUILD_DEFERRED.get() is False, "flag leaked out of the block"
+    with assistant.builds_deferred():
+        assert assistant._BUILD_DEFERRED.get() is True
+    assert assistant._BUILD_DEFERRED.get() is False, "flag not reset on exit"
+
+
+check("deferred build only records the request", _deferred_tool_does_not_run_the_job)
+check("deferral is scoped to the block", _deferral_does_not_leak)
+check("clawbot_build is still exposed over MCP", lambda: (
+    None if "clawbot_build" in assistant.tool_names() else (_ for _ in ()).throw(
+        AssertionError("clawbot_build fell out of the registry"))))
+
 print(f"\n{PASSED} passed, {len(FAILED)} failed")
 for f in FAILED:
     print(f"  - {f}")

@@ -16,6 +16,8 @@ do anything but look.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -227,6 +229,30 @@ def _wa():
 AI_CONTROLLER_SSH = os.environ.get("AI_CONTROLLER_SSH", "ai@100.68.46.42")
 AI_CONTROLLER_KEY = os.environ.get("AI_CONTROLLER_KEY",
                                    "/home/opti3/.ssh/id_ed25519_aicontroller")
+
+# ── Who runs a build when the model asks for one ──────────────────────────────
+# The WhatsApp handler needs to own the job itself: it has the group to post
+# progress into, and the member's original wording (the model's rewritten `task`
+# often loses the site name). But it used to intercept clawbot_build *after* the
+# tool had already fired its own job, so one request produced two builds, two
+# dashboard entries and two deploys. This flag is how the handler says "I have
+# this one" — the tool then only records the request.
+_BUILD_DEFERRED = contextvars.ContextVar("crcmz_build_deferred", default=False)
+
+
+@contextlib.contextmanager
+def builds_deferred():
+    """Inside this block `clawbot_build` records the request instead of running it.
+
+    The caller is then responsible for dispatching the job itself (see
+    `server._run_clawbot_job`). Used by the WhatsApp path; every other caller —
+    MCP, the portal — leaves it off and the tool runs the job directly.
+    """
+    token = _BUILD_DEFERRED.set(True)
+    try:
+        yield
+    finally:
+        _BUILD_DEFERRED.reset(token)
 
 SLAP_BASE = os.environ.get("SLAP_API_BASE", "https://slap.qureshi.io/api/v1/dashboard")
 SITE_URL = os.environ.get("CRCMZ_SITE_URL", "https://crcmz.me")
@@ -519,8 +545,10 @@ def _web_search(query: str, limit: int = 6) -> Any:
 
 @tool("clawbot_build",
       "Build and deploy a website, app, or tool using the Clawbot engineer AI. "
-      "Use when someone in the group asks to build, make, create, or ship something — "
-      "a site, a tool, an app, a dashboard. Clawbot codes and deploys it autonomously. "
+      "Use when someone asks to build, make, create or ship something — a site, a "
+      "tool, an app, a dashboard — and ALSO when they ask to change, update or fix "
+      "one that already exists. Clawbot codes and deploys it autonomously; an edit "
+      "of a live site is applied in place on the same URL. "
       "After calling this tool your reply must be ONE short line: confirm you're getting "
       "the engineer on it. Do NOT mention a URL, do NOT say it's done — a follow-up "
       "message with the jobs dashboard link is sent automatically.",
@@ -534,97 +562,52 @@ def _web_search(query: str, limit: int = 6) -> Any:
        },
        "required": ["task", "subdomain"]})
 def _clawbot_build(task: str, subdomain: str) -> Any:
+    """Dispatch a build/edit to the engineer.
+
+    The job itself runs in `server._run_clawbot_job` — one code path for every
+    caller, so the "is this an edit of a site that already exists?" rules live in
+    exactly one place. `server` is imported lazily because `server` imports this
+    module at load time.
+    """
     import re as _re
     import threading as _thr
-    import shlex as _shlex
-    import subprocess as _sub
-    import uuid as _uuid
-    import time as _t
-    import json as _json
-    import httpx as _hx
 
     clean = _re.sub(r"[^a-z0-9-]", "-", subdomain.lower().strip()).strip("-")[:40] or "squad-build"
 
-    _JOBS_API = "https://jobs.buildanator.com"
-    job_id = ""
-    job_url = _JOBS_API
-    try:
-        r = _hx.post(f"{_JOBS_API}/jobs", json={"task": task, "subdomain": clean}, timeout=10)
-        r.raise_for_status()
-        job_id = r.json().get("id", "")
-        job_url = f"{_JOBS_API}?job={job_id}" if job_id else _JOBS_API
-    except Exception as e:
-        pass
+    if _BUILD_DEFERRED.get():
+        # The WhatsApp handler dispatches this one itself, with the group to post
+        # progress into and the member's original wording. Returning here is what
+        # stops a single request producing two builds.
+        logger.info("clawbot_build: deferred to the caller (subdomain=%r)", clean)
+        return {"ok": True, "deferred": True, "subdomain": clean,
+                "message": "Engineer is on it."}
 
-    def _patch(status: str, logs: str = "", result_url: str = "") -> None:
-        if not job_id:
-            return
-        try:
-            _hx.patch(f"{_JOBS_API}/jobs/{job_id}",
-                      json={"status": status, "logs": logs, "result_url": result_url},
-                      timeout=10)
-        except Exception:
-            pass
+    import server as _server   # lazy: server imports assistant at module load
 
-    def _run() -> None:
-        prompt = task + (f". Deploy to {clean}.buildanator.com" if clean else "")
-        run_id = _uuid.uuid4().hex[:12]
-        out_file = f"/tmp/claw-{run_id}.json"
-        remote_cmd = (
-            f"/home/ai/.npm-global/bin/openclaw agent -m {_shlex.quote(prompt)}"
-            f" --agent engineer --session-key {_shlex.quote('agent:engineer:job-' + run_id)}"
-            f" --json --timeout 7200"
-            f" > {out_file} 2>&1; echo $? > {out_file}.exit"
-        )
-        ssh_base = [
-            "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-n",
-            "-i", AI_CONTROLLER_KEY, AI_CONTROLLER_SSH,
-        ]
-        _patch("running", "🚀 SSH connected, engineer running…")
-        log_lines = ["🚀 SSH connected, engineer running…"]
-        proc = _sub.Popen(ssh_base + [remote_cmd], stdout=_sub.PIPE, stderr=_sub.PIPE, text=True)
-        start = _t.time()
-        last_patch = start
-        while proc.poll() is None:
-            _t.sleep(5)
-            elapsed = int(_t.time() - start)
-            if _t.time() - last_patch >= 60:
-                m, s = divmod(elapsed, 60)
-                log_lines.append(f"⏳ {m}:{s:02d} elapsed…")
-                _patch("running", "\n".join(log_lines))
-                last_patch = _t.time()
-            if elapsed > 25 * 60:
-                proc.kill()
-                break
-        try:
-            proc.communicate(timeout=10)
-        except Exception:
-            pass
-        try:
-            out = _sub.run(ssh_base + [f"cat {out_file}; rm -f {out_file} {out_file}.exit"],
-                           capture_output=True, text=True, timeout=30).stdout
-        except Exception:
-            out = ""
-        elapsed = int(_t.time() - start)
-        answer = ""
-        try:
-            data = _json.loads((out or "").strip())
-            payloads = (data.get("result") or {}).get("payloads") or []
-            answer = " ".join(p.get("text", "") for p in payloads if p.get("text")).strip()
-            if not answer:
-                answer = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
-        except Exception:
-            answer = (out or "").strip()[:400]
-        answer = _re.sub(r"\s*⚠️\s*Reply truncated[^\n]*", "", answer, flags=_re.IGNORECASE).rstrip()
-        m, s = divmod(elapsed, 60)
-        log_lines.append(f"✅ Finished in {m}:{s:02d}")
-        if answer and answer != "job finished":
-            log_lines.append(answer[:300])
-        result_url = f"https://{clean}.buildanator.com" if clean else ""
-        _patch("done", "\n".join(log_lines), result_url)
+    box: dict[str, str] = {}
+    ready = _thr.Event()
 
-    _thr.Thread(target=_run, daemon=True).start()
-    return {"ok": True, "job_url": job_url, "message": f"Engineer is on it — track at {job_url}"}
+    def _started(job_url: str = "", error: str = "") -> None:
+        box["job_url"] = job_url
+        box["error"] = error
+        ready.set()
+
+    _thr.Thread(
+        target=_server._run_clawbot_job,
+        kwargs={"task": task, "subdomain": clean, "group_jid": "",
+                "raw_text": task, "subdomain_explicit": True,
+                "on_started": _started},
+        daemon=True,
+    ).start()
+
+    # Wait only for the job to be *registered*, not finished: the first call of
+    # the day also reads the deployment registry over SSH, which is the slow bit.
+    ready.wait(timeout=45)
+    if box.get("error"):
+        return {"ok": False, "error": box["error"]}
+    job_url = box.get("job_url") or "https://jobs.buildanator.com"
+    return {"ok": True, "job_url": job_url,
+            "message": f"Engineer is on it — track at {job_url}"}
 
 
 @tool("whatsapp_stats",

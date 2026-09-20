@@ -1974,31 +1974,51 @@ _CREATE_INTENT_RE = _re.compile(
     _re.IGNORECASE)
 
 
-def _run_clawbot_job(task: str, subdomain: str, group_jid: str,
-                     raw_text: str = "") -> None:
+def _run_clawbot_job(task: str, subdomain: str, group_jid: str = "",
+                     raw_text: str = "", subdomain_explicit: bool = False,
+                     on_started=None) -> None:
     """SSH to ai-controller, run openclaw engineer, track via jobs.buildanator.com.
+
+    The one code path for every build and edit — WhatsApp, the portal, and the
+    `clawbot_build` MCP tool all land here, so the edit/create rules only exist
+    in one place.
 
     `subdomain` is only the caller's guess. When the message names a site that is
     already deployed, that site wins and the engineer is told to edit it in place.
     `raw_text` is the member's original message when `task` has been rewritten by
     the model — the site name often survives only in the original.
+    `subdomain_explicit` says the caller named the subdomain deliberately (the MCP
+    tool does), which suppresses the "which site?" question.
+    `group_jid` empty means no chat to report into (MCP, portal): every
+    `send_reply` below is then a no-op and `on_started` is the only channel back.
+    `on_started(job_url, error)` fires once the dashboard job exists, or with an
+    error when the request is refused before any job is created.
     """
     import shlex
     import subprocess
     import uuid as _uuid
     import httpx as _hx
 
+    def _started(job_url: str = "", error: str = "") -> None:
+        if on_started is None:
+            return
+        try:
+            on_started(job_url, error)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("clawbot: on_started callback failed: %s", e)
+
     # ── Resolve the target before touching the dashboard ──────────────────────
     raw = raw_text or task
-    explicit = bool(_SUBDOMAIN_RE.search(raw))
+    explicit = subdomain_explicit or bool(_SUBDOMAIN_RE.search(raw))
     existing: dict | None = None
     if explicit or _EDIT_INTENT_RE.search(raw):
         existing = _resolve_existing_site(raw)
         if existing is None and not explicit and not _CREATE_INTENT_RE.search(raw):
             # An edit of something we cannot identify. Guessing produces a new
-            # site at a nonsense subdomain, so ask rather than invent. The
-            # handler has already said "I'll get my engineer on it", hence the
-            # lead-in.
+            # site at a nonsense subdomain, so refuse rather than invent. In the
+            # group the handler has already said "I'll get my engineer on it",
+            # hence the lead-in; over MCP the caller gets the same answer as an
+            # error it can act on.
             sites = [d["subdomain"] for d in _known_deployments()]
             if sites:
                 wa_ai.send_reply(
@@ -2006,6 +2026,8 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str,
                     "hold up — which site do you want changed? I've got: "
                     + ", ".join(sites[:12])
                     + "\n(or just say the full url and I'll go straight there)")
+                _started(error="ambiguous target — say which site to change: "
+                               + ", ".join(sites[:12]))
                 logger.info("clawbot: edit with no resolvable target for %r", raw[:100])
                 return
     if existing is None:
@@ -2031,6 +2053,7 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str,
         logger.warning("clawbot: could not create job in dashboard: %s", e)
 
     job_url = f"{_JOBS_API}" + (f"?job={job_id}" if job_id else "")
+    _started(job_url)
     wa_ai.send_reply(WA_BRIDGE_URL, group_jid, f"🛠️ Track progress: {job_url}")
     # Say out loud which site is being touched. A wrong guess is then obvious in
     # the group instead of showing up as a mystery site nobody asked for.
@@ -2600,8 +2623,12 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
     logger.info("wa_ai: %s asked %r%s", author, prompt[:80],
                 " [+image]" if image_b64 else "")
     try:
-        result = assistant.ask(f"{author} asks: {prompt}", _chat.context(thread),
-                               image_b64=image_b64, image_type=image_type)
+        # We dispatch any build ourselves below — we have the group to report
+        # into and the member's original wording. Without this the tool would
+        # also fire its own job and one request would build twice.
+        with assistant.builds_deferred():
+            result = assistant.ask(f"{author} asks: {prompt}", _chat.context(thread),
+                                   image_b64=image_b64, image_type=image_type)
         answer = (result.get("answer") or "").strip()
     except Exception as e:  # noqa: BLE001
         logger.warning("wa_ai: answering failed: %s", e)
