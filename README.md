@@ -160,12 +160,34 @@ Requires: Baileys bridge (`whatsapp-worker`) redeployed with DM forwarding enabl
 
 ## PSN token refresh
 
-NPSSO tokens expire roughly every 60 days. To refresh:
+**You should rarely need to do this manually.** Here is what the app does automatically:
 
-1. Log into playstation.com in a browser
+```
+NPSSO_TOKEN (env var, ~60 day TTL)
+    │
+    └─▶ on first use: exchanges for access_token + refresh_token
+              │                         │
+              │  expires in ~1 h        │  expires in ~90 days
+              │                         │
+              ▼                         ▼
+        auto-refreshed             auto-refreshed using refresh_token
+        5 min before expiry        (no NPSSO needed)
+              │
+              └─▶ persisted to /data/psn_tokens.json
+```
+
+So as long as the container is running and the refresh token stays valid (~90 days),
+nothing needs touching. The container persists `psn_tokens.json` across restarts.
+
+**When you do need to act:** if PSN calls start failing with auth errors (check logs),
+the refresh token has expired. Then:
+
+1. Log into playstation.com
 2. Visit `https://ca.account.sony.com/api/v1/ssocookie`
 3. Copy the `npsso` value
-4. Update `NPSSO_TOKEN` in Coolify and redeploy
+4. Update `NPSSO_TOKEN` in Coolify → **Restart** (not redeploy)
+
+The app will use the new NPSSO to do a fresh auth and persist new tokens immediately.
 
 ---
 
