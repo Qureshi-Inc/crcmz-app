@@ -9,9 +9,24 @@ the model is given read-only functions over the real tables and answers from wha
 they return. The registry below doubles as the documented read surface of the
 platform: every question the assistant can answer is one of these.
 
-Tools are READ ONLY on purpose. Nothing here sends a PSN or WhatsApp message,
-mutates a giveaway, or writes to a database -- a jailbroken prompt still cannot
-do anything but look.
+TWO REGISTRIES, AND THE LINE BETWEEN THEM IS ABSOLUTE.
+
+`_TOOLS` (@tool) is READ ONLY. It is served to anyone holding the shared MCP_TOKEN,
+so a tool in here must have NO side effects: it may not send a message, deploy or
+modify anything, mutate a database, or start a job. A jailbroken prompt reaching
+this registry can still do nothing but look.
+
+`_WRITE_TOOLS` (@write_tool) is everything with a side effect. Served only to a
+caller holding a personal OAuth token, rate-limited, and appended to write_audit.
+
+If a tool grows a side effect it MOVES REGISTRY — it does not stay in `_TOOLS` with
+a note. clawbot_build learned to edit live sites in place while sitting in the read
+registry, which meant the shared read-only token could change a site that was
+serving traffic. tests/test_read_only.py now fails the build if that happens again.
+
+The one allowed exception is `web_search`, which shells out to `lab-search` on the
+controller. It executes a remote command but returns search results and changes
+nothing; the query is shell-quoted.
 """
 
 from __future__ import annotations
@@ -541,73 +556,6 @@ def _web_search(query: str, limit: int = 6) -> Any:
     except ValueError:
         return {"error": "could not parse search results", "raw": proc.stdout[:200]}
     return data
-
-
-@tool("clawbot_build",
-      "Build and deploy a website, app, or tool using the Clawbot engineer AI. "
-      "Use when someone asks to build, make, create or ship something — a site, a "
-      "tool, an app, a dashboard — and ALSO when they ask to change, update or fix "
-      "one that already exists. Clawbot codes and deploys it autonomously; an edit "
-      "of a live site is applied in place on the same URL. "
-      "After calling this tool your reply must be ONE short line: confirm you're getting "
-      "the engineer on it. Do NOT mention a URL, do NOT say it's done — a follow-up "
-      "message with the jobs dashboard link is sent automatically.",
-      {"type": "object",
-       "properties": {
-           "task": {"type": "string",
-                    "description": "Detailed description of what to build. Include all specifics mentioned."},
-           "subdomain": {"type": "string",
-                         "description": "Subdomain for buildanator.com (e.g. 'crcmz-stats'). "
-                                        "Lowercase letters and hyphens only. Derive from the task."},
-       },
-       "required": ["task", "subdomain"]})
-def _clawbot_build(task: str, subdomain: str) -> Any:
-    """Dispatch a build/edit to the engineer.
-
-    The job itself runs in `server._run_clawbot_job` — one code path for every
-    caller, so the "is this an edit of a site that already exists?" rules live in
-    exactly one place. `server` is imported lazily because `server` imports this
-    module at load time.
-    """
-    import re as _re
-    import threading as _thr
-
-    clean = _re.sub(r"[^a-z0-9-]", "-", subdomain.lower().strip()).strip("-")[:40] or "squad-build"
-
-    if _BUILD_DEFERRED.get():
-        # The WhatsApp handler dispatches this one itself, with the group to post
-        # progress into and the member's original wording. Returning here is what
-        # stops a single request producing two builds.
-        logger.info("clawbot_build: deferred to the caller (subdomain=%r)", clean)
-        return {"ok": True, "deferred": True, "subdomain": clean,
-                "message": "Engineer is on it."}
-
-    import server as _server   # lazy: server imports assistant at module load
-
-    box: dict[str, str] = {}
-    ready = _thr.Event()
-
-    def _started(job_url: str = "", error: str = "") -> None:
-        box["job_url"] = job_url
-        box["error"] = error
-        ready.set()
-
-    _thr.Thread(
-        target=_server._run_clawbot_job,
-        kwargs={"task": task, "subdomain": clean, "group_jid": "",
-                "raw_text": task, "subdomain_explicit": True,
-                "on_started": _started},
-        daemon=True,
-    ).start()
-
-    # Wait only for the job to be *registered*, not finished: the first call of
-    # the day also reads the deployment registry over SSH, which is the slow bit.
-    ready.wait(timeout=45)
-    if box.get("error"):
-        return {"ok": False, "error": box["error"]}
-    job_url = box.get("job_url") or "https://jobs.buildanator.com"
-    return {"ok": True, "job_url": job_url,
-            "message": f"Engineer is on it — track at {job_url}"}
 
 
 @tool("whatsapp_stats",
@@ -1414,6 +1362,93 @@ def _send_mm_channel(channel: str, message: str, caller: dict) -> dict:
     }
 
 
+@write_tool(
+    "clawbot_build",
+    "Build and deploy a website, app or tool with the Clawbot engineer AI, or change "
+    "one that already exists. Deploys to <subdomain>.buildanator.com. An edit of a live "
+    "site is applied in place on the same URL. This WRITES: it builds and deploys real "
+    "infrastructure and can modify a site that is already serving traffic, so it needs a "
+    "personal OAuth token — the shared read-only token cannot reach it. "
+    "Rate limit: 3 builds per 30 minutes.",
+    {"type": "object",
+     "properties": {
+         "task": {"type": "string",
+                  "description": "Detailed description of what to build or change. "
+                                 "Include all specifics mentioned."},
+         "subdomain": {"type": "string",
+                       "description": "Subdomain on buildanator.com (e.g. 'crcmz-stats'). "
+                                      "Lowercase letters and hyphens only. To change an "
+                                      "existing site, name that site's subdomain."},
+     },
+     "required": ["task", "subdomain"]})
+def _clawbot_build(task: str, subdomain: str, caller: dict) -> dict:
+    """Dispatch a build/edit to the engineer.
+
+    The job runs in `server._run_clawbot_job` — one code path for every caller, so the
+    "is this an edit of a site that already exists?" rules live in one place. `server`
+    is imported lazily because `server` imports this module at load time.
+
+    This is a WRITE tool on purpose. It deploys real infrastructure and, since it grew
+    edit-in-place support, can change a site that is already serving traffic. That is
+    not something a shared read-only token may do.
+    """
+    import json as _json
+    import re as _re
+    import threading as _thr
+    import mcp_oauth
+
+    zid = caller.get("zitadel_id", "")
+    tool_n = "clawbot_build"
+    clean = _re.sub(r"[^a-z0-9-]", "-", (subdomain or "").lower().strip()).strip("-")[:40]
+    audit = _json.dumps({"subdomain": clean, "task": (task or "")[:120]})
+
+    if not (task or "").strip():
+        return {"ok": False, "error": "task cannot be empty"}
+    if not clean:
+        return {"ok": False, "error": "subdomain must contain letters or digits"}
+
+    if _BUILD_DEFERRED.get():
+        # Dead code on the happy path — this is a write tool now, so the chat model
+        # cannot reach it and the WhatsApp handler dispatches builds itself. Kept as a
+        # guard: if it is ever put back within the bot's reach it must not double-fire.
+        # Checked before the rate limit because it dispatches nothing to limit.
+        return {"ok": True, "deferred": True, "subdomain": clean,
+                "message": "Engineer is on it."}
+
+    if not mcp_oauth.within_rate_limit(zid, tool_n, 3, 1800):
+        mcp_oauth.audit_write(zid, tool_n, audit, "rate_limited")
+        return {"ok": False, "error": "rate limit: 3 builds per 30 minutes"}
+
+    import server as _server   # lazy: server imports assistant at module load
+
+    box: dict[str, str] = {}
+    ready = _thr.Event()
+
+    def _started(job_url: str = "", error: str = "") -> None:
+        box["job_url"] = job_url
+        box["error"] = error
+        ready.set()
+
+    _thr.Thread(
+        target=_server._run_clawbot_job,
+        kwargs={"task": task, "subdomain": clean, "group_jid": "",
+                "raw_text": task, "subdomain_explicit": True,
+                "on_started": _started},
+        daemon=True,
+    ).start()
+
+    # Wait only for the job to be *registered*, not finished: the first call also reads
+    # the deployment registry over SSH, which is the slow part.
+    ready.wait(timeout=45)
+    if box.get("error"):
+        mcp_oauth.audit_write(zid, tool_n, audit, "refused:" + box["error"][:60])
+        return {"ok": False, "error": box["error"]}
+    job_url = box.get("job_url") or "https://jobs.buildanator.com"
+    mcp_oauth.audit_write(zid, tool_n, audit, "dispatched:" + job_url)
+    return {"ok": True, "job_url": job_url,
+            "message": f"Engineer is on it — track at {job_url}"}
+
+
 # ── Model plumbing ─────────────────────────────────────────────────────────────
 
 def _config() -> tuple[str, str, str]:
@@ -1458,9 +1493,21 @@ _BUILD_VERBS = (r"build|make|create|ship|deploy|launch|spin\s+up|set\s+up|put\s+
 # common in group chat ("add the game to the list") to imply a build on their own.
 _EDIT_VERBS = _BUILD_VERBS + r"|add|remove|delete|swap|replace|pull"
 
+# Nouns that make a verb a deploy request rather than chat.
+_BUILD_NOUNS = r"site|website|web\s*app|app|tool|dashboard|page|landing|portfolio|game"
+# A tighter set for add/remove, which are far too common in group chat to pair with a
+# word like "app" or "game": "add the game to the list" is not a deploy request.
+_EDIT_NOUNS = r"site|website|web\s*app|dashboard|landing\s*page|buildanator"
+
 _BUILD_QUESTION = re.compile(
     rf"\b({_BUILD_VERBS})\b"
-    r".{0,80}\b(site|website|web\s*app|app|tool|dashboard|page|landing|portfolio|game)\b"
+    rf".{{0,80}}\b({_BUILD_NOUNS})\b"
+    # add/remove only count next to one of those nouns — "add the game to the list" is
+    # chat, "add a leaderboard to the loadout site" is a job. This alternative carries
+    # weight now that clawbot_build is a write tool and the chat model cannot call it,
+    # so this regex (plus the promise backstop) is the whole trigger on WhatsApp.
+    rf"|\b(add|adding|remove|removing|delete|deleting|swap|replace)\b.{{0,60}}\b({_EDIT_NOUNS})\b"
+    rf"|\b({_EDIT_NOUNS})\b.{{0,60}}\b(add|adding|remove|removing|delete|deleting|swap|replace)\b"
     r"|\b(site|website|web\s*app|app|tool|dashboard)\b.{0,80}"
     r"\b(build|make|create|ship|deploy|launch)\b"
     # Any action verb aimed at a *.buildanator.com deploy target is a build/edit job.

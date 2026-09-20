@@ -182,14 +182,13 @@ check("cache invalidation keeps the fallback list", lambda: (
 import assistant  # noqa: E402
 
 
-def _deferred_tool_does_not_run_the_job():
+def _deferred_call_does_not_run_the_job():
+    fn = assistant._WRITE_TOOLS["clawbot_build"]["fn"]
     with assistant.builds_deferred():
-        text, ok = assistant.call_tool("clawbot_build",
-                                       {"task": "make a site", "subdomain": "Some Site!"})
-    assert ok, text
-    payload = json.loads(text)
-    assert payload.get("deferred") is True, f"tool ran the job anyway: {payload}"
-    # Still normalises the subdomain, so the caller can trust the value.
+        payload = fn(task="make a site", subdomain="Some Site!",
+                     caller={"zitadel_id": "test-user"})
+    assert payload.get("deferred") is True, f"the job ran anyway: {payload}"
+    # Still normalises the subdomain, so a caller can trust the value it gets back.
     assert payload.get("subdomain") == "some-site", payload
 
 
@@ -200,11 +199,20 @@ def _deferral_does_not_leak():
     assert assistant._BUILD_DEFERRED.get() is False, "flag not reset on exit"
 
 
-check("deferred build only records the request", _deferred_tool_does_not_run_the_job)
+def _chat_model_cannot_reach_it():
+    """The read registry is what the WhatsApp/portal model is handed. A build deploys
+    real infrastructure and can edit a live site, so it must not be in there."""
+    text, ok = assistant.call_tool("clawbot_build",
+                                   {"task": "x", "subdomain": "y"})
+    assert not ok, "call_tool ran clawbot_build — it is supposed to be write-only"
+    assert "no such tool" in text, text
+    assert "clawbot_build" not in assistant.tool_names()
+    assert "clawbot_build" in assistant.write_tool_names()
+
+
+check("deferred call only records the request", _deferred_call_does_not_run_the_job)
 check("deferral is scoped to the block", _deferral_does_not_leak)
-check("clawbot_build is still exposed over MCP", lambda: (
-    None if "clawbot_build" in assistant.tool_names() else (_ for _ in ()).throw(
-        AssertionError("clawbot_build fell out of the registry"))))
+check("the chat model cannot reach clawbot_build", _chat_model_cannot_reach_it)
 
 print(f"\n{PASSED} passed, {len(FAILED)} failed")
 for f in FAILED:
