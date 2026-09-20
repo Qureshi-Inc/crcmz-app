@@ -4492,10 +4492,75 @@ async def watch_set_nickname(request: Request):
         watch_mod.set_nickname, viewer["zitadelSubject"], (body or {}).get("nickname") or ""
     )
     refreshed = await _watch_viewer(request)
+    # Semantic capture: identity decisions are meaningful WatchParty events.
+    try:
+        new_name = (refreshed or viewer)["displayName"]
+        _text = f"viewer set display name to {new_name!r}" + (
+            f" (cleared nickname)" if not stored else ""
+        )
+        await asyncio.to_thread(
+            _watchparty_events.record,
+            "identity_decision", _text,
+            user_id=viewer["viewerId"],
+            metadata={"display_name": new_name, "nickname_set": bool(stored)},
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return JSONResponse(
         {"nickname": stored, "name": (refreshed or viewer)["displayName"]},
         headers={"Cache-Control": "no-store"},
     )
+
+
+_WP_EVENT_TYPES = {
+    "comment", "feedback", "playback_error", "screen_share_failure",
+    "webrtc_error", "sync_issue", "feature_notice", "incident",
+}
+
+@app.post("/api/watch/event")
+async def watch_report_event(request: Request):
+    """Report a semantic WatchParty event (feedback, errors, playback issues).
+
+    Authenticated viewers can report events from the Watch tab. These are
+    indexed by the semantic memory layer so they become searchable.
+
+    Body: {"event_type": str, "text": str, "room_id": str?, "metadata": {}?}
+    """
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    event_type = (body or {}).get("event_type", "")
+    text = ((body or {}).get("text") or "").strip()
+    room_id = watch_mod.canonical_room((body or {}).get("room_id") or "")
+    metadata = (body or {}).get("metadata") or {}
+
+    if event_type not in _WP_EVENT_TYPES:
+        return JSONResponse(
+            {"detail": f"invalid event_type; valid: {sorted(_WP_EVENT_TYPES)}"},
+            status_code=400,
+        )
+    if not text or len(text) > 2000:
+        return JSONResponse({"detail": "text required (max 2000 chars)"}, status_code=400)
+
+    try:
+        event_id = await asyncio.to_thread(
+            _watchparty_events.record,
+            event_type, text,
+            room_id=room_id,
+            user_id=viewer["viewerId"],
+            metadata=metadata,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("watch: event record failed: %s", e)
+        return JSONResponse({"detail": "failed to record event"}, status_code=500)
+
+    return JSONResponse({"ok": True, "event_id": event_id}, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/watch/rally")
