@@ -631,6 +631,130 @@ def test_acceptance_synthetic_queries():
         )
 
 
+# ── Durable store tests ────────────────────────────────────────────────────────
+
+def test_coach_store() -> None:
+    import tempfile
+    import coach as _coach
+    with tempfile.TemporaryDirectory() as td:
+        orig = _coach._DB_PATH
+        _coach._DB_PATH = Path(td) / "coach_reviews.db"
+        try:
+            _coach.init()
+            # Table created
+            import sqlite3
+            with sqlite3.connect(_coach._DB_PATH) as c:
+                tables = {r[0] for r in c.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()}
+            assert "coach_reviews" in tables, "coach_reviews table not created"
+
+            # Insert and retrieve
+            rid = _coach.upsert({
+                "clip_id": "clip-001",
+                "psn_user": "testuser",
+                "review_status": "complete",
+                "summary": "Great positioning.",
+                "coaching_tips": ["Stay behind cover", "Reload before pushing"],
+            })
+            assert rid
+            row = _coach.get(rid)
+            assert row is not None
+            assert row["clip_id"] == "clip-001"
+            assert isinstance(row["coaching_tips"], list)
+            assert len(row["coaching_tips"]) == 2
+
+            # backfill_pending returns list (clips.db absent → empty)
+            pending = _coach.backfill_pending(limit=5)
+            assert isinstance(pending, list)
+
+            # count_by_status
+            counts = _coach.count_by_status()
+            assert counts.get("complete", 0) == 1
+        finally:
+            _coach._DB_PATH = orig
+
+
+def test_app_events_store() -> None:
+    import tempfile
+    import app_events as _ae
+    with tempfile.TemporaryDirectory() as td:
+        orig = _ae._DB_PATH
+        _ae._DB_PATH = Path(td) / "app_events.db"
+        try:
+            _ae.init()
+
+            # record returns event_id
+            eid = _ae.record("feature_shipped", "Semantic memory", "Added sqlite-vec layer",
+                             actor="test", feature="memory")
+            assert eid, "record() should return event_id"
+
+            # idempotent — same content returns None
+            eid2 = _ae.record("feature_shipped", "Semantic memory", "Added sqlite-vec layer",
+                              actor="test", feature="memory")
+            assert eid2 is None, "duplicate record should return None"
+
+            # count is 1
+            assert _ae.count() == 1
+
+            # list_events returns it
+            rows = _ae.list_events(limit=10)
+            assert len(rows) == 1
+            assert rows[0]["event_id"] == eid
+            assert rows[0]["feature"] == "memory"
+        finally:
+            _ae._DB_PATH = orig
+
+
+def test_watchparty_events_store() -> None:
+    import tempfile
+    import watchparty_events as _wpe
+    with tempfile.TemporaryDirectory() as td:
+        orig = _wpe._DB_PATH
+        _wpe._DB_PATH = Path(td) / "watchparty_events.db"
+        try:
+            _wpe.init()
+
+            # record returns event_id
+            eid = _wpe.record("feedback", "Stream was lagging badly at 22:30",
+                              room_id="room-abc", user_id="zid-xyz")
+            assert eid
+
+            # idempotent
+            eid2 = _wpe.record("feedback", "Stream was lagging badly at 22:30")
+            assert eid2 is None, "duplicate should return None"
+
+            assert _wpe.count() == 1
+
+            rows = _wpe.list_events(room_id="room-abc")
+            assert len(rows) == 1
+
+            # scan_existing_data always returns dict with 'found' key
+            result = _wpe.scan_existing_data()
+            assert "found" in result
+        finally:
+            _wpe._DB_PATH = orig
+
+
+def test_memory_status_source_states() -> None:
+    """memory_status() source entries use valid status strings."""
+    import tempfile
+    _embed_url = _start_fake_embed_server()
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        _patch_module(tmp, _embed_url)
+        import memory_store as ms
+        ms.init()
+        st = ms.status()
+        valid_statuses = {"indexed", "empty", "unavailable", "indexing", "behind", "failed"}
+        for src, info in st.get("sources", {}).items():
+            flag = info.get("status")
+            assert flag in valid_statuses, (
+                f"source {src!r} has invalid status {flag!r}; "
+                f"expected one of {valid_statuses}"
+            )
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -650,6 +774,10 @@ def main() -> int:
     check("13. audit_write called with correct signature", test_audit_write_signature)
     check("14. last_index_run persists across restarts", test_last_index_run_persisted)
     check("A. acceptance: 3 synthetic queries", test_acceptance_synthetic_queries)
+    check("15. coach store: init, upsert, get, backfill_pending, count_by_status", test_coach_store)
+    check("16. app_events store: init, record, idempotency, count, list", test_app_events_store)
+    check("17. watchparty_events store: init, record, idempotency, scan_existing_data", test_watchparty_events_store)
+    check("18. memory_status source state strings are valid", test_memory_status_source_states)
 
     print(f"\n{PASSED} passed, {len(FAILED)} failed")
     if FAILED:

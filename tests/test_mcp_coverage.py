@@ -51,6 +51,10 @@ STORES: dict[str, list[str] | None] = {
     "/data/memory.db": ["memory_search", "memory_get", "memory_context",
                         "memory_status"],
 
+    "/data/coach_reviews.db": ["coach_reviews"],
+    "/data/app_events.db":    ["app_events_list"],
+    "/data/watchparty_events.db": ["watchparty_events_list"],
+
     "/data/mm_tokens.db": None,         # Mattermost OAuth access/refresh tokens.
                                        # Same rule as mcp_user_tokens — tokens
                                        # must never be readable through a tool.

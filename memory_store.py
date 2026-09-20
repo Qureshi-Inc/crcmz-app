@@ -795,56 +795,232 @@ def _index_docs(since_ts: float | None = None) -> None:
         logger.debug("memory: docs indexed=%d skipped=%d", indexed, skipped)
 
 
-# ── Coach indexer (stub — table not yet built) ────────────────────────────────
+# ── Coach indexer ─────────────────────────────────────────────────────────────
 
 def _index_coach(since_ts: float | None = None) -> None:
-    """Index completed AI Coach clip reviews.
-
-    The `coach_reviews` table in `/data/game_history.db` does not exist yet.
-    This indexer no-ops gracefully until the AI Coach feature is shipped.
-
-    When the table exists it should contain at minimum:
-        review_id TEXT PK, clip_id TEXT, psn_user TEXT, reviewed_at INTEGER,
-        summary TEXT, strengths TEXT, mistakes TEXT, coaching_tips TEXT,
-        notable_moments TEXT, tags TEXT, game TEXT
-    """
-    import sqlite3 as _sq3
-    db = Path("/data/game_history.db")
+    """Index completed AI Coach clip reviews from /data/coach_reviews.db."""
+    db = Path("/data/coach_reviews.db")
     if not db.exists():
         return
     try:
-        with _sq3.connect(db) as c:
-            tables = {r[0] for r in c.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()}
+        import coach as _coach
     except Exception:  # noqa: BLE001
         return
-    if "coach_reviews" not in tables:
+
+    cursor_key = "coach"
+    since = since_ts if since_ts is not None else _get_cursor(cursor_key)
+
+    rows = _coach.list_reviews(limit=500, status="complete")
+    if not rows:
         return
-    # Full implementation needed when the table exists.
-    logger.info("memory: coach_reviews table found — stub indexer needs implementation")
+
+    if since:
+        rows = [r for r in rows if r.get("created_at", 0) > since]
+    if not rows:
+        return
+
+    texts = []
+    for r in rows:
+        parts = [
+            r.get("summary", "") or "",
+            r.get("overall_assessment", "") or "",
+        ]
+        tips = r.get("coaching_tips") or []
+        if isinstance(tips, list):
+            parts.append(" ".join(tips))
+        texts.append(" ".join(filter(None, parts))[:MAX_TEXT_CHARS])
+
+    # Filter out empty texts before embedding
+    pairs = [(t, r) for t, r in zip(texts, rows) if t.strip()]
+    if not pairs:
+        return
+    texts, rows = zip(*pairs)
+    texts, rows = list(texts), list(rows)
+
+    try:
+        vecs = _embed(texts, _embed_base, _model_name, _embed_key)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("memory: coach embed batch failed: %s", e)
+        _stats["embed_errors"] += 1
+        return
+
+    now = int(time.time() * 1000)
+    max_ts = 0.0
+    indexed = skipped = 0
+
+    for r, text, vec in zip(rows, texts, vecs):
+        rec_hash = hashlib.sha256(text.encode()).hexdigest()
+        tags = r.get("tags") or []
+        if isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except Exception:  # noqa: BLE001
+                tags = []
+        meta = json.dumps({
+            "clip_id":  r.get("clip_id", ""),
+            "psn_user": r.get("psn_user", ""),
+            "game":     r.get("game", ""),
+            "tags":     tags,
+        })
+        created = r.get("created_at") or 0
+        ok, was_new = _upsert_item(
+            source="coach",
+            source_record_id=r["review_id"],
+            source_hash=rec_hash,
+            chunk_index=0,
+            text=text,
+            source_ts=int(created * 1000),
+            created_at=now,
+            metadata_json=meta,
+            vec=vec,
+        )
+        if ok:
+            if was_new:
+                indexed += 1
+            else:
+                skipped += 1
+        if created > max_ts:
+            max_ts = created
+
+    _stats["indexed_total"] += indexed
+    _stats["skipped_unchanged"] += skipped
+    if max_ts:
+        _set_cursor(cursor_key, max_ts)
+    if indexed or skipped:
+        logger.debug("memory: coach indexed=%d skipped=%d", indexed, skipped)
 
 
-# ── App indexer (stub — store not yet built) ──────────────────────────────────
+# ── App indexer ───────────────────────────────────────────────────────────────
 
 def _index_app(since_ts: float | None = None) -> None:
-    """Index app notes, decisions, and meaningful human-readable events.
+    """Index app semantic events from /data/app_events.db."""
+    db = Path("/data/app_events.db")
+    if not db.exists():
+        return
+    try:
+        import app_events as _ae
+    except Exception:  # noqa: BLE001
+        return
 
-    No `app_notes` store exists yet; this is a forward-compatible stub.
-    """
-    return
+    cursor_key = "app"
+    since = since_ts if since_ts is not None else _get_cursor(cursor_key)
+
+    rows = _ae.list_events(limit=500, since_ts=since or None)
+    if not rows:
+        return
+
+    texts = [f"{r['title']}: {r['text']}"[:MAX_TEXT_CHARS] for r in rows]
+    try:
+        vecs = _embed(texts, _embed_base, _model_name, _embed_key)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("memory: app embed batch failed: %s", e)
+        _stats["embed_errors"] += 1
+        return
+
+    now = int(time.time() * 1000)
+    max_ts = 0.0
+    indexed = skipped = 0
+
+    for r, text, vec in zip(rows, texts, vecs):
+        rec_hash = hashlib.sha256(text.encode()).hexdigest()
+        meta = json.dumps({
+            "event_type": r.get("event_type", ""),
+            "feature":    r.get("feature", ""),
+            "actor":      r.get("actor", ""),
+            "reference":  r.get("reference", ""),
+        })
+        created = r.get("created_at") or 0
+        ok, was_new = _upsert_item(
+            source="app",
+            source_record_id=r["event_id"],
+            source_hash=rec_hash,
+            chunk_index=0,
+            text=text,
+            source_ts=int(created * 1000),
+            created_at=now,
+            metadata_json=meta,
+            vec=vec,
+        )
+        if ok:
+            if was_new:
+                indexed += 1
+            else:
+                skipped += 1
+        if created > max_ts:
+            max_ts = created
+
+    _stats["indexed_total"] += indexed
+    _stats["skipped_unchanged"] += skipped
+    if max_ts:
+        _set_cursor(cursor_key, max_ts)
+    if indexed or skipped:
+        logger.debug("memory: app indexed=%d skipped=%d", indexed, skipped)
 
 
-# ── WatchParty indexer (stub — no semantic text stored yet) ───────────────────
+# ── WatchParty indexer ────────────────────────────────────────────────────────
 
 def _index_watchparty(since_ts: float | None = None) -> None:
-    """Index WatchParty semantic content (feature notes, room descriptions, etc.).
+    """Index WatchParty semantic events from /data/watchparty_events.db."""
+    db = Path("/data/watchparty_events.db")
+    if not db.exists():
+        return
+    try:
+        import watchparty_events as _wpe
+    except Exception:  # noqa: BLE001
+        return
 
-    `/data/watch/` currently stores only `nicknames.json` and a signing key —
-    neither is indexable.  This stub is ready for when WatchParty adds
-    structured notes or event descriptions.
-    """
-    return
+    cursor_key = "watchparty"
+    since = since_ts if since_ts is not None else _get_cursor(cursor_key)
+
+    rows = _wpe.list_events(limit=500, since_ts=since or None)
+    if not rows:
+        return
+
+    texts = [r["text"][:MAX_TEXT_CHARS] for r in rows]
+    try:
+        vecs = _embed(texts, _embed_base, _model_name, _embed_key)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("memory: watchparty embed batch failed: %s", e)
+        _stats["embed_errors"] += 1
+        return
+
+    now = int(time.time() * 1000)
+    max_ts = 0.0
+    indexed = skipped = 0
+
+    for r, text, vec in zip(rows, texts, vecs):
+        rec_hash = hashlib.sha256(text.encode()).hexdigest()
+        meta = json.dumps({
+            "event_type": r.get("event_type", ""),
+            "room_id":    r.get("room_id", ""),
+            "user_id":    r.get("user_id", ""),
+        })
+        created = r.get("created_at") or 0
+        ok, was_new = _upsert_item(
+            source="watchparty",
+            source_record_id=r["event_id"],
+            source_hash=rec_hash,
+            chunk_index=0,
+            text=text,
+            source_ts=int(created * 1000),
+            created_at=now,
+            metadata_json=meta,
+            vec=vec,
+        )
+        if ok:
+            if was_new:
+                indexed += 1
+            else:
+                skipped += 1
+        if created > max_ts:
+            max_ts = created
+
+    _stats["indexed_total"] += indexed
+    _stats["skipped_unchanged"] += skipped
+    if max_ts:
+        _set_cursor(cursor_key, max_ts)
+    if indexed or skipped:
+        logger.debug("memory: watchparty indexed=%d skipped=%d", indexed, skipped)
 
 
 # ── Core index operations ─────────────────────────────────────────────────────
@@ -1286,11 +1462,81 @@ def _source_newest_ts(source: str) -> int | None:
             with _sq3.connect(db) as c:
                 row = c.execute("SELECT MAX(created_at) FROM facts").fetchone()
                 return int(row[0]) if row and row[0] else None
+        if source == "coach":
+            db = Path("/data/coach_reviews.db")
+            if not db.exists():
+                return None
+            with _sq3.connect(db) as c:
+                row = c.execute(
+                    "SELECT MAX(created_at) FROM coach_reviews WHERE review_status='complete'"
+                ).fetchone()
+                return int(row[0] * 1000) if row and row[0] else None
+        if source == "app":
+            db = Path("/data/app_events.db")
+            if not db.exists():
+                return None
+            with _sq3.connect(db) as c:
+                row = c.execute("SELECT MAX(created_at) FROM app_events").fetchone()
+                return int(row[0] * 1000) if row and row[0] else None
+        if source == "watchparty":
+            db = Path("/data/watchparty_events.db")
+            if not db.exists():
+                return None
+            with _sq3.connect(db) as c:
+                row = c.execute("SELECT MAX(created_at) FROM watchparty_events").fetchone()
+                return int(row[0] * 1000) if row and row[0] else None
         # docs: cursor IS the newest mtime, returned below via the cursor value
-        # coach/app/watchparty: no canonical table yet
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+_SOURCE_STORES = {
+    "whatsapp":   Path("/data/whatsapp.db"),
+    "psn":        Path("/data/clips.db"),
+    "facts":      Path("/data/assistant_facts.db"),
+    "docs":       Path("/app/docs"),
+    "coach":      Path("/data/coach_reviews.db"),
+    "app":        Path("/data/app_events.db"),
+    "watchparty": Path("/data/watchparty_events.db"),
+}
+
+
+def _source_has_indexable_rows(source: str) -> bool:
+    """Return True if the source store exists and contains at least one indexable row."""
+    import sqlite3 as _sq3
+    try:
+        if source == "docs":
+            p = Path("/app/docs")
+            if not p.exists():
+                p = Path(__file__).parent / "docs"
+            return p.exists() and any(p.rglob("*.md"))
+        if source == "coach":
+            db = Path("/data/coach_reviews.db")
+            if not db.exists():
+                return False
+            with _sq3.connect(db) as c:
+                n = c.execute(
+                    "SELECT COUNT(*) FROM coach_reviews WHERE review_status='complete'"
+                ).fetchone()[0]
+            return n > 0
+        if source == "app":
+            db = Path("/data/app_events.db")
+            if not db.exists():
+                return False
+            with _sq3.connect(db) as c:
+                n = c.execute("SELECT COUNT(*) FROM app_events").fetchone()[0]
+            return n > 0
+        if source == "watchparty":
+            db = Path("/data/watchparty_events.db")
+            if not db.exists():
+                return False
+            with _sq3.connect(db) as c:
+                n = c.execute("SELECT COUNT(*) FROM watchparty_events").fetchone()[0]
+            return n > 0
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 def _source_status_flag(
@@ -1299,28 +1545,31 @@ def _source_status_flag(
     cursor_s: float,
     newest_ms: int | None,
 ) -> str:
-    """Derive a simple status string for a source."""
+    """Return one of: indexed | empty | unavailable | indexing | behind | failed."""
+    store_path = _SOURCE_STORES.get(source)
+    store_exists = store_path is not None and store_path.exists()
+
+    with _reindex_lock:
+        is_indexing = source in _reindex_pending or "all" in _reindex_pending
+
+    if is_indexing:
+        return "indexing"
+
     if indexed == 0:
-        # Check whether the underlying store actually exists.
-        exists_map = {
-            "whatsapp":   Path("/data/whatsapp.db"),
-            "psn":        Path("/data/clips.db"),
-            "facts":      Path("/data/assistant_facts.db"),
-            "docs":       Path("/app/docs"),
-            "coach":      None,   # stub — no DB expected yet
-            "app":        None,
-            "watchparty": None,
-        }
-        db_path = exists_map.get(source)
-        if db_path is not None and not db_path.exists():
+        if not store_exists:
             return "unavailable"
-        # Source DB exists (or is a stub) but nothing indexed yet.
-        return "empty"
+        # Store exists — check whether it actually has indexable content.
+        if _source_has_indexable_rows(source):
+            return "empty"   # content present but not yet indexed
+        return "empty"       # store exists but no rows yet
+
+    # Items are indexed; check freshness.
     if newest_ms and cursor_s > 0:
         lag = (newest_ms / 1000) - cursor_s
-        if lag > 3600:
+        if lag > 86400:   # >24 hours behind
             return "behind"
-    return "current"
+
+    return "indexed"
 
 
 def status() -> dict:

@@ -5011,13 +5011,31 @@ PSN_AI_GROUPS = os.environ.get("PSN_AI_GROUPS", "squad").lower()
 import game_history as _games
 import mm_tokens as _mm_tokens
 import memory_store as _mem
+import coach as _coach
+import app_events as _app_events
+import watchparty_events as _watchparty_events
 _wa.init()
 _facts.init()
 _chat.init()
 _games.init()
 _mcp_oauth.init()
 _mm_tokens.init()
+_coach.init()
+_app_events.init()
+_watchparty_events.init()
 _mem.init()
+
+
+def _startup_backfill() -> None:
+    try:
+        n = _app_events.backfill_from_git("/app", limit=10)
+        if n:
+            logging.getLogger("app_events").info("backfilled %d events from git", n)
+    except Exception:
+        pass
+
+
+_threading.Thread(target=_startup_backfill, name="app-events-backfill", daemon=True).start()
 
 _video_seen: set[str] = set()
 _video_initialized: bool = False

@@ -987,6 +987,64 @@ def _memory_status() -> dict:
     return memory_store.status()
 
 
+@tool("coach_reviews",
+      "List AI coaching reviews for PSN gaming clips. Returns summaries, assessments, "
+      "tips, and clip metadata. Filter by psn_user or status. "
+      "status values: pending|processing|complete|failed.",
+      {"type": "object", "properties": {
+          "limit":    {"type": "integer", "description": "1-50, default 10"},
+          "status":   {"type": "string",  "description": "pending|processing|complete|failed"},
+          "psn_user": {"type": "string"},
+      }})
+def _coach_reviews(limit: int = 10, status: str | None = None,
+                   psn_user: str | None = None) -> dict:
+    import coach as _coach
+    return {"reviews": _coach.list_reviews(
+        limit=max(1, min(int(limit or 10), 50)),
+        status=status or None,
+        psn_user=psn_user or None,
+    )}
+
+
+@tool("app_events_list",
+      "List semantic app events: features shipped, decisions made, deployments, "
+      "migrations, incidents. NOT raw telemetry. "
+      "event_type values: feature_shipped|feature_changed|release|decision|"
+      "admin_note|support_issue|error|migration|config_change|incident.",
+      {"type": "object", "properties": {
+          "limit":      {"type": "integer", "description": "1-50, default 10"},
+          "event_type": {"type": "string"},
+          "feature":    {"type": "string"},
+      }})
+def _app_events_list(limit: int = 10, event_type: str | None = None,
+                     feature: str | None = None) -> dict:
+    import app_events as _ae
+    return {"events": _ae.list_events(
+        limit=max(1, min(int(limit or 10), 50)),
+        event_type=event_type or None,
+        feature=feature or None,
+    )}
+
+
+@tool("watchparty_events_list",
+      "List semantic WatchParty events: user feedback, playback problems, WebRTC errors, "
+      "room descriptions. NOT participant counts, durations, or room state — use "
+      "structured DB queries for those.",
+      {"type": "object", "properties": {
+          "limit":      {"type": "integer", "description": "1-50, default 10"},
+          "event_type": {"type": "string"},
+          "room_id":    {"type": "string"},
+      }})
+def _watchparty_events_list(limit: int = 10, event_type: str | None = None,
+                             room_id: str | None = None) -> dict:
+    import watchparty_events as _wpe
+    return {"events": _wpe.list_events(
+        limit=max(1, min(int(limit or 10), 50)),
+        event_type=event_type or None,
+        room_id=room_id or None,
+    )}
+
+
 def tool_specs() -> list[dict]:
     """The registry in OpenAI function-calling form."""
     return [
@@ -1118,6 +1176,44 @@ def _memory_reindex(source: str, since_ts: float | None = None,
                           _json.dumps({"source": source, "since_ts": since_ts}),
                           "queued" if result.get("ok") else f"error:{result.get('error','')[:60]}")
     return result
+
+
+@write_tool(
+    "app_event_record",
+    "Record a semantic app event: feature shipped, decision made, deployment, "
+    "migration, incident, etc. NOT for telemetry, health checks, or repetitive logs. "
+    "Rate limit: 20 per hour.",
+    {"type": "object", "required": ["event_type", "title", "text"],
+     "properties": {
+         "event_type": {"type": "string",
+                        "description": "feature_shipped|feature_changed|release|decision|"
+                                       "admin_note|support_issue|error|migration|config_change|incident"},
+         "title":     {"type": "string"},
+         "text":      {"type": "string"},
+         "feature":   {"type": "string"},
+         "reference": {"type": "string"},
+     }})
+def _app_event_record(event_type: str, title: str, text: str,
+                      feature: str | None = None, reference: str | None = None,
+                      caller: dict | None = None) -> dict:
+    import json as _json
+    import mcp_oauth
+    import app_events as _ae
+    caller = caller or {}
+    zid = caller.get("zitadel_id", "")
+    if not mcp_oauth.within_rate_limit(zid, "app_event_record", 20, 3600):
+        mcp_oauth.audit_write(zid, "app_event_record",
+                              _json.dumps({"event_type": event_type, "title": title}),
+                              "rate_limited")
+        return {"error": "rate limit exceeded", "limit": "20 per hour"}
+    event_id = _ae.record(event_type, title, text,
+                          actor=zid or "mcp",
+                          feature=feature or None,
+                          reference=reference or None)
+    mcp_oauth.audit_write(zid, "app_event_record",
+                          _json.dumps({"event_type": event_type, "title": title}),
+                          f"recorded:{event_id[:8]}" if event_id else "duplicate")
+    return {"ok": bool(event_id), "event_id": event_id}
 
 
 def _caller_name(caller: dict) -> str:
