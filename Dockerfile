@@ -5,17 +5,9 @@ FROM python:3.12-slim AS git-meta
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 WORKDIR /repo
 COPY .git ./.git
-RUN git log --format="%H|%aI|%aN|%s" --no-merges -n 100 2>/dev/null \
-    | python3 -c "
-import sys, json
-events = []
-for line in sys.stdin:
-    line = line.rstrip('\n')
-    parts = line.split('|', 3)
-    if len(parts) == 4:
-        events.append({'hash': parts[0], 'date': parts[1], 'author': parts[2], 'subject': parts[3]})
-print(json.dumps(events))
-" > /git_commits.json 2>/dev/null || printf '[]' > /git_commits.json
+RUN git log --format="%H|%aI|%aN|%s" --no-merges -n 100 2>/dev/null > /tmp/gl.txt; \
+    python3 -c "import sys,json;lines=open('/tmp/gl.txt').read().splitlines();entries=[dict(zip(['hash','date','author','subject'],l.split('|',3))) for l in lines if len(l.split('|',3))==4];print(json.dumps(entries))" \
+    > /git_commits.json 2>/dev/null || printf '[]' > /git_commits.json
 
 # ── Stage 1: build the React interface ───────────────────────────────────────
 # A separate stage so node and 300 MB of node_modules never reach the runtime image.
