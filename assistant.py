@@ -1046,6 +1046,68 @@ def _watchparty_events_list(limit: int = 10, event_type: str | None = None,
     )}
 
 
+_WP_INTERNAL_URL = __import__("os").environ.get(
+    "WATCHPARTY_INTERNAL_URL", "http://watchparty-watchparty-1:8080"
+)
+
+
+@tool("watchparty_rooms",
+      "List live WatchParty rooms with current video, participant count, and recent chat. "
+      "Returns real-time in-memory state — no historical data is stored. "
+      "nameMap keys are opaque viewerIds; values are display names.",
+      {"type": "object", "properties": {
+          "room_id": {"type": "string", "description": "filter to a single room slug, e.g. 'crcmz'"},
+      }})
+def _watchparty_rooms(room_id: str | None = None) -> dict:
+    import httpx as _hx
+    try:
+        r = _hx.get(f"{_WP_INTERNAL_URL}/internal/rooms", timeout=5)
+        r.raise_for_status()
+        rooms = r.json()
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"watchparty unavailable: {e}"}
+    if room_id:
+        slug = "/" + room_id.lstrip("/")
+        rooms = [rm for rm in rooms if rm.get("roomId") == slug or rm.get("roomId") == room_id]
+    # strip chat from room listing to keep payload small
+    for rm in rooms:
+        rm["chatCount"] = len(rm.pop("chat", []))
+    return {"rooms": rooms}
+
+
+@tool("watchparty_chat",
+      "Get chat messages for a WatchParty room. Returns live in-memory messages only — "
+      "chat is not persisted, so messages are lost on container restart. "
+      "Each message has: id (opaque viewerId), msg (text), system (bool), timestamp. "
+      "nameMap maps viewerId -> display name.",
+      {"type": "object", "required": ["room_id"], "properties": {
+          "room_id": {"type": "string", "description": "room slug, e.g. 'crcmz'"},
+          "limit":   {"type": "integer", "description": "last N messages, 1-200, default 50"},
+      }})
+def _watchparty_chat(room_id: str, limit: int = 50) -> dict:
+    import httpx as _hx
+    limit = max(1, min(int(limit or 50), 200))
+    try:
+        r = _hx.get(f"{_WP_INTERNAL_URL}/internal/rooms", timeout=5)
+        r.raise_for_status()
+        rooms = r.json()
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"watchparty unavailable: {e}"}
+    slug = "/" + room_id.lstrip("/")
+    room = next((rm for rm in rooms if rm.get("roomId") in (slug, room_id)), None)
+    if room is None:
+        return {"error": f"room not found: {room_id}", "available_rooms": [rm["roomId"] for rm in rooms]}
+    return {
+        "roomId": room["roomId"],
+        "video": room.get("video"),
+        "videoTS": room.get("videoTS"),
+        "paused": room.get("paused"),
+        "participantCount": room.get("participantCount", 0),
+        "nameMap": room.get("nameMap", {}),
+        "chat": room.get("chat", [])[-limit:],
+    }
+
+
 def tool_specs() -> list[dict]:
     """The registry in OpenAI function-calling form."""
     return [
