@@ -53,6 +53,13 @@ services:
       # tool calls). ASSISTANT_STYLE=plain drops the vulgar persona.
       - ASSISTANT_MODEL=${ASSISTANT_MODEL:-Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-8bit}
       - ASSISTANT_STYLE=${ASSISTANT_STYLE:-vulgar}
+      # Semantic memory layer: set EMBEDDING_MODEL to enable (e.g.
+      # mlx-community/nomic-embed-text-v1.5-mlx). Shares OLLAMA_BASE_URL by
+      # default; set EMBEDDING_BASE_URL to point at a different endpoint.
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-0}
       # "ai <question>" in The Squad PSN group, answered by the same assistant
       # (replaces the standalone psn-gpt bot). PSN_AI_ENABLED=0 turns it off.
       - PSN_AI_ENABLED=${PSN_AI_ENABLED:-1}

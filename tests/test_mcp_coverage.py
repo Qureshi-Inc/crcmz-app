@@ -48,6 +48,13 @@ STORES: dict[str, list[str] | None] = {
     "/data/game_history.db": ["games_played", "game_sessions", "person_profile",
                               "platform_overview"],
 
+    "/data/memory.db": ["memory_search", "memory_get", "memory_context",
+                        "memory_status"],
+
+    "/data/mm_tokens.db": None,         # Mattermost OAuth access/refresh tokens.
+                                       # Same rule as mcp_user_tokens — tokens
+                                       # must never be readable through a tool.
+
     "/data/mcp_user_tokens.db": None,   # OAuth token state for per-user MCP access.
                                        # Internal auth DB — no tool should ever
                                        # read tokens, codes, or audit rows.

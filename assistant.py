@@ -896,6 +896,97 @@ def _person_profile(who: str, range: str = "all_time") -> dict:  # noqa: A002
     }
 
 
+@tool("memory_search",
+      "Semantic search across indexed squad data: WhatsApp messages, PSN clip "
+      "descriptions, and squad facts. Embeds the query and returns the top "
+      "nearest items. Use this when the user asks fuzzy questions like 'what "
+      "did we say about X', 'find the clip where Y happened', or 'any facts "
+      "about Z'. Returns memory_id, source, timestamp, snippet, and score. "
+      "Returns an error dict when the embedding service is not configured — "
+      "that means EMBEDDING_MODEL is not set, not a code bug.",
+      {"type": "object",
+       "properties": {
+           "query":    {"type": "string",
+                        "description": "Natural-language question or description to search for."},
+           "sources":  {"type": "array", "items": {"type": "string"},
+                        "description": "Limit to these sources: whatsapp, psn, facts. "
+                                       "Omit to search all."},
+           "after_ts": {"type": "number",
+                        "description": "Only return results with source timestamp after "
+                                       "this epoch-seconds value."},
+           "before_ts": {"type": "number",
+                         "description": "Only return results before this epoch-seconds."},
+           "group_id": {"type": "string",
+                        "description": "Filter WhatsApp results to a specific group JID."},
+           "limit":    {"type": "integer",
+                        "description": "Max results to return. 1-30, default 10."},
+       },
+       "required": ["query"]})
+def _memory_search(query: str, sources: list | None = None,
+                   after_ts: float | None = None, before_ts: float | None = None,
+                   group_id: str = "", limit: int = 10) -> dict:
+    import memory_store
+    return memory_store.search(
+        query,
+        sources=sources,
+        after_ts=after_ts,
+        before_ts=before_ts,
+        group_id=group_id or "",
+        limit=max(1, min(int(limit or 10), 30)),
+    )
+
+
+@tool("memory_get",
+      "Retrieve a single indexed memory item by its memory_id UUID (obtained "
+      "from memory_search results). Returns the full text, source metadata, "
+      "and a pointer to the original source record.",
+      {"type": "object",
+       "properties": {
+           "memory_id": {"type": "string",
+                         "description": "UUID from a memory_search result."},
+       },
+       "required": ["memory_id"]})
+def _memory_get(memory_id: str) -> dict:
+    import memory_store
+    return memory_store.get(memory_id)
+
+
+@tool("memory_context",
+      "Fetch the surrounding context for a memory_search result. For WhatsApp "
+      "items, returns the messages immediately before and after the matched "
+      "message so the conversation thread is visible. before_count and "
+      "after_count default to 3 each (max 20).",
+      {"type": "object",
+       "properties": {
+           "memory_id":    {"type": "string",
+                            "description": "UUID from a memory_search result."},
+           "before_count": {"type": "integer",
+                            "description": "Messages before the match. Default 3."},
+           "after_count":  {"type": "integer",
+                            "description": "Messages after the match. Default 3."},
+       },
+       "required": ["memory_id"]})
+def _memory_context(memory_id: str, before_count: int = 3,
+                    after_count: int = 3) -> dict:
+    import memory_store
+    return memory_store.context(
+        memory_id,
+        before_count=max(0, min(int(before_count or 3), 20)),
+        after_count=max(0, min(int(after_count or 3), 20)),
+    )
+
+
+@tool("memory_status",
+      "Return the health and indexing stats for the semantic memory layer: "
+      "which sources are indexed, cursor timestamps, item counts per source, "
+      "last run time, error counts. Use this to check whether the embedding "
+      "service is configured and how fresh the index is.",
+      {"type": "object", "properties": {}})
+def _memory_status() -> dict:
+    import memory_store
+    return memory_store.status()
+
+
 def tool_specs() -> list[dict]:
     """The registry in OpenAI function-calling form."""
     return [
@@ -991,6 +1082,35 @@ def call_write_tool(name: str, args: dict, caller: dict) -> tuple[str, bool]:
         return json.dumps({"error": f"{name} failed: {e}"}), False
     payload = json.dumps(result, default=str)
     return payload, True
+
+
+@write_tool(
+    "memory_reindex",
+    "Queue a reindex of the semantic memory layer for one or all sources. "
+    "Use this after bulk data imports or when memory_status shows the index "
+    "is stale. The job runs in the background (within MEMORY_POLL_SECONDS, "
+    "default 60s). source must be: whatsapp, psn, facts, or all. "
+    "since_ts is an optional epoch-seconds lower bound (omit for full reindex). "
+    "Rate limit: 5 per hour.",
+    {"type": "object",
+     "properties": {
+         "source":   {"type": "string",
+                      "description": "whatsapp | psn | facts | all"},
+         "since_ts": {"type": "number",
+                      "description": "Epoch-seconds lower bound. Omit to reindex from the start."},
+     },
+     "required": ["source"]})
+def _memory_reindex(source: str, since_ts: float | None = None,
+                    caller: dict | None = None) -> dict:
+    import mcp_oauth
+    import memory_store
+    caller = caller or {}
+    if not mcp_oauth.within_rate_limit(caller.get("zitadel_id", ""),
+                                       "memory_reindex", 5, 3600):
+        return {"error": "rate limit exceeded", "limit": "5 per hour"}
+    mcp_oauth.audit_write(caller.get("zitadel_id", ""), "memory_reindex",
+                          {"source": source, "since_ts": since_ts})
+    return memory_store.queue_reindex(source, since_ts=since_ts)
 
 
 def _caller_name(caller: dict) -> str:

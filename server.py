@@ -5010,12 +5010,14 @@ PSN_AI_POLL_SECONDS = max(10, int(os.environ.get("PSN_AI_POLL_SECONDS", "20")))
 PSN_AI_GROUPS = os.environ.get("PSN_AI_GROUPS", "squad").lower()
 import game_history as _games
 import mm_tokens as _mm_tokens
+import memory_store as _mem
 _wa.init()
 _facts.init()
 _chat.init()
 _games.init()
 _mcp_oauth.init()
 _mm_tokens.init()
+_mem.init()
 
 _video_seen: set[str] = set()
 _video_initialized: bool = False
