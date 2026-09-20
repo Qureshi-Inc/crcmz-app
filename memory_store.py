@@ -99,6 +99,9 @@ _embed_key       = ""       # confirmed API key
 _reindex_pending: dict[str, float | None] = {}
 _reindex_lock    = threading.Lock()
 
+# All recognized semantic-memory source namespaces.
+_VALID_SOURCES = frozenset({"whatsapp", "psn", "facts", "docs", "coach", "app", "watchparty"})
+
 # Background stats (no sensitive data)
 _stats: dict[str, Any] = {
     "indexed_total": 0,
@@ -354,6 +357,10 @@ def _run_index_cycle() -> None:
     _index_whatsapp()
     _index_psn_clips()
     _index_facts()
+    _index_docs()
+    _index_coach()
+    _index_app()
+    _index_watchparty()
     ts = int(time.time())
     _stats["last_index_ts"] = ts
     # Persist so status() survives container restarts.
@@ -368,22 +375,34 @@ def _run_index_cycle() -> None:
         logger.debug("memory: could not persist last_index_run: %s", e)
 
 
+_SOURCE_INDEXERS = {
+    "whatsapp":   lambda st: _index_whatsapp(since_ts=st),
+    "psn":        lambda st: _index_psn_clips(since_ts=st),
+    "facts":      lambda st: _index_facts(since_ts=st),
+    "docs":       lambda st: _index_docs(since_ts=st),
+    "coach":      lambda st: _index_coach(since_ts=st),
+    "app":        lambda st: _index_app(since_ts=st),
+    "watchparty": lambda st: _index_watchparty(since_ts=st),
+}
+
+
 def _flush_reindex_requests() -> None:
     with _reindex_lock:
         reqs = dict(_reindex_pending)
         _reindex_pending.clear()
     for source, since_ts in reqs.items():
         logger.info("memory: reindex requested for source=%s since=%s", source, since_ts)
-        if source == "whatsapp":
-            _index_whatsapp(since_ts=since_ts)
-        elif source == "psn":
-            _index_psn_clips(since_ts=since_ts)
-        elif source == "facts":
-            _index_facts(since_ts=since_ts)
-        elif source == "all":
-            _index_whatsapp(since_ts=since_ts)
-            _index_psn_clips(since_ts=since_ts)
-            _index_facts(since_ts=since_ts)
+        if source == "all":
+            for name, fn in _SOURCE_INDEXERS.items():
+                try:
+                    fn(since_ts)
+                except Exception as e:  # noqa: BLE001
+                    logger.error("memory: reindex(all) error for %s: %s", name, e)
+        elif source in _SOURCE_INDEXERS:
+            try:
+                _SOURCE_INDEXERS[source](since_ts)
+            except Exception as e:  # noqa: BLE001
+                logger.error("memory: reindex error for %s: %s", source, e)
 
 
 def _get_cursor(source: str) -> float:
@@ -648,6 +667,186 @@ def _index_facts(since_ts: float | None = None) -> None:
         _index_facts(since_ts=max_created / 1000 if max_created else None)
 
 
+# ── Docs indexer ──────────────────────────────────────────────────────────────
+
+def _chunk_markdown(text: str, max_chars: int = MAX_TEXT_CHARS) -> list[dict]:
+    """Split markdown text into chunks on H1–H3 heading boundaries."""
+    import re as _re
+    # Prepend newline so the first heading also matches the split pattern.
+    parts = _re.split(r'\n(?=#{1,3} )', "\n" + text.strip())
+    chunks = []
+    for i, part in enumerate(parts):
+        part = part.strip()
+        if not part or len(part) < 20:
+            continue
+        first_line, _, _ = part.partition('\n')
+        heading = first_line.lstrip('#').strip() if first_line.startswith('#') else ''
+        chunks.append({
+            "text":        part[:max_chars],
+            "heading":     heading,
+            "chunk_index": i,
+        })
+    return chunks
+
+
+def _index_docs(since_ts: float | None = None) -> None:
+    """Index Markdown documentation files, chunked by heading boundaries.
+
+    Looks for docs/ relative to this file (source tree) or /app/docs (Docker).
+    Uses file mtime as the cursor; skips files whose mtime has not changed.
+    """
+    skip_dirs = {"node_modules", ".git", "dist", "build", "__pycache__", ".pytest_cache"}
+    # Candidate locations: Docker image path first, then source-tree fallback.
+    docs_root: Path | None = None
+    for candidate in (Path("/app/docs"), Path(__file__).parent / "docs"):
+        if candidate.exists() and candidate.is_dir():
+            docs_root = candidate
+            break
+
+    # Root-level markdown files worth indexing.
+    root_mds: list[Path] = []
+    for p in (Path("/app/README.md"), Path(__file__).parent / "README.md"):
+        if p.exists() and p.is_file():
+            root_mds.append(p)
+            break  # only the first that exists
+
+    all_files: list[Path] = list(root_mds)
+    if docs_root:
+        for p in sorted(docs_root.rglob("*.md")):
+            if any(d in p.parts for d in skip_dirs):
+                continue
+            all_files.append(p)
+
+    if not all_files:
+        return
+
+    cursor_key = "docs"
+    since_mtime = since_ts if since_ts is not None else _get_cursor(cursor_key)
+
+    now_ms = int(time.time() * 1000)
+    max_mtime = 0.0
+    indexed = skipped = 0
+
+    # Determine a stable base for relative paths.
+    base = docs_root.parent if docs_root else Path(__file__).parent
+
+    for md_file in all_files:
+        try:
+            mtime = md_file.stat().st_mtime
+        except Exception:  # noqa: BLE001
+            continue
+
+        # Fast-path: skip files that predate the cursor (unless explicit reset).
+        if since_ts is None and since_mtime > 0 and mtime <= since_mtime:
+            continue
+
+        try:
+            text = md_file.read_text(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            continue
+
+        try:
+            rel_path = str(md_file.relative_to(base))
+        except ValueError:
+            rel_path = md_file.name
+
+        chunks = _chunk_markdown(text)
+        if not chunks:
+            continue
+
+        chunk_texts = [c["text"] for c in chunks]
+        try:
+            vecs = _embed(chunk_texts, _embed_base, _model_name, _embed_key)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("memory: docs embed failed for %s: %s", rel_path, e)
+            _stats["embed_errors"] += 1
+            continue
+
+        source_ts_ms = int(mtime * 1000)
+        for chunk, vec in zip(chunks, vecs):
+            rec_id   = f"{rel_path}::{chunk['chunk_index']}"
+            rec_hash = hashlib.sha256(chunk["text"].encode()).hexdigest()
+            meta     = json.dumps({"path": rel_path, "heading": chunk["heading"]})
+            ok, was_new = _upsert_item(
+                source="docs",
+                source_record_id=rec_id,
+                source_hash=rec_hash,
+                chunk_index=chunk["chunk_index"],
+                text=chunk["text"],
+                source_ts=source_ts_ms,
+                created_at=now_ms,
+                metadata_json=meta,
+                vec=vec,
+            )
+            if ok:
+                if was_new:
+                    indexed += 1
+                else:
+                    skipped += 1
+
+        if mtime > max_mtime:
+            max_mtime = mtime
+
+    _stats["indexed_total"] += indexed
+    _stats["skipped_unchanged"] += skipped
+    if max_mtime:
+        _set_cursor(cursor_key, max_mtime)
+    if indexed or skipped:
+        logger.debug("memory: docs indexed=%d skipped=%d", indexed, skipped)
+
+
+# ── Coach indexer (stub — table not yet built) ────────────────────────────────
+
+def _index_coach(since_ts: float | None = None) -> None:
+    """Index completed AI Coach clip reviews.
+
+    The `coach_reviews` table in `/data/game_history.db` does not exist yet.
+    This indexer no-ops gracefully until the AI Coach feature is shipped.
+
+    When the table exists it should contain at minimum:
+        review_id TEXT PK, clip_id TEXT, psn_user TEXT, reviewed_at INTEGER,
+        summary TEXT, strengths TEXT, mistakes TEXT, coaching_tips TEXT,
+        notable_moments TEXT, tags TEXT, game TEXT
+    """
+    import sqlite3 as _sq3
+    db = Path("/data/game_history.db")
+    if not db.exists():
+        return
+    try:
+        with _sq3.connect(db) as c:
+            tables = {r[0] for r in c.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()}
+    except Exception:  # noqa: BLE001
+        return
+    if "coach_reviews" not in tables:
+        return
+    # Full implementation needed when the table exists.
+    logger.info("memory: coach_reviews table found — stub indexer needs implementation")
+
+
+# ── App indexer (stub — store not yet built) ──────────────────────────────────
+
+def _index_app(since_ts: float | None = None) -> None:
+    """Index app notes, decisions, and meaningful human-readable events.
+
+    No `app_notes` store exists yet; this is a forward-compatible stub.
+    """
+    return
+
+
+# ── WatchParty indexer (stub — no semantic text stored yet) ───────────────────
+
+def _index_watchparty(since_ts: float | None = None) -> None:
+    """Index WatchParty semantic content (feature notes, room descriptions, etc.).
+
+    `/data/watch/` currently stores only `nicknames.json` and a signing key —
+    neither is indexable.  This stub is ready for when WatchParty adds
+    structured notes or event descriptions.
+    """
+    return
+
+
 # ── Core index operations ─────────────────────────────────────────────────────
 
 def _upsert_item(
@@ -764,7 +963,8 @@ def deactivate(source: str, source_record_id: str) -> int:
 
 _QUERY_PREFIX = (
     "Instruct: Given a search query about squad gaming activity (WhatsApp messages, "
-    "PSN clips, facts), retrieve the most relevant passages.\nQuery: "
+    "PSN clips, AI coach reviews, documentation, app notes, WatchParty, squad facts), "
+    "retrieve the most relevant passages.\nQuery: "
 )
 
 
@@ -791,7 +991,7 @@ def search(
 
     Returns a dict suitable for JSON serialisation by the MCP tool.
     """
-    limit = max(1, min(int(limit or 10), MAX_RESULTS))
+    limit = max(1, min(int(limit) if limit is not None else 10, MAX_RESULTS))
 
     if not _available:
         return _not_available()
@@ -1056,8 +1256,77 @@ def _wa_context(item: dict, before: int, after: int) -> dict:
     }
 
 
+def _source_newest_ts(source: str) -> int | None:
+    """Return the newest record timestamp (epoch-ms) from the canonical source DB.
+
+    Returns None when the source DB is absent or the table is empty.
+    """
+    import sqlite3 as _sq3
+    try:
+        if source == "whatsapp":
+            db = Path("/data/whatsapp.db")
+            if not db.exists():
+                return None
+            with _sq3.connect(db) as c:
+                row = c.execute("SELECT MAX(timestamp) FROM whatsapp_messages").fetchone()
+                return int(row[0]) if row and row[0] else None
+        if source == "psn":
+            db = Path("/data/clips.db")
+            if not db.exists():
+                return None
+            with _sq3.connect(db) as c:
+                row = c.execute(
+                    "SELECT MAX(CAST(psn_created_at * 1000 AS INTEGER)) FROM clips"
+                ).fetchone()
+                return int(row[0]) if row and row[0] else None
+        if source == "facts":
+            db = Path("/data/assistant_facts.db")
+            if not db.exists():
+                return None
+            with _sq3.connect(db) as c:
+                row = c.execute("SELECT MAX(created_at) FROM facts").fetchone()
+                return int(row[0]) if row and row[0] else None
+        # docs: cursor IS the newest mtime, returned below via the cursor value
+        # coach/app/watchparty: no canonical table yet
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _source_status_flag(
+    source: str,
+    indexed: int,
+    cursor_s: float,
+    newest_ms: int | None,
+) -> str:
+    """Derive a simple status string for a source."""
+    if indexed == 0:
+        # Check whether the underlying store actually exists.
+        exists_map = {
+            "whatsapp":   Path("/data/whatsapp.db"),
+            "psn":        Path("/data/clips.db"),
+            "facts":      Path("/data/assistant_facts.db"),
+            "docs":       Path("/app/docs"),
+            "coach":      None,   # stub — no DB expected yet
+            "app":        None,
+            "watchparty": None,
+        }
+        db_path = exists_map.get(source)
+        if db_path is not None and not db_path.exists():
+            return "unavailable"
+        # Source DB exists (or is a stub) but nothing indexed yet.
+        return "empty"
+    if newest_ms and cursor_s > 0:
+        lag = (newest_ms / 1000) - cursor_s
+        if lag > 3600:
+            return "behind"
+    return "current"
+
+
 def status() -> dict:
     """Return health and indexing stats.  Never reveals keys or credentials."""
+    import datetime as _dt
+
     base_info: dict[str, Any] = {
         "embedding_available": _available,
         "embedding_model":     _model_name or "not configured",
@@ -1076,18 +1345,27 @@ def status() -> dict:
         ).fetchall():
             counts[row["source"]] = row["c"]
 
-        cursors: dict[str, Any] = {}
+        # Build cursor map: source → epoch-seconds float
+        cursor_floats: dict[str, float] = {}
         for row in conn.execute(
             "SELECT key, value FROM memory_config WHERE key LIKE 'cursor_%'"
         ).fetchall():
-            source = row["key"][7:]  # strip 'cursor_'
-            import datetime as _dt
+            src = row["key"][7:]  # strip 'cursor_'
             try:
-                ts = _dt.datetime.fromtimestamp(float(row["value"]),
-                                                tz=_dt.timezone.utc).isoformat()
+                cursor_floats[src] = float(row["value"])
+            except (ValueError, TypeError):
+                pass
+
+        # Human-readable cursor map for backward compat.
+        cursors: dict[str, Any] = {}
+        for src, ts_s in cursor_floats.items():
+            try:
+                cursors[src] = _dt.datetime.fromtimestamp(
+                    ts_s / 1000 if ts_s > 1e10 else ts_s,
+                    tz=_dt.timezone.utc,
+                ).isoformat()
             except Exception:  # noqa: BLE001
-                ts = row["value"]
-            cursors[source] = ts
+                cursors[src] = str(ts_s)
 
         recent_errors = conn.execute(
             """SELECT source, record_id, detail, ts
@@ -1096,22 +1374,53 @@ def status() -> dict:
                ORDER BY ts DESC LIMIT 5"""
         ).fetchall()
 
-        # Persist last_index_run so status() survives container restarts.
         _lr = conn.execute(
             "SELECT value FROM memory_config WHERE key='last_index_run'"
         ).fetchone()
         persisted_last_run = int(_lr["value"]) if _lr else 0
 
-    import datetime as _dt
-    # In-memory value resets on restart; persisted value is the fallback.
     last_ts = _stats["last_index_ts"] or persisted_last_run
+
+    def _ts_iso(ts_ms: int | None) -> str | None:
+        if not ts_ms:
+            return None
+        try:
+            return _dt.datetime.fromtimestamp(ts_ms / 1000, tz=_dt.timezone.utc).isoformat()
+        except Exception:  # noqa: BLE001
+            return None
+
+    sources_out: dict[str, Any] = {}
+    for src in sorted(_VALID_SOURCES):
+        cursor_s = cursor_floats.get(src, 0.0)
+        # PSN cursor is stored as epoch-ms (not epoch-s like the others).
+        if src == "psn" and cursor_s > 1e10:
+            cursor_s = cursor_s / 1000
+        indexed = counts.get(src, 0)
+        newest_ms = _source_newest_ts(src)
+        # For docs, use cursor as proxy for newest indexed mtime.
+        if src == "docs" and newest_ms is None and cursor_s > 0:
+            newest_ms = int(cursor_s * 1000)
+        sources_out[src] = {
+            "indexed":          indexed,
+            "cursor":           cursors.get(src),
+            "newest_source_ts": _ts_iso(newest_ms),
+            "status":           _source_status_flag(src, indexed, cursor_s, newest_ms),
+        }
+
+    with _reindex_lock:
+        pending = sorted(_reindex_pending.keys())
 
     return {
         **base_info,
-        "indexed_counts":   counts,
-        "cursors":          cursors,
-        "last_index_run":   (_dt.datetime.fromtimestamp(last_ts, tz=_dt.timezone.utc).isoformat()
-                             if last_ts else None),
+        "last_index_run": _ts_iso(last_ts * 1000) if last_ts else None,
+        "sources": sources_out,
+        "queue": {
+            "pending_reindex": pending,
+            "size": len(pending),
+        },
+        # Backward-compat flat fields kept for existing callers.
+        "indexed_counts": counts,
+        "cursors":        cursors,
         "stats": {
             "indexed_total":     _stats["indexed_total"],
             "skipped_unchanged": _stats["skipped_unchanged"],
@@ -1130,10 +1439,10 @@ def status() -> dict:
 def queue_reindex(source: str, since_ts: float | None = None) -> dict:
     """Enqueue a reindex request for the next background cycle.
 
-    source: 'whatsapp' | 'psn' | 'facts' | 'all'
+    source: one of _VALID_SOURCES or 'all'
     since_ts: epoch-seconds lower bound, or None to reindex from the beginning
     """
-    valid = {"whatsapp", "psn", "facts", "all"}
+    valid = _VALID_SOURCES | {"all"}
     if source not in valid:
         return {"error": f"unknown source {source!r}", "valid": sorted(valid)}
 
@@ -1143,6 +1452,13 @@ def queue_reindex(source: str, since_ts: float | None = None) -> dict:
     with _reindex_lock:
         _reindex_pending[source] = since_ts
 
+    if source == "all":
+        return {
+            "ok": True,
+            "queued_sources": sorted(_VALID_SOURCES),
+            "since": since_ts,
+            "note": f"reindex for all sources queued; will run within {POLL_SECONDS}s",
+        }
     return {
         "ok": True,
         "source": source,

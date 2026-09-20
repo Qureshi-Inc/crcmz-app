@@ -138,6 +138,10 @@ def _patch_module(tmp: Path, embed_url: str) -> None:
     })
     with ms._reindex_lock:
         ms._reindex_pending.clear()
+    # Prevent the background indexer thread from starting — it would find the
+    # real docs/ directory and index it into the test DB, polluting results and
+    # keeping file handles open so TemporaryDirectory cleanup fails.
+    ms._start_background_indexer = lambda: None
 
 
 def _create_wa_db(wa_db: Path, rows: list[dict]) -> None:

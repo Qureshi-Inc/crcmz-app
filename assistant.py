@@ -1089,7 +1089,8 @@ def call_write_tool(name: str, args: dict, caller: dict) -> tuple[str, bool]:
     "Queue a reindex of the semantic memory layer for one or all sources. "
     "Use this after bulk data imports or when memory_status shows the index "
     "is stale. The job runs in the background (within MEMORY_POLL_SECONDS, "
-    "default 60s). source must be: whatsapp, psn, facts, or all. "
+    "default 60s). source must be: whatsapp, psn, facts, docs, coach, app, "
+    "watchparty, or all. "
     "since_ts is an optional epoch-seconds lower bound (omit for full reindex). "
     "Rate limit: 5 per hour.",
     {"type": "object",

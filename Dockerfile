@@ -21,6 +21,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py psn_auth.py psn_messaging.py roast_bot.py portal.py psn_data.py mattermost.py mm_tokens.py video_jobs.py clips.py clip_store.py whatsapp_analytics.py giveaway.py watch.py assistant.py facts.py chat_history.py psn_ai.py wa_ai.py crcmz_identity.py soundboard.py mcp_server.py game_history.py mcp_oauth.py memory_store.py favicon.png crcmz-logo.png footer-avatar.png ./
+# Documentation files — indexed by the semantic memory layer (memory_store.py).
+COPY docs/ ./docs/
 # Must land at frontend/dist — that is the path _APP_DIST resolves in server.py.
 COPY --from=frontend /build/dist ./frontend/dist
 RUN mkdir -p /data
