@@ -38,15 +38,20 @@ _TRIGGER = re.compile(r"^\s*@?ai\s*[,:>-]?\s+(?P<prompt>.+)$", re.IGNORECASE | r
 _SYSTEM_BODY = re.compile(r".+ sent a (video clip|screenshot)\.$", re.IGNORECASE)
 
 
-def parse_trigger(body: str) -> str | None:
-    """The question after an "ai" prefix, or None if this is not for the bot."""
+def parse_trigger(body: str, max_chars: int = PROMPT_MAX) -> str | None:
+    """The question after an "ai" prefix, or None if this is not for the bot.
+
+    `max_chars` defaults to the PSN limit, which suits questions. WhatsApp passes a
+    much larger one: a build brief is not a question, and truncating it at 400 chars
+    silently amputated the spec mid-sentence before the engineer ever saw it.
+    """
     body = (body or "").strip()
     if not body or _SYSTEM_BODY.match(body):
         return None
     m = _TRIGGER.match(body)
     if not m:
         return None
-    prompt = " ".join(m.group("prompt").split())[:PROMPT_MAX]
+    prompt = " ".join(m.group("prompt").split())[:max_chars]
     return prompt or None
 
 

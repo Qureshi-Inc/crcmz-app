@@ -336,6 +336,22 @@ def http_tests():
             check("http/" + name[2:], fn)
 
 
+
+def t_a_long_build_brief_is_not_truncated():
+    """trigger_from used to cap every message at 400 chars, inherited from the PSN bot
+    where messages are one-liners. A request for a site with a feature list was cut off
+    mid-word and the engineer built from the fragment."""
+    brief = ("Build me a fun interactive website for my friend group called Spin It. "
+             + "Feature: " * 60 + "and a leaderboard that persists between hangouts.")
+    msg = {"sender_jid": "1@s.whatsapp.net", "sender_name": "MQ",
+           "group_jid": GROUP, "text": "ai " + brief}
+    got = wa_ai.trigger_from(msg, GROUP)
+    assert got, "no trigger at all"
+    assert len(got) > 400, "still capped at the old 400-char limit (%d)" % len(got)
+    assert got.endswith("persists between hangouts."), (
+        "brief truncated at %d chars — the engineer builds from a fragment" % len(got))
+
+
 print("WhatsApp \"ai ...\" bot tests")
 for name, fn in list(globals().items()):
     if name.startswith("t_") and callable(fn):

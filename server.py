@@ -2747,6 +2747,13 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
 
     _wa_typing(group_jid, True)
     thread = f"wa-group:{group_jid}"
+    # Builds keep the full message (see wa_ai.TRIGGER_MAX) and have already been
+    # dispatched above. A chat question has to fit assistant.ask's 1000-char limit,
+    # which counts the "<author> asks: " prefix too — over that it raises.
+    if len(prompt) > 900:
+        logger.info("wa_ai: trimming a %d-char question to 900 for the chat path",
+                    len(prompt))
+        prompt = prompt[:900].rstrip()
     logger.info("wa_ai: %s asked %r%s", author, prompt[:80],
                 " [+image]" if image_b64 else "")
     try:

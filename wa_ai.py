@@ -24,6 +24,12 @@ from psn_ai import parse_trigger      # one trigger for every surface
 logger = logging.getLogger(__name__)
 
 MAX_REPLY_CHARS = 4000    # WhatsApp supports up to 65k; 4k is generous without being excessive
+# How much of an inbound message survives. This used to be 400, inherited from the
+# PSN bot where messages are one-liners. A build brief is not a one-liner: a request
+# for a site with a feature list was cut off mid-word at 400 chars and the engineer
+# built from the fragment. Chat answers are clamped further down by the caller,
+# which has the assistant's own 1000-char limit to respect; a build wants it all.
+TRIGGER_MAX = 4000
 _recent_replies: list[str] = []
 _RECENT_KEEP = 20
 
@@ -181,7 +187,7 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
     # records their IDs in _recent_sent_ids so we can match here.
     reply_to = msg.get("reply_to") or msg.get("quotedMessageId") or ""
     if reply_to and reply_to in _recent_sent_ids:
-        return text[:400]
+        return text[:TRIGGER_MAX]
 
     # Path 1: @mention.
     lead = _MENTION.match(text)
@@ -190,22 +196,22 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
         rest = text[lead.end():].strip()
         # Tagged us? Then whatever follows is the question, "ai" or not.
         if mentioned & _self_ids and rest:
-            return parse_trigger(rest) or rest[:400]
+            return parse_trigger(rest, TRIGGER_MAX) or rest[:TRIGGER_MAX]
         # Don't know our own ID yet (WA_BOT_IDS not set): treat any @mention
         # with following text as a trigger so the bot responds from day one.
         # Once WA_BOT_IDS is set, only actual @mentions of us fire.
         if not _self_ids and rest:
-            return rest[:400]
+            return rest[:TRIGGER_MAX]
         # We know our IDs but this mention isn't us — still catch "ai ..." in rest.
-        return parse_trigger(rest)
+        return parse_trigger(rest, TRIGGER_MAX)
 
     # Path 4: @mention of us anywhere in the message (middle, end, etc.).
     if _self_ids and set(_MENTION_ID.findall(text)) & _self_ids:
         clean = re.sub(r"@(?:" + "|".join(re.escape(i) for i in _self_ids) + r")", "", text).strip()
-        return (clean or text)[:400]
+        return (clean or text)[:TRIGGER_MAX]
 
     # Path 3: plain "ai ..." prefix.
-    return parse_trigger(text)
+    return parse_trigger(text, TRIGGER_MAX)
 
 
 def sender_name(msg: dict) -> str:
