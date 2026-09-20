@@ -1,4 +1,4 @@
-# CRCMZ App — psn-messenger
+# CRCMZ App
 
 Squad platform for Professional Goopers. One FastAPI service that does everything:
 PSN messaging, WhatsApp analytics, clip pipeline, soundboard, giveaway, watch party,

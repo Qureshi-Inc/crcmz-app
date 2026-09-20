@@ -6,8 +6,8 @@ testable, which the original standalone script could not be.
 
 Plain asserts, no pytest — run inside the app image where the deps live:
 
-    docker build -t psn-messenger:test .
-    docker run --rm -v "$PWD/tests:/app/tests" psn-messenger:test \
+    docker build -t crcmz-app:test .
+    docker run --rm -v "$PWD/tests:/app/tests" crcmz-app:test \
       python tests/test_psn_ai.py
 """
 

@@ -4,9 +4,9 @@
 Plain asserts, no pytest.  The module-level tests run on the host (sqlite3 +
 stdlib only).  The write-tool tests need the app image:
 
-    docker build -t psn-messenger:test .
+    docker build -t crcmz-app:test .
     docker run --rm -e SESSION_SECRET=test-secret \
-      -v "$PWD/tests:/app/tests" psn-messenger:test \
+      -v "$PWD/tests:/app/tests" crcmz-app:test \
       python tests/test_mcp_oauth.py
 """
 

@@ -1,5 +1,5 @@
 services:
-  psn-messenger:
+  crcmz-app:
     build: .
     environment:
       - NPSSO_TOKEN=${NPSSO_TOKEN}

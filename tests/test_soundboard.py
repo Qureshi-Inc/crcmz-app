@@ -3,9 +3,9 @@
 
 Plain asserts, no pytest -- run inside the app image where the deps live:
 
-    docker build -t psn-messenger:test .
+    docker build -t crcmz-app:test .
     docker run --rm -e SESSION_SECRET=test-secret \
-      -v "$PWD/tests:/app/tests" psn-messenger:test python tests/test_soundboard.py
+      -v "$PWD/tests:/app/tests" crcmz-app:test python tests/test_soundboard.py
 """
 
 import json

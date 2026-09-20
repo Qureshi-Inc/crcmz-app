@@ -1,6 +1,6 @@
 ---
 name: crcmz-mcp-tool
-description: Use when adding, changing, or removing any feature, table, or data store in the psn-messenger app (server.py and friends) - covers exposing it as an assistant tool and over MCP, joining it to the identity graph, and keeping secrets out. Invoke before writing the feature, not after.
+description: Use when adding, changing, or removing any feature, table, or data store in the CRCMZ App (server.py and friends) - covers exposing it as an assistant tool and over MCP, joining it to the identity graph, and keeping secrets out. Invoke before writing the feature, not after.
 ---
 
 # Adding a feature to CRCMZ without orphaning it
@@ -173,9 +173,9 @@ fails with `ModuleNotFoundError` for reasons that have nothing to do with the
 test. Pure-module tests do run on the host.
 
 ```bash
-docker build -t psn-messenger:test .
+docker build -t crcmz-app:test .
 docker run --rm -e SESSION_SECRET=test-secret \
-  -v "$PWD/tests:/app/tests" psn-messenger:test python tests/test_identity.py
+  -v "$PWD/tests:/app/tests" crcmz-app:test python tests/test_identity.py
 ```
 
 Ten tests in `test_assistant.py` and `test_wa_ai.py` fail at `main` for unrelated

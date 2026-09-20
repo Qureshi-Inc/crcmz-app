@@ -4,9 +4,9 @@
 Plain asserts, no pytest. The module itself is pure sqlite + stdlib so it runs on
 the host; the assistant/MCP half needs the app deps, so run it in the image:
 
-    docker build -t psn-messenger:test .
+    docker build -t crcmz-app:test .
     docker run --rm -e SESSION_SECRET=test-secret \
-      -v "$PWD/tests:/app/tests" psn-messenger:test python tests/test_game_history.py
+      -v "$PWD/tests:/app/tests" crcmz-app:test python tests/test_game_history.py
 """
 
 import json

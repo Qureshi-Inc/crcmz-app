@@ -3,9 +3,9 @@
 
 Plain asserts, no pytest — run inside the app image where the deps live:
 
-    docker build -t psn-messenger:test .
+    docker build -t crcmz-app:test .
     docker run --rm -e SESSION_SECRET=test-secret -e WA_INGEST_SECRET=test-ingest \
-      -v "$PWD/tests:/app/tests" psn-messenger:test python tests/test_wa_ai.py
+      -v "$PWD/tests:/app/tests" crcmz-app:test python tests/test_wa_ai.py
 """
 
 import json
