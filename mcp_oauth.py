@@ -82,9 +82,19 @@ def init() -> None:
                 client_name     TEXT DEFAULT '',
                 registered_at   INTEGER NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_at_zid  ON access_tokens(zitadel_id);
-            CREATE INDEX IF NOT EXISTS idx_rt_zid  ON refresh_tokens(zitadel_id);
-            CREATE INDEX IF NOT EXISTS idx_aud_zid ON write_audit(zitadel_id);
+            CREATE TABLE IF NOT EXISTS dm_threads (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                initiator_zid       TEXT NOT NULL,
+                initiator_name      TEXT NOT NULL,
+                initiator_wa_jid    TEXT NOT NULL,
+                recipient_wa_jid    TEXT NOT NULL,
+                created_at          INTEGER NOT NULL,
+                last_activity_at    INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_at_zid    ON access_tokens(zitadel_id);
+            CREATE INDEX IF NOT EXISTS idx_rt_zid    ON refresh_tokens(zitadel_id);
+            CREATE INDEX IF NOT EXISTS idx_aud_zid   ON write_audit(zitadel_id);
+            CREATE INDEX IF NOT EXISTS idx_dm_recip  ON dm_threads(recipient_wa_jid);
         """)
 
 
@@ -351,3 +361,72 @@ def within_rate_limit(
     except Exception as e:  # noqa: BLE001
         logger.debug("mcp_oauth: within_rate_limit: %s", e)
         return True  # fail-open: a DB blip should not silently drop sends
+
+
+# ── DM relay threads ──────────────────────────────────────────────────────────
+
+DM_THREAD_TTL = 24 * 3600  # threads expire after 24 h of inactivity
+
+
+def open_dm_thread(
+    initiator_zid: str,
+    initiator_name: str,
+    initiator_wa_jid: str,
+    recipient_wa_jid: str,
+) -> None:
+    """Record or refresh a relay thread when a DM is sent via MCP."""
+    now = int(time.time())
+    try:
+        with _connect() as db:
+            # Upsert: same pair → just refresh last_activity_at
+            existing = db.execute(
+                "SELECT id FROM dm_threads WHERE initiator_zid=? AND recipient_wa_jid=?",
+                (initiator_zid, recipient_wa_jid),
+            ).fetchone()
+            if existing:
+                db.execute(
+                    "UPDATE dm_threads SET last_activity_at=?, initiator_wa_jid=?, initiator_name=? WHERE id=?",
+                    (now, initiator_wa_jid, initiator_name, existing["id"]),
+                )
+            else:
+                db.execute(
+                    "INSERT INTO dm_threads(initiator_zid,initiator_name,initiator_wa_jid,recipient_wa_jid,created_at,last_activity_at) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (initiator_zid, initiator_name, initiator_wa_jid, recipient_wa_jid, now, now),
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("mcp_oauth: open_dm_thread: %s", e)
+
+
+def find_dm_thread(recipient_wa_jid: str) -> dict | None:
+    """Return active thread for a recipient JID, or None if none/expired."""
+    if not recipient_wa_jid:
+        return None
+    cutoff = int(time.time()) - DM_THREAD_TTL
+    try:
+        with _connect() as db:
+            row = db.execute(
+                "SELECT * FROM dm_threads "
+                "WHERE recipient_wa_jid=? AND last_activity_at>? "
+                "ORDER BY last_activity_at DESC LIMIT 1",
+                (recipient_wa_jid, cutoff),
+            ).fetchone()
+            if not row:
+                return None
+            return dict(row)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("mcp_oauth: find_dm_thread: %s", e)
+        return None
+
+
+def touch_dm_thread(recipient_wa_jid: str) -> None:
+    """Update last_activity_at when a reply arrives, keeping thread alive."""
+    now = int(time.time())
+    try:
+        with _connect() as db:
+            db.execute(
+                "UPDATE dm_threads SET last_activity_at=? WHERE recipient_wa_jid=?",
+                (now, recipient_wa_jid),
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("mcp_oauth: touch_dm_thread: %s", e)

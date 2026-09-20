@@ -535,8 +535,96 @@ def _web_search(query: str, limit: int = 6) -> Any:
        "required": ["task", "subdomain"]})
 def _clawbot_build(task: str, subdomain: str) -> Any:
     import re as _re
-    clean = _re.sub(r"[^a-z0-9-]", "-", subdomain.lower().strip()).strip("-")[:40]
-    return {"ready": True, "task": task, "subdomain": clean or "squad-build"}
+    import threading as _thr
+    import shlex as _shlex
+    import subprocess as _sub
+    import uuid as _uuid
+    import time as _t
+    import json as _json
+    import httpx as _hx
+
+    clean = _re.sub(r"[^a-z0-9-]", "-", subdomain.lower().strip()).strip("-")[:40] or "squad-build"
+
+    _JOBS_API = "https://jobs.buildanator.com"
+    job_id = ""
+    job_url = _JOBS_API
+    try:
+        r = _hx.post(f"{_JOBS_API}/jobs", json={"task": task, "subdomain": clean}, timeout=10)
+        r.raise_for_status()
+        job_id = r.json().get("id", "")
+        job_url = f"{_JOBS_API}?job={job_id}" if job_id else _JOBS_API
+    except Exception as e:
+        pass
+
+    def _patch(status: str, logs: str = "", result_url: str = "") -> None:
+        if not job_id:
+            return
+        try:
+            _hx.patch(f"{_JOBS_API}/jobs/{job_id}",
+                      json={"status": status, "logs": logs, "result_url": result_url},
+                      timeout=10)
+        except Exception:
+            pass
+
+    def _run() -> None:
+        prompt = task + (f". Deploy to {clean}.buildanator.com" if clean else "")
+        run_id = _uuid.uuid4().hex[:12]
+        out_file = f"/tmp/claw-{run_id}.json"
+        remote_cmd = (
+            f"/home/ai/.npm-global/bin/openclaw agent -m {_shlex.quote(prompt)}"
+            f" --agent engineer --session-key {_shlex.quote('agent:engineer:job-' + run_id)}"
+            f" --json --timeout 7200"
+            f" > {out_file} 2>&1; echo $? > {out_file}.exit"
+        )
+        ssh_base = [
+            "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-n",
+            "-i", AI_CONTROLLER_KEY, AI_CONTROLLER_SSH,
+        ]
+        _patch("running", "🚀 SSH connected, engineer running…")
+        log_lines = ["🚀 SSH connected, engineer running…"]
+        proc = _sub.Popen(ssh_base + [remote_cmd], stdout=_sub.PIPE, stderr=_sub.PIPE, text=True)
+        start = _t.time()
+        last_patch = start
+        while proc.poll() is None:
+            _t.sleep(5)
+            elapsed = int(_t.time() - start)
+            if _t.time() - last_patch >= 60:
+                m, s = divmod(elapsed, 60)
+                log_lines.append(f"⏳ {m}:{s:02d} elapsed…")
+                _patch("running", "\n".join(log_lines))
+                last_patch = _t.time()
+            if elapsed > 25 * 60:
+                proc.kill()
+                break
+        try:
+            proc.communicate(timeout=10)
+        except Exception:
+            pass
+        try:
+            out = _sub.run(ssh_base + [f"cat {out_file}; rm -f {out_file} {out_file}.exit"],
+                           capture_output=True, text=True, timeout=30).stdout
+        except Exception:
+            out = ""
+        elapsed = int(_t.time() - start)
+        answer = ""
+        try:
+            data = _json.loads((out or "").strip())
+            payloads = (data.get("result") or {}).get("payloads") or []
+            answer = " ".join(p.get("text", "") for p in payloads if p.get("text")).strip()
+            if not answer:
+                answer = (data.get("answer") or data.get("response") or data.get("content") or "").strip()
+        except Exception:
+            answer = (out or "").strip()[:400]
+        answer = _re.sub(r"\s*⚠️\s*Reply truncated[^\n]*", "", answer, flags=_re.IGNORECASE).rstrip()
+        m, s = divmod(elapsed, 60)
+        log_lines.append(f"✅ Finished in {m}:{s:02d}")
+        if answer and answer != "job finished":
+            log_lines.append(answer[:300])
+        result_url = f"https://{clean}.buildanator.com" if clean else ""
+        _patch("done", "\n".join(log_lines), result_url)
+
+    _thr.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "job_url": job_url, "message": f"Engineer is on it — track at {job_url}"}
 
 
 @tool("whatsapp_stats",
@@ -1160,10 +1248,37 @@ def _send_wa_dm(to: str, message: str, caller: dict) -> dict:
     result = "sent" if ok else "failed"
     mcp_oauth.audit_write(zid, tool_n,
                           _json.dumps({"to": to, "message": message[:80]}), result)
+
+    if ok:
+        # Open a relay thread so replies from the recipient are forwarded back
+        # to the caller via WhatsApp DM.  We need the caller's own wa_jid —
+        # try the identity graph first, fall back to the messages DB.
+        caller_wa_jid = (crcmz_identity.by_zitadel_id().get(zid) or {}).get("wa_jid", "")
+        if not caller_wa_jid:
+            try:
+                import sqlite3 as _sq
+                _WA_DB = "/data/whatsapp.db"
+                caller_names = (crcmz_identity.by_zitadel_id().get(zid) or {}).get("wa_names", [])
+                if caller_names:
+                    placeholders = ",".join("?" * len(caller_names))
+                    row = _sq.connect(_WA_DB).execute(
+                        f"SELECT sender_jid FROM whatsapp_messages WHERE sender_name IN ({placeholders})"
+                        " AND sender_jid IS NOT NULL LIMIT 1",
+                        caller_names,
+                    ).fetchone()
+                    caller_wa_jid = row[0] if row else ""
+            except Exception:  # noqa: BLE001
+                pass
+        if caller_wa_jid:
+            mcp_oauth.open_dm_thread(zid, name, caller_wa_jid, jid)
+
     return {
         "ok": ok,
-        "detail": f"DM sent to {person.get('name', to)}" if ok else "Send failed",
-        "recipient_name": person.get("name", to),
+        "detail": f"DM sent to {person.get('display_name', to)}" if ok else "Send failed",
+        "recipient_name": person.get("display_name", to),
+        "relay_active": ok and bool(
+            (crcmz_identity.by_zitadel_id().get(zid) or {}).get("wa_jid", "") or True
+        ),
     }
 
 

@@ -1747,6 +1747,29 @@ async def wa_ingest(request: Request):
     msgs = body if isinstance(body, list) else [body]
     inserted = 0
     for msg in msgs:
+        group_jid = msg.get("group_jid") or msg.get("groupJid") or ""
+        sender_jid = msg.get("sender_jid") or msg.get("from") or ""
+        is_dm = bool(sender_jid) and not group_jid.endswith("@g.us") and not (msg.get("from_me") or msg.get("fromMe"))
+
+        # DM relay: if this is a reply from a tracked recipient, forward it to
+        # the original sender via WhatsApp DM and skip storing in the shared DB.
+        if is_dm:
+            thread = _mcp_oauth.find_dm_thread(sender_jid)
+            if thread:
+                _mcp_oauth.touch_dm_thread(sender_jid)
+                text = msg.get("text") or msg.get("body") or ""
+                sender_name = msg.get("sender_name") or msg.get("pushName") or sender_jid.split("@")[0]
+                if text and WA_BRIDGE_URL:
+                    relay_text = f"[{sender_name} replied] {text}"
+                    _threading.Thread(
+                        target=wa_ai.send_reply,
+                        args=(WA_BRIDGE_URL, thread["initiator_wa_jid"], relay_text),
+                        daemon=True,
+                    ).start()
+                    logger.info("wa_ingest: relayed DM reply from %s to %s",
+                                sender_jid, thread["initiator_wa_jid"])
+            continue  # never store DMs in the shared analytics DB
+
         if msg.get("type") == "reaction":
             if await asyncio.to_thread(_wa.ingest_baileys_reaction, msg):
                 inserted += 1
