@@ -6,3 +6,5 @@ psn_tokens.json
 data/
 psn_tokens.backup.json
 .devlibs/
+frontend/node_modules/
+frontend/dist/

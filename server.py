@@ -128,6 +128,12 @@ def health():
     return {"status": "ok"}
 
 
+# The React interface, built by `npm run build` in frontend/ and copied into the image
+# by the Dockerfile's build stage. Absent in a plain `python server.py` checkout, which
+# is handled: /app answers 503 with an explanation rather than a traceback.
+_APP_DIST = Path(__file__).parent / "frontend" / "dist"
+_APP_ASSET_PREFIX = "/app/assets/"
+
 _FAVICON_PATH = Path(__file__).parent / "favicon.png"
 _LOGO_PATH         = Path(__file__).parent / "crcmz-logo.png"
 _FOOTER_AVATAR_PATH = Path(__file__).parent / "footer-avatar.png"
@@ -860,6 +866,14 @@ def _machine_authorised(request: Request) -> bool:
 async def _auth_gate(request: Request, call_next):
     path = request.url.path
     if path in _OPEN_PATHS:
+        return await call_next(request)
+
+    # The new interface's fingerprinted bundle. Public on purpose: it is client code
+    # with no user data in it, and keeping it behind the session cookie would stop the
+    # edge caching it — the whole point of the immutable filenames. The *document* at
+    # /app is still gated below, so an unauthenticated visitor gets sent to sign in
+    # before any of this is requested.
+    if path.startswith(_APP_ASSET_PREFIX):
         return await call_next(request)
 
     # A machine with an explicit credential, on any Host. This is the migration
@@ -6025,6 +6039,90 @@ def dashboard(request: Request):
                                         signed_in=bool(session)))
 
 
+# ── The new React interface, at /app ─────────────────────────────────────────
+#
+# Registered here rather than as a mount so the fallback stays narrow. A blanket
+# StaticFiles(html=True) at "/" would answer index.html with a 200 for every unknown
+# path, which would turn a typo'd API call into "a JSON parse error" and hide real
+# 404s. Instead:
+#
+#   /app/assets/<fingerprinted>  → the file, immutable, or a real 404
+#   /app, /app/<anything else>   → index.html, never cached
+#
+# Nothing outside /app is touched, so /clips, /clips/{uid}, /api/*, /v2/*, /portal*,
+# /watch, /mcp and the well-known endpoints keep the contracts they already have.
+
+_APP_MEDIA_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".webp": "image/webp",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ico": "image/x-icon",
+    ".json": "application/json; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+@app.get("/app/assets/{asset_path:path}", include_in_schema=False)
+def app_asset(asset_path: str):
+    """One built asset. Missing means 404, not the index document."""
+    target = (_APP_DIST / "assets" / asset_path).resolve()
+    assets_root = (_APP_DIST / "assets").resolve()
+    # Containment check before touching the filesystem: `asset_path` is caller-supplied
+    # and ".." in it would otherwise read anything the process can.
+    if not target.is_file() or not target.is_relative_to(assets_root):
+        return Response(status_code=404)
+    media_type = _APP_MEDIA_TYPES.get(target.suffix.lower(), "application/octet-stream")
+    return Response(
+        target.read_bytes(),
+        media_type=media_type,
+        # Safe to keep forever: Vite puts a content hash in every filename here, so a
+        # changed file is a different URL.
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
+@app.get("/app", include_in_schema=False)
+@app.get("/app/{spa_path:path}", include_in_schema=False)
+def app_shell(request: Request, spa_path: str = ""):
+    """The SPA document, for any route the client router owns."""
+    index = _APP_DIST / "index.html"
+    if not index.is_file():
+        # The image was built without the frontend stage. Say so; do not fall back to
+        # the legacy dashboard, which would silently make /app look like it works.
+        return HTMLResponse(
+            "<h1>The new interface is not in this build</h1>"
+            "<p>frontend/dist is missing. Build it with <code>npm run build</code> in "
+            "<code>frontend/</code>, or use the image built by the project Dockerfile.</p>"
+            '<p><a href="/">Open the classic interface</a></p>',
+            status_code=503,
+        )
+    # A request under /app that clearly wants a file rather than a page gets a 404.
+    # Serving HTML with a 200 for a missing .js is how a broken deploy turns into an
+    # unexplainable syntax error in the console instead of an obvious missing asset.
+    if not _wants_html(request) and Path(spa_path).suffix:
+        return Response(status_code=404)
+    return HTMLResponse(
+        index.read_text(encoding="utf-8"),
+        headers={
+            # The document names the current fingerprinted bundles, so caching it is how
+            # a browser ends up asking for assets that no longer exist after a deploy.
+            "Cache-Control": "no-store, must-revalidate",
+            # It is a private, authenticated document; keep it out of any shared cache.
+            "Vary": "Cookie",
+        },
+    )
+
+
+def _wants_html(request: Request) -> bool:
+    """True for a browser navigation, as opposed to a fetch for a file."""
+    return "text/html" in (request.headers.get("accept") or "")
 
 
 # The dashboard's "soundboard" buttons, and the private per-person boards behind

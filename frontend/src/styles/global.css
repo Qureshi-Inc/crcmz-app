@@ -1,0 +1,120 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+/* Foundations only. Anything that belongs to one screen lives with that screen —
+ * the legacy build's 1,050 lines of global CSS is the thing being escaped here. */
+
+*,
+*::before,
+*::after {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  /* Not `scroll-behavior: smooth` unconditionally: it fights with restoring a
+     position on Back. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface-base);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  /* dvh, so the address bar collapsing on a phone does not leave a gap or push a
+     fixed composer off-screen. */
+  min-height: 100dvh;
+  overscroll-behavior-y: none;
+}
+
+/* One focus ring for the whole application, on the keyboard only. It is drawn with
+ * outline (not box-shadow) so it cannot be clipped by an ancestor's overflow. */
+:focus-visible {
+  outline: 2px solid var(--color-accent-text);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Skip link — the first thing in the tab order, invisible until it has focus. */
+.skip-link {
+  position: fixed;
+  top: calc(var(--safe-top) + 8px);
+  left: 8px;
+  z-index: 100;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-3);
+  color: var(--color-fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transform: translateY(-200%);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+/* Scrollbars, so a deliberately scrollable table does not look like a rendering
+ * accident on desktop. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* The brand wordmark is the one place the old gradient survives. */
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  background: linear-gradient(96deg, #46e8ff, #e838bd 72%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Numerals in stat tiles. Tabular so a value changing does not reflow its row. */
+.numeral {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* Honour the OS setting. Everything below is an enhancement, never information. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* A placeholder that matches the shape of what is coming, rather than a spinner.
+ * Reserving the space is what keeps CLS down. */
+@keyframes skeleton-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+.skeleton {
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+  animation: skeleton-pulse 1.6s var(--ease-out) infinite;
+}

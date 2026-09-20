@@ -1,0 +1,16 @@
+# Keep the frontend build stage's context small and deterministic. node_modules is
+# reinstalled from the lockfile inside the image; dist is rebuilt there.
+frontend/node_modules
+frontend/dist
+.git
+.devlibs
+__pycache__
+*.pyc
+.venv
+data/
+docs/ux/screenshots
+tests/__pycache__
+.gstack
+psn_tokens.json
+psn_tokens.backup.json
+.env

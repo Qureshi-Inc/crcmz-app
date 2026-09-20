@@ -1,0 +1,133 @@
+/*
+ * CRCMZ design tokens.
+ *
+ * The legacy dashboard reached for full-saturation neon (#ff2fd6, #22e6ff) as
+ * *surface* colour: gradient text, glowing borders, six accent colours competing on
+ * one screen. It reads as a splash page rather than somewhere to sit and look at a
+ * table of who is online.
+ *
+ * So: neutral dark surfaces carry the layout, one accent (magenta) carries action,
+ * and the rest of the palette is reserved for meaning — success, warning, danger,
+ * live. The neon is kept, but spent deliberately: the wordmark, the live indicator,
+ * the primary button. Nothing else glows.
+ *
+ * Contrast: every text pair is at or above 4.5:1 against its surface, and every UI
+ * boundary or indicator at or above 3:1. Run `node tests/browser/contrast.mjs` to
+ * re-measure — it reads this file, so the numbers cannot drift from the tokens, and it
+ * fails the check rather than trusting a comment. Two of these pairs were wrong when
+ * first written by hand; that is what the script is for.
+ */
+
+@theme {
+  /* ── Surfaces ──────────────────────────────────────────────────────────────
+     A four-step ramp. Anything that needs to sit "above" something else moves one
+     step up, rather than inventing a new colour or adding a glow. */
+  --color-surface-base: #08060f;    /* the page */
+  --color-surface-1: #100c1c;       /* cards, the sidebar */
+  --color-surface-2: #181327;       /* raised: inputs, hovered rows */
+  --color-surface-3: #221a35;       /* popovers, dialogs, active states */
+
+  /* ── Text ─────────────────────────────────────────────────────────────────── */
+  --color-fg: #f4f1fb;              /* 18.0:1 on base — body and headings */
+  --color-fg-muted: #b3abc8;        /* 9.2:1 on base — secondary text */
+  --color-fg-subtle: #8a82a3;       /* 5.6:1 on base — labels, timestamps */
+  /* Deliberately the lowest usable step. Anything quieter than this is decoration
+     and must not be the only carrier of information. */
+
+  /* ── Borders ─────────────────────────────────────────────────────────────── */
+  --color-border: #2a2340;
+  --color-border-strong: #3d3358;
+
+  /* ── Accent: one primary, used for the action you are most likely to want ───
+     Two magentas, not one, because the same hue cannot do both jobs:
+
+       --color-accent      a *filled* surface, so its label sits on top of it
+       --color-accent-text accent-coloured *text*, so it sits on a dark surface
+
+     The first started at the brand's #e838bd, which measures 3.66:1 against white —
+     below the 4.5:1 that 1.4.3 asks for, and axe flagged it on every screen with a
+     primary button. Darkened until white passes. Hover goes darker still rather than
+     brighter, which is the only direction that improves contrast here.
+
+     Every number below is measured by tests/browser/contrast.mjs, not estimated. */
+  --color-accent: #cf2aa8;          /* white on this: 4.62:1 */
+  --color-accent-hover: #b8218f;    /* white on this: 5.79:1 */
+  --color-accent-fg: #ffffff;
+  --color-accent-subtle: #2a1029;   /* tinted surface for selected nav, chips */
+  --color-accent-text: #ff9ce6;     /* 10.7:1 on base — accent-coloured *text* */
+
+  /* ── Meaningful state. Not decoration: each one means one thing. ─────────── */
+  --color-live: #34d399;            /* online / connected */
+  --color-live-text: #6ee7b7;
+  --color-warn: #fbbf24;
+  --color-warn-text: #fcd34d;
+  --color-danger: #f0503c;
+  --color-danger-text: #ff9182;
+  --color-info-text: #7dd3fc;
+
+  /* ── Typography ───────────────────────────────────────────────────────────
+     System stack: nothing to download, correct on every platform, and the legacy
+     build already depended on it for body text. Orbitron survives only as the
+     display face for the wordmark and for numerals in stat tiles, where its fixed
+     width actually helps. */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji',
+    'Segoe UI Emoji', 'Noto Color Emoji';
+  --font-display: 'Orbitron', var(--font-sans);
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* A modest scale. 16px body, 14px secondary — as specified, and large enough that
+     the 200% zoom requirement does not immediately break the layout. */
+  --text-2xs: 0.6875rem;   /* 11px — badge text only */
+  --text-xs: 0.75rem;      /* 12px — timestamps, captions */
+  --text-sm: 0.875rem;     /* 14px — secondary */
+  --text-base: 1rem;       /* 16px — body */
+  --text-lg: 1.125rem;     /* 18px */
+  --text-xl: 1.375rem;     /* 22px — section heading */
+  --text-2xl: 1.75rem;     /* 28px — page title */
+  --text-3xl: 2.25rem;     /* 36px — stat numerals */
+
+  /* ── Radii ───────────────────────────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  /* ── Elevation. Shadow only; no glow in the default state. ───────────────── */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 14px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 18px 48px rgb(0 0 0 / 0.55);
+
+  /* ── Motion. Short enough to feel like a response, not an animation. ─────── */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+}
+
+:root {
+  /* ── Layout constants ──────────────────────────────────────────────────────
+     The legacy build constrained every screen to 760px, which wasted roughly half a
+     1440px window. Ordinary pages get 1120–1280px; conversations and forms get a
+     narrower measure because long lines are hard to read, not because of the frame. */
+  --content-width: 1200px;
+  --content-width-wide: 1440px;   /* media grids */
+  --content-width-read: 760px;    /* conversation, forms */
+  --sidebar-width: 244px;
+  --mobile-nav-height: 60px;
+  --dock-height: 56px;
+
+  /* Safe areas, resolved once. Every fixed element adds these rather than guessing,
+     which is what keeps a composer or a Leave button off the home indicator. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* Product comfort target for touch targets. Not a WCAG AA minimum — AA asks for
+     24px (2.5.8); 44px is what actually feels right on a phone. */
+  --tap-target: 44px;
+
+  color-scheme: dark;
+}
