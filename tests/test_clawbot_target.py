@@ -199,20 +199,35 @@ def _deferral_does_not_leak():
     assert assistant._BUILD_DEFERRED.get() is False, "flag not reset on exit"
 
 
-def _chat_model_cannot_reach_it():
-    """The read registry is what the WhatsApp/portal model is handed. A build deploys
-    real infrastructure and can edit a live site, so it must not be in there."""
-    text, ok = assistant.call_tool("clawbot_build",
-                                   {"task": "x", "subdomain": "y"})
-    assert not ok, "call_tool ran clawbot_build — it is supposed to be write-only"
+def _untrusted_surface_cannot_reach_it():
+    """Off a trusted surface the tool does not exist for the chat path at all, and it
+    is never in the read registry the shared MCP_TOKEN is served."""
+    text, ok = assistant.call_tool("clawbot_build", {"task": "x", "subdomain": "y"})
+    assert not ok, "call_tool ran clawbot_build outside a deferred surface"
     assert "no such tool" in text, text
     assert "clawbot_build" not in assistant.tool_names()
     assert "clawbot_build" in assistant.write_tool_names()
+    assert not assistant.signal_tool_specs(), "signalling offered with no deferral"
+
+
+def _trusted_surface_gets_it_as_a_signal():
+    """On WhatsApp/portal the handler dispatches the job, so the model is offered the
+    tool as a pure signal: it names the build, nothing executes here."""
+    with assistant.builds_deferred():
+        specs = assistant.signal_tool_specs()
+        assert [x["function"]["name"] for x in specs] == ["clawbot_build"], specs
+        text, ok = assistant.call_tool("clawbot_build",
+                                       {"task": "make a site", "subdomain": "x"})
+        assert ok, text
+        assert json.loads(text).get("deferred") is True, text
+    # and it is still absent from the read specs the shared token sees
+    assert "clawbot_build" not in {s["function"]["name"] for s in assistant.tool_specs()}
 
 
 check("deferred call only records the request", _deferred_call_does_not_run_the_job)
 check("deferral is scoped to the block", _deferral_does_not_leak)
-check("the chat model cannot reach clawbot_build", _chat_model_cannot_reach_it)
+check("untrusted surface cannot reach clawbot_build", _untrusted_surface_cannot_reach_it)
+check("trusted surface gets it as a signal", _trusted_surface_gets_it_as_a_signal)
 
 print(f"\n{PASSED} passed, {len(FAILED)} failed")
 for f in FAILED:

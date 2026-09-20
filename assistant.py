@@ -914,6 +914,12 @@ def call_tool(name: str, args: dict) -> tuple[str, bool]:
     """Run one tool. Returns (json_text, ok) -- errors go back to the model."""
     spec = _TOOLS.get(name)
     if spec is None:
+        if name == "clawbot_build" and _BUILD_DEFERRED.get():
+            # Signal only: the handler that set the flag dispatches the job, with the
+            # group to report into. Nothing is executed here, so no caller is needed.
+            logger.info("clawbot_build: signalled by the model (handler dispatches)")
+            return json.dumps({"ok": True, "deferred": True,
+                               "message": "Engineer is on it."}), True
         return json.dumps({"error": f"no such tool: {name}",
                            "available": tool_names()}), False
     allowed = set(spec["parameters"].get("properties", {}))
@@ -1506,8 +1512,10 @@ _BUILD_QUESTION = re.compile(
     # chat, "add a leaderboard to the loadout site" is a job. This alternative carries
     # weight now that clawbot_build is a write tool and the chat model cannot call it,
     # so this regex (plus the promise backstop) is the whole trigger on WhatsApp.
-    rf"|\b(add|adding|remove|removing|delete|deleting|swap|replace)\b.{{0,60}}\b({_EDIT_NOUNS})\b"
-    rf"|\b({_EDIT_NOUNS})\b.{{0,60}}\b(add|adding|remove|removing|delete|deleting|swap|replace)\b"
+    # No delete/remove here on purpose: taking a site down is done from the Clawbot UI,
+    # not by a chat model reading a sentence. These only ever add or change.
+    rf"|\b(add|adding|swap|replace|put)\b.{{0,60}}\b({_EDIT_NOUNS})\b"
+    rf"|\b({_EDIT_NOUNS})\b.{{0,60}}\b(add|adding|swap|replace)\b"
     r"|\b(site|website|web\s*app|app|tool|dashboard)\b.{0,80}"
     r"\b(build|make|create|ship|deploy|launch)\b"
     # Any action verb aimed at a *.buildanator.com deploy target is a build/edit job.
@@ -1524,6 +1532,25 @@ def needs_build(question: str) -> bool:
     return bool(_BUILD_QUESTION.search(question or ""))
 
 
+def signal_tool_specs() -> list[dict]:
+    """Tools the model may *name* on a trusted, server-side surface.
+
+    Only inside `builds_deferred()` — i.e. the WhatsApp/portal handler, which runs the
+    job itself. The tool executes nothing there, so the model gets its build door back
+    without `clawbot_build` re-entering the read registry that the shared MCP_TOKEN
+    can reach. MCP callers never set this flag.
+    """
+    if not _BUILD_DEFERRED.get():
+        return []
+    spec = _WRITE_TOOLS.get("clawbot_build")
+    if not spec:
+        return []
+    return [{"type": "function",
+             "function": {"name": "clawbot_build",
+                          "description": spec["description"],
+                          "parameters": spec["parameters"]}}]
+
+
 def _chat(messages: list[dict], model: str, base: str, key: str,
           force_tool: bool = False) -> dict:
     """One /v1/chat/completions round trip with the tool registry attached."""
@@ -1532,7 +1559,7 @@ def _chat(messages: list[dict], model: str, base: str, key: str,
     payload = {
         "model": model,
         "messages": messages,
-        "tools": tool_specs(),
+        "tools": tool_specs() + signal_tool_specs(),
         # "required" only ever on the first turn: leaving it on would make the
         # model call tools forever instead of writing the answer.
         "tool_choice": tc,

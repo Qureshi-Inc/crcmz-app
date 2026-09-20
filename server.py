@@ -1961,13 +1961,25 @@ def _resolve_existing_site(text: str) -> dict | None:
 # to name a live site is caught by the subdomain-collision check instead.
 _EDIT_INTENT_RE = _re.compile(
     r"\b(updat\w+|edit\w*|chang\w+|fix\w*|modif\w+|rebuild\w*|redo|redesign\w*|"
-    r"restyle\w*|tweak\w*|improv\w+|adjust\w*|renam\w+|add|adding|remove\w*|"
-    r"delete\w*|swap\w*|replac\w+)\b",
+    # No delete/remove: removal is done from the Clawbot UI, never inferred from chat.
+    # Leaving them in here was actively dangerous once unresolved edits started
+    # building — "delete the plant site" would have deployed a new plant site.
+    r"restyle\w*|tweak\w*|improv\w+|adjust\w*|renam\w+|add|adding|"
+    r"swap\w*|replac\w+)\b",
     _re.IGNORECASE)
 
 # Asked for something to be built from scratch. Used only as a veto: "build a
 # site that adds up scores" trips the edit regex on "add", and asking "which
 # site?" when somebody clearly wants a new one is worse than just building it.
+# Asking for something to be taken down. The bot never does this: a chat model reading
+# a sentence is the wrong thing to hand a delete to, and `expose-app --down` is one
+# command in the Clawbot UI. This exists to make sure no other branch mistakes a
+# teardown request for a build.
+_TEARDOWN_RE = _re.compile(
+    r"\b(delete|remove|take\s+(?:it|that|them)?\s*down|tear\s*down|kill|"
+    r"get\s+rid\s+of|shut\s+(?:it|that)?\s*down|unpublish|undeploy)\b",
+    _re.IGNORECASE)
+
 _CREATE_INTENT_RE = _re.compile(
     r"\b(build|builds|building|make|makes|making|creat\w+|launch\w*|ship|"
     r"spin\s+up|set\s+up|put\s+together)\b",
@@ -2009,6 +2021,17 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str = "",
 
     # ── Resolve the target before touching the dashboard ──────────────────────
     raw = raw_text or task
+    # A teardown is never a deploy. Refuse rather than guess — every other branch
+    # below ends in something being built.
+    if _TEARDOWN_RE.search(raw) and not _CREATE_INTENT_RE.search(raw):
+        wa_ai.send_reply(
+            WA_BRIDGE_URL, group_jid,
+            "not doing deletes from chat — take it down from the Clawbot UI "
+            "(or run `expose-app --down <name>` on the controller)")
+        _started(error="teardown requests are not handled here; use the Clawbot UI")
+        logger.info("clawbot: refused a teardown request %r", raw[:100])
+        return
+
     explicit = subdomain_explicit or bool(_SUBDOMAIN_RE.search(raw))
     existing: dict | None = None
     if explicit or _EDIT_INTENT_RE.search(raw):
@@ -2019,16 +2042,29 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str = "",
             # group the handler has already said "I'll get my engineer on it",
             # hence the lead-in; over MCP the caller gets the same answer as an
             # error it can act on.
+            # Nothing live matches. Do NOT stop here: a request that produces neither
+            # a build nor an edit is the worst outcome, and it is what happened after
+            # the lab was pruned — every "update the <deleted site>" answered with a
+            # question and built nothing. If the message names something usable,
+            # build it fresh at that name and say so. Only ask when there is no
+            # candidate at all ("update the thing we made last week").
+            guess = _extract_subdomain(raw)
             sites = [d["subdomain"] for d in _known_deployments()]
-            if sites:
+            if guess and guess != "squad-build":
+                subdomain = guess
                 wa_ai.send_reply(
                     WA_BRIDGE_URL, group_jid,
-                    "hold up — which site do you want changed? I've got: "
-                    + ", ".join(sites[:12])
-                    + "\n(or just say the full url and I'll go straight there)")
-                _started(error="ambiguous target — say which site to change: "
-                               + ", ".join(sites[:12]))
-                logger.info("clawbot: edit with no resolvable target for %r", raw[:100])
+                    f"nothing live called that — building a fresh one at "
+                    f"{subdomain}.buildanator.com"
+                    + (f" (live right now: {', '.join(sites[:8])})" if sites else ""))
+                logger.info("clawbot: unresolved edit -> fresh build at %r", subdomain)
+            elif sites:
+                wa_ai.send_reply(
+                    WA_BRIDGE_URL, group_jid,
+                    "which site? I've got: " + ", ".join(sites[:12])
+                    + "\n(or name a new one and I'll build it)")
+                _started(error="no target — live sites: " + ", ".join(sites[:12]))
+                logger.info("clawbot: edit with no candidate at all for %r", raw[:100])
                 return
     if existing is None:
         # Phrased as a build, but if the name we picked is already live it is
@@ -2337,6 +2373,18 @@ def _extract_subdomain(text: str) -> str:
     m2 = _re.search(r'\b(?:called|named)\s+([a-z][a-z0-9-]{1,38})\b', text, _re.IGNORECASE)
     if m2:
         return m2.group(1).lower()[:30]
+    # "the loadout spinner site" names the site "loadout-spinner". Reading the words
+    # in front of the noun beats taking the first long word in the sentence, which
+    # turned "add a leaderboard to the loadout spinner site" into `leaderboard`.
+    m3 = _re.search(r"\b(?:the|my|our|a|an)\s+([a-z0-9][a-z0-9\- ]{2,30}?)\s+"
+                    r"(?:site|website|web\s*page|page|app|dashboard)\b",
+                    text, _re.IGNORECASE)
+    if m3:
+        words = [w for w in m3.group(1).lower().split()
+                 if w not in ("new", "old", "whole", "entire", "same")]
+        slug = _re.sub(r"[^a-z0-9-]+", "-", "-".join(words)).strip("-")[:30]
+        if len(slug) >= 3:
+            return slug
     # Only derive from longer meaningful words — avoids slang like "bro", "man".
     # The edit verbs belong here as much as the create verbs: without them
     # "update the gta6 countdown site" picked "update" and shipped a new site.
@@ -2350,7 +2398,11 @@ def _extract_subdomain(text: str) -> str:
             "changes","modify","modified","rebuild","redo","redesign","restyle",
             "tweak","tweaks","improve","adjust","rename","remove","delete",
             "swap","replace","again","also","please","from","into","then","when",
-            "same","more","less","dark","mode","instead","should","would","could"}
+            "same","more","less","dark","mode","instead","should","would","could",
+            # placeholders: if this is all the message gives us, we have no name and
+            # should ask rather than deploy thing.buildanator.com
+            "thing","things","stuff","something","anything","week","made","last",
+            "yesterday","earlier","before","other"}
     slug = next((w.lower() for w in words if w.lower() not in skip), "squad-build")
     return slug[:30]
 
