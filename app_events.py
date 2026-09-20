@@ -84,8 +84,13 @@ def record(
     feature: str | None = None,
     reference: str | None = None,
     metadata: dict | None = None,
+    _created_at: float | None = None,
 ) -> str | None:
-    """Record a semantic event.  Returns the new event_id, or None if duplicate."""
+    """Record a semantic event.  Returns the new event_id, or None if duplicate.
+
+    _created_at: override the creation timestamp (epoch-seconds).  Used by
+    backfill_from_git() to preserve the original commit date.
+    """
     content_hash = hashlib.sha256(f"{title}|{text}".encode()).hexdigest()
     with _lock, _conn() as db:
         existing = db.execute(
@@ -105,7 +110,7 @@ def record(
                 event_type,
                 title,
                 text,
-                time.time(),
+                _created_at if _created_at is not None else time.time(),
                 actor,
                 feature,
                 reference,
@@ -184,41 +189,67 @@ def _classify_commit(subject: str) -> str:
     return "admin_note"
 
 
-def backfill_from_git(repo_path: str, limit: int = 10) -> int:
+def _load_commit_manifest(repo_path: str) -> list[dict]:
+    """Try to load the pre-built git commit manifest from the Docker image."""
+    manifest = Path(repo_path) / "git_commits.json"
+    if not manifest.exists():
+        return []
+    try:
+        with open(manifest) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:  # noqa: BLE001
+        pass
+    return []
+
+
+def backfill_from_git(repo_path: str = "/app", limit: int = 10) -> int:
     """Backfill semantic events from git commit history.
+
+    Tries a pre-built manifest file (git_commits.json, generated at Docker
+    build time) before shelling out to live git.  The manifest is the
+    production path since .git is not present in the container image.
 
     Only includes commits whose subjects look like meaningful events
     (feat/fix/docs/refactor/migration/deploy/release/breaking).
-    Safe to run multiple times (idempotent on content_hash).
-    Returns count of newly inserted events.
+    Idempotent (content_hash dedup).  Returns count of newly inserted events.
     """
-    try:
-        result = subprocess.run(
-            ["git", "log", "--format=%H|%ai|%an|%s|%b", "--no-merges",
-             f"-n{limit * 3}"],
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if result.returncode != 0:
-            logger.warning("app_events.backfill_from_git: git log failed: %s",
-                           result.stderr[:200])
+    commits = _load_commit_manifest(repo_path)
+
+    if not commits:
+        # Fall back to live git (dev / test environments)
+        try:
+            result = subprocess.run(
+                ["git", "log", "--format=%H|%aI|%an|%s", "--no-merges",
+                 f"-n{limit * 3}"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().splitlines():
+                    parts = line.split("|", 3)
+                    if len(parts) == 4:
+                        commits.append({
+                            "hash": parts[0], "date": parts[1],
+                            "author": parts[2], "subject": parts[3],
+                        })
+        except Exception as e:  # noqa: BLE001
+            logger.warning("app_events.backfill_from_git: git unavailable: %s", e)
             return 0
-    except Exception as e:  # noqa: BLE001
-        logger.warning("app_events.backfill_from_git: %s", e)
+
+    if not commits:
+        logger.debug("app_events.backfill_from_git: no commits found")
         return 0
 
+    import datetime as _dt
     inserted = 0
-    for line in result.stdout.strip().split("\n"):
-        if not line.strip():
+    for c in commits:
+        subject = c.get("subject", "")
+        if not subject:
             continue
-        parts = line.split("|", 4)
-        if len(parts) < 4:
-            continue
-        commit_hash, date_str, author, subject = parts[:4]
-        body = parts[4].strip() if len(parts) > 4 else ""
-
         lower = subject.lower()
         is_semantic = any(
             lower.startswith(p + "(") or lower.startswith(p + ":")
@@ -227,14 +258,19 @@ def backfill_from_git(repo_path: str, limit: int = 10) -> int:
         if not is_semantic:
             continue
 
+        commit_hash = c.get("hash", "")
+        date_str = c.get("date", "")
+        author = c.get("author", "")
+        body = c.get("body", "")
         event_type = _classify_commit(subject)
-        text = body if body else subject
+        text = body.strip() if body and body.strip() else subject
+
         try:
-            import datetime as _dt
-            ts = _dt.datetime.fromisoformat(date_str).timestamp()
+            ts = _dt.datetime.fromisoformat(date_str.replace("Z", "+00:00")).timestamp()
         except Exception:  # noqa: BLE001
             ts = time.time()
 
+        # Use commit hash in content_hash so each commit is uniquely deduped
         content_hash = hashlib.sha256(f"{subject}|{commit_hash}".encode()).hexdigest()
         with _lock, _conn() as db:
             existing = db.execute(
@@ -250,13 +286,8 @@ def backfill_from_git(repo_path: str, limit: int = 10) -> int:
                     actor, reference, metadata_json, content_hash)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    event_id,
-                    event_type,
-                    subject,
-                    text,
-                    ts,
-                    author,
-                    commit_hash,
+                    event_id, event_type, subject, text, ts,
+                    author, commit_hash,
                     json.dumps({"commit": commit_hash, "date": date_str}),
                     content_hash,
                 ),
@@ -266,4 +297,5 @@ def backfill_from_git(repo_path: str, limit: int = 10) -> int:
         if inserted >= limit:
             break
 
+    logger.info("app_events.backfill_from_git: inserted %d events", inserted)
     return inserted

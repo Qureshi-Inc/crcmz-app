@@ -755,6 +755,150 @@ def test_memory_status_source_states() -> None:
             )
 
 
+def test_source_filter_unknown() -> None:
+    """search() with an unknown source returns an error dict."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _patch_module(tmp, EMBED_URL)
+        import memory_store as ms
+        ms.init()
+        result = ms.search("anything", sources=["foobar"])
+        assert "error" in result, f"expected error for unknown source, got: {result}"
+        assert "valid_sources" in result
+
+
+def test_source_filter_docs_only() -> None:
+    """search() with sources=['docs'] returns only docs items."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _patch_module(tmp, EMBED_URL)
+        import memory_store as ms
+        ms.init()
+        docs_text = "WatchParty docs: how to join a room and stream content"
+        wa_text   = "hey let's watch something tonight on WatchParty"
+        for src, rid, text in [("docs", "doc1", docs_text), ("whatsapp", "wa1", wa_text)]:
+            ms._upsert_item(src, rid, hashlib.sha256(text.encode()).hexdigest(),
+                            0, text, int(time.time()*1000), int(time.time()*1000),
+                            "{}", _make_vec(text))
+        result = ms.search("WatchParty room", sources=["docs"])
+        sources_returned = {r["source"] for r in result.get("results", [])}
+        assert sources_returned <= {"docs"}, (
+            f"sources=['docs'] returned non-docs results: {sources_returned}"
+        )
+
+
+def test_source_filter_empty_source() -> None:
+    """search() with sources=['app'] when no app records returns empty results."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _patch_module(tmp, EMBED_URL)
+        import memory_store as ms
+        ms.init()
+        # Only insert whatsapp records
+        text = "FIFA tonight anyone?"
+        ms._upsert_item("whatsapp", "wa1", hashlib.sha256(text.encode()).hexdigest(),
+                        0, text, int(time.time()*1000), int(time.time()*1000),
+                        "{}", _make_vec(text))
+        result = ms.search("FIFA", sources=["app"])
+        assert result.get("results") == [] or result.get("count", 0) == 0, (
+            f"sources=['app'] with no app records should return empty, got: {result}"
+        )
+
+
+def test_source_filter_multi() -> None:
+    """search() with sources=['docs','app'] returns only docs/app items."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _patch_module(tmp, EMBED_URL)
+        import memory_store as ms
+        ms.init()
+        docs_text = "Deployment decision: use Coolify for container orchestration"
+        wa_text   = "Deployment to prod went fine today"
+        for src, rid, text in [("docs","doc1",docs_text), ("whatsapp","wa1",wa_text)]:
+            ms._upsert_item(src, rid, hashlib.sha256(text.encode()).hexdigest(),
+                            0, text, int(time.time()*1000), int(time.time()*1000),
+                            "{}", _make_vec(text))
+        result = ms.search("deployment decision", sources=["docs", "app"])
+        sources_returned = {r["source"] for r in result.get("results", [])}
+        assert sources_returned <= {"docs", "app"}, (
+            f"sources=['docs','app'] returned unexpected sources: {sources_returned}"
+        )
+
+
+def test_no_source_filter() -> None:
+    """search() with sources=None returns results from any source."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _patch_module(tmp, EMBED_URL)
+        import memory_store as ms
+        ms.init()
+        for src, rid, text in [
+            ("whatsapp", "wa1", "FIFA match highlights"),
+            ("facts",    "f1",  "FIFA ProGamer is undefeated"),
+        ]:
+            ms._upsert_item(src, rid, hashlib.sha256(text.encode()).hexdigest(),
+                            0, text, int(time.time()*1000), int(time.time()*1000),
+                            "{}", _make_vec(text))
+        result = ms.search("FIFA", sources=None)
+        sources_returned = {r["source"] for r in result.get("results", [])}
+        assert len(sources_returned) >= 1, "sources=None should return results from any source"
+
+
+def test_to_epoch_s() -> None:
+    """_to_epoch_s normalizes any timestamp format to epoch-seconds."""
+    import memory_store as ms
+
+    # Epoch seconds passthrough (< 1e10)
+    assert abs(ms._to_epoch_s(1758390000) - 1758390000) < 1, "seconds passthrough"
+    # Epoch milliseconds converted (>= 1e10)
+    assert abs(ms._to_epoch_s(1758390000000) - 1758390000) < 1, "ms → s"
+    # ISO-8601 string
+    r = ms._to_epoch_s("2026-09-20T15:18:57Z")
+    assert r > 1758000000, f"ISO string gave wrong result: {r}"
+    # Null / zero
+    assert ms._to_epoch_s(None) == 0.0, "None should give 0.0"
+    assert ms._to_epoch_s(0) == 0.0, "0 should give 0.0"
+    assert ms._to_epoch_s("") == 0.0, "empty string should give 0.0"
+    # Malformed string
+    assert ms._to_epoch_s("not-a-date") == 0.0, "malformed string should give 0.0"
+    # WhatsApp timestamps are epoch-seconds (~1.79 billion)
+    wa_ts = 1789917537
+    assert abs(ms._to_epoch_s(wa_ts) - wa_ts) < 1, "WA seconds passthrough"
+    # WA-style millisecond value (same moment, *1000)
+    wa_ts_ms = 1789917537000
+    assert abs(ms._to_epoch_s(wa_ts_ms) - wa_ts) < 1, "WA ms → s"
+    # Facts timestamps are epoch-seconds
+    facts_ts = 1789691256
+    assert abs(ms._to_epoch_s(facts_ts) - facts_ts) < 1, "facts seconds passthrough"
+    # PSN psn_created_at is epoch-seconds
+    psn_ts = 1758390537.5
+    assert abs(ms._to_epoch_s(psn_ts) - psn_ts) < 1, "PSN float seconds passthrough"
+    print("  _to_epoch_s: all pass")
+
+
+def test_app_events_created_at() -> None:
+    """record() with _created_at preserves the commit's original timestamp."""
+    import app_events as _ae
+    with tempfile.TemporaryDirectory() as td:
+        orig = _ae._DB_PATH
+        _ae._DB_PATH = Path(td) / "app_events.db"
+        try:
+            _ae.init()
+            commit_ts = 1758390537.0  # a past commit time
+            eid = _ae.record(
+                "feature_shipped", "Old feature", "Shipped long ago",
+                _created_at=commit_ts,
+            )
+            assert eid
+            row = _ae.get(eid)
+            assert row is not None
+            assert abs(row["created_at"] - commit_ts) < 1, (
+                f"created_at {row['created_at']} should match commit_ts {commit_ts}"
+            )
+        finally:
+            _ae._DB_PATH = orig
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -778,6 +922,13 @@ def main() -> int:
     check("16. app_events store: init, record, idempotency, count, list", test_app_events_store)
     check("17. watchparty_events store: init, record, idempotency, scan_existing_data", test_watchparty_events_store)
     check("18. memory_status source state strings are valid", test_memory_status_source_states)
+    check("19. _to_epoch_s normalizes all timestamp formats", test_to_epoch_s)
+    check("20. app_events record() respects _created_at", test_app_events_created_at)
+    check("21. source filter: unknown source returns error", test_source_filter_unknown)
+    check("22. source filter: docs-only excludes whatsapp", test_source_filter_docs_only)
+    check("23. source filter: empty source returns []", test_source_filter_empty_source)
+    check("24. source filter: multi-source", test_source_filter_multi)
+    check("25. source filter: None searches all", test_no_source_filter)
 
     print(f"\n{PASSED} passed, {len(FAILED)} failed")
     if FAILED:

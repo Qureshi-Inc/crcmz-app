@@ -69,6 +69,31 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+
+def _to_epoch_s(v) -> float:
+    """Convert any source timestamp to Unix seconds (float).
+
+    Accepts:
+    - int/float in seconds (< 1e10): returned as-is
+    - int/float in milliseconds (>= 1e10): divided by 1000
+    - ISO-8601 string: parsed via datetime.fromisoformat()
+    - None / 0 / falsy: returns 0.0
+    - Anything unparseable: returns 0.0
+    """
+    if not v:
+        return 0.0
+    if isinstance(v, str):
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+        except Exception:  # noqa: BLE001
+            return 0.0
+    try:
+        f = float(v)
+        return f / 1000.0 if f >= 1e10 else f
+    except Exception:  # noqa: BLE001
+        return 0.0
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 _BASE = os.environ.get("EMBEDDING_BASE_URL",
@@ -485,7 +510,7 @@ def _index_whatsapp(since_ts: float | None = None) -> None:
             source_hash=rec_hash,
             chunk_index=0,
             text=text,
-            source_ts=row["timestamp"],
+            source_ts=int(_to_epoch_s(row["timestamp"]) * 1000),
             created_at=now,
             metadata_json=meta,
             vec=vec,
@@ -495,7 +520,7 @@ def _index_whatsapp(since_ts: float | None = None) -> None:
                 indexed += 1
             else:
                 skipped += 1
-        ts_val = float(row["timestamp"])
+        ts_val = _to_epoch_s(row["timestamp"])
         if ts_val > max_ts:
             max_ts = ts_val
 
@@ -599,8 +624,8 @@ def _index_facts(since_ts: float | None = None) -> None:
         return
 
     cursor_key = "facts"
-    since_ms = int((since_ts or _get_cursor(cursor_key)) * 1000
-                    if since_ts is not None else _get_cursor(cursor_key))
+    # facts.created_at is epoch-seconds; cursor stored as epoch-seconds
+    since = since_ts if since_ts is not None else _get_cursor(cursor_key)
     import sqlite3 as _sq3
     with _sq3.connect(facts_db, check_same_thread=False) as fdb:
         fdb.row_factory = _sq3.Row
@@ -610,7 +635,7 @@ def _index_facts(since_ts: float | None = None) -> None:
                WHERE created_at > ?
                ORDER BY created_at
                LIMIT ?""",
-            (since_ms or since_ts or 0, BATCH_SIZE),
+            (since or 0, BATCH_SIZE),
         ).fetchall()
 
     if not rows:
@@ -643,7 +668,7 @@ def _index_facts(since_ts: float | None = None) -> None:
             source_hash=rec_hash,
             chunk_index=0,
             text=text,
-            source_ts=row["created_at"],
+            source_ts=int(_to_epoch_s(row["created_at"]) * 1000),
             created_at=now,
             metadata_json=meta,
             vec=vec,
@@ -653,18 +678,19 @@ def _index_facts(since_ts: float | None = None) -> None:
                 indexed += 1
             else:
                 skipped += 1
-        if row["created_at"] > max_created:
-            max_created = row["created_at"]
+        ca = _to_epoch_s(row["created_at"])
+        if ca > max_created:
+            max_created = ca
 
     _stats["indexed_total"] += indexed
     _stats["skipped_unchanged"] += skipped
     if max_created:
-        # facts.created_at is epoch-ms; cursor is epoch-s for consistency with WA
-        _set_cursor(cursor_key, max_created / 1000)
+        # cursor stored as epoch-seconds
+        _set_cursor(cursor_key, max_created)
     if indexed or skipped:
         logger.debug("memory: facts indexed=%d skipped=%d", indexed, skipped)
     if len(rows) == BATCH_SIZE:
-        _index_facts(since_ts=max_created / 1000 if max_created else None)
+        _index_facts(since_ts=max_created if max_created else None)
 
 
 # ── Docs indexer ──────────────────────────────────────────────────────────────
@@ -1169,6 +1195,16 @@ def search(
     """
     limit = max(1, min(int(limit) if limit is not None else 10, MAX_RESULTS))
 
+    # Validate and normalise the sources filter before hitting the DB.
+    if sources is not None:
+        sources = [s for s in sources if s]  # drop empties
+        invalid = set(sources) - _VALID_SOURCES
+        if invalid:
+            return {"error": f"unknown source(s): {sorted(invalid)}",
+                    "valid_sources": sorted(_VALID_SOURCES)}
+        if not sources:
+            sources = None  # empty list → no filter (treat as all)
+
     if not _available:
         return _not_available()
 
@@ -1214,27 +1250,41 @@ def search(
         seqs = [r["rowid"] for r in vec_rows]
         dist_by_seq = {r["rowid"]: r["distance"] for r in vec_rows}
 
-        placeholders = ",".join("?" * len(seqs))
-        meta_rows = conn.execute(
-            f"""SELECT seq, id, source, source_record_id, text,
-                       source_ts, metadata_json
-                FROM memory_items
-                WHERE seq IN ({placeholders})
-                  AND deleted_at IS NULL""",
-            seqs,
-        ).fetchall()
+        seq_placeholders = ",".join("?" * len(seqs))
+        # Push the source filter into SQL to avoid returning irrelevant sources
+        # in the post-filter — without this, a sources=["docs"] query would
+        # first fetch CANDIDATE_K mixed results, potentially returning 0 docs.
+        if sources:
+            src_placeholders = ",".join("?" * len(sources))
+            meta_rows = conn.execute(
+                f"""SELECT seq, id, source, source_record_id, text,
+                           source_ts, metadata_json
+                    FROM memory_items
+                    WHERE seq IN ({seq_placeholders})
+                      AND source IN ({src_placeholders})
+                      AND deleted_at IS NULL""",
+                seqs + list(sources),
+            ).fetchall()
+        else:
+            meta_rows = conn.execute(
+                f"""SELECT seq, id, source, source_record_id, text,
+                           source_ts, metadata_json
+                    FROM memory_items
+                    WHERE seq IN ({seq_placeholders})
+                      AND deleted_at IS NULL""",
+                seqs,
+            ).fetchall()
 
     # Filter and build results.
     results = []
     for row in meta_rows:
         meta = json.loads(row["metadata_json"] or "{}")
 
-        if sources and row["source"] not in sources:
+        raw_ts = row["source_ts"]
+        ts_s = _to_epoch_s(raw_ts)  # normalized to epoch-seconds regardless of storage unit
+        if after_ts and ts_s and ts_s < after_ts:
             continue
-        ts = row["source_ts"]
-        if after_ts and ts and ts < after_ts * 1000:
-            continue
-        if before_ts and ts and ts > before_ts * 1000:
+        if before_ts and ts_s and ts_s > before_ts:
             continue
         if group_id and meta.get("group_id", meta.get("group_jid", "")) != group_id:
             continue
@@ -1253,8 +1303,8 @@ def search(
 
         import datetime as _dt
         ts_iso = (
-            _dt.datetime.fromtimestamp(ts / 1000, tz=_dt.timezone.utc).isoformat()
-            if ts else None
+            _dt.datetime.fromtimestamp(ts_s, tz=_dt.timezone.utc).isoformat()
+            if ts_s else None
         )
 
         # sqlite-vec uses L2 distance for float vectors by default; convert
@@ -1305,19 +1355,19 @@ def get(memory_id: str) -> dict:
 
     import datetime as _dt
     meta = json.loads(row["metadata_json"] or "{}")
-    ts = row["source_ts"]
+    ts_s = _to_epoch_s(row["source_ts"])
 
     return {
         "memory_id":       row["id"],
         "source":          row["source"],
         "source_record_id": row["source_record_id"],
         "chunk_index":     row["chunk_index"],
-        "timestamp":       (_dt.datetime.fromtimestamp(ts / 1000, tz=_dt.timezone.utc).isoformat()
-                            if ts else None),
+        "timestamp":       (_dt.datetime.fromtimestamp(ts_s, tz=_dt.timezone.utc).isoformat()
+                            if ts_s else None),
         "text":            row["text"],
         "metadata":        {k: v for k, v in meta.items() if k not in ("author_sub",)},
         "indexed_at":      _dt.datetime.fromtimestamp(
-                               row["created_at"] / 1000, tz=_dt.timezone.utc
+                               _to_epoch_s(row["created_at"]), tz=_dt.timezone.utc
                            ).isoformat(),
     }
 
@@ -1404,13 +1454,13 @@ def _wa_context(item: dict, before: int, after: int) -> dict:
         ).fetchall()
 
     def _fmt(row, role="context") -> dict:
-        ts_ms = row["timestamp"]
+        ts_s = _to_epoch_s(row["timestamp"])
         return {
             "role":      role,
             "message_id": row["id"],
             "author":    row["sender_name"] or ("(you)" if row["from_me"] else ""),
-            "timestamp": (_dt.datetime.fromtimestamp(ts_ms / 1000, tz=_dt.timezone.utc).isoformat()
-                          if ts_ms else None),
+            "timestamp": (_dt.datetime.fromtimestamp(ts_s, tz=_dt.timezone.utc).isoformat()
+                          if ts_s else None),
             "text":      row["text"] or None,
             "media":     (True if any([row["has_photo"], row["has_video"],
                                        row["has_audio"]]) else None),
@@ -1445,7 +1495,10 @@ def _source_newest_ts(source: str) -> int | None:
                 return None
             with _sq3.connect(db) as c:
                 row = c.execute("SELECT MAX(timestamp) FROM whatsapp_messages").fetchone()
-                return int(row[0]) if row and row[0] else None
+                if not (row and row[0]):
+                    return None
+                # whatsapp_messages.timestamp is epoch-seconds; return epoch-ms
+                return int(_to_epoch_s(row[0]) * 1000)
         if source == "psn":
             db = Path("/data/clips.db")
             if not db.exists():
@@ -1461,7 +1514,10 @@ def _source_newest_ts(source: str) -> int | None:
                 return None
             with _sq3.connect(db) as c:
                 row = c.execute("SELECT MAX(created_at) FROM facts").fetchone()
-                return int(row[0]) if row and row[0] else None
+                if not (row and row[0]):
+                    return None
+                # facts.created_at is epoch-seconds; return epoch-ms
+                return int(_to_epoch_s(row[0]) * 1000)
         if source == "coach":
             db = Path("/data/coach_reviews.db")
             if not db.exists():

@@ -909,8 +909,9 @@ def _person_profile(who: str, range: str = "all_time") -> dict:  # noqa: A002
            "query":    {"type": "string",
                         "description": "Natural-language question or description to search for."},
            "sources":  {"type": "array", "items": {"type": "string"},
-                        "description": "Limit to these sources: whatsapp, psn, facts. "
-                                       "Omit to search all."},
+                        "description": "Limit to these sources: whatsapp, psn, facts, "
+                                       "docs, coach, app, watchparty. "
+                                       "Omit or pass null to search all."},
            "after_ts": {"type": "number",
                         "description": "Only return results with source timestamp after "
                                        "this epoch-seconds value."},
