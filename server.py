@@ -2130,7 +2130,11 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str = "",
     else:
         prompt = task
         if subdomain:
-            prompt += f". Deploy to {subdomain}.buildanator.com"
+            prompt += (
+                f". Deploy to {subdomain}.buildanator.com using `lab-ship <project-dir> {subdomain}`."
+                f" Do NOT use `python -m http.server`, do NOT edit ~/.cloudflared/config.yml,"
+                f" and do NOT host on the controller. lab-ship is the only sanctioned deploy method."
+            )
 
     # Write output to a temp file on remote so SSH closes as soon as openclaw
     # exits — otherwise lab-ship's persistent server keeps the pipe open forever.
@@ -2203,6 +2207,8 @@ def _run_clawbot_job(task: str, subdomain: str, group_jid: str = "",
 
     # Strip openclaw's output-limit warning — build jobs don't need the continuation hint
     answer_text = _re.sub(r"\s*⚠️\s*Reply truncated[^\n]*", "", answer_text, flags=_re.IGNORECASE).rstrip()
+    # Strip any raw model artifact tags the LLM leaked into its response text
+    answer_text = _re.sub(r"<tool_call>.*?</tool_call>|<tool_call>|</tool_call>", "", answer_text, flags=_re.DOTALL).strip()
 
     if not answer_text:
         answer_text = "job finished"

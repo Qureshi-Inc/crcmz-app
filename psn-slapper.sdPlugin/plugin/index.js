@@ -17,6 +17,7 @@ const MESSAGES = {
   "com.psn.slapper.icedcap": "🧊☕ Iced Cap STORRYYY! 📖✨",
   "com.psn.slapper.waterbreak": "💧 Water break! 🚰💦",
   "com.psn.slapper.never": "Never 🙅‍♂️❌",
+  "com.psn.slapper.lfg": "Let's Fuckin' Go! 🔥💥🚀",
 };
 
 const W = 126, H = 126;
@@ -161,6 +162,19 @@ async function renderIdleSquadUp() {
   return pngDataUri(img);
 }
 
+async function renderIdleLfg() {
+  const { img, ctx } = makeCanvas(W, H);
+  rect(ctx, 0, 0, W, H, "#0a0a0f");
+  rect(ctx, 0, 0, W, 3, "#ff6600");
+  rect(ctx, 0, 3, W, 2, "#ff4400");
+  rect(ctx, 0, 120, W, 2, "#ff4400");
+  rect(ctx, 0, 122, W, 4, "#ff6600");
+  text(ctx, "LET'S", 63, 36, 13, "#ffaa44", "center", "DeckBold");
+  text(ctx, "FUCKIN'", 63, 64, 14, "#ff3322", "center", "DeckBold");
+  text(ctx, "GO!", 63, 102, 26, "#00ff88", "center", "DeckBold");
+  return pngDataUri(img);
+}
+
 async function getIdleImage(action) {
   if (action === "com.psn.slapper.icedcap") return renderIdleIcedCap();
   if (action === "com.psn.slapper.waterbreak") return renderIdleWaterBreak();
@@ -170,6 +184,7 @@ async function getIdleImage(action) {
   if (action === "com.psn.slapper.roastnow") return renderIdleRoastNow();
   if (action === "com.psn.slapper.gametime") return renderIdleGameTime();
   if (action === "com.psn.slapper.squadup") return renderIdleSquadUp();
+  if (action === "com.psn.slapper.lfg") return renderIdleLfg();
   return renderIdle();
 }
 
