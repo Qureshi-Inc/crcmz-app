@@ -73,7 +73,16 @@ def http_tests():
     client = TestClient(server.app, base_url="https://app.crcmz.me")
     # Direct-IP / LAN hits (Stream Deck) skip the auth gate, so this is the one
     # way to reach the board endpoints with no session at all.
-    lan = TestClient(server.app, base_url="http://10.0.0.7:8000")
+    # The peer address matters now: the LAN bypass requires the request to really
+    # come from a private address, not just to carry a non-public Host header. This
+    # starlette's TestClient hardcodes scope["client"] to "testclient", so stand in
+    # for the transport and set it, which is what a real socket does.
+    async def _from_lan(scope, receive, send):
+        if scope["type"] == "http":
+            scope = {**scope, "client": ("10.0.0.7", 51234)}
+        await server.app(scope, receive, send)
+
+    lan = TestClient(_from_lan, base_url="http://10.0.0.7:8000")
     HDR = {"Origin": "https://app.crcmz.me", "Content-Type": "application/json"}
     COOKIE = server._SESSION_COOKIE
 

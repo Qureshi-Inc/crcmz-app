@@ -5,3 +5,4 @@ __pycache__/
 psn_tokens.json
 data/
 psn_tokens.backup.json
+.devlibs/

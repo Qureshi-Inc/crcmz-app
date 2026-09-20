@@ -660,6 +660,7 @@ def _portal_page(error: str = "", ok: str = "") -> str:
 # Redirect URI to register in Zitadel: https://app.crcmz.me/auth/callback
 
 import hashlib as _hashlib, base64 as _base64, secrets as _secrets
+import hmac as _hmac, ipaddress as _ipaddress, html as _html
 from urllib.parse import urlencode as _urlencode
 from itsdangerous import URLSafeTimedSerializer as _USTS, BadSignature, SignatureExpired
 
@@ -680,8 +681,13 @@ _OIDC_STATE_COOKIE = "psn_oidc_state"
 _SESSION_MAX_AGE   = 60 * 60 * 24 * 30  # 30 days
 _OIDC_CONFIG_CACHE: dict = {}
 
-# The only public hostname; bare IPs from the tailnet/LAN bypass auth.
+# The only public hostname. A request for any other Host may bypass auth, but only
+# if it really did arrive from the tailnet/LAN — see _auth_gate.
 _PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
+# Explicit credential for machine callers (Stream Deck, scripts, health pollers).
+# This is the replacement for "you reached me on a private address, so you must be
+# trusted"; set it and callers can authenticate from anywhere, over any Host.
+MACHINE_TOKEN = os.environ.get("CRCMZ_MACHINE_TOKEN", "")
 # Paths that must be reachable before authentication.
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/auth/logout", "/auth/passkey/begin", "/auth/passkey/complete",
@@ -711,12 +717,33 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/settings/mattermost/callback"}
 
 
+# Session cookies used to fall back to the literal string "dev-insecure" when
+# SESSION_SECRET was unset. That is a published constant in this repository: anyone
+# who could reach an instance running without the env var could mint a cookie for
+# any `sub` and be signed in as that person.
+#
+# Two changes. First, the fallback is a fresh random value per process, so there is
+# nothing to forge against — the cost is that sessions do not survive a restart
+# without SESSION_SECRET, which is correct for a dev box and irrelevant in
+# production where Coolify always sets it. Second, `_auth_gate` refuses to serve
+# the public host at all in that state (see SESSION_SECRET_MISSING below), so a
+# misconfigured production deploy fails closed instead of running on a throwaway
+# key nobody notices.
+SESSION_SECRET_MISSING = not SESSION_SECRET
+_EFFECTIVE_SESSION_SECRET = SESSION_SECRET or _secrets.token_urlsafe(48)
+if SESSION_SECRET_MISSING:
+    logging.warning(
+        "SESSION_SECRET is not set. Using a random per-process key: sessions will "
+        "not survive a restart, and requests to the public host (%s) will be "
+        "refused. Set SESSION_SECRET to serve real traffic.", _PUBLIC_HOST)
+
+
 def _signer() -> _USTS:
-    return _USTS(SESSION_SECRET or "dev-insecure", salt="psn-session")
+    return _USTS(_EFFECTIVE_SESSION_SECRET, salt="psn-session")
 
 
 def _state_signer() -> _USTS:
-    return _USTS(SESSION_SECRET or "dev-insecure", salt="psn-oidc-state")
+    return _USTS(_EFFECTIVE_SESSION_SECRET, salt="psn-oidc-state")
 
 
 def _get_session(request: Request) -> dict | None:
@@ -766,16 +793,102 @@ async def _oidc_cfg() -> dict:
     return _OIDC_CONFIG_CACHE
 
 
+# Headers a reverse proxy adds. Their presence means the request was relayed, so
+# whatever address we see is the proxy's, not the caller's, and the private-network
+# test below would be measuring the wrong machine.
+_PROXY_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+                  "x-real-ip", "forwarded", "cf-connecting-ip")
+
+
+# The networks this app is actually reachable on without crossing the public edge.
+#
+# Spelled out rather than using ipaddress.is_private, which is the wrong predicate
+# in both directions here. It is False for 100.64.0.0/10 — Tailscale's range, and
+# the exact address the Stream Deck plugin calls — so is_private would have locked
+# the plugin out. And it is True for the documentation ranges (203.0.113.0/24 and
+# friends), because what it really means is "not globally routable", which is not
+# the same as "on my LAN".
+_LOCAL_NETWORKS = tuple(_ipaddress.ip_network(n) for n in (
+    "127.0.0.0/8",      # loopback — the container healthcheck
+    "10.0.0.0/8",       # RFC1918, incl. the Docker/Coolify bridge
+    "172.16.0.0/12",    # RFC1918
+    "192.168.0.0/16",   # RFC1918 — the house LAN
+    "169.254.0.0/16",   # link-local
+    "100.64.0.0/10",    # CGNAT — Tailscale
+    "::1/128",          # loopback v6
+    "fc00::/7",         # unique local v6
+    "fe80::/10",        # link-local v6
+))
+
+
+def _peer_is_local(request: Request) -> bool:
+    """True when the TCP peer is on one of _LOCAL_NETWORKS.
+
+    An unidentifiable peer — no client, a unix socket, a hostname rather than an
+    address — is not local. This gates an auth bypass, so unknown has to mean no.
+    """
+    client = request.client
+    if client is None or not client.host:
+        return False
+    try:
+        ip = _ipaddress.ip_address(client.host)
+    except ValueError:
+        return False
+    return any(ip in net for net in _LOCAL_NETWORKS if ip.version == net.version)
+
+
+def _machine_authorised(request: Request) -> bool:
+    """True for a caller presenting CRCMZ_MACHINE_TOKEN.
+
+    Accepts `Authorization: Bearer <token>` or `X-CRCMZ-Machine-Token: <token>`.
+    Compared with compare_digest so the check does not leak the token by timing.
+    """
+    if not MACHINE_TOKEN:
+        return False
+    value = (request.headers.get("authorization") or "").strip()
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    else:
+        value = ""
+    value = value or (request.headers.get("x-crcmz-machine-token") or "").strip()
+    if not value:
+        return False
+    return _hmac.compare_digest(value, MACHINE_TOKEN)
+
+
 @app.middleware("http")
 async def _auth_gate(request: Request, call_next):
     path = request.url.path
     if path in _OPEN_PATHS:
         return await call_next(request)
 
-    # Tailscale/LAN direct-IP hits (Stream Deck, etc.) bypass auth entirely.
+    # A machine with an explicit credential, on any Host. This is the migration
+    # target for everything that currently relies on the private-network rule.
+    if _machine_authorised(request):
+        return await call_next(request)
+
     host = (request.headers.get("host") or "").split(":")[0]
     if host != _PUBLIC_HOST:
-        return await call_next(request)
+        # Historical bypass for direct-IP hits from the tailnet/LAN (the Stream Deck
+        # plugin has no credential at all — it just calls http://100.123.228.75:3021).
+        #
+        # It used to trust the Host header alone, which is caller-supplied: "give me
+        # a Host that isn't app.crcmz.me" was the entire authentication check. Now the
+        # request must also genuinely come from a private address and not have been
+        # relayed by a proxy, so a forged Host from the public edge no longer opens
+        # the door. Retire this branch once the Stream Deck plugin ships a token.
+        relayed = any(h in request.headers for h in _PROXY_HEADERS)
+        if _peer_is_local(request) and not relayed:
+            return await call_next(request)
+        # Otherwise fall through and demand a real session.
+
+    # Mandatory security configuration fails closed rather than quietly running on a
+    # throwaway key: without SESSION_SECRET no cookie issued here outlives a restart
+    # and none can be trusted across instances.
+    if SESSION_SECRET_MISSING:
+        logging.error("refusing request for %s: SESSION_SECRET is not configured", path)
+        return JSONResponse({"detail": "server session key is not configured"},
+                            status_code=503)
 
     if _get_session(request):
         return await call_next(request)
@@ -4613,7 +4726,7 @@ async def settings_mattermost_connect(request: Request):
     if not MM_OAUTH_CLIENT_ID:
         return JSONResponse({"error": "Mattermost OAuth not configured"}, status_code=503)
     zid = session.get("sub", "")
-    state = _USTS(SESSION_SECRET or "dev-insecure", salt="mm-oauth-state").dumps(zid)
+    state = _USTS(_EFFECTIVE_SESSION_SECRET, salt="mm-oauth-state").dumps(zid)
     mm_public = (os.environ.get("MATTERMOST_PUBLIC_URL")
                  or os.environ.get("MATTERMOST_URL") or "").rstrip("/")
     callback = f"https://{_PUBLIC_HOST}/settings/mattermost/callback"
@@ -4632,7 +4745,7 @@ async def settings_mattermost_callback(request: Request, code: str = "", state: 
     if not code or not state:
         return HTMLResponse("<h2>Missing code or state</h2>", status_code=400)
     try:
-        zid = _USTS(SESSION_SECRET or "dev-insecure", salt="mm-oauth-state").loads(
+        zid = _USTS(_EFFECTIVE_SESSION_SECRET, salt="mm-oauth-state").loads(
             state, max_age=600)
     except (BadSignature, SignatureExpired):
         return HTMLResponse("<h2>Invalid or expired state</h2>", status_code=400)
@@ -5933,7 +6046,7 @@ _save_personal_buttons = _sb.save_personal
 
 
 def _soundboard_json() -> str:
-    return json.dumps(_sb.shared())
+    return _script_json(_sb.shared())
 
 
 def _personal_key(request: Request) -> str:
@@ -5942,11 +6055,29 @@ def _personal_key(request: Request) -> str:
     return (session or {}).get("sub", "") or ""
 
 
+def _script_json(value) -> str:
+    """JSON for embedding inside a <script> block.
+
+    json.dumps alone is not safe here: it leaves `<` and `/` untouched, so a value
+    containing `</script>` closes the block early and everything after it is parsed
+    as HTML. Personal board labels are free text that went through the flavour model,
+    so they can contain anything. Escaping the three characters that can start an
+    HTML tag or a comment keeps the value a string literal in every case, and the
+    escapes are ordinary JSON so the parsed value is unchanged.
+    """
+    import json as _json
+    return (_json.dumps(value)
+            .replace("<", "\\u003c").replace(">", "\\u003e")
+            .replace("&", "\\u0026").replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029"))
+
+
 def _dashboard_html(user_email: str = "", psn_id: str = "",
                     personal: list[dict] | None = None,
                     signed_in: bool = False) -> str:
     if user_email:
         disp = user_email.split("@")[0] if "@" in user_email else user_email
+        disp = _html.escape(disp, quote=True)   # a display name is not markup
         user_html = (
             '<button class="user-btn" id="userBtn" onclick="toggleUserMenu()" aria-label="Account">'
             '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
@@ -5960,13 +6091,12 @@ def _dashboard_html(user_email: str = "", psn_id: str = "",
         )
     else:
         user_html = '<a class="ud-item" href="/auth/login" style="padding:8px 12px;font-size:12px">Sign in</a>'
-    import json as _json
     return (_DASHBOARD_TMPL
             .replace("__SOUNDBOARD__", _soundboard_json())
-            .replace("__PERSONAL__", _json.dumps(personal or []))
+            .replace("__PERSONAL__", _script_json(personal or []))
             .replace("__SIGNED_IN__", "true" if signed_in else "false")
             .replace("__USER__", user_html)
-            .replace("__PSN_ID__", _json.dumps(psn_id)))
+            .replace("__PSN_ID__", _script_json(psn_id)))
 
 
 _DASHBOARD_TMPL = r"""<!doctype html>
@@ -6457,6 +6587,11 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     box-shadow:0 0 10px rgba(255,47,214,.5); }
 
   .empty { color:#7d8ab0; text-align:center; padding:30px 10px; font-size:14px; line-height:1.6; }
+  .retry-btn { margin-top:12px; min-height:40px; padding:0 20px; border-radius:11px; cursor:pointer;
+    background:rgba(255,47,214,.12); border:1px solid rgba(255,47,214,.38); color:#ff8ce6;
+    font-size:13.5px; font-weight:700; font-family:inherit; }
+  .retry-btn:hover { background:rgba(255,47,214,.2); }
+  .retry-btn:disabled { opacity:.55; cursor:default; }
   .spin { color:#7d8ab0; text-align:center; padding:26px; }
   .link-cta { color:#7fb2ff; font-size:12.5px; text-decoration:none; }
   .toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
@@ -7188,12 +7323,12 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div class="nav-dropdown" id="navDropdown">
       <button class="nav-item on" data-p="squad" data-icon="🎮" data-label="Squad" onclick="tab(this)"><span class="nav-i-icon">🎮</span><span>Squad</span></button>
       <button class="nav-item" data-p="pipeline" data-icon="🎬" data-label="Clips" onclick="tab(this)"><span class="nav-i-icon">🎬</span><span>Clips</span></button>
-      <button class="nav-item" data-p="slap" data-icon="🎵" data-label="Slap" onclick="tab(this);loadSlap()"><span class="nav-i-icon">🎵</span><span>Slap</span></button>
-      <button class="nav-item" data-p="wa" data-icon="💬" data-label="WhatsApp" onclick="tab(this);loadWa()"><span class="nav-i-icon">💬</span><span>WhatsApp</span></button>
-      <button class="nav-item" data-p="giveaway" data-icon="🎁" data-label="Giveaway" onclick="tab(this);loadGiveaway()"><span class="nav-i-icon">🎁</span><span>Giveaway</span></button>
-      <button class="nav-item" data-p="watch" data-icon="🍿" data-label="Watch" onclick="tab(this);loadWatch()"><span class="nav-i-icon">🍿</span><span>Watch</span></button>
-      <button class="nav-item" data-p="huddle" data-icon="🎥" data-label="Huddle" onclick="tab(this);loadHuddle()"><span class="nav-i-icon">🎥</span><span>Huddle</span></button>
-      <button class="nav-item" data-p="ai" data-icon="🤖" data-label="Ask AI" onclick="tab(this);loadAsk()"><span class="nav-i-icon">🤖</span><span>Ask AI</span></button>
+      <button class="nav-item" data-p="slap" data-icon="🎵" data-label="Slap" onclick="tab(this)"><span class="nav-i-icon">🎵</span><span>Slap</span></button>
+      <button class="nav-item" data-p="wa" data-icon="💬" data-label="WhatsApp" onclick="tab(this)"><span class="nav-i-icon">💬</span><span>WhatsApp</span></button>
+      <button class="nav-item" data-p="giveaway" data-icon="🎁" data-label="Giveaway" onclick="tab(this)"><span class="nav-i-icon">🎁</span><span>Giveaway</span></button>
+      <button class="nav-item" data-p="watch" data-icon="🍿" data-label="Watch" onclick="tab(this)"><span class="nav-i-icon">🍿</span><span>Watch</span></button>
+      <button class="nav-item" data-p="huddle" data-icon="🎥" data-label="Huddle" onclick="tab(this)"><span class="nav-i-icon">🎥</span><span>Huddle</span></button>
+      <button class="nav-item" data-p="ai" data-icon="🤖" data-label="Ask AI" onclick="tab(this)"><span class="nav-i-icon">🤖</span><span>Ask AI</span></button>
     </div>
   </div>
   <div class="panel" id="p-squad">
@@ -7453,7 +7588,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <input id="quick" type="text" placeholder="Send a quick message to the squad…"
       maxlength="200" autocomplete="off"
       onkeydown="if(event.key==='Enter')sendQuick()">
-    <button class="qsend" onclick="sendQuick()" aria-label="Send">➤</button>
+    <button class="qsend" id="quickSend" onclick="sendQuick()" aria-label="Send">➤</button>
   </div>
   <button class="board-done-btn" id="boardDoneBtn" onclick="exitOrganize()">✓ Done Organizing</button>
 </div>
@@ -7479,6 +7614,27 @@ const MY_PSN_ID = __PSN_ID__;
 let MY_AVATAR = null, MOD_AVATAR = null;
 const $ = id => document.getElementById(id);
 const esc = s => (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// One recoverable error panel for every lazily-loaded tab.
+//
+// Each tab keeps an "already loaded" flag so revisiting it does not refetch. The
+// flag was set before the request, and never cleared when the request failed — so
+// one blip on Slapshare, the WhatsApp API or the giveaway endpoint left that tab
+// showing "Could not load…" with no way back short of reloading the whole page.
+// Clearing the flag is the caller's job (it owns the variable); this renders the
+// state and wires a Retry that actually retries.
+function panelError(elId, msg, retry){
+  const el = $(elId);
+  if(!el) return;
+  el.innerHTML = '<div class="card"><div class="empty">' + esc(msg) +
+    '<br><button class="retry-btn" type="button">Retry</button></div></div>';
+  const b = el.querySelector('.retry-btn');
+  if(b) b.addEventListener('click', function(){
+    b.disabled = true;               // one retry per click, not one per impatient tap
+    b.textContent = 'Retrying…';
+    retry();
+  });
+}
 const toast = m => { const t=$('toast'); t.textContent=m; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),2000); };
 
@@ -7765,22 +7921,40 @@ async function fire(el){
   } catch(e){ toast('Network error'); }
 }
 // Ad-hoc one-off message -> sent as-is to the group (not saved, no AI).
+//
+// `_quickSending` guards the send itself rather than trusting the button's
+// disabled attribute. The Enter handler and the click handler both land here, and
+// a disabled button is not proof of one request: the keydown path never looked at
+// it. The flag is the gate; disabling the button is only the visible half.
+let _quickSending = false;
 async function sendQuick(){
-  const inp = $('quick'), btn = document.querySelector('.qsend');
+  // #quickSend by id, not .qsend by class. document.querySelector('.qsend')
+  // matched the FIRST .qsend in the document, which is Ask AI's send button
+  // further up the page — so this used to grey out the AI composer, leave its own
+  // button live for repeat clicks, and fly the "sent" animation off the wrong
+  // element.
+  const inp = $('quick'), btn = $('quickSend');
   const msg = (inp.value||'').trim();
-  if(!msg) return;
-  btn.disabled = true;
+  if(!msg || _quickSending) return;
+  _quickSending = true;
+  if(btn) btn.disabled = true;
   try {
     const r = await fetch('/v2/send',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({message:msg})});
     if(r.ok){
       inp.value='';
       const name = MY_PSN_ID || 'You';
-      showSentFly(MY_AVATAR, name, msg, btn);
+      showSentFly(MY_AVATAR, name, msg, btn || inp);
     } else if(r.status===429){ toast('Slow down a sec ⏳'); }
     else toast('Failed ('+r.status+')');
-  } catch(e){ toast('Network error'); }
-  btn.disabled = false;
+  } catch(e){
+    // The send may or may not have landed. Keep the draft so nothing is lost, and
+    // do not resend for them — /v2/send is not idempotent.
+    toast('Network error — message may not have been sent');
+  } finally {
+    _quickSending = false;
+    if(btn) btn.disabled = false;
+  }
 }
 async function openCustom(){
   const mine = onMyBoard();
@@ -8123,38 +8297,88 @@ function closeNav(){
 document.addEventListener('click', e=>{
   if(!e.target.closest('#navWrap')) closeNav();
 });
-function tab(btn, skipHash){
+// Which loader each panel needs, in one table instead of spread across the nav
+// markup and the boot path. Those two used to disagree: ?p=huddle deep-linked to
+// an empty panel because only the button knew about loadHuddle.
+//
+// The functions are named, not referenced, because this object is built while the
+// script is still parsing — `loadSlap` is hoisted but the `let _slapLoaded` guard
+// it reads is not, so touching it now would throw. Calling through a thunk defers
+// that read to after parse, which is the whole point.
+const PANEL_LOADERS = {
+  slap:     function(){ loadSlap(); },
+  wa:       function(){ loadWa(); },
+  giveaway: function(){ loadGiveaway(); },
+  ai:       function(){ loadAsk(); },
+  huddle:   function(){ loadHuddle(); },
+  // Defer one tick so the page settles before opening a WebSocket. On mobile,
+  // connecting synchronously during page parse causes transient failures that
+  // never trigger connect_error.
+  watch:    function(){ setTimeout(loadWatch, 0); },
+};
+function navBtn(p){
+  return document.querySelector('.nav-item[data-p="'+CSS.escape(p||'')+'"]');
+}
+function currentPanel(){
+  const on = document.querySelector('.nav-item.on');
+  return on ? on.dataset.p : '';
+}
+// Swap which panel is visible. No URL work, no loading — safe to call during parse.
+function paintTab(btn){
+  const p = btn.dataset.p;
   document.querySelectorAll('.nav-item').forEach(t=>t.classList.remove('on'));
-  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
   btn.classList.add('on');
-  $('p-'+btn.dataset.p).classList.add('on');
-  // update trigger label
+  $('p-'+p).classList.add('on');
   const icon=$('navActiveIcon'), lbl=$('navActiveLabel');
   if(icon) icon.textContent = btn.dataset.icon||'';
   if(lbl)  lbl.textContent  = btn.dataset.label||'';
-  // update URL so the view is shareable and survives auth redirects
-  if(!skipHash) history.replaceState(null,'','?p='+btn.dataset.p);
+}
+// Paint a panel, record it in history, and run its loader. `skipHash` leaves the
+// URL alone — used by popstate, where the URL is already correct.
+function tab(btn, skipHash){
+  const p = btn.dataset.p;
+  paintTab(btn);
+  // push, don't replace: replaceState left Back pointing at whatever page came
+  // before the app, so Back out of Clips exited the site instead of returning to
+  // Squad. Pushing only on a real change keeps repeat clicks from stacking.
+  if(!skipHash && new URLSearchParams(location.search).get('p') !== p){
+    history.pushState({p:p},'','?p='+encodeURIComponent(p));
+  }
+  const load = PANEL_LOADERS[p];
+  if(load) load();
   // close dropdown with a slight delay so user sees selection
   setTimeout(closeNav, 120);
 }
-// restore tab from URL on load — ?p=page survives auth redirects; #hash is legacy fallback
+// Back/Forward. Panels are kept in the document, so returning to one is just a
+// class swap — the loaders are all guarded and will not refetch.
+window.addEventListener('popstate', function(){
+  const p = new URLSearchParams(location.search).get('p') || 'squad';
+  const btn = navBtn(p) || navBtn('squad');
+  if(btn && p !== currentPanel()) tab(btn, true);
+});
+// Restore the tab from the URL on load — ?p=page survives auth redirects, #hash is
+// the legacy form, and an unknown value falls back to Squad rather than showing
+// nothing.
 (function(){
   const p = new URLSearchParams(location.search).get('p') || location.hash.replace('#','') || 'squad';
-  const btn = document.querySelector('.nav-item[data-p="'+p+'"]') ||
-              document.querySelector('.nav-item[data-p="squad"]');
-  if(btn){
-    tab(btn, true);
-    if(p==='slap')    loadSlap();
-    if(p==='wa')      loadWa();
-    if(p==='ai')      loadAsk();
-    if(p==='giveaway') loadGiveaway();
-    if(p==='watch'){
-      // Defer one tick so the page settles before opening a WebSocket.
-      // On mobile, connecting synchronously during page parse causes
-      // transient failures that never trigger connect_error.
-      setTimeout(loadWatch, 0);
-    }
-  }
+  const btn = navBtn(p) || navBtn('squad');
+  if(!btn) return;
+  // Paint now, while the browser is still parsing, so the right panel is up on
+  // first paint and there is no flash of an empty page.
+  paintTab(btn);
+  // Normalise the URL so a #hash entry or an unknown ?p= still leaves a correct,
+  // shareable address and a sane popstate baseline.
+  history.replaceState({p:btn.dataset.p},'','?p='+encodeURIComponent(btn.dataset.p));
+  // Load on the next macrotask, NOT now. This runs mid-parse, and loadSlap,
+  // loadWa and loadGiveaway read `let` guards declared further down the script.
+  // Calling them synchronously threw a ReferenceError out of the temporal dead
+  // zone, so ?p=slap, ?p=wa and ?p=giveaway landed on a dead "Loading…" panel on
+  // every direct visit, every refresh and every return from login.
+  setTimeout(function(){
+    const load = PANEL_LOADERS[btn.dataset.p];
+    if(load) load();
+  }, 0);
 })();
 function fmtLast(iso){ if(!iso) return 'offline';
   const s=(Date.now()-new Date(iso))/1000;
@@ -8704,7 +8928,9 @@ async function loadSlap(){
     }).catch(()=>{});
 
   } catch(e) {
-    $('slap-inner').innerHTML='<div class="card"><div class="empty">Could not load Slapshare.</div></div>';
+    // Clear the guard first, or Retry returns immediately and nothing happens.
+    _slapLoaded = false;
+    panelError('slap-inner', 'Could not load Slapshare — the music service did not answer.', loadSlap);
   }
 }
 
@@ -9230,6 +9456,11 @@ function copyMcpCfg(){
 let _waLoaded = false;
 let _waRange = 'all_time';
 let _waStart = '', _waEnd = '';
+// Bumped on every load. "All time" is nine queries over ~10k messages and can
+// easily outlive a "Last 7 days" started after it, so whoever finishes last used
+// to win regardless of which range the buttons say is selected. A response only
+// gets to touch the DOM if its generation is still the current one.
+let _waGen = 0;
 
 function waSetRange(btn){
   document.querySelectorAll('.wa-rb').forEach(b=>b.classList.remove('on'));
@@ -9260,6 +9491,7 @@ function _waQs(){
 async function loadWa(){
   if(_waLoaded) return;
   _waLoaded = true;
+  const gen = ++_waGen;
   try {
     const qs = _waQs();
     const [sR,aR,hmR,wdR,emR,rtR,mbR,awR,ciR] = await Promise.all([
@@ -9273,6 +9505,7 @@ async function loadWa(){
       fetch('/api/whatsapp/awards'+qs).then(r=>r.json()),
       fetch('/api/whatsapp/can-import').then(r=>r.json()),
     ]);
+    if(gen !== _waGen) return;   // a newer range was picked while these were in flight
 
     // Stat tiles
     const fmtN = n => n>=1000 ? (n/1000).toFixed(1)+'k' : String(n||0);
@@ -9571,7 +9804,12 @@ async function loadWa(){
     $('wa-inner').innerHTML = html;
 
   } catch(err) {
-    if($('wa-inner')) $('wa-inner').innerHTML = '<div class="card"><div class="empty">Could not load WhatsApp analytics.</div></div>';
+    // A superseded range failing is not this view's problem — the current one is
+    // still loading and owns the panel.
+    if(gen !== _waGen) return;
+    // Clear the guard first, or Retry returns immediately and nothing happens.
+    _waLoaded = false;
+    panelError('wa-inner', 'Could not load WhatsApp analytics.', loadWa);
   }
 }
 
@@ -9660,7 +9898,11 @@ async function loadGiveaway(){
       const key='celebrated_gw_'+d.giveaway.id;
       if(!localStorage.getItem(key)){ gwConfetti(5000); localStorage.setItem(key,'1'); }
     }
-  }catch(e){ el.innerHTML='<div class="gw-no-giveaway">Failed to load giveaway.</div>'; }
+  }catch(e){
+    // Clear the guard first, or Retry returns immediately and nothing happens.
+    _gwLoaded=false;
+    panelError('giveaway-inner', 'Failed to load the giveaway.', loadGiveaway);
+  }
 }
 
 function gwRender(d, hist){
