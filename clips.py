@@ -97,6 +97,13 @@ def init() -> None:
         if "message_source" not in cols:
             db.execute("ALTER TABLE clips ADD COLUMN message_source TEXT")
             db.commit()
+        # One-time backfill: clips inserted before message_source was added have a
+        # non-null body but no source label. They all came from the poller's
+        # _adjacent_caption window, so they are clip_caption.
+        db.execute(
+            "UPDATE clips SET message_source='clip_caption'"
+            " WHERE message_source IS NULL AND body IS NOT NULL AND body != ''")
+        db.commit()
     logger.info("clips: DB ready at %s", _DB_PATH)
 
 
