@@ -1609,6 +1609,85 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
             **({"notify_note": note} if note else {})}
 
 
+@write_tool(
+    "ig_reel_share",
+    "Called by Muse's IG watcher after every successful Instagram post. "
+    "Stores the post URL and media ID, then fans out the IG link to the WhatsApp "
+    "group. Clips queued before this tool existed flush automatically — just call "
+    "it with their clip_id. `sender` overrides the PSN user on the clip record "
+    "when the watcher knows it more precisely. Rate limit: 30 per hour.",
+    {"type": "object",
+     "properties": {
+         "clip_id":             {"type": "string",
+                                 "description": "Clip message_uid from recent_clips."},
+         "instagram_url":       {"type": "string",
+                                 "description": "Full Instagram post URL "
+                                                "(https://www.instagram.com/p/...)."},
+         "instagram_media_id":  {"type": "string",
+                                 "description": "Instagram media ID returned by the "
+                                                "Graph API (optional but recommended "
+                                                "for deduplication)."},
+         "caption":             {"type": "string",
+                                 "description": "Caption that was posted to Instagram."},
+         "sender":              {"type": "string",
+                                 "description": "PSN online ID of the clip sender. "
+                                                "Falls back to clips.sender_online_id "
+                                                "when omitted."},
+     },
+     "required": ["clip_id", "instagram_url"]})
+def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
+                   instagram_media_id: str = "", caption: str = "",
+                   sender: str = "") -> dict:
+    """Ingest an IG post result and fan out to WhatsApp. The platform composes the message."""
+    import clips as clips_mod
+    import ig_posts as ig_mod
+    import mcp_oauth
+
+    clip_id       = (clip_id or "").strip()
+    instagram_url = (instagram_url or "").strip()
+    if not clip_id:
+        return {"ok": False, "error": "clip_id is required"}
+    if not instagram_url:
+        return {"ok": False, "error": "instagram_url is required"}
+    if not instagram_url.startswith("https://"):
+        return {"ok": False, "error": "instagram_url must be an https:// URL"}
+
+    zid = caller.get("zitadel_id", "")
+    if not mcp_oauth.within_rate_limit(zid, "ig_reel_share", 30, 3600):
+        return {"ok": False, "error": "rate limit: 30 posts per hour"}
+
+    ig_mod.init()
+    clip = clips_mod.get(clip_id)
+    if not clip:
+        return {"ok": False, "error": "no clip with that clip_id"}
+
+    psn_user = (sender or "").strip() or clip.get("sender_online_id") or ""
+    existing = ig_mod.get_by_clip(clip_id)
+    if existing:
+        post_id = existing["post_id"]
+    else:
+        post_id = ig_mod.claim_for_post(clip_id, psn_user,
+                                        _zid_for_psn(psn_user) if psn_user else "")
+
+    ig_mod.submit_post(post_id, instagram_url,
+                       instagram_media_id=instagram_media_id,
+                       caption=caption)
+    mcp_oauth.audit_write(zid, "ig_reel_share", f'{{"clip_id": "{clip_id}"}}', "ok")
+
+    notified = False
+    note = None
+    if ig_mod.claim_notification(post_id):
+        notified, note = _notify_ig_posted(psn_user, instagram_url, caller,
+                                           ig_mod.get(post_id))
+        if not notified:
+            ig_mod.release_notification(post_id)
+
+    return {"ok": True, "post_id": post_id, "instagram_url": instagram_url,
+            **({"instagram_media_id": instagram_media_id} if instagram_media_id else {}),
+            "group_notified": notified,
+            **({"notify_note": note} if note else {})}
+
+
 @tool(
     "ig_clips_recent",
     "Recent Instagram-posted clips. Each row has clip_id, psn_user, ig_url (null "

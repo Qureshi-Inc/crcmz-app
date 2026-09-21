@@ -36,18 +36,29 @@ def init() -> None:
     with _lock, _conn() as db:
         db.executescript("""
             CREATE TABLE IF NOT EXISTS ig_posts (
-                post_id     TEXT PRIMARY KEY,
-                clip_id     TEXT NOT NULL UNIQUE,
-                psn_user    TEXT NOT NULL,
-                zitadel_id  TEXT NOT NULL DEFAULT '',
-                created_at  REAL NOT NULL,
-                ig_url      TEXT,
-                posted_at   REAL,
-                notified_at REAL
+                post_id              TEXT PRIMARY KEY,
+                clip_id              TEXT NOT NULL UNIQUE,
+                psn_user             TEXT NOT NULL,
+                zitadel_id           TEXT NOT NULL DEFAULT '',
+                created_at           REAL NOT NULL,
+                ig_url               TEXT,
+                instagram_media_id   TEXT,
+                ig_caption           TEXT,
+                posted_at            REAL,
+                notified_at          REAL
             );
             CREATE INDEX IF NOT EXISTS idx_ig_clip ON ig_posts(clip_id);
             CREATE INDEX IF NOT EXISTS idx_ig_at   ON ig_posts(created_at);
         """)
+        # Migrations for DBs created before these columns were added
+        for col, defn in (
+            ("instagram_media_id", "TEXT"),
+            ("ig_caption",         "TEXT"),
+        ):
+            try:
+                db.execute(f"ALTER TABLE ig_posts ADD COLUMN {col} {defn}")
+            except sqlite3.OperationalError:
+                pass
         db.commit()
     logger.info("ig_posts: DB ready at %s", _DB_PATH)
 
@@ -86,12 +97,15 @@ def get(post_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def submit_post(post_id: str, ig_url: str) -> None:
-    """Record the Instagram URL once the post is live."""
+def submit_post(post_id: str, ig_url: str,
+                instagram_media_id: str = "", caption: str = "") -> None:
+    """Record the Instagram URL (and optional media ID / caption) once the post is live."""
     now = time.time()
     with _lock, _conn() as db:
-        db.execute("UPDATE ig_posts SET ig_url=?, posted_at=? WHERE post_id=?",
-                   (ig_url, now, post_id))
+        db.execute(
+            "UPDATE ig_posts SET ig_url=?, instagram_media_id=?, ig_caption=?, posted_at=?"
+            " WHERE post_id=?",
+            (ig_url, instagram_media_id or None, caption or None, now, post_id))
         db.commit()
 
 
