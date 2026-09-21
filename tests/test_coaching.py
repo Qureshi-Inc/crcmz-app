@@ -154,6 +154,48 @@ def test_resubmit_does_not_renotify():
         "a resubmit must not make the member notifiable again"
 
 
+def test_claim_notification_is_atomic():
+    """The load-bearing guard. needs_notification() is check-then-act, so only the
+    conditional UPDATE in claim_notification can stop a concurrent double-DM."""
+    import coach
+    coach.init()
+    rid = coach.upsert({"clip_id": "test-clip-atomic", "psn_user": "nobody",
+                        "review_status": "complete"})
+    assert coach.claim_notification(rid) is True, "first claimant must win"
+    assert coach.claim_notification(rid) is False, \
+        "a second concurrent submit must NOT also get to send"
+    # a failed send hands the claim back so a retry can pick it up
+    coach.release_notification(rid)
+    assert coach.claim_notification(rid) is True, \
+        "released claim must be retryable after a failed send"
+
+
+def test_pending_review_cannot_be_claimed():
+    import coach
+    coach.init()
+    rid = coach.upsert({"clip_id": "test-clip-noclaim", "psn_user": "nobody",
+                        "review_status": "pending"})
+    assert coach.claim_notification(rid) is False, \
+        "an unfinished review must never notify"
+
+
+def test_zitadel_id_is_persisted_for_the_join():
+    """/coaching must join on the Zitadel sub: PSN online IDs are renameable."""
+    import coach
+    coach.init()
+    rid = coach.upsert({"clip_id": "test-clip-zid", "psn_user": "SomeOldName",
+                        "zitadel_id": "zid-123", "review_status": "complete"})
+    got = coach.get(rid)
+    assert got.get("zitadel_id") == "zid-123", "zitadel_id must survive upsert"
+    coach.mark_notified(rid)
+    coach.upsert({"review_id": rid, "clip_id": "test-clip-zid",
+                  "psn_user": "ARenamedAccount", "zitadel_id": "zid-123",
+                  "review_status": "complete",
+                  "notified_at": coach.get(rid).get("notified_at")})
+    assert coach.get(rid).get("zitadel_id") == "zid-123", \
+        "renaming the PSN account must not orphan the review"
+
+
 def test_pending_review_is_not_notified():
     import coach
     coach.init()

@@ -3006,6 +3006,17 @@ async def mcp_endpoint(request: Request):
 _REV_RE = _re.compile(r"\brev\b", _re.IGNORECASE)
 
 
+def _zid_for_psn(psn_user: str) -> str:
+    """Durable Zitadel id for a PSN online ID, or "" when unknown."""
+    if not psn_user:
+        return ""
+    try:
+        import crcmz_identity
+        return (crcmz_identity.resolve(psn_user) or {}).get("zitadel_id", "") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _wants_coaching(caption: str) -> bool:
     """True when the clip's caption asks for a coaching review.
 
@@ -5532,7 +5543,8 @@ async def _start_squad_poller():
                                     uid, ugc_id, sender, wm._group_name,
                                 )
                                 if _wants_coaching(body_text):
-                                    rid = _coach.claim_for_review(uid, sender)
+                                    rid = _coach.claim_for_review(
+                                        uid, sender, zitadel_id=_zid_for_psn(sender))
                                     if rid:
                                         logger.info(
                                             "coach_queued uid=%s sender=%s review=%s",

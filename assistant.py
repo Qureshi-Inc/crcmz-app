@@ -1399,9 +1399,11 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
         return {"ok": False, "error": "no clip with that clip_id"}
 
     existing = coach_mod.get_any_by_clip(clip_id)   # pending rows must be updated, not duplicated
+    psn_user = clip.get("sender_online_id") or ""
     payload = {
         "clip_id": clip_id,
-        "psn_user": clip.get("sender_online_id") or "",
+        "psn_user": psn_user,
+        "zitadel_id": _zid_for_psn(psn_user) or (existing or {}).get("zitadel_id") or "",
         "game": game or (existing or {}).get("game") or "",
         "summary": summary, "overall_assessment": overall_assessment,
         "strengths": strengths or [], "mistakes": mistakes or [],
@@ -1416,15 +1418,28 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
     mcp_oauth.audit_write(zid, "coach_review_record",
                           _json.dumps({"clip_id": clip_id, "status": status}), "ok")
 
+    # Claim atomically, then send. needs_notification() is check-then-act: two
+    # concurrent submits would both pass it and the member would be DM'd twice.
     notified = False
     note = None
-    if coach_mod.needs_notification(review_id):
-        notified, note = _notify_coaching_ready(clip.get("sender_online_id") or "")
-        if notified:
-            coach_mod.mark_notified(review_id)
+    if coach_mod.claim_notification(review_id):
+        notified, note = _notify_coaching_ready(psn_user)
+        if not notified:
+            coach_mod.release_notification(review_id)   # let a later submit retry
     return {"ok": True, "review_id": review_id, "status": status,
             "member_notified": notified,
             **({"notify_note": note} if note else {})}
+
+
+def _zid_for_psn(psn_user: str) -> str:
+    """Durable Zitadel id for a PSN online ID, or "" when unknown."""
+    if not psn_user:
+        return ""
+    try:
+        import crcmz_identity
+        return (crcmz_identity.resolve(psn_user) or {}).get("zitadel_id", "") or ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _notify_coaching_ready(psn_user: str) -> tuple[bool, str | None]:

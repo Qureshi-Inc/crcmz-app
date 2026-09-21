@@ -60,6 +60,13 @@ def init() -> None:
                 ON coach_reviews(review_status, created_at);
         """)
         cols = {r[1] for r in db.execute("PRAGMA table_info(coach_reviews)")}
+        if "zitadel_id" not in cols:
+            # The durable person key. psn_user is kept for provenance, but Sony lets
+            # a member rename their online ID, which would orphan their reviews — so
+            # the dashboard joins on this.
+            db.execute("ALTER TABLE coach_reviews ADD COLUMN zitadel_id TEXT")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_coach_zid "
+                       "ON coach_reviews(zitadel_id, created_at)")
         if "notified_at" not in cols:
             # When the member was told their review is ready. The notification is
             # sent once, on the pending -> complete transition: the analyser retries
@@ -77,7 +84,9 @@ def mark_notified(review_id: str) -> None:
 
 
 def needs_notification(review_id: str) -> bool:
-    """True only for a complete review nobody has been told about yet."""
+    """Whether this review still wants a notification. READ ONLY — do not gate a
+    send on this. It is check-then-act: two concurrent submits both see True and
+    both send. Use `claim_notification` to actually take the send."""
     with _lock, _conn() as db:
         row = db.execute(
             "SELECT review_status, notified_at FROM coach_reviews WHERE review_id=?",
@@ -85,7 +94,34 @@ def needs_notification(review_id: str) -> bool:
     return bool(row) and row["review_status"] == "complete" and row["notified_at"] is None
 
 
-def claim_for_review(clip_id: str, psn_user: str = "", game: str = "") -> str | None:
+def claim_notification(review_id: str) -> bool:
+    """Atomically take the right to notify. True for exactly one caller, ever.
+
+    The condition lives in the UPDATE, so SQLite settles the race for us and this
+    holds across processes too — an in-process lock would not, with more than one
+    worker. Claim before sending rather than after: a crash mid-send then loses one
+    notification, where the reverse order sends a duplicate, and for "your review is
+    ready" a missed DM is far better than a repeated one.
+    """
+    with _lock, _conn() as db:
+        cur = db.execute(
+            "UPDATE coach_reviews SET notified_at=? "
+            "WHERE review_id=? AND review_status='complete' AND notified_at IS NULL",
+            (time.time(), review_id))
+        db.commit()
+        return cur.rowcount == 1
+
+
+def release_notification(review_id: str) -> None:
+    """Give a claim back after a failed send so a later submit can retry it."""
+    with _lock, _conn() as db:
+        db.execute("UPDATE coach_reviews SET notified_at=NULL WHERE review_id=?",
+                   (review_id,))
+        db.commit()
+
+
+def claim_for_review(clip_id: str, psn_user: str = "", game: str = "",
+                     zitadel_id: str = "") -> str | None:
     """Queue a clip for coaching. Returns the review_id, or None if already queued.
 
     Idempotent on clip_id so a poller that re-sees the same clip does not enqueue
@@ -93,7 +129,7 @@ def claim_for_review(clip_id: str, psn_user: str = "", game: str = "") -> str | 
     if get_any_by_clip(clip_id):
         return None
     return upsert({"clip_id": clip_id, "psn_user": psn_user, "game": game,
-                   "review_status": "pending"})
+                   "zitadel_id": zitadel_id, "review_status": "pending"})
 
 
 def _row_to_dict(row) -> dict:
@@ -193,7 +229,7 @@ def upsert(review_data: dict) -> str:
         "review_id", "clip_id", "psn_user", "game", "created_at",
         "model", "prompt_version", "summary", "overall_assessment",
         "strengths", "mistakes", "coaching_tips", "notable_moments",
-        "tags", "review_json", "review_status", "source_checksum",
+        "tags", "review_json", "review_status", "source_checksum", "zitadel_id",
         # Must be persisted: this is INSERT OR REPLACE, so leaving it out of the
         # column list resets it to NULL on every resubmit, and the member gets
         # DM'd again each time the analyser retries.
