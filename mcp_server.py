@@ -94,11 +94,12 @@ def _service_scopes() -> dict[str, set[str]]:
         parts = [p.strip() for p in entry.split(":")]
         if len(parts) != 3 or not all(parts):
             continue
-        _name, token, tools = parts
+        name, token, tools = parts
         if len(token) < 16:          # refuse a guessable service credential
-            logger.warning("mcp: service token %r too short, ignoring", _name)
+            logger.warning("mcp: service token %r too short, ignoring", name)
             continue
-        out[token] = {t.strip() for t in tools.split(",") if t.strip()}
+        out[token] = {"label": name[:32],
+                      "scopes": {t.strip() for t in tools.split(",") if t.strip()}}
     return out
 
 
@@ -113,10 +114,15 @@ def resolve_service(header: str) -> dict | None:
         value = value[7:].strip()
     if not value:
         return None
-    for token, scopes in _service_scopes().items():
+    for token, cfg in _service_scopes().items():
         if hmac.compare_digest(value, token):
             return {"zitadel_id": "service:" + hashlib.sha256(
-                token.encode()).hexdigest()[:12], "scopes": scopes}
+                        token.encode()).hexdigest()[:12],
+                    # Carried so anything this service emits is attributed to it by
+                    # name. Without it the identity graph has nothing to resolve and
+                    # an outbound message would be signed "unknown".
+                    "label": cfg["label"],
+                    "scopes": cfg["scopes"]}
     return None
 
 

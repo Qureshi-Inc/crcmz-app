@@ -223,6 +223,50 @@ def test_notify_helper_never_raises_without_a_jid():
     assert ok is False and note, "unknown member should report, not raise"
 
 
+def test_service_messages_are_attributed_to_the_service():
+    """A service token has no Zitadel profile, so without its own label anything it
+    emits would be signed "unknown"."""
+    import mcp_server, assistant
+    c = mcp_server.resolve_service("Bearer " + SERVICE_TOKEN)
+    assert c.get("label") == "muse", "service label must be carried on the caller"
+    assert assistant._caller_name(c) == "Muse", \
+        "a service must be named, not resolved to 'unknown'"
+    # a human with no resolvable profile still falls back, unchanged
+    assert assistant._caller_name({"zitadel_id": "nobody"}) == "unknown"
+
+
+def test_coaching_notification_is_tagged_with_the_service():
+    import assistant, wa_ai, crcmz_identity, coach_prefs, mcp_server
+    import os as _os
+    _os.environ["WA_BRIDGE_URL"] = "http://stub"
+    _os.environ["WA_GOOPERS_JID"] = "group@g.us"
+    sent = {}
+    orig_send, orig_res = wa_ai.send_reply, crcmz_identity.resolve
+    wa_ai.send_reply = lambda u, j, t: (sent.update({"jid": j, "text": t}) or True)
+    crcmz_identity.resolve = lambda w: {"zitadel_id": "zid-tag", "display_name": "Soup",
+                                        "wa_jid": "me@s.whatsapp.net"}
+    try:
+        caller = mcp_server.resolve_service("Bearer " + SERVICE_TOKEN)
+        coach_prefs.set_mode("zid-tag", "group")
+        ok, _ = assistant._notify_coaching_ready("somebody", caller)
+        assert ok and sent["text"].startswith("[Muse] "), sent.get("text")
+        assert sent["jid"] == "group@g.us", "group mode must target the group"
+        assert "@Soup" in sent["text"], "group post should mention the member"
+
+        coach_prefs.set_mode("zid-tag", "dm")
+        sent.clear()
+        ok, _ = assistant._notify_coaching_ready("somebody", caller)
+        assert ok and sent["jid"] == "me@s.whatsapp.net", "dm mode must target the member"
+        assert sent["text"].startswith("[Muse] ")
+
+        coach_prefs.set_mode("zid-tag", "off")
+        sent.clear()
+        ok, note = assistant._notify_coaching_ready("somebody", caller)
+        assert ok is False and sent == {}, "off must send nothing at all"
+    finally:
+        wa_ai.send_reply, crcmz_identity.resolve = orig_send, orig_res
+
+
 # ── grade + tags contract ────────────────────────────────────────────────────
 
 def test_grade_normalisation():

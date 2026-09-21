@@ -1392,7 +1392,15 @@ def _app_event_record(event_type: str, title: str, text: str,
 
 
 def _caller_name(caller: dict) -> str:
-    """Display name for the caller, from the identity graph."""
+    """Display name for the caller, from the identity graph.
+
+    A service token is not a person and has no Zitadel profile to look up, so it
+    carries its own label. Without this branch it resolved to "unknown" and anything
+    it sent would have been signed that way.
+    """
+    label = (caller or {}).get("label", "")
+    if label:
+        return label[:32].strip().title()
     try:
         import crcmz_identity
         person = crcmz_identity.by_zitadel_id().get(caller.get("zitadel_id", ""))
@@ -1494,7 +1502,7 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
     notified = False
     note = None
     if coach_mod.claim_notification(review_id):
-        notified, note = _notify_coaching_ready(psn_user)
+        notified, note = _notify_coaching_ready(psn_user, caller)
         if not notified:
             coach_mod.release_notification(review_id)   # let a later submit retry
     return {"ok": True, "review_id": review_id, "status": status,
@@ -1554,7 +1562,8 @@ def _zid_for_psn(psn_user: str) -> str:
         return ""
 
 
-def _notify_coaching_ready(psn_user: str) -> tuple[bool, str | None]:
+def _notify_coaching_ready(psn_user: str,
+                           caller: dict | None = None) -> tuple[bool, str | None]:
     """Tell the member their review is ready, honouring their preference.
 
     Default is the WhatsApp group, since that is where the squad already shares
@@ -1585,18 +1594,24 @@ def _notify_coaching_ready(psn_user: str) -> tuple[bool, str | None]:
 
     host = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
     link = f"https://{host}/?p=coach"
+    # Name the service that produced the review, so the group can see this came
+    # from an automated analyser and not from a person. A human acting through MCP
+    # is marked "[via <name>]"; a service gets the bare "[<Service>]".
+    label = (caller or {}).get("label", "")
+    tag = f"[{label[:32].strip().title()}] " if label else ""
 
     if mode == "dm":
         jid = person.get("wa_jid", "")
         if not jid:
             return False, f"no WhatsApp JID known for {psn_user}"
-        text = f"\U0001f9e0 Your clip review is ready.\nRead the breakdown: {link}"
+        text = (f"{tag}\U0001f9e0 Your clip review is ready.\n"
+                f"Read the breakdown: {link}")
     else:
         jid = os.environ.get("WA_GOOPERS_JID", "")
         if not jid:
             return False, "WA_GOOPERS_JID not configured for group posting"
         # @Name is resolved to a real WhatsApp mention by the bridge helper.
-        text = (f"\U0001f9e0 @{name} your clip review is ready.\n"
+        text = (f"{tag}\U0001f9e0 @{name} your clip review is ready.\n"
                 f"Read the breakdown: {link}")
 
     try:
