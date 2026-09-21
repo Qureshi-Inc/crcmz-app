@@ -30,9 +30,12 @@ import hmac
 import json
 import logging
 import os
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+import mcp_audit
 
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "")
 
@@ -295,6 +298,44 @@ def handle(message: dict, caller: dict | None = None) -> dict | None:
     return _error(rid, METHOD_NOT_FOUND, f"unknown method: {method}")
 
 
+def _handle_audited(msg: Any, caller: dict | None):
+    """handle() plus a call-log entry. Wrapping here rather than inside handle()
+    catches the batch form too, with one code path for both."""
+    method = tool = ""
+    args = None
+    if isinstance(msg, dict):
+        method = str(msg.get("method") or "")
+        params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+        tool = str(params.get("name") or "") if method == "tools/call" else ""
+        a = params.get("arguments")
+        args = a if isinstance(a, dict) else None
+
+    started = time.monotonic()
+    ok = True
+    try:
+        reply = handle(msg, caller)
+        # A tool that failed comes back as a result with isError, not an exception.
+        if isinstance(reply, dict):
+            res = reply.get("result")
+            if isinstance(res, dict) and res.get("isError"):
+                ok = False
+            if reply.get("error"):
+                ok = False
+        return reply
+    except Exception:
+        ok = False
+        raise
+    finally:
+        try:
+            kind = ""
+            if tool:
+                kind = "write" if tool in {t["name"] for t in _write_tools()} else "read"
+            mcp_audit.record(caller, method or "unknown", tool, kind, ok,
+                             int((time.monotonic() - started) * 1000), args)
+        except Exception:  # noqa: BLE001 - never let logging break a call
+            pass
+
+
 def handle_body(
     raw: bytes | str, caller: dict | None = None
 ) -> tuple[Any, int]:
@@ -314,10 +355,11 @@ def handle_body(
             if not payload:
                 return _error(None, INVALID_REQUEST, "empty batch"), 400
             replies = [
-                r for r in (handle(m, caller) for m in payload) if r is not None
+                r for r in (_handle_audited(m, caller) for m in payload)
+                if r is not None
             ]
             return (replies, 200) if replies else (None, 202)
-        reply = handle(payload, caller)
+        reply = _handle_audited(payload, caller)
         return (reply, 200) if reply is not None else (None, 202)
     except Exception as e:  # noqa: BLE001 - a bug here must not 500 the app
         logger.exception("mcp: dispatch failed")

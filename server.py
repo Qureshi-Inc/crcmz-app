@@ -5273,6 +5273,7 @@ import whatsapp_analytics as _wa
 import giveaway as _giveaway
 import assistant
 import mcp_server as _mcp
+import mcp_audit as _mcp_audit
 import facts as _facts
 import chat_history as _chat
 import psn_ai
@@ -5299,6 +5300,7 @@ _games.init()
 _mcp_oauth.init()
 _mm_tokens.init()
 _coach.init()
+_mcp_audit.init()
 _app_events.init()
 _watchparty_events.init()
 _mem.init()

@@ -70,6 +70,11 @@ STORES: dict[str, list[str] | None] = {
     "/data/psn_tokens.json": None,     # live PSN access/refresh tokens. Must never
                                        # be readable through a tool.
     "/data/psn_ai_seen.json": None,    # dedupe cursor, not content.
+    "/data/mcp_calls.db": None,        # the MCP call log itself. Operational
+                                       # telemetry, not squad data, and exposing
+                                       # "who called what when" over the same
+                                       # endpoint it records would let a caller
+                                       # watch the other callers. Read it locally.
     "/data/coach_prefs.json": None,    # one member's own notification choice for AI
                                        # Coach (group/dm/off). A UI setting, not squad
                                        # data, and surfacing whether somebody wants
