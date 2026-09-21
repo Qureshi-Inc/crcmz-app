@@ -7014,7 +7014,15 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .coach-mis-row.solo .coach-mis-n{color:#8b96a8}
   .coach-mis-row.solo .coach-mis-track i{background:#8b96a8}
   .coach-sub{font-size:11px;color:#8b96a8;margin:-6px 0 11px;font-weight:500}
+  /* reports toolbar: search + filter chips + sort, above the report cards */
+  .coach-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+  .coach-search{flex:1 1 200px;min-width:150px;font:inherit;font-size:13px;color:#d7dde8;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);
+    border-radius:8px;padding:8px 12px;min-height:38px}
+  .coach-search::placeholder{color:#8b96a8}
+  .coach-search:focus{outline:none;border-color:var(--neon)}
   @media(max-width:620px){
+    .coach-search{flex:1 1 100%}
     .coach-hero{grid-template-columns:1fr}
     .coach-prefs{width:100%}
     .coach-top{flex-direction:column;align-items:stretch}
@@ -8896,6 +8904,7 @@ document.addEventListener('click', e=>{
    Reviews produced by the rev-coaching pipeline. Charts are inline SVG on
    purpose: this app must not depend on a CDN that can fail to load. */
 let coachLoaded = false, coachScope = 'me', coachOpen = null;
+let coachQ = '', coachGame = 'all', coachPlayer = 'all', coachSort = 'new';
 
 function coachEsc(s){
   return String(s==null?'':s).replace(/[&<>"']/g, c =>
@@ -9063,7 +9072,95 @@ function coachToggle(id, forceOpen){
 }
 function coachSetScope(sc){
   if(coachScope === sc) return;
-  coachScope = sc; coachLoaded = false; loadCoach();
+  coachScope = sc; coachLoaded = false;
+  coachQ = ''; coachGame = 'all'; coachPlayer = 'all'; coachSort = 'new';
+  loadCoach();
+}
+/* Reports toolbar: search, game/player filters, grade sort. All client-side —
+   the /api/coaching payload already carries everything the filters need. */
+function coachJsStr(s){
+  return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+}
+function coachHaystack(r){
+  return [r.overall_assessment, r.summary, (r.mistakes||[]).join(' '),
+    (r.coaching_tips||[]).join(' '), (r.notable_moments||[]).join(' '),
+    (r.tags||[]).join(' '), r.game, r.psn_user].join(' ').toLowerCase();
+}
+function coachFilteredReviews(d){
+  const q = coachQ.toLowerCase();
+  const gv = r => { const v = coachGradeVal(r.grade); return v == null ? -1 : v; };
+  const out = (d.reviews||[]).filter(r => {
+    if(coachScope === 'squad' && coachPlayer !== 'all' &&
+       (r.psn_user || 'unknown') !== coachPlayer) return false;
+    if(coachGame !== 'all' && (r.game || 'unknown') !== coachGame) return false;
+    if(q && coachHaystack(r).indexOf(q) < 0) return false;
+    return true;
+  }).slice();
+  if(coachSort === 'old') out.sort((a,b) => (a.created_at||0) - (b.created_at||0));
+  else if(coachSort === 'best') out.sort((a,b) => gv(b) - gv(a));
+  else if(coachSort === 'worst') out.sort((a,b) => gv(a) - gv(b));
+  else out.sort((a,b) => (b.created_at||0) - (a.created_at||0));
+  return out;
+}
+function coachCountText(d, list){
+  const total = (d.reviews||[]).length;
+  return list.length === total ? total + (total === 1 ? ' report' : ' reports')
+    : list.length + ' of ' + total;
+}
+function coachReportListHtml(d, list){
+  list = list || coachFilteredReviews(d);
+  if(!list.length)
+    return '<div class="coach-empty">No reports match these filters. ' +
+      '<button class="coach-tab" onclick="coachClearFilters()">Clear filters</button></div>';
+  return list.map(coachCard).join('');
+}
+function coachToolbarHtml(d){
+  const revs = d.reviews || [];
+  const games = [...new Set(revs.map(r => r.game || 'unknown'))];
+  const sortBtn = (v, label) =>
+    '<button class="coach-mode'+(coachSort===v?' on':'')+'" onclick="coachSetSort(\''+v+'\')">'+label+'</button>';
+  let h = '<input class="coach-search" type="search" placeholder="Search reports…" ' +
+    'value="'+coachEsc(coachQ)+'" oninput="coachSetQ(this.value)" aria-label="Search reports">';
+  if(games.length > 1)
+    h += '<span class="coach-nlbl">Game</span>' + games.map(g =>
+      '<button class="coach-mode'+(coachGame===g?' on':'')+'" onclick="coachSetGame(\''+
+      coachJsStr(g)+'\')">'+coachEsc(g)+'</button>').join('');
+  if(coachScope === 'squad'){
+    const players = [...new Set(revs.map(r => r.psn_user || 'unknown'))];
+    if(players.length > 1)
+      h += '<span class="coach-nlbl">Player</span>' + players.map(p =>
+        '<button class="coach-mode'+(coachPlayer===p?' on':'')+'" onclick="coachSetPlayer(\''+
+        coachJsStr(p)+'\')">'+coachEsc(p)+'</button>').join('');
+  }
+  h += '<span class="coach-nlbl">Sort</span>' +
+    sortBtn('new','Newest') + sortBtn('old','Oldest') +
+    sortBtn('best','Best') + sortBtn('worst','Worst');
+  h += '<span class="coach-nlbl" id="coach-rep-count">' +
+    coachEsc(coachCountText(d, coachFilteredReviews(d))) + '</span>';
+  return h;
+}
+function coachSetGame(g){ coachGame = (coachGame === g) ? 'all' : g; coachRefreshReports(); }
+function coachSetPlayer(p){ coachPlayer = (coachPlayer === p) ? 'all' : p; coachRefreshReports(); }
+function coachSetSort(s){ coachSort = s; coachRefreshReports(); }
+function coachClearFilters(){
+  coachQ = ''; coachGame = 'all'; coachPlayer = 'all'; coachSort = 'new';
+  coachRefreshReports();
+}
+function coachRefreshReports(){
+  const d = window._coachData; if(!d) return;
+  document.getElementById('coach-tools').innerHTML = coachToolbarHtml(d);
+  document.getElementById('coach-reports-list').innerHTML =
+    coachReportListHtml(d, coachFilteredReviews(d));
+}
+/* Search re-renders the list only, never the toolbar: rebuilding the input on
+   every keystroke would drop focus and eat the half-typed query. */
+function coachSetQ(v){
+  coachQ = v;
+  const d = window._coachData; if(!d) return;
+  const list = coachFilteredReviews(d);
+  document.getElementById('coach-reports-list').innerHTML = coachReportListHtml(d, list);
+  const c = document.getElementById('coach-rep-count');
+  if(c) c.textContent = coachCountText(d, list);
 }
 async function coachSetPref(patch){
   try{
@@ -9117,6 +9214,9 @@ function coachRender(d){
     }).join('') + '</div>';
   };
 
+  const weekAgo = Date.now()/1000 - 7*86400;
+  const thisWeek = (d.reviews||[]).filter(r => (r.created_at||0) >= weekAgo).length;
+
   const html =
   '<div class="coach-top">' +
     '<div class="coach-tabs">' +
@@ -9139,6 +9239,7 @@ function coachRender(d){
   coachHero(d, coachScope) +
   '<div class="coach-stats">' +
     '<div class="coach-stat"><b>'+(n.complete||0)+'</b><span>reviews</span></div>' +
+    '<div class="coach-stat"><b>'+thisWeek+'</b><span>this week</span></div>' +
     '<div class="coach-stat"><b>'+(n.processing||0)+'</b><span>processing</span></div>' +
     '<div class="coach-stat coach-stat-wide">'+coachSpark(c.per_day||[])+
       '<span>last 30 days</span></div>' +
@@ -9163,7 +9264,8 @@ function coachRender(d){
       '</div>' : '') +
   '<h4 class="coach-lh">Reports</h4>' +
   ((d.reviews||[]).length
-    ? '<div class="coach-list">'+d.reviews.map(coachCard).join('')+'</div>'
+    ? '<div class="coach-tools" id="coach-tools">'+coachToolbarHtml(d)+'</div>' +
+      '<div class="coach-list" id="coach-reports-list">'+coachReportListHtml(d)+'</div>'
     : '<div class="coach-empty">No reviews yet. Post a clip in the PSN group and '+
       'send <b>rev</b> as its own message within about 5 seconds — that is what '+
       'queues it for analysis.</div>');

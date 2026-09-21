@@ -635,6 +635,78 @@ console.log('hero states ok');
         assert "hero states ok" in out
 
 
+def test_coach_template_has_reports_toolbar():
+    """The reports toolbar landmarks must survive future template edits."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "server.py")).read()
+    for marker in ("coach-tools", "coach-search", "coachFilteredReviews",
+                   "coachToolbarHtml", "coachReportListHtml", "coachSetQ",
+                   "coachClearFilters", "coach-rep-count", "Search reports",
+                   "Clear filters", "this week"):
+        assert marker in src, "template lost %r" % marker
+
+
+def test_coach_reports_filter_and_sort():
+    """Search, game/player filters and grade sort narrow the report list."""
+    out = _node_eval(_coach_js_source() + """
+const d = {reviews: [
+  {review_id:'r1', grade:'B', game:'Warzone', psn_user:'soup', created_at: 3000,
+   overall_assessment:'B \\u2014 solid', summary:'Held the flank well',
+   mistakes:['Rotated late'], coaching_tips:['Check the minimap'],
+   notable_moments:[], tags:['rotation']},
+  {review_id:'r2', grade:'C+', game:'ARC Raiders', psn_user:'soup', created_at: 2000,
+   overall_assessment:'C+ \\u2014 ok', summary:'Good shots', mistakes:['Pushed alone'],
+   coaching_tips:['Wait for the squad'], notable_moments:[], tags:['push']},
+  {review_id:'r3', grade:'A', game:'Warzone', psn_user:'deception', created_at: 1000,
+   overall_assessment:'A \\u2014 clean', summary:'Flawless retake', mistakes:[],
+   coaching_tips:['Keep it up'], notable_moments:[], tags:['retake']},
+]};
+const ids = () => coachFilteredReviews(d).map(r => r.review_id).join(',');
+if (ids() !== 'r1,r2,r3') throw new Error('default is newest-first: ' + ids());
+coachQ = 'minimap'; if (ids() !== 'r1') throw new Error('search mistakes: ' + ids());
+coachQ = 'squad'; if (ids() !== 'r2') throw new Error('search tips: ' + ids());
+coachQ = 'FLAWLESS'; if (ids() !== 'r3') throw new Error('search is case-insensitive');
+coachQ = '';
+coachGame = 'Warzone'; if (ids() !== 'r1,r3') throw new Error('game filter: ' + ids());
+coachGame = 'all';
+// the player filter only bites in squad scope
+coachPlayer = 'deception';
+if (ids() !== 'r1,r2,r3') throw new Error('player must be ignored outside squad');
+coachScope = 'squad';
+if (ids() !== 'r3') throw new Error('player filter: ' + ids());
+coachPlayer = 'all'; coachScope = 'me';
+// grade sort honours modifiers: A(4) > B(3) > C+(2.33)
+coachSort = 'best'; if (ids() !== 'r3,r1,r2') throw new Error('best: ' + ids());
+coachSort = 'worst'; if (ids() !== 'r2,r1,r3') throw new Error('worst: ' + ids());
+coachSort = 'old'; if (ids() !== 'r3,r2,r1') throw new Error('oldest: ' + ids());
+coachSort = 'new';
+// game chips appear only when there is more than one game
+const tb = coachToolbarHtml(d);
+if (!/Warzone/.test(tb) || !/ARC Raiders/.test(tb)) throw new Error('game chips missing');
+if (/Game<\\/span>/.test(coachToolbarHtml({reviews:[d.reviews[0]]})))
+  throw new Error('game label wants more than one game');
+coachScope = 'squad';
+if (!/Player<\\/span>/.test(coachToolbarHtml(d))) throw new Error('no player chips in squad');
+coachScope = 'me';
+// the filtered-empty state offers a way out
+coachQ = 'zzz-no-match';
+const empty = coachReportListHtml(d);
+if (!/No reports match/.test(empty)) throw new Error('empty state: ' + empty.slice(0, 80));
+if (!/Clear filters/.test(empty)) throw new Error('clear-filters button missing');
+coachQ = '';
+// the count reads "N of M" only while filtered
+if (coachCountText(d, coachFilteredReviews(d)) !== '3 reports')
+  throw new Error('unfiltered count');
+coachGame = 'Warzone';
+if (coachCountText(d, coachFilteredReviews(d)) !== '2 of 3')
+  throw new Error('filtered count');
+coachGame = 'all';
+console.log('toolbar filter/sort ok');
+""")
+    if out is not None:
+        assert "toolbar filter/sort ok" in out
+
+
 if __name__ == "__main__":
     print("coaching pipeline")
     for name, fn in sorted(globals().items()):
