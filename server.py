@@ -3026,6 +3026,121 @@ def _wants_coaching(caption: str) -> bool:
     return bool(caption) and bool(_REV_RE.search(caption))
 
 
+@app.get("/api/coaching")
+def api_coaching(request: Request, scope: str = "me", limit: int = 50):
+    """Reviews plus aggregates for the AI Coach dashboard.
+
+    scope=me    -> only the signed-in member's reviews (default)
+    scope=squad -> everyone's, for the squad-wide charts
+
+    Joins on the Zitadel sub rather than psn_user: a member who renames their PSN
+    account keeps their history.
+    """
+    import datetime as _dt
+
+    session = _get_session(request)
+    sub = (session or {}).get("sub", "") or ""
+    if not sub:
+        raise HTTPException(status_code=401, detail="sign in to see coaching")
+
+    limit = max(1, min(int(limit or 50), 200))
+    rows = _coach.list_reviews(limit=200)
+    mine = [r for r in rows if (r.get("zitadel_id") or "") == sub]
+    shown = rows if scope == "squad" else mine
+
+    def _n(v):
+        return v if isinstance(v, list) else []
+
+    # Aggregates for the charts. Counted over what is shown, so the squad view
+    # summarises the squad and the personal view summarises the member.
+    complete = [r for r in shown if r.get("review_status") == "complete"]
+    tally: dict[str, int] = {}
+    mistakes: dict[str, int] = {}
+    per_day: dict[str, int] = {}
+    per_player: dict[str, int] = {}
+    grades: dict[str, int] = {}
+    for r in complete:
+        g = (r.get("grade") or "").strip().upper()
+        if g:
+            grades[g] = grades.get(g, 0) + 1
+        for t in _n(r.get("tags")):
+            tally[str(t)[:40]] = tally.get(str(t)[:40], 0) + 1
+        for m in _n(r.get("mistakes")):
+            mistakes[str(m)[:60]] = mistakes.get(str(m)[:60], 0) + 1
+        ts = r.get("created_at") or 0
+        if ts:
+            day = _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+            per_day[day] = per_day.get(day, 0) + 1
+        who = r.get("psn_user") or "unknown"
+        per_player[who] = per_player.get(who, 0) + 1
+
+    top = lambda d, n: [{"label": k, "count": v} for k, v in
+                        sorted(d.items(), key=lambda kv: -kv[1])[:n]]
+    try:
+        import coach_prefs
+        mode = coach_prefs.get_mode(sub)
+    except Exception:  # noqa: BLE001
+        mode = "group"
+
+    return {
+        "scope": scope,
+        "notify_mode": mode,
+        "counts": {
+            "mine": len(mine),
+            "squad": len(rows),
+            "complete": len(complete),
+            "pending": len([r for r in shown if r.get("review_status") == "pending"]),
+        },
+        "reviews": [{
+            "review_id": r.get("review_id"),
+            "clip_id": r.get("clip_id"),
+            "psn_user": r.get("psn_user"),
+            "is_mine": (r.get("zitadel_id") or "") == sub,
+            "game": r.get("game"),
+            "created_at": r.get("created_at"),
+            "status": r.get("review_status"),
+            "summary": r.get("summary"),
+            "overall_assessment": r.get("overall_assessment"),
+            "grade": r.get("grade") or "",
+            "strengths": _n(r.get("strengths")),
+            "mistakes": _n(r.get("mistakes")),
+            "coaching_tips": _n(r.get("coaching_tips")),
+            "notable_moments": _n(r.get("notable_moments")),
+            "tags": _n(r.get("tags")),
+        } for r in shown[:limit]],
+        "charts": {
+            "tags": top(tally, 10),
+            "mistakes": top(mistakes, 8),
+            "per_player": top(per_player, 10),
+            "per_day": [{"label": k, "count": per_day[k]}
+                        for k in sorted(per_day)][-30:],
+            # Fixed S..D order, not frequency order: a grade axis that reorders
+            # itself as data arrives is unreadable.
+            "grades": [{"label": g, "count": grades.get(g, 0)}
+                       for g in ("S", "A", "B", "C", "D")],
+        },
+    }
+
+
+@app.post("/api/coaching/prefs")
+async def api_coaching_prefs(request: Request):
+    """Set how this member is told a review is ready: group | dm | off."""
+    session = _get_session(request)
+    sub = (session or {}).get("sub", "") or ""
+    if not sub:
+        raise HTTPException(status_code=401, detail="sign in first")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    import coach_prefs
+    try:
+        mode = coach_prefs.set_mode(sub, (body.get("mode") or "").strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "notify_mode": mode}
+
+
 @app.get("/api/clips/media")
 def api_clip_media(uid: str, request: Request):
     """Stream one archived clip's MP4 to a bearer-authenticated machine client.
@@ -6717,6 +6832,79 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     clip-path:inset(0 0 -2px 0 round 0 0 18px 18px);
     opacity:1; pointer-events:auto; }
 
+  /* ── AI Coach ── */
+  .coach-top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;
+    justify-content:space-between;margin-bottom:14px}
+  .coach-tabs,.coach-notify{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .coach-nlbl{font-size:11px;color:#8b96a8;text-transform:uppercase;letter-spacing:.8px;
+    margin-right:2px}
+  .coach-tab,.coach-mode{font:inherit;font-size:13px;cursor:pointer;color:#d7dde8;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);
+    border-radius:8px;padding:8px 13px;min-height:38px}
+  .coach-mode{font-size:12px;padding:7px 11px;min-height:34px}
+  .coach-tab.on,.coach-mode.on{color:var(--neon);border-color:var(--neon);
+    background:rgba(255,255,255,.07)}
+  .coach-tab:active,.coach-mode:active{transform:translateY(1px)}
+  .coach-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));
+    gap:10px;margin-bottom:16px}
+  .coach-stat{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07);
+    border-radius:11px;padding:11px 13px}
+  .coach-stat b{display:block;font-size:22px;font-weight:650;line-height:1.2}
+  .coach-stat span{font-size:11px;color:#8b96a8;text-transform:uppercase;letter-spacing:.6px}
+  .coach-stat-wide{grid-column:span 2;display:flex;flex-direction:column;justify-content:center}
+  .coach-spark{width:100%;height:28px;display:block;margin-bottom:4px}
+  .coach-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));
+    gap:12px;margin-bottom:20px}
+  .coach-panel{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07);
+    border-radius:11px;padding:13px}
+  .coach-panel h4{margin:0 0 11px;font-size:11px;text-transform:uppercase;
+    letter-spacing:1.1px;color:#8b96a8;font-weight:700}
+  .coach-bars{display:flex;flex-direction:column;gap:7px}
+  .coach-bar-row{display:flex;align-items:center;gap:9px;font-size:12.5px}
+  .coach-bar-lbl{flex:0 0 96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:#b9c2d0}
+  .coach-bar-track{flex:1;height:7px;background:rgba(255,255,255,.06);border-radius:4px;
+    overflow:hidden}
+  .coach-bar-track i{display:block;height:100%;border-radius:4px}
+  .coach-bar-n{flex:0 0 22px;text-align:right;font-variant-numeric:tabular-nums;
+    color:#8b96a8}
+  .coach-lh{margin:0 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:1.1px;
+    color:#8b96a8;font-weight:700}
+  .coach-list{display:flex;flex-direction:column;gap:10px}
+  .coach-card{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07);
+    border-left:3px solid rgba(255,255,255,.12);border-radius:11px;padding:13px;
+    cursor:pointer;transition:border-color .15s}
+  .coach-card:hover{border-left-color:var(--neon)}
+  .coach-card.open{border-left-color:var(--neon);background:rgba(255,255,255,.05)}
+  .coach-head{display:flex;gap:11px;align-items:flex-start}
+  .coach-grade{flex:0 0 auto;font-weight:750;font-size:17px;border:1.5px solid;
+    border-radius:9px;width:36px;height:36px;display:flex;align-items:center;
+    justify-content:center}
+  .coach-h-txt{flex:1;min-width:0}
+  .coach-title{font-weight:600;font-size:14.5px;overflow-wrap:anywhere}
+  .coach-meta{font-size:12px;color:#8b96a8;margin-top:2px;overflow-wrap:anywhere}
+  .coach-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  .coach-chip{font-size:10.5px;color:#b9c2d0;background:rgba(255,255,255,.06);
+    border-radius:99px;padding:2px 9px}
+  .coach-caret{flex:0 0 auto;color:#8b96a8;font-size:13px}
+  .coach-body{margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.07)}
+  .coach-sum{margin:0 0 11px;font-size:13.5px;line-height:1.55;overflow-wrap:anywhere}
+  .coach-sec{margin-bottom:11px}
+  .coach-sec h5{margin:0 0 5px;font-size:11px;text-transform:uppercase;letter-spacing:.9px;
+    font-weight:700}
+  .coach-sec h5.good{color:#3ddc9a} .coach-sec h5.bad{color:#ff5570}
+  .coach-sec h5.tip{color:#6cb6ff}  .coach-sec h5.mom{color:#ffb454}
+  .coach-sec ul{margin:0;padding-left:18px}
+  .coach-sec li{font-size:13px;line-height:1.55;margin-bottom:4px;overflow-wrap:anywhere}
+  .coach-empty{color:#8b96a8;font-size:13px;padding:14px;background:rgba(255,255,255,.03);
+    border-radius:10px;line-height:1.6}
+  @media(max-width:620px){
+    .coach-top{flex-direction:column;align-items:stretch}
+    .coach-grid{grid-template-columns:1fr}
+    .coach-stat-wide{grid-column:span 2}
+    .coach-bar-lbl{flex-basis:78px}
+    .coach-tab,.coach-mode{flex:1}
+  }
   .nav-item {
     width:100%; display:flex; align-items:center; gap:14px;
     padding:14px 20px; border:none; background:none;
@@ -7607,6 +7795,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="nav-item" data-p="giveaway" data-icon="🎁" data-label="Giveaway" onclick="tab(this)"><span class="nav-i-icon">🎁</span><span>Giveaway</span></button>
       <button class="nav-item" data-p="watch" data-icon="🍿" data-label="Watch" onclick="tab(this)"><span class="nav-i-icon">🍿</span><span>Watch</span></button>
       <button class="nav-item" data-p="huddle" data-icon="🎥" data-label="Huddle" onclick="tab(this)"><span class="nav-i-icon">🎥</span><span>Huddle</span></button>
+      <button class="nav-item" data-p="coach" data-icon="🧠" data-label="AI Coach" onclick="tab(this)"><span class="nav-i-icon">🧠</span><span>AI Coach</span></button>
       <button class="nav-item" data-p="ai" data-icon="🤖" data-label="Ask AI" onclick="tab(this)"><span class="nav-i-icon">🤖</span><span>Ask AI</span></button>
     </div>
   </div>
@@ -7666,6 +7855,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       </div>
     </div>
   </div>
+  <div class="panel" id="p-coach"><div id="coach-inner"><div class="spin">Loading coaching…</div></div></div>
   <div class="panel" id="p-ai">
     <div class="pip-title" style="margin:8px 0 4px">Ask the Squad AI</div>
     <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.55">
@@ -8584,10 +8774,171 @@ document.addEventListener('click', e=>{
 // script is still parsing — `loadSlap` is hoisted but the `let _slapLoaded` guard
 // it reads is not, so touching it now would throw. Calling through a thunk defers
 // that read to after parse, which is the whole point.
+/* ── AI Coach ───────────────────────────────────────────────────────────────
+   Reviews produced by the rev-coaching pipeline. Charts are inline SVG on
+   purpose: this app must not depend on a CDN that can fail to load. */
+let coachLoaded = false, coachScope = 'me', coachOpen = null;
+
+function coachEsc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function coachWhen(ts){
+  if(!ts) return '';
+  const d = new Date(ts*1000), now = Date.now()/1000, age = now - ts;
+  if(age < 86400) return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  if(age < 604800) return d.toLocaleDateString([], {weekday:'short'});
+  return d.toLocaleDateString([], {month:'short', day:'numeric'});
+}
+const COACH_GRADE_COLOR = {S:'#ffd447', A:'#3ddc9a', B:'#6cb6ff', C:'#ffb454', D:'#ff5570'};
+
+/* Horizontal bars. Values are drawn as a share of the largest, so a single
+   review does not render as an empty chart. */
+function coachBars(rows, color){
+  if(!rows || !rows.length) return '<div class="coach-empty">no data yet</div>';
+  const max = Math.max.apply(null, rows.map(r => r.count)) || 1;
+  return '<div class="coach-bars">' + rows.map(r =>
+    '<div class="coach-bar-row">' +
+      '<span class="coach-bar-lbl" title="'+coachEsc(r.label)+'">'+coachEsc(r.label)+'</span>' +
+      '<span class="coach-bar-track"><i style="width:'+
+        Math.max(2, r.count/max*100).toFixed(1)+'%;background:'+
+        (color || (COACH_GRADE_COLOR[r.label] || 'var(--neon)'))+'"></i></span>' +
+      '<span class="coach-bar-n">'+r.count+'</span>' +
+    '</div>').join('') + '</div>';
+}
+/* Sparkline of reviews per day. */
+function coachSpark(rows){
+  if(!rows || rows.length < 2) return '';
+  const max = Math.max.apply(null, rows.map(r => r.count)) || 1;
+  const w = 100, h = 28, step = w / (rows.length - 1);
+  const pts = rows.map((r,i) => (i*step).toFixed(2)+','+(h - r.count/max*(h-4)).toFixed(2));
+  return '<svg class="coach-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" '+
+    'aria-label="reviews per day">' +
+    '<polyline fill="none" stroke="var(--neon)" stroke-width="1.5" points="'+pts.join(' ')+'"/>' +
+    '</svg>';
+}
+
+function coachCard(r, i){
+  const open = coachOpen === r.review_id;
+  const g = (r.grade||'').toUpperCase();
+  const badge = g ? '<span class="coach-grade" style="color:'+(COACH_GRADE_COLOR[g]||'#fff')+
+    ';border-color:'+(COACH_GRADE_COLOR[g]||'#555')+'">'+coachEsc(g)+'</span>' : '';
+  const chips = (r.tags||[]).map(t =>
+    '<span class="coach-chip">'+coachEsc(t)+'</span>').join('');
+  const list = (title, arr, cls) => (arr && arr.length)
+    ? '<div class="coach-sec"><h5 class="'+cls+'">'+title+'</h5><ul>' +
+      arr.map(x => '<li>'+coachEsc(x)+'</li>').join('') + '</ul></div>' : '';
+  const body = open ? '<div class="coach-body">' +
+      (r.summary ? '<p class="coach-sum">'+coachEsc(r.summary)+'</p>' : '') +
+      list('Strengths', r.strengths, 'good') +
+      list('Mistakes', r.mistakes, 'bad') +
+      list('Coaching tips', r.coaching_tips, 'tip') +
+      list('Notable moments', r.notable_moments, 'mom') +
+      '</div>' : '';
+  return '<div class="coach-card'+(open?' open':'')+'" onclick="coachToggle(\''+
+    coachEsc(r.review_id)+'\')">' +
+    '<div class="coach-head">' + badge +
+      '<div class="coach-h-txt">' +
+        '<div class="coach-title">'+coachEsc(r.overall_assessment || r.summary || 'Review')+'</div>' +
+        '<div class="coach-meta">'+coachEsc(r.psn_user||'')+
+          (r.game ? ' · '+coachEsc(r.game) : '') + ' · ' + coachWhen(r.created_at) +
+          (r.status !== 'complete' ? ' · <em>'+coachEsc(r.status)+'</em>' : '') +
+        '</div>' +
+        (chips ? '<div class="coach-chips">'+chips+'</div>' : '') +
+      '</div>' +
+      '<span class="coach-caret">'+(open?'▾':'▸')+'</span>' +
+    '</div>' + body + '</div>';
+}
+
+function coachToggle(id){
+  coachOpen = (coachOpen === id) ? null : id;
+  if(window._coachData) coachRender(window._coachData);
+}
+function coachSetScope(sc){
+  if(coachScope === sc) return;
+  coachScope = sc; coachLoaded = false; loadCoach();
+}
+async function coachSetMode(mode){
+  try{
+    const r = await fetch('/api/coaching/prefs', {method:'POST',
+      headers:{'content-type':'application/json'}, body: JSON.stringify({mode:mode})});
+    const j = await r.json();
+    if(j.ok && window._coachData){ window._coachData.notify_mode = j.notify_mode;
+                                   coachRender(window._coachData); }
+  }catch(e){ /* leave the current selection showing */ }
+}
+
+function coachRender(d){
+  window._coachData = d;
+  const c = d.charts || {}, n = d.counts || {};
+  const mode = d.notify_mode || 'group';
+  const modeBtn = (v, label, hint) =>
+    '<button class="coach-mode'+(mode===v?' on':'')+'" title="'+hint+
+    '" onclick="coachSetMode(\''+v+'\')">'+label+'</button>';
+
+  const html =
+  '<div class="coach-top">' +
+    '<div class="coach-tabs">' +
+      '<button class="coach-tab'+(coachScope==='me'?' on':'')+
+        '" onclick="coachSetScope(\'me\')">Mine ('+(n.mine||0)+')</button>' +
+      '<button class="coach-tab'+(coachScope==='squad'?' on':'')+
+        '" onclick="coachSetScope(\'squad\')">Squad ('+(n.squad||0)+')</button>' +
+    '</div>' +
+    '<div class="coach-notify">' +
+      '<span class="coach-nlbl">Notify me</span>' +
+      modeBtn('group','Group','Post in the WhatsApp group') +
+      modeBtn('dm','DM','Direct message me instead') +
+      modeBtn('off','Off','No notification') +
+    '</div>' +
+  '</div>' +
+  '<div class="coach-stats">' +
+    '<div class="coach-stat"><b>'+(n.complete||0)+'</b><span>reviews</span></div>' +
+    '<div class="coach-stat"><b>'+(n.pending||0)+'</b><span>pending</span></div>' +
+    '<div class="coach-stat coach-stat-wide">'+coachSpark(c.per_day||[])+
+      '<span>last 30 days</span></div>' +
+  '</div>' +
+  '<div class="coach-grid">' +
+    '<div class="coach-panel"><h4>Grades</h4>'+coachBars(c.grades||[])+'</div>' +
+    '<div class="coach-panel"><h4>Themes</h4>'+coachBars(c.tags||[], 'var(--neon)')+'</div>' +
+    '<div class="coach-panel"><h4>Recurring mistakes</h4>'+
+      coachBars(c.mistakes||[], '#ff5570')+'</div>' +
+    (coachScope==='squad'
+      ? '<div class="coach-panel"><h4>Reviews per player</h4>'+
+        coachBars(c.per_player||[], '#6cb6ff')+'</div>' : '') +
+  '</div>' +
+  '<h4 class="coach-lh">Reports</h4>' +
+  ((d.reviews||[]).length
+    ? '<div class="coach-list">'+d.reviews.map(coachCard).join('')+'</div>'
+    : '<div class="coach-empty">No reviews yet. Post a clip in the PSN group and '+
+      'send <b>rev</b> as its own message within about 5 seconds — that is what '+
+      'queues it for analysis.</div>');
+  document.getElementById('coach-inner').innerHTML = html;
+}
+
+async function loadCoach(){
+  if(coachLoaded) return;
+  coachLoaded = true;
+  const el = document.getElementById('coach-inner');
+  try{
+    const r = await fetch('/api/coaching?scope='+encodeURIComponent(coachScope));
+    if(r.status === 401){
+      el.innerHTML = '<div class="coach-empty">Sign in to see your coaching.</div>';
+      return;
+    }
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    coachRender(await r.json());
+  }catch(e){
+    coachLoaded = false;
+    el.innerHTML = '<div class="coach-empty">Could not load coaching ('+
+      coachEsc(e.message||e)+'). <button class="coach-tab" onclick="loadCoach()">Retry</button></div>';
+  }
+}
+
 const PANEL_LOADERS = {
   slap:     function(){ loadSlap(); },
   wa:       function(){ loadWa(); },
   giveaway: function(){ loadGiveaway(); },
+  coach:    function(){ loadCoach(); },
   ai:       function(){ loadAsk(); },
   huddle:   function(){ loadHuddle(); },
   // Defer one tick so the page settles before opening a WebSocket. On mobile,

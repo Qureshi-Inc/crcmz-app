@@ -70,6 +70,13 @@ STORES: dict[str, list[str] | None] = {
     "/data/psn_tokens.json": None,     # live PSN access/refresh tokens. Must never
                                        # be readable through a tool.
     "/data/psn_ai_seen.json": None,    # dedupe cursor, not content.
+    "/data/coach_prefs.json": None,    # one member's own notification choice for AI
+                                       # Coach (group/dm/off). A UI setting, not squad
+                                       # data, and surfacing whether somebody wants
+                                       # DMs to everyone holding the shared read token
+                                       # is not warranted. The reviews themselves are
+                                       # exposed via coach_reviews and
+                                       # coach_player_profile.
     "/data/video_jobs.db": None,       # internal clip-forwarding work queue.
     "/data/clips": None,               # the media files themselves; clips.db is
                                        # the queryable index.

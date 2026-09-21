@@ -60,6 +60,11 @@ def init() -> None:
                 ON coach_reviews(review_status, created_at);
         """)
         cols = {r[1] for r in db.execute("PRAGMA table_info(coach_reviews)")}
+        if "grade" not in cols:
+            # S/A/B/C/D, stored separately from overall_assessment. Charts and any
+            # future player characterisation key off this, and deriving it by
+            # string-splitting the prose breaks the first time the wording changes.
+            db.execute("ALTER TABLE coach_reviews ADD COLUMN grade TEXT")
         if "zitadel_id" not in cols:
             # The durable person key. psn_user is kept for provenance, but Sony lets
             # a member rename their online ID, which would orphan their reviews — so
@@ -230,6 +235,7 @@ def upsert(review_data: dict) -> str:
         "model", "prompt_version", "summary", "overall_assessment",
         "strengths", "mistakes", "coaching_tips", "notable_moments",
         "tags", "review_json", "review_status", "source_checksum", "zitadel_id",
+        "grade",
         # Must be persisted: this is INSERT OR REPLACE, so leaving it out of the
         # column list resets it to NULL on every resubmit, and the member gets
         # DM'd again each time the analyser retries.

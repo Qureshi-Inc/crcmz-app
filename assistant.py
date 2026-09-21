@@ -1056,6 +1056,69 @@ def _coach_reviews(limit: int = 10, status: str | None = None,
     )}
 
 
+@tool("coach_player_profile",
+      "Aggregated coaching signal per player, built from AI clip reviews: grade "
+      "distribution, most common themes, recurring mistakes and review count. This "
+      "is the data to reason over when characterising how somebody plays. Pass "
+      "psn_user for one player, or omit it for every player who has reviews. Returns "
+      "an empty profile list when no clips have been reviewed yet.",
+      {"type": "object",
+       "properties": {
+           "psn_user": {"type": "string",
+                        "description": "Exact PSN online ID. Omit for all players."},
+           "limit":    {"type": "integer", "description": "Max reviews scanned, 1-500."},
+       },
+       "required": []})
+def _coach_player_profile(psn_user: str = "", limit: int = 200) -> dict:
+    import coach as coach_mod
+    coach_mod.init()
+    limit = max(1, min(int(limit or 200), 500))
+    rows = [r for r in coach_mod.list_reviews(limit=limit, status="complete")
+            if not psn_user or r.get("psn_user") == psn_user]
+    if not rows:
+        return {"players": [], "note": "no completed reviews yet"}
+
+    def _lst(v):
+        return v if isinstance(v, list) else []
+
+    by: dict[str, dict] = {}
+    for r in rows:
+        who = r.get("psn_user") or "unknown"
+        p = by.setdefault(who, {"psn_user": who, "reviews": 0, "grades": {},
+                                "themes": {}, "mistakes": {}, "games": {}})
+        p["reviews"] += 1
+        g = (r.get("grade") or "").strip().upper()
+        if g:
+            p["grades"][g] = p["grades"].get(g, 0) + 1
+        if r.get("game"):
+            p["games"][r["game"]] = p["games"].get(r["game"], 0) + 1
+        for t in _lst(r.get("tags")):
+            p["themes"][t] = p["themes"].get(t, 0) + 1
+        for m in _lst(r.get("mistakes")):
+            p["mistakes"][m] = p["mistakes"].get(m, 0) + 1
+
+    # Mean grade on a 5..1 scale (S..D) as a single comparable number. Reported only
+    # when a grade exists, so an unreviewed axis is absent rather than shown as zero.
+    scale = {"S": 5, "A": 4, "B": 3, "C": 2, "D": 1}
+    out = []
+    for p in by.values():
+        scored = [scale[g] * n for g, n in p["grades"].items() if g in scale]
+        total = sum(n for g, n in p["grades"].items() if g in scale)
+        top = lambda d, k: [{"label": a, "count": b} for a, b in
+                            sorted(d.items(), key=lambda kv: -kv[1])[:k]]
+        out.append({
+            "psn_user": p["psn_user"],
+            "reviews": p["reviews"],
+            "grades": p["grades"],
+            "avg_grade_score": round(sum(scored) / total, 2) if total else None,
+            "top_themes": top(p["themes"], 5),
+            "recurring_mistakes": top(p["mistakes"], 5),
+            "games": top(p["games"], 5),
+        })
+    out.sort(key=lambda p: -p["reviews"])
+    return {"players": out}
+
+
 @tool("app_events_list",
       "List semantic app events: features shipped, decisions made, deployments, "
       "migrations, incidents. NOT raw telemetry. "
@@ -1351,7 +1414,13 @@ def _caller_name(caller: dict) -> str:
      "properties": {
          "clip_id":            {"type": "string", "description": "Clip message_uid."},
          "summary":            {"type": "string", "description": "Short overall summary."},
-         "overall_assessment": {"type": "string", "description": "Verdict / grade."},
+         "overall_assessment": {"type": "string",
+                                "description": "Grade + one-liner, e.g. 'B — solid "
+                                               "aim, late rotations'."},
+         "grade":              {"type": "string",
+                                "description": "Just the letter: S, A, B, C or D. "
+                                               "Derived from overall_assessment when "
+                                               "omitted."},
          "game":               {"type": "string", "description": "Game name if known."},
          "strengths":          {"type": "array", "items": {"type": "string"}},
          "mistakes":           {"type": "array", "items": {"type": "string"}},
@@ -1366,7 +1435,7 @@ def _caller_name(caller: dict) -> str:
      },
      "required": ["clip_id"]})
 def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
-                         overall_assessment: str = "", game: str = "",
+                         overall_assessment: str = "", grade: str = "", game: str = "",
                          strengths: Any = None, mistakes: Any = None,
                          coaching_tips: Any = None, notable_moments: Any = None,
                          tags: Any = None, model: str = "", prompt_version: str = "",
@@ -1406,9 +1475,11 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
         "zitadel_id": _zid_for_psn(psn_user) or (existing or {}).get("zitadel_id") or "",
         "game": game or (existing or {}).get("game") or "",
         "summary": summary, "overall_assessment": overall_assessment,
+        "grade": _normalise_grade(grade, overall_assessment),
         "strengths": strengths or [], "mistakes": mistakes or [],
         "coaching_tips": coaching_tips or [], "notable_moments": notable_moments or [],
-        "tags": tags or [], "model": model, "prompt_version": prompt_version,
+        "tags": _normalise_tags(tags), "model": model,
+        "prompt_version": prompt_version,
         "review_status": status,
     }
     if existing and existing.get("review_id"):
@@ -1431,6 +1502,47 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
             **({"notify_note": note} if note else {})}
 
 
+COACH_TAGS = ("positioning", "rotation", "crosshair-placement", "timing",
+              "decision-making", "movement", "gunskill", "map-awareness",
+              "utility-usage", "communication", "clutch", "highlight", "fail")
+COACH_GRADES = ("S", "A", "B", "C", "D")
+
+
+def _normalise_grade(grade: str, overall: str) -> str:
+    """Letter grade, from the explicit field or the leading token of the prose.
+
+    The contract is "<GRADE> — <phrase>", so the fallback reads the first token.
+    Anything unrecognised is stored empty rather than guessed at — a wrong grade
+    would quietly skew every chart built on it.
+    """
+    g = (grade or "").strip().upper()
+    if g in COACH_GRADES:
+        return g
+    head = (overall or "").strip().upper().split()
+    if head and head[0].strip(":-—") in COACH_GRADES:
+        return head[0].strip(":-—")
+    return ""
+
+
+def _normalise_tags(tags) -> list:
+    """Lower-case and de-duplicate tags, keeping order.
+
+    Tags outside the agreed vocabulary are kept, not dropped — losing an analyser's
+    output to a typo is worse than an unexpected chip — but they are logged so the
+    drift is visible instead of silently fragmenting the charts.
+    """
+    out, seen = [], set()
+    for t in (tags or []):
+        v = str(t).strip().lower().replace("_", "-").replace(" ", "-")
+        if not v or v in seen:
+            continue
+        seen.add(v)
+        if v not in COACH_TAGS:
+            logger.info("coach: tag outside the agreed vocabulary: %r", v)
+        out.append(v)
+    return out
+
+
 def _zid_for_psn(psn_user: str) -> str:
     """Durable Zitadel id for a PSN online ID, or "" when unknown."""
     if not psn_user:
@@ -1443,10 +1555,12 @@ def _zid_for_psn(psn_user: str) -> str:
 
 
 def _notify_coaching_ready(psn_user: str) -> tuple[bool, str | None]:
-    """DM the member that their review is ready. Fixed template, no caller input.
+    """Tell the member their review is ready, honouring their preference.
 
-    A member with no wa_jid tag is not an error: the review is already stored, so
-    this reports why nothing was sent instead of failing the write.
+    Default is the WhatsApp group, since that is where the squad already shares
+    clips; a member can switch to a DM or silence it in the AI Coach settings.
+    The text is a fixed template — no analyser output is interpolated, so a
+    poisoned clip caption cannot reach a WhatsApp message through here.
     """
     if not psn_user:
         return False, "clip has no sender to notify"
@@ -1455,15 +1569,36 @@ def _notify_coaching_ready(psn_user: str) -> tuple[bool, str | None]:
         return False, "WhatsApp bridge not configured"
     try:
         import crcmz_identity
-        person = crcmz_identity.resolve(psn_user)
+        person = crcmz_identity.resolve(psn_user) or {}
     except Exception as e:  # noqa: BLE001
         return False, f"identity lookup failed: {e}"
-    jid = (person or {}).get("wa_jid", "")
-    if not jid:
-        return False, f"no WhatsApp JID known for {psn_user}"
+
+    zid = person.get("zitadel_id", "") or ""
+    name = person.get("display_name") or psn_user
+    try:
+        import coach_prefs
+        mode = coach_prefs.get_mode(zid)
+    except Exception:  # noqa: BLE001
+        mode = "group"
+    if mode == "off":
+        return False, "member has coaching notifications turned off"
+
     host = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
-    text = ("\U0001f3ae Your clip review is ready.\n"
-            f"See the breakdown here: https://{host}/coaching")
+    link = f"https://{host}/?p=coach"
+
+    if mode == "dm":
+        jid = person.get("wa_jid", "")
+        if not jid:
+            return False, f"no WhatsApp JID known for {psn_user}"
+        text = f"\U0001f9e0 Your clip review is ready.\nRead the breakdown: {link}"
+    else:
+        jid = os.environ.get("WA_GOOPERS_JID", "")
+        if not jid:
+            return False, "WA_GOOPERS_JID not configured for group posting"
+        # @Name is resolved to a real WhatsApp mention by the bridge helper.
+        text = (f"\U0001f9e0 @{name} your clip review is ready.\n"
+                f"Read the breakdown: {link}")
+
     try:
         import wa_ai
         ok = wa_ai.send_reply(bridge, jid, text)

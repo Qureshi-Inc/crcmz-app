@@ -223,6 +223,53 @@ def test_notify_helper_never_raises_without_a_jid():
     assert ok is False and note, "unknown member should report, not raise"
 
 
+# ── grade + tags contract ────────────────────────────────────────────────────
+
+def test_grade_normalisation():
+    import assistant as a
+    assert a._normalise_grade("B", "") == "B"
+    assert a._normalise_grade("b", "") == "B", "lower case should be accepted"
+    # falls back to the leading token of the agreed "<GRADE> — <phrase>" form
+    assert a._normalise_grade("", "B — solid aim, late rotations") == "B"
+    assert a._normalise_grade("", "S - exceptional") == "S"
+    # anything unrecognised stays empty rather than being guessed at
+    assert a._normalise_grade("", "pretty good actually") == ""
+    assert a._normalise_grade("F", "") == "", "F is not in the S-D scale"
+
+
+def test_tag_normalisation_keeps_unknown_tags():
+    import assistant as a
+    assert a._normalise_tags(["Rotation", "GUNSKILL"]) == ["rotation", "gunskill"]
+    assert a._normalise_tags(["crosshair_placement"]) == ["crosshair-placement"]
+    assert a._normalise_tags(["rotation", "rotation"]) == ["rotation"], "dedupe"
+    # an off-vocabulary tag is kept, not dropped: losing analyser output to a typo
+    # is worse than an unexpected chip
+    assert a._normalise_tags(["something-new"]) == ["something-new"]
+
+
+def test_notify_respects_member_preference():
+    import coach_prefs
+    assert coach_prefs.get_mode("nobody-set-this") == "group", "group is the default"
+    coach_prefs.set_mode("zid-pref-test", "off")
+    assert coach_prefs.get_mode("zid-pref-test") == "off"
+    import assistant
+    ok, note = assistant._notify_coaching_ready("")
+    assert ok is False and note
+    try:
+        coach_prefs.set_mode("zid-pref-test", "shout")
+        raise AssertionError("an unknown mode must be rejected")
+    except ValueError:
+        pass
+
+
+def test_player_profile_tool_registered_and_read_only():
+    import assistant
+    names = assistant.tool_names()
+    assert "coach_player_profile" in names
+    assert "coach_player_profile" not in assistant.write_tool_names(), \
+        "characterisation data is a read; it must not sit in the write registry"
+
+
 if __name__ == "__main__":
     print("coaching pipeline")
     for name, fn in sorted(globals().items()):
