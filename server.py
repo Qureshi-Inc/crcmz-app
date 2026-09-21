@@ -3003,15 +3003,23 @@ async def mcp_endpoint(request: Request):
     return JSONResponse(body, status_code=status)
 
 
-_REV_RE = _re.compile(r"\brev\b", _re.IGNORECASE)
+_REV_RE   = _re.compile(r"\brev\b",  _re.IGNORECASE)
+_FAIL_RE  = _re.compile(r"\bfail\b", _re.IGNORECASE)
 
-# How far back to search for an untagged clip when a follow-up "rev" / "🔥"
-# text arrives as a separate message.
+# How far back to search for an untagged clip when a follow-up text
+# arrives as a separate message.
 REV_FOLLOWUP_WINDOW = 5 * 60  # seconds
 
 
 def _wants_ig_post(caption: str) -> bool:
     return bool(caption) and "🔥" in caption
+
+
+def _wants_fail_tag(caption: str) -> bool:
+    """True for follow-up texts that tag a clip as a funny fail.
+    The downstream watcher handles IG posting; this side only backfills the message.
+    """
+    return bool(caption) and (bool(_FAIL_RE.search(caption)) or "😂" in caption)
 
 
 def _zid_for_psn(psn_user: str) -> str:
@@ -5774,7 +5782,8 @@ async def _start_squad_poller():
                             # sender in the same group and backfill its caption.
                             if msg_type == 1:
                                 text = (msg.get("body") or "").strip()
-                                if text and (_wants_coaching(text) or _wants_ig_post(text)):
+                                if text and (_wants_coaching(text) or _wants_ig_post(text)
+                                            or _wants_fail_tag(text)):
                                     since = (
                                         (psn_ts_ms / 1000.0 - REV_FOLLOWUP_WINDOW)
                                         if psn_ts_ms
@@ -5809,6 +5818,13 @@ async def _start_squad_poller():
                                                             "ig_queued_followup "
                                                             "uid=%s post=%s",
                                                             clip_uid, pid)
+                                            elif _wants_fail_tag(text):
+                                                # Message backfilled; downstream
+                                                # watcher reads recent_clips and
+                                                # handles IG posting itself.
+                                                logger.info(
+                                                    "fail_tag_followup uid=%s sender=%s",
+                                                    clip_uid, sender)
                                             await _video_queue.put(clip_uid)
                                 continue
 
