@@ -3006,6 +3006,10 @@ async def mcp_endpoint(request: Request):
 _REV_RE = _re.compile(r"\brev\b", _re.IGNORECASE)
 
 
+def _wants_ig_post(caption: str) -> bool:
+    return bool(caption) and "🔥" in caption
+
+
 def _zid_for_psn(psn_user: str) -> str:
     """Durable Zitadel id for a PSN online ID, or "" when unknown."""
     if not psn_user:
@@ -5374,6 +5378,7 @@ import game_history as _games
 import mm_tokens as _mm_tokens
 import memory_store as _mem
 import coach as _coach
+import ig_posts as _ig
 import app_events as _app_events
 import watchparty_events as _watchparty_events
 _wa.init()
@@ -5383,6 +5388,7 @@ _games.init()
 _mcp_oauth.init()
 _mm_tokens.init()
 _coach.init()
+_ig.init()
 _mcp_audit.init()
 _app_events.init()
 _watchparty_events.init()
@@ -5548,11 +5554,12 @@ def _process_clip_job(message_uid: str, job: dict) -> str | None:
     sender   = job["sender_online_id"]
     group_id = job.get("psn_group_id", "")
     body     = job.get("body") or ""
-    # A coaching clip is downloaded and archived but never forwarded, so it must not
-    # be blocked by WhatsApp configuration it will never use. Checked after `body` is
-    # read, which is why this guard moved down from the top of the function.
+    # Coaching and IG clips are archived but never forwarded via the WA bridge, so they
+    # must not be blocked by WA config they will never use. Coaching takes priority if
+    # both "rev" and "🔥" appear in the same caption.
     coaching_only = _wants_coaching(body)
-    if not coaching_only and (not WA_BRIDGE_URL or not WA_GOOPERS_JID):
+    ig_only = not coaching_only and _wants_ig_post(body)
+    if not coaching_only and not ig_only and (not WA_BRIDGE_URL or not WA_GOOPERS_JID):
         raise ClipError("WA_BRIDGE_URL or WA_GOOPERS_JID not configured")
 
     # ── Resume from archive if available ──────────────────────────────────────
@@ -5564,6 +5571,10 @@ def _process_clip_job(message_uid: str, job: dict) -> str | None:
             raise ClipError(f"archived clip missing from store: {storage_key}")
         if coaching_only:
             logger.info("clip_coaching_only uid=%s — archived, not forwarded",
+                        message_uid)
+            return None
+        if ig_only:
+            logger.info("clip_ig_only uid=%s — archived, awaiting IG post",
                         message_uid)
             return None
         _send_to_discord(message_uid, video_bytes, sender, body)
@@ -5600,10 +5611,13 @@ def _process_clip_job(message_uid: str, job: dict) -> str | None:
     )
 
     # ── Send ─────────────────────────────────────────────────────────────────
-    # A "rev" clip is archived so the coach pipeline can fetch it, then stops here.
-    # The archive above already ran, which is what clip_media_url serves to Muse.
+    # Coaching/IG clips are archived so Muse can fetch them, then stop here.
+    # The archive above is what clip_media_url serves.
     if coaching_only:
         logger.info("clip_coaching_only uid=%s — archived, not forwarded", message_uid)
+        return None
+    if ig_only:
+        logger.info("clip_ig_only uid=%s — archived, awaiting IG post", message_uid)
         return None
     _send_to_discord(message_uid, result.data, sender, body)
     return _send_to_wa(message_uid, result.data, sender, body)
@@ -5774,6 +5788,16 @@ async def _start_squad_poller():
                                         logger.info(
                                             "coach_queued uid=%s sender=%s review=%s",
                                             uid, sender, rid)
+                                elif _wants_ig_post(body_text):
+                                    # "🔥" means post to IG: archived, not forwarded via
+                                    # WA bridge. montage_eligible stays 1 — fire clips
+                                    # are highlights. Muse will call ig_post_record.
+                                    pid = _ig.claim_for_post(
+                                        uid, sender, zitadel_id=_zid_for_psn(sender))
+                                    if pid:
+                                        logger.info(
+                                            "ig_queued uid=%s sender=%s post=%s",
+                                            uid, sender, pid)
                                 await _video_queue.put(uid)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("video-watch tick failed: %s", exc)
@@ -5820,10 +5844,11 @@ async def _start_squad_poller():
                         exc_info = ("error", f"unexpected: {e}", 0)
 
                     if exc_info is None:
-                        # A coaching clip is archived but never forwarded, so it must
-                        # not be recorded as WhatsApp-delivered.
-                        if _wants_coaching(job.get("body") or ""):
+                        body_str = job.get("body") or ""
+                        if _wants_coaching(body_str):
                             _clips.set_coaching_done(uid)
+                        elif _wants_ig_post(body_str):
+                            _clips.set_ig_done(uid)
                         else:
                             _clips.set_delivered(uid, wa_msg_id)
                         continue

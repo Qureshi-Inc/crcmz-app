@@ -52,6 +52,7 @@ STORES: dict[str, list[str] | None] = {
                         "memory_status"],
 
     "/data/coach_reviews.db": ["coach_reviews"],
+    "/data/ig_posts.db":     ["ig_clips_recent"],
     "/data/app_events.db":    ["app_events_list"],
     "/data/watchparty_events.db": ["watchparty_events_list"],
 

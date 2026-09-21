@@ -216,6 +216,19 @@ def set_coaching_done(message_uid: str) -> None:
         db.commit()
 
 
+def set_ig_done(message_uid: str) -> None:
+    """Terminal state for an IG-posted clip: archived, not sent via WA bridge.
+
+    montage_eligible stays 1 — a fire clip IS a highlight and belongs in the montage.
+    whatsapp_delivered_at stays NULL — Muse shares the IG link, not the raw clip.
+    """
+    now = time.time()
+    with _lock, _conn() as db:
+        db.execute("UPDATE clips SET status='delivered', updated_at=? "
+                   "WHERE message_uid=?", (now, message_uid))
+        db.commit()
+
+
 def set_delivered(message_uid: str, wa_message_id: str | None = None) -> None:
     now = time.time()
     with _lock, _conn() as db:

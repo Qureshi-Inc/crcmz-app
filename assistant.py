@@ -1545,6 +1545,86 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
             **({"notify_note": note} if note else {})}
 
 
+@write_tool(
+    "ig_post_record",
+    "Submit an Instagram post result for a fire-emoji clip. Call this after you have "
+    "successfully posted the clip to Instagram. `clip_id` comes from recent_clips — "
+    "look for 🔥 in the message field. The platform will announce the post to the "
+    "WhatsApp group with the IG link. Rate limit: 30 per hour.",
+    {"type": "object",
+     "properties": {
+         "clip_id": {"type": "string", "description": "Clip message_uid from recent_clips."},
+         "ig_url":  {"type": "string",
+                     "description": "Full Instagram post URL (https://www.instagram.com/...)."},
+         "caption": {"type": "string",
+                     "description": "Caption used on Instagram, for reference (optional)."},
+     },
+     "required": ["clip_id", "ig_url"]})
+def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
+                    caption: str = "") -> dict:
+    """Record an IG post and notify the group. Muse reports; the platform composes and sends."""
+    import clips as clips_mod
+    import ig_posts as ig_mod
+    import mcp_oauth
+
+    clip_id = (clip_id or "").strip()
+    ig_url  = (ig_url or "").strip()
+    if not clip_id:
+        return {"ok": False, "error": "clip_id is required"}
+    if not ig_url:
+        return {"ok": False, "error": "ig_url is required"}
+    if not ig_url.startswith("https://"):
+        return {"ok": False, "error": "ig_url must be an https:// URL"}
+
+    zid = caller.get("zitadel_id", "")
+    if not mcp_oauth.within_rate_limit(zid, "ig_post_record", 30, 3600):
+        return {"ok": False, "error": "rate limit: 30 IG posts per hour"}
+
+    ig_mod.init()
+    clip = clips_mod.get(clip_id)
+    if not clip:
+        return {"ok": False, "error": "no clip with that clip_id"}
+
+    psn_user = clip.get("sender_online_id") or ""
+    existing = ig_mod.get_by_clip(clip_id)
+    if existing:
+        post_id = existing["post_id"]
+    else:
+        post_id = ig_mod.claim_for_post(clip_id, psn_user,
+                                        _zid_for_psn(psn_user) if psn_user else "")
+
+    ig_mod.submit_post(post_id, ig_url)
+    mcp_oauth.audit_write(zid, "ig_post_record",
+                          f'{{"clip_id": "{clip_id}"}}', "ok")
+
+    notified = False
+    note = None
+    if ig_mod.claim_notification(post_id):
+        notified, note = _notify_ig_posted(psn_user, ig_url, caller, ig_mod.get(post_id))
+        if not notified:
+            ig_mod.release_notification(post_id)
+
+    return {"ok": True, "post_id": post_id, "ig_url": ig_url,
+            "group_notified": notified,
+            **({"notify_note": note} if note else {})}
+
+
+@tool(
+    "ig_clips_recent",
+    "Recent Instagram-posted clips. Each row has clip_id, psn_user, ig_url (null "
+    "until Muse submits the URL), posted_at, and notified_at. Use this to check "
+    "which fire-emoji clips have been posted and which are still pending. "
+    "Limit clamped 1–100.",
+    {"type": "object",
+     "properties": {
+         "limit": {"type": "integer", "description": "Number of records, 1–100. Default 20."},
+     }})
+def _ig_clips_recent(limit: int = 20) -> list:
+    import ig_posts as ig_mod
+    ig_mod.init()
+    return ig_mod.recent(limit=max(1, min(int(limit or 20), 100)))
+
+
 COACH_TAGS = ("positioning", "rotation", "crosshair-placement", "timing",
               "decision-making", "movement", "gunskill", "map-awareness",
               "utility-usage", "communication", "clutch", "highlight", "fail")
@@ -1668,6 +1748,34 @@ def _coach_report_text(review: dict, limit: int = 1400) -> str:
     if len(body) > limit:
         body = body[:limit].rstrip() + "…"
     return body
+
+
+def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
+                      post: dict | None = None) -> tuple[bool, str | None]:
+    """Announce an Instagram post to the WhatsApp group.
+
+    The IG URL comes from Muse's service call (validated https://), not from user
+    text, so it is not passed through _wa_safe. Only psn_user is user-originated
+    and gets sanitised.
+    """
+    bridge = os.environ.get("WA_BRIDGE_URL", "")
+    if not bridge:
+        return False, "WhatsApp bridge not configured"
+    jid = os.environ.get("WA_GOOPERS_JID", "")
+    if not jid:
+        return False, "WA_GOOPERS_JID not configured"
+
+    label = (caller or {}).get("label", "")
+    tag = f"[{label[:32].strip().title()}] " if label else ""
+    safe_user = _wa_safe(psn_user, 40)
+
+    text = f"{tag}\U0001f525 *{safe_user}* just dropped on Instagram:\n{ig_url}"
+    try:
+        import wa_ai
+        ok = wa_ai.send_reply(bridge, jid, text)
+        return bool(ok), None if ok else "bridge refused the message"
+    except Exception as e:  # noqa: BLE001
+        return False, f"WhatsApp send failed: {e}"
 
 
 def _notify_coaching_ready(psn_user: str, caller: dict | None = None,

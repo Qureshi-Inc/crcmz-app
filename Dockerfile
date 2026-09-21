@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg openssh-
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server.py psn_auth.py psn_messaging.py roast_bot.py portal.py psn_data.py mattermost.py mm_tokens.py video_jobs.py clips.py clip_store.py whatsapp_analytics.py giveaway.py watch.py assistant.py facts.py chat_history.py psn_ai.py wa_ai.py crcmz_identity.py soundboard.py mcp_server.py game_history.py mcp_oauth.py memory_store.py coach.py coach_prefs.py mcp_audit.py app_events.py watchparty_events.py favicon.png crcmz-logo.png footer-avatar.png ./
+COPY server.py psn_auth.py psn_messaging.py roast_bot.py portal.py psn_data.py mattermost.py mm_tokens.py video_jobs.py clips.py clip_store.py whatsapp_analytics.py giveaway.py watch.py assistant.py facts.py chat_history.py psn_ai.py wa_ai.py crcmz_identity.py soundboard.py mcp_server.py game_history.py mcp_oauth.py memory_store.py coach.py coach_prefs.py mcp_audit.py app_events.py watchparty_events.py ig_posts.py favicon.png crcmz-logo.png footer-avatar.png ./
 # Documentation files — indexed by the semantic memory layer (memory_store.py).
 COPY docs/ ./docs/
 # Git commit manifest — generated locally and committed; used by

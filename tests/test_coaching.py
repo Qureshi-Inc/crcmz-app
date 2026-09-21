@@ -7,7 +7,7 @@ send messages. The analyser's input is a PSN caption (user-controlled text), so
 if it could reach send_whatsapp_dm a poisoned caption would become a message.
 
   docker run --rm -e SESSION_SECRET=test -e NPSSO_TOKEN=t -e GROUP_ID=g \
-    -e MCP_TOKEN=shared -e CRCMZ_SERVICE_TOKENS='muse:muse-token-abcdefghij:coach_review_record' \
+    -e MCP_TOKEN=shared -e CRCMZ_SERVICE_TOKENS='muse:muse-token-abcdefghij:coach_review_record,ig_post_record' \
     -v "$PWD/tests:/app/tests" crcmz-app:test python tests/test_coaching.py
 """
 import os
@@ -854,6 +854,110 @@ console.log('sightings panel ok');
 """)
     if out is not None:
         assert "sightings panel ok" in out
+
+
+# ── fire emoji / IG trigger ──────────────────────────────────────────────────
+
+def test_fire_trigger_detects_emoji():
+    import server
+    fires = ["🔥", "sick shot 🔥", "🔥🔥", "🔥 post this"]
+    quiet = ["", None, "rev", "fire", "hot", "sick shot"]
+    for c in fires:
+        assert server._wants_ig_post(c), "%r should trigger IG post" % c
+    for c in quiet:
+        assert not server._wants_ig_post(c), "%r must NOT trigger IG post" % c
+
+
+def test_rev_takes_priority_over_fire():
+    """If a caption has both rev and 🔥 the coaching flow wins."""
+    import server
+    caption = "rev 🔥"
+    assert server._wants_coaching(caption), "coaching must fire"
+    # ig_only is only set when coaching_only is False
+    coaching_only = server._wants_coaching(caption)
+    ig_only = not coaching_only and server._wants_ig_post(caption)
+    assert not ig_only, "ig_only must be False when coaching_only is True"
+
+
+def test_fire_clip_is_archived_but_not_forwarded_montage_eligible():
+    """A fire clip must be archived so Muse can fetch it; it must not be forwarded
+    via the WA bridge; but it MUST stay montage-eligible (it's a highlight)."""
+    import server, clips, clip_store
+    server.WA_BRIDGE_URL = "http://stub"
+    server.WA_GOOPERS_JID = "g@g.us"
+    clips.init()
+    real = [r for r in clips.list_clips(limit=300)
+            if r.get("archive_status") == "archived"
+            and clip_store.local_file(r.get("storage_key_original") or "")]
+    if not real:
+        return
+    base = real[0]
+
+    sent = {"wa": [], "discord": []}
+    orig_wa, orig_dc = server._send_to_wa, server._send_to_discord
+    server._send_to_wa = lambda u, d, s_, b: sent["wa"].append(u) or "wa-1"
+    server._send_to_discord = lambda u, d, s_, b: sent["discord"].append(u)
+    try:
+        import uuid as _uuid
+        run = _uuid.uuid4().hex[:6]
+        uid = f"t-fire-{run}"
+        clips.claim(uid, base["ugc_id"], "g", "G", "moiiz41510",
+                    1789956485000, "sick play 🔥")
+        clips.set_archived(uid, base["storage_key_original"],
+                           file_size=base.get("file_size"),
+                           sha256=base.get("sha256"))
+        server._process_clip_job(uid, clips.get(uid))
+        clips.set_ig_done(uid)
+        row = clips.get(uid)
+        assert uid not in sent["wa"], "fire clip must not reach WhatsApp bridge"
+        assert uid not in sent["discord"], "fire clip must not reach Discord"
+        assert row.get("montage_eligible"), \
+            "fire clips stay montage-eligible — they are highlights"
+        assert row.get("whatsapp_delivered_at") is None, \
+            "fire clip was never delivered to WhatsApp"
+        assert row.get("archive_status") == "archived", \
+            "must be archived so Muse can fetch it"
+        assert row.get("status") in ("delivered", "failed"), \
+            "must reach terminal state so the worker does not requeue it"
+    finally:
+        server._send_to_wa, server._send_to_discord = orig_wa, orig_dc
+
+
+def test_fire_clip_does_not_need_whatsapp_config():
+    """The WhatsApp config guard must not block an IG clip."""
+    import inspect
+    import server
+    src = inspect.getsource(server._process_clip_job)
+    assert "ig_only = not coaching_only and _wants_ig_post(body)" in src
+    guard = src.index("WA_BRIDGE_URL or WA_GOOPERS_JID not configured")
+    flag = src.index("ig_only = not coaching_only and _wants_ig_post(body)")
+    assert flag < guard, "the ig check must precede the WhatsApp config guard"
+
+
+def test_ig_post_record_tool_requires_https():
+    """ig_post_record must reject non-https URLs — an analyser should not be able
+    to inject an http or data: URL into a WhatsApp message."""
+    from assistant import call_write_tool
+    caller = {"zitadel_id": "service:muse", "label": "Muse",
+              "scopes": {"ig_post_record"}}
+    bad_urls = ["http://evil.example/x", "data:text/html,hi", "ftp://x"]
+    for url in bad_urls:
+        result, ok = call_write_tool(
+            "ig_post_record",
+            {"clip_id": "dummy-clip-id", "ig_url": url},
+            caller)
+        import json
+        r = json.loads(result)
+        assert not r.get("ok"), f"non-https URL {url!r} should be rejected"
+
+
+def test_ig_clips_recent_read_tool():
+    """ig_clips_recent is a read tool and must return a list."""
+    from assistant import call_tool
+    result, ok = call_tool("ig_clips_recent", {"limit": 5})
+    import json
+    data = json.loads(result)
+    assert isinstance(data, list), "must return a list"
 
 
 if __name__ == "__main__":
