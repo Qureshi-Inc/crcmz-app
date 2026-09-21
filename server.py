@@ -6955,6 +6955,9 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .coach-sec h5.tip{color:#6cb6ff}  .coach-sec h5.mom{color:#ffb454}
   .coach-sec ul{margin:0;padding-left:18px}
   .coach-sec li{font-size:13px;line-height:1.55;margin-bottom:4px;overflow-wrap:anywhere}
+  .coach-mom-t{font-family:ui-monospace,monospace;font-size:11.5px;color:#ffb454;
+    background:rgba(255,180,84,.1);border:1px solid rgba(255,180,84,.25);
+    border-radius:4px;padding:1px 6px;margin-right:6px;white-space:nowrap}
   /* recurring mistakes: wrapped, never truncated — this is the only copy of the text */
   .coach-panel-wide{grid-column:1/-1}
   .coach-mis{display:flex;flex-direction:column;gap:11px}
@@ -9039,12 +9042,26 @@ function coachCard(r, i){
   const list = (title, arr, cls) => (arr && arr.length)
     ? '<div class="coach-sec"><h5 class="'+cls+'">'+title+'</h5><ul>' +
       arr.map(x => '<li>'+coachEsc(x)+'</li>').join('') + '</ul></div>' : '';
+  // Notable moments arrive as objects {t, note} (or legacy plain strings).
+  // Rendering the raw object coerces to "[object Object]".
+  const moments = (r.notable_moments||[]).map(m => {
+    if (m && typeof m === 'object') {
+      const t = m.t || m.time || m.ts || '';
+      const note = m.note || m.text || m.description || '';
+      return '<li>' + (t ? '<span class="coach-mom-t">'+coachEsc(t)+
+        '</span> ' : '') + coachEsc(note) + '</li>';
+    }
+    return '<li>'+coachEsc(m)+'</li>';
+  }).join('');
+  const momentsSec = moments
+    ? '<div class="coach-sec"><h5 class="mom">Notable moments</h5><ul>' +
+      moments + '</ul></div>' : '';
   const body = open ? '<div class="coach-body">' +
       (r.summary ? '<p class="coach-sum">'+coachEsc(r.summary)+'</p>' : '') +
       list('Strengths', r.strengths, 'good') +
       list('Mistakes', r.mistakes, 'bad') +
       list('Coaching tips', r.coaching_tips, 'tip') +
-      list('Notable moments', r.notable_moments, 'mom') +
+      momentsSec +
       '</div>' : '';
   return '<div class="coach-card'+(open?' open':'')+'" id="coach-r-'+
     coachEsc(r.review_id)+'" onclick="coachToggle(\''+
@@ -9081,9 +9098,16 @@ function coachSetScope(sc){
 function coachJsStr(s){
   return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
 }
+function coachMomentText(m){
+  if (m && typeof m === 'object')
+    return [m.t||m.time||m.ts, m.note||m.text||m.description]
+      .filter(Boolean).join(' ');
+  return String(m==null?'':m);
+}
 function coachHaystack(r){
   return [r.overall_assessment, r.summary, (r.mistakes||[]).join(' '),
-    (r.coaching_tips||[]).join(' '), (r.notable_moments||[]).join(' '),
+    (r.coaching_tips||[]).join(' '),
+    (r.notable_moments||[]).map(coachMomentText).join(' '),
     (r.tags||[]).join(' '), r.game, r.psn_user].join(' ').toLowerCase();
 }
 function coachFilteredReviews(d){

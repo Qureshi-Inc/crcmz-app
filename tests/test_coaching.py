@@ -707,6 +707,34 @@ console.log('toolbar filter/sort ok');
         assert "toolbar filter/sort ok" in out
 
 
+def test_coach_notable_moments_render_objects():
+    """Moments are {t, note} objects — they must not render as [object Object]."""
+    out = _node_eval(_coach_js_source() + """
+coachOpen = 'r1';
+const r = {review_id:'r1', grade:'C', status:'complete', psn_user:'moiiz41510',
+  game:'ARC Raiders', created_at: 1789982581, overall_assessment:'C',
+  summary:'s', strengths:[], mistakes:[], coaching_tips:[],
+  notable_moments:[{t:'0:25', note:'Traverse/zipline deploy'},
+                   {t:'1:32', note:'Looting with FULL backpack'},
+                   'a legacy plain-string moment'],
+  tags:['arc-raiders']};
+const html = coachCard(r, true);
+if (/\\[object Object\\]/.test(html)) throw new Error('object leaked into card');
+if (!/coach-mom-t/.test(html) || !/0:25/.test(html))
+  throw new Error('timestamp chip missing');
+if (!/Traverse\\/zipline deploy/.test(html)) throw new Error('note text missing');
+if (!/a legacy plain-string moment/.test(html))
+  throw new Error('plain-string moments must keep working');
+const h = coachHaystack(r);
+if (/\\[object Object\\]/.test(h)) throw new Error('object leaked into haystack');
+if (!/traverse\\/zipline deploy/.test(h) || !/0:25/.test(h))
+  throw new Error('moment text must be searchable: ' + h.slice(0, 80));
+console.log('moments render ok');
+""")
+    if out is not None:
+        assert "moments render ok" in out
+
+
 if __name__ == "__main__":
     print("coaching pipeline")
     for name, fn in sorted(globals().items()):
