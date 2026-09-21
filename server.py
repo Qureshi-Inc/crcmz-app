@@ -3005,6 +3005,10 @@ async def mcp_endpoint(request: Request):
 
 _REV_RE = _re.compile(r"\brev\b", _re.IGNORECASE)
 
+# How far back to search for an untagged clip when a follow-up "rev" / "🔥"
+# text arrives as a separate message.
+REV_FOLLOWUP_WINDOW = 5 * 60  # seconds
+
 
 def _wants_ig_post(caption: str) -> bool:
     return bool(caption) and "🔥" in caption
@@ -5759,6 +5763,51 @@ async def _start_squad_poller():
                                 asyncio.create_task(
                                     _forward_screenshot(uid, screenshot_ugc_id, sender, body_text, wm)
                                 )
+                                continue
+
+                            # Text messages — check for follow-up "rev" / "🔥" trigger.
+                            # Players often send the clip with no caption, then type
+                            # "rev" as a separate message. We look back REV_FOLLOWUP_WINDOW
+                            # seconds for the most recent untagged clip from the same
+                            # sender in the same group and backfill its caption.
+                            if msg_type == 1:
+                                text = (msg.get("body") or "").strip()
+                                if text and (_wants_coaching(text) or _wants_ig_post(text)):
+                                    since = (
+                                        (psn_ts_ms / 1000.0 - REV_FOLLOWUP_WINDOW)
+                                        if psn_ts_ms
+                                        else (time.time() - REV_FOLLOWUP_WINDOW)
+                                    )
+                                    match = _clips.recent_untagged_by_sender(
+                                        sender, wm._group_id, since)
+                                    if match:
+                                        clip_uid = match["message_uid"]
+                                        if _clips.set_message(clip_uid, text):
+                                            logger.info(
+                                                "rev_followup uid=%s sender=%s text=%r",
+                                                clip_uid, sender, text)
+                                            if _wants_coaching(text):
+                                                _clips.set_coaching_only(clip_uid)
+                                                if not _coach.get_any_by_clip(clip_uid):
+                                                    rid = _coach.claim_for_review(
+                                                        clip_uid, sender,
+                                                        zitadel_id=_zid_for_psn(sender))
+                                                    if rid:
+                                                        logger.info(
+                                                            "coach_queued_followup "
+                                                            "uid=%s review=%s",
+                                                            clip_uid, rid)
+                                            elif _wants_ig_post(text):
+                                                if not _ig.get_by_clip(clip_uid):
+                                                    pid = _ig.claim_for_post(
+                                                        clip_uid, sender,
+                                                        zitadel_id=_zid_for_psn(sender))
+                                                    if pid:
+                                                        logger.info(
+                                                            "ig_queued_followup "
+                                                            "uid=%s post=%s",
+                                                            clip_uid, pid)
+                                            await _video_queue.put(clip_uid)
                                 continue
 
                             # Video clip messages

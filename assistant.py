@@ -650,11 +650,15 @@ def _squad() -> Any:
 
 @tool("recent_clips",
       "Recently captured PSN clips: who shared them, when, how long, their status, "
-      "and `message` — the PSN text posted with the clip, which is null unless the "
-      "sender typed something within 5 seconds of sharing. General PSN group chat is "
-      "not stored anywhere, so this is the only PSN message text that exists. Pass a "
-      "clip_id to clip_media_url to download the video. `sender` must be an exact "
-      "PSN online ID.",
+      "and `message` — the PSN text associated with the clip. `message_source` tells "
+      "you where it came from: 'clip_caption' means the sender typed it within ~5s of "
+      "sharing (the normal case); 'followup_text' means they sent the clip with no "
+      "caption and then typed the text as a separate message within 5 minutes — both "
+      "sources are semantically equivalent for trigger matching (e.g. checking for "
+      "'rev' or '🔥'). `message_source` is null when there is no message at all. "
+      "General PSN group chat is not stored, so this is the only PSN message text "
+      "that exists. Pass a clip_id to clip_media_url to download the video. "
+      "`sender` must be an exact PSN online ID.",
       {"type": "object",
        "properties": {
            "limit": {"type": "integer", "description": "1-25, default 10."},
@@ -670,6 +674,7 @@ def _clips(limit: int = 10, sender: str = "", month: str = "") -> Any:
     out = []
     for r in rows:
         when = r.get("psn_created_at") or r.get("discovered_at")
+        msg = (r.get("body") or "") or None
         out.append({
             "clip_id": r.get("message_uid"),
             "sender": r.get("sender_online_id"),
@@ -677,10 +682,8 @@ def _clips(limit: int = 10, sender: str = "", month: str = "") -> Any:
             "duration_seconds": r.get("duration_seconds"),
             "status": r.get("status"),
             "archived": r.get("archive_status") == "archived",
-            # The PSN text the sender posted alongside the clip. Often absent: the
-            # poller only captures a caption from the same sender within 5s of the
-            # clip, and general group chat is never stored at all.
-            "message": (r.get("body") or "") or None,
+            "message": msg,
+            "message_source": r.get("message_source") if msg else None,
         })
     return out
 

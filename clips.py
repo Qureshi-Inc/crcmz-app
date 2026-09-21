@@ -94,6 +94,9 @@ def init() -> None:
         if "body" not in cols:
             db.execute("ALTER TABLE clips ADD COLUMN body TEXT")
             db.commit()
+        if "message_source" not in cols:
+            db.execute("ALTER TABLE clips ADD COLUMN message_source TEXT")
+            db.commit()
     logger.info("clips: DB ready at %s", _DB_PATH)
 
 
@@ -114,10 +117,11 @@ def claim(
             """INSERT OR IGNORE INTO clips
                (message_uid, ugc_id, psn_group_id, psn_group_name,
                 sender_online_id, psn_created_at, discovered_at,
-                body, next_attempt_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?)""",
+                body, message_source, next_attempt_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?)""",
             (message_uid, ugc_id, group_id, group_name,
-             sender, psn_created_at, now, body or None, now, now),
+             sender, psn_created_at, now, body or None,
+             "clip_caption" if body else None, now, now),
         )
         db.commit()
         return db.execute("SELECT changes()").fetchone()[0] > 0
@@ -214,6 +218,43 @@ def set_coaching_done(message_uid: str) -> None:
         db.execute("UPDATE clips SET status='delivered', updated_at=? "
                    "WHERE message_uid=?", (now, message_uid))
         db.commit()
+
+
+def set_message(message_uid: str, text: str) -> bool:
+    """Backfill a caption from a follow-up text message sent after the clip.
+
+    Only writes when body is currently NULL or empty — never overwrites an
+    existing caption. Returns True if the update was actually applied, False if
+    the clip already had a caption (safe to call redundantly).
+    """
+    text = (text or "").strip()
+    if not text:
+        return False
+    now = time.time()
+    with _lock, _conn() as db:
+        cur = db.execute(
+            "UPDATE clips SET body=?, message_source='followup_text', updated_at=?"
+            " WHERE message_uid=? AND (body IS NULL OR body='')",
+            (text, now, message_uid))
+        db.commit()
+        return cur.rowcount > 0
+
+
+def recent_untagged_by_sender(sender: str, group_id: str, since_ts: float) -> dict | None:
+    """Most recent clip from sender in group with no caption, created at or after since_ts.
+
+    Used to match a follow-up "rev" or "🔥" text back to the clip it refers to.
+    """
+    with _conn() as db:
+        row = db.execute(
+            "SELECT * FROM clips"
+            " WHERE sender_online_id=? AND psn_group_id=?"
+            "   AND (body IS NULL OR body='')"
+            "   AND COALESCE(psn_created_at, created_at) >= ?"
+            " ORDER BY COALESCE(psn_created_at, created_at) DESC"
+            " LIMIT 1",
+            (sender, group_id, since_ts)).fetchone()
+    return dict(row) if row else None
 
 
 def set_ig_done(message_uid: str) -> None:
