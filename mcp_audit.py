@@ -151,9 +151,11 @@ def summary(since_s: float) -> dict:
                 " FROM mcp_calls WHERE called_at >= ?"
                 " GROUP BY source ORDER BY n DESC", (since_s,))]
             tools = [dict(r) for r in db.execute(
-                "SELECT COALESCE(tool, method) AS tool, tool_kind, COUNT(*) n,"
-                " MAX(called_at) last FROM mcp_calls WHERE called_at >= ?"
-                " GROUP BY COALESCE(tool, method) ORDER BY n DESC LIMIT 40",
+                "SELECT COALESCE(NULLIF(tool, ''), method) AS tool, tool_kind,"
+                " COUNT(*) n, MAX(called_at) last FROM mcp_calls"
+                " WHERE called_at >= ?"
+                " GROUP BY COALESCE(NULLIF(tool, ''), method)"
+                " ORDER BY n DESC LIMIT 40",
                 (since_s,))]
             hours = [dict(r) for r in db.execute(
                 "SELECT CAST(called_at/3600 AS INTEGER) AS h, COUNT(*) n"
