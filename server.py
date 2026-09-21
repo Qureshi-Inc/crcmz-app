@@ -3091,6 +3091,18 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
     except Exception:  # noqa: BLE001
         mode, detail = "group", "full"
 
+    # Sightings: cross-player observations mined from review text ("Deception
+    # revived him"). Squad scope only — they are inherently about other people.
+    if squad_view:
+        try:
+            import crcmz_identity
+            import coach_sightings
+            roster = coach_sightings.roster_aliases(crcmz_identity.people())
+            sightings = coach_sightings.extract(complete, roster)
+        except Exception:  # noqa: BLE001
+            sightings = []
+    else:
+        sightings = []
     # Privacy: the squad tab is aggregate-only. Individual reports — grades,
     # mistakes, tips, moments, and who they belong to — never leave the server
     # for another member. Squad scope gets anonymous grade/game/time points
@@ -3146,6 +3158,7 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
             "reason": (_n(r.get("tags")) or [None])[0] or r.get("summary") or "",
         } for r in unfinished[:20]] if not squad_view else [],
         "reviews": reviews_out,
+        "sightings": sightings,
         "charts": {
             "tags": top(tally, 10),
             "mistakes": mis_list,
@@ -7021,6 +7034,17 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .coach-drill b{color:#6cb6ff}
   .coach-trend{width:100%;height:132px;display:block}
   .coach-trend-lbl{font-size:9px;fill:#8b96a8;font-weight:700}
+  /* squad sightings: who was caught doing what, in someone else's clip */
+  .coach-sight-list{display:flex;flex-direction:column;gap:9px}
+  .coach-sight{display:flex;gap:10px;align-items:baseline;padding:9px 11px;
+    border-radius:9px;background:rgba(255,255,255,.03);
+    border:1px solid rgba(255,255,255,.06)}
+  .coach-sight-who{flex:0 0 auto;font-size:11px;font-weight:700;color:#ffd447;
+    background:rgba(255,212,71,.09);border:1px solid rgba(255,212,71,.25);
+    border-radius:99px;padding:2px 10px;white-space:nowrap}
+  .coach-sight-txt{flex:1;font-size:13px;line-height:1.5;color:#d7dde8;
+    overflow-wrap:anywhere}
+  .coach-sight-meta{flex:0 0 auto;font-size:11px;color:#8b96a8;white-space:nowrap}
   /* collapsed report titles clamp to two lines so the list scans */
   .coach-card:not(.open) .coach-title{display:-webkit-box;-webkit-line-clamp:2;
     -webkit-box-orient:vertical;overflow:hidden}
@@ -9251,6 +9275,22 @@ function coachRender(d){
     }).join('') + '</div>';
   };
 
+  // Squad sightings: observations about squadmates mined from everyone's
+  // review text. One row per sighting — who, what, and when — with no link
+  // back to anyone's private report.
+  const sightRows = (rows) => {
+    if(!rows || !rows.length)
+      return '<div class="coach-empty">No squad sightings yet — they appear ' +
+        'when a review mentions a squadmate.</div>';
+    return '<div class="coach-sight-list">' + rows.map(s =>
+      '<div class="coach-sight">' +
+        '<span class="coach-sight-who">'+coachEsc(s.player||'Squad')+'</span>' +
+        '<span class="coach-sight-txt">'+coachEsc(s.observation||'')+'</span>' +
+        '<span class="coach-sight-meta">'+coachEsc(s.game||'')+' · '+
+          coachWhen(s.created_at)+'</span>' +
+      '</div>').join('') + '</div>';
+  };
+
   const weekAgo = Date.now()/1000 - 7*86400;
   const thisWeek = (d.reviews||[]).filter(r => (r.created_at||0) >= weekAgo).length;
 
@@ -9289,6 +9329,12 @@ function coachRender(d){
         ? 'Shared patterns across the squad \u2014 individual reports stay private'
         : '\u00d72 or more means it\u2019s a habit \u2014 tap to see the report')+'</div>'+
       mistakeRows(c.mistakes||[])+'</div>' +
+    (coachScope==='squad'
+      ? '<div class="coach-panel coach-panel-wide"><h4>Squad sightings</h4>'+
+        '<div class="coach-sub">Caught in each other\u2019s clips \u2014 '+
+          'what the AI noticed squadmates doing</div>'+
+        sightRows(d.sightings||[])+'</div>'
+      : '') +
   '</div>' +
   ((d.processing||[]).length
     ? '<h4 class="coach-lh">Processing</h4><div class="coach-proc">' +

@@ -813,6 +813,49 @@ console.log('squad privacy ok');
         assert "squad privacy ok" in out
 
 
+def test_coach_squad_sightings_panel():
+    """Squad scope shows the sightings feed; me scope never does."""
+    out = _node_eval(
+        "var __els = {};\n"
+        "var document = {getElementById: function(id){ return __els[id] = __els[id] || {}; }};\n"
+        "var window = {};\n" + _coach_js_source() + """
+const base = {scope:'squad', counts:{mine:1, squad:1, complete:1, processing:0},
+  notify_mode:'dm', detail_mode:'full', processing:[],
+  reviews:[{grade:'B', game:'ARC Raiders', created_at:3000}],
+  sightings:[{player:'Deception', observation:'Deception revived him mid-fight.',
+              game:'ARC Raiders', created_at:3000}],
+  charts:{tags:[], mistakes:[], per_day:[], grades:[{label:'B', count:1}]}};
+coachScope = 'squad';
+coachRender(base);
+const squadHtml = __els['coach-inner'].innerHTML;
+if (!/Squad sightings/.test(squadHtml)) throw new Error('sightings panel missing');
+if (!/Deception revived him/.test(squadHtml)) throw new Error('observation missing');
+if (!/coach-sight-who/.test(squadHtml)) throw new Error('player chip missing');
+// me scope: even with sightings in the payload, no panel
+coachScope = 'me';
+coachRender(Object.assign({}, base, {scope:'me',
+  reviews:[{review_id:'r1', grade:'B', status:'complete', psn_user:'alice',
+    game:'Warzone', created_at:3000, overall_assessment:'B', summary:'s',
+    strengths:[], mistakes:[], coaching_tips:[], notable_moments:[], tags:[]}]}));
+if (/Squad sightings/.test(__els['coach-inner'].innerHTML))
+  throw new Error('sightings panel must be squad-only');
+// empty sightings get the empty state, not a broken panel
+coachScope = 'squad';
+coachRender(Object.assign({}, base, {sightings:[]}));
+if (!/No squad sightings yet/.test(__els['coach-inner'].innerHTML))
+  throw new Error('empty sightings state missing');
+// observations are HTML-escaped
+coachRender(Object.assign({}, base, {sightings:[{player:'<b>Deception</b>',
+  observation:'<script>alert(1)</scr'+'ipt>', game:'ARC Raiders', created_at:1}]}));
+const xssHtml = __els['coach-inner'].innerHTML;
+if (/<script/.test(xssHtml) || /<b>Deception/.test(xssHtml))
+  throw new Error('sighting HTML not escaped');
+console.log('sightings panel ok');
+""")
+    if out is not None:
+        assert "sightings panel ok" in out
+
+
 if __name__ == "__main__":
     print("coaching pipeline")
     for name, fn in sorted(globals().items()):
