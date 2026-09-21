@@ -2979,7 +2979,8 @@ async def mcp_endpoint(request: Request):
         caller = None
     else:
         # Path 2: per-user OAuth access token (mcpa-...).
-        caller = _mcp.resolve_caller(auth_header)
+        # Path 3: a scoped service token, which gets only its listed write tools.
+        caller = _mcp.resolve_caller(auth_header) or _mcp.resolve_service(auth_header)
         if caller is None:
             # Tell clients exactly where to authenticate.
             return JSONResponse(
@@ -3000,6 +3001,18 @@ async def mcp_endpoint(request: Request):
         # Notification-only request: the spec wants 202 and an empty body.
         return Response(status_code=status)
     return JSONResponse(body, status_code=status)
+
+
+_REV_RE = _re.compile(r"\brev\b", _re.IGNORECASE)
+
+
+def _wants_coaching(caption: str) -> bool:
+    """True when the clip's caption asks for a coaching review.
+
+    Word-boundary match on purpose: "rev this one" opts in, "revenge" does not.
+    A substring test would have made every revenge clip a coaching request.
+    """
+    return bool(caption) and bool(_REV_RE.search(caption))
 
 
 @app.get("/api/clips/media")
@@ -3024,7 +3037,8 @@ def api_clip_media(uid: str, request: Request):
     auth_header = request.headers.get("authorization", "")
     caller = None
     if not _mcp.authorised(auth_header):
-        caller = _mcp.resolve_caller(auth_header)
+        caller = (_mcp.resolve_caller(auth_header)
+                  or _mcp.resolve_service(auth_header))
         if caller is None:
             return JSONResponse(
                 {"error": "invalid or missing bearer token — use the shared "
@@ -5517,6 +5531,12 @@ async def _start_squad_poller():
                                     "clip_detected uid=%s ugcId=%s sender=%s group=%s",
                                     uid, ugc_id, sender, wm._group_name,
                                 )
+                                if _wants_coaching(body_text):
+                                    rid = _coach.claim_for_review(uid, sender)
+                                    if rid:
+                                        logger.info(
+                                            "coach_queued uid=%s sender=%s review=%s",
+                                            uid, sender, rid)
                                 await _video_queue.put(uid)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("video-watch tick failed: %s", exc)

@@ -25,6 +25,7 @@ this endpoint read ~10k private group messages. So:
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import logging
@@ -76,6 +77,47 @@ def authorised(header: str) -> bool:
     if not value:
         return False
     return hmac.compare_digest(value, MCP_TOKEN)
+
+
+def _service_scopes() -> dict[str, set[str]]:
+    """Machine credentials from CRCMZ_SERVICE_TOKENS, each limited to named tools.
+
+    Format: "name:token:tool1,tool2; name2:token2:tool3". A service token is not a
+    user: it unlocks only the tools listed for it and nothing else. This exists so a
+    single-purpose integration does not have to be handed a personal OAuth token,
+    which would carry every write tool — the messaging ones and clawbot_build
+    included.
+    """
+    out: dict[str, set[str]] = {}
+    raw = os.environ.get("CRCMZ_SERVICE_TOKENS", "")
+    for entry in raw.split(";"):
+        parts = [p.strip() for p in entry.split(":")]
+        if len(parts) != 3 or not all(parts):
+            continue
+        _name, token, tools = parts
+        if len(token) < 16:          # refuse a guessable service credential
+            logger.warning("mcp: service token %r too short, ignoring", _name)
+            continue
+        out[token] = {t.strip() for t in tools.split(",") if t.strip()}
+    return out
+
+
+def resolve_service(header: str) -> dict | None:
+    """Return a caller dict for a valid service token, or None.
+
+    The caller carries `scopes`, and `zitadel_id` is the service's own identity so
+    rate limits and the write audit still attribute its actions to something.
+    """
+    value = (header or "").strip()
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    if not value:
+        return None
+    for token, scopes in _service_scopes().items():
+        if hmac.compare_digest(value, token):
+            return {"zitadel_id": "service:" + hashlib.sha256(
+                token.encode()).hexdigest()[:12], "scopes": scopes}
+    return None
 
 
 def resolve_caller(header: str) -> dict | None:
@@ -192,7 +234,13 @@ def handle(message: dict, caller: dict | None = None) -> dict | None:
     if method == "tools/list":
         tools = _tools()
         if caller:
-            tools = tools + _write_tools()
+            wt = _write_tools()
+            # Advertise only what this caller may actually call, so a scoped service
+            # is not shown messaging tools it will be refused for.
+            scopes = caller.get("scopes")
+            if scopes is not None:
+                wt = [t for t in wt if t["name"] in scopes]
+            tools = tools + wt
         return _result(rid, {"tools": tools})
 
     if method == "tools/call":
@@ -211,6 +259,16 @@ def handle(message: dict, caller: dict | None = None) -> dict | None:
                                  f"'{name}' is a write tool and requires a personal "
                                  "user token. Connect via OAuth at app.crcmz.me/mcp "
                                  "to get write access."}],
+                    "isError": True,
+                })
+            # A service token is scoped; a user token is not. Checking scopes here
+            # rather than at auth time keeps one dispatch path for both.
+            scopes = caller.get("scopes")
+            if scopes is not None and name not in scopes:
+                return _result(rid, {
+                    "content": [{"type": "text", "text":
+                                 f"'{name}' is not in this service token's scope "
+                                 f"({', '.join(sorted(scopes)) or 'none'})."}],
                     "isError": True,
                 })
             tok = _caller.set(caller)

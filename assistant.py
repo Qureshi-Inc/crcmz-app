@@ -1339,6 +1339,125 @@ def _caller_name(caller: dict) -> str:
 
 
 @write_tool(
+    "coach_review_record",
+    "Submit a finished AI coaching review for one clip. `clip_id` comes from "
+    "coach_reviews(status='pending') or recent_clips. Pass the analysis as "
+    "structured fields; lists may be arrays. Setting status='complete' is what "
+    "publishes it to the member's coaching dashboard and triggers their "
+    "notification, so only send that once the analysis is actually finished. "
+    "Resubmitting the same clip updates the review and does not re-notify. "
+    "Rate limit: 60 per hour.",
+    {"type": "object",
+     "properties": {
+         "clip_id":            {"type": "string", "description": "Clip message_uid."},
+         "summary":            {"type": "string", "description": "Short overall summary."},
+         "overall_assessment": {"type": "string", "description": "Verdict / grade."},
+         "game":               {"type": "string", "description": "Game name if known."},
+         "strengths":          {"type": "array", "items": {"type": "string"}},
+         "mistakes":           {"type": "array", "items": {"type": "string"}},
+         "coaching_tips":      {"type": "array", "items": {"type": "string"}},
+         "notable_moments":    {"type": "array", "items": {"type": "string"}},
+         "tags":               {"type": "array", "items": {"type": "string"}},
+         "model":              {"type": "string", "description": "Model that produced it."},
+         "prompt_version":     {"type": "string"},
+         "status":             {"type": "string",
+                                "description": "pending | complete | failed. "
+                                               "Default complete."},
+     },
+     "required": ["clip_id"]})
+def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
+                         overall_assessment: str = "", game: str = "",
+                         strengths: Any = None, mistakes: Any = None,
+                         coaching_tips: Any = None, notable_moments: Any = None,
+                         tags: Any = None, model: str = "", prompt_version: str = "",
+                         status: str = "complete") -> dict:
+    """Store a review, then notify the member — the notification is deliberately
+    on this side of the boundary.
+
+    The analyser's input is a PSN caption, which is user-controlled text, so it is
+    never given a messaging tool. It reports a finished review; the platform decides
+    who to tell and composes the message from a fixed template. The worst a poisoned
+    caption can do here is produce a bad review, not send anything.
+    """
+    import json as _json
+    import clips as clips_mod
+    import coach as coach_mod
+    import mcp_oauth
+
+    zid = caller.get("zitadel_id", "")
+    clip_id = (clip_id or "").strip()
+    if not clip_id:
+        return {"ok": False, "error": "clip_id is required"}
+    if status not in ("pending", "complete", "failed"):
+        return {"ok": False, "error": "status must be pending, complete or failed"}
+    if not mcp_oauth.within_rate_limit(zid, "coach_review_record", 60, 3600):
+        return {"ok": False, "error": "rate limit: 60 reviews per hour"}
+
+    coach_mod.init()
+    clip = clips_mod.get(clip_id)
+    if not clip:
+        return {"ok": False, "error": "no clip with that clip_id"}
+
+    existing = coach_mod.get_any_by_clip(clip_id)   # pending rows must be updated, not duplicated
+    payload = {
+        "clip_id": clip_id,
+        "psn_user": clip.get("sender_online_id") or "",
+        "game": game or (existing or {}).get("game") or "",
+        "summary": summary, "overall_assessment": overall_assessment,
+        "strengths": strengths or [], "mistakes": mistakes or [],
+        "coaching_tips": coaching_tips or [], "notable_moments": notable_moments or [],
+        "tags": tags or [], "model": model, "prompt_version": prompt_version,
+        "review_status": status,
+    }
+    if existing and existing.get("review_id"):
+        payload["review_id"] = existing["review_id"]
+        payload["notified_at"] = existing.get("notified_at")
+    review_id = coach_mod.upsert(payload)
+    mcp_oauth.audit_write(zid, "coach_review_record",
+                          _json.dumps({"clip_id": clip_id, "status": status}), "ok")
+
+    notified = False
+    note = None
+    if coach_mod.needs_notification(review_id):
+        notified, note = _notify_coaching_ready(clip.get("sender_online_id") or "")
+        if notified:
+            coach_mod.mark_notified(review_id)
+    return {"ok": True, "review_id": review_id, "status": status,
+            "member_notified": notified,
+            **({"notify_note": note} if note else {})}
+
+
+def _notify_coaching_ready(psn_user: str) -> tuple[bool, str | None]:
+    """DM the member that their review is ready. Fixed template, no caller input.
+
+    A member with no wa_jid tag is not an error: the review is already stored, so
+    this reports why nothing was sent instead of failing the write.
+    """
+    if not psn_user:
+        return False, "clip has no sender to notify"
+    bridge = os.environ.get("WA_BRIDGE_URL", "")
+    if not bridge:
+        return False, "WhatsApp bridge not configured"
+    try:
+        import crcmz_identity
+        person = crcmz_identity.resolve(psn_user)
+    except Exception as e:  # noqa: BLE001
+        return False, f"identity lookup failed: {e}"
+    jid = (person or {}).get("wa_jid", "")
+    if not jid:
+        return False, f"no WhatsApp JID known for {psn_user}"
+    host = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
+    text = ("\U0001f3ae Your clip review is ready.\n"
+            f"See the breakdown here: https://{host}/coaching")
+    try:
+        import wa_ai
+        ok = wa_ai.send_reply(bridge, jid, text)
+        return bool(ok), None if ok else "bridge refused the message"
+    except Exception as e:  # noqa: BLE001
+        return False, f"WhatsApp send failed: {e}"
+
+
+@write_tool(
     "send_psn_group_message",
     "Send a message to the PSN squad group thread as the authenticated user. "
     "This posts to the shared squad group on PlayStation — it is not a 1:1 DM. "

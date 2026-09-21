@@ -59,8 +59,41 @@ def init() -> None:
             CREATE INDEX IF NOT EXISTS idx_coach_status
                 ON coach_reviews(review_status, created_at);
         """)
+        cols = {r[1] for r in db.execute("PRAGMA table_info(coach_reviews)")}
+        if "notified_at" not in cols:
+            # When the member was told their review is ready. The notification is
+            # sent once, on the pending -> complete transition: the analyser retries
+            # submits, and without this column every retry would DM again.
+            db.execute("ALTER TABLE coach_reviews ADD COLUMN notified_at REAL")
         db.commit()
     logger.info("coach: DB ready at %s", _DB_PATH)
+
+
+def mark_notified(review_id: str) -> None:
+    with _lock, _conn() as db:
+        db.execute("UPDATE coach_reviews SET notified_at=? WHERE review_id=?",
+                   (time.time(), review_id))
+        db.commit()
+
+
+def needs_notification(review_id: str) -> bool:
+    """True only for a complete review nobody has been told about yet."""
+    with _lock, _conn() as db:
+        row = db.execute(
+            "SELECT review_status, notified_at FROM coach_reviews WHERE review_id=?",
+            (review_id,)).fetchone()
+    return bool(row) and row["review_status"] == "complete" and row["notified_at"] is None
+
+
+def claim_for_review(clip_id: str, psn_user: str = "", game: str = "") -> str | None:
+    """Queue a clip for coaching. Returns the review_id, or None if already queued.
+
+    Idempotent on clip_id so a poller that re-sees the same clip does not enqueue
+    it twice."""
+    if get_any_by_clip(clip_id):
+        return None
+    return upsert({"clip_id": clip_id, "psn_user": psn_user, "game": game,
+                   "review_status": "pending"})
 
 
 def _row_to_dict(row) -> dict:
@@ -89,6 +122,24 @@ def get_by_clip(clip_id: str) -> dict | None:
         row = db.execute(
             """SELECT * FROM coach_reviews
                WHERE clip_id = ? AND review_status = 'complete'
+               ORDER BY created_at DESC LIMIT 1""",
+            (clip_id,),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def get_any_by_clip(clip_id: str) -> dict | None:
+    """Most recent review for a clip at ANY status.
+
+    `get_by_clip` deliberately returns only completed reviews — that is what the
+    read tool wants. Queueing and updating need to see a pending row too: without
+    this the poller re-queues the same clip on every tick, and a submitted review
+    lands as a second row beside the pending one instead of replacing it.
+    """
+    with _lock, _conn() as db:
+        row = db.execute(
+            """SELECT * FROM coach_reviews
+               WHERE clip_id = ?
                ORDER BY created_at DESC LIMIT 1""",
             (clip_id,),
         ).fetchone()
@@ -143,6 +194,10 @@ def upsert(review_data: dict) -> str:
         "model", "prompt_version", "summary", "overall_assessment",
         "strengths", "mistakes", "coaching_tips", "notable_moments",
         "tags", "review_json", "review_status", "source_checksum",
+        # Must be persisted: this is INSERT OR REPLACE, so leaving it out of the
+        # column list resets it to NULL on every resubmit, and the member gets
+        # DM'd again each time the analyser retries.
+        "notified_at",
     ]
     vals = [d.get(c) for c in cols]
     placeholders = ", ".join("?" * len(cols))
