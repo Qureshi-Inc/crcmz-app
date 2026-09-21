@@ -1878,6 +1878,27 @@ def _task_release(caller: dict, task_id: str = "", note: str = "") -> dict:
             **({"error": "task not found or not in_progress"} if not ok else {})}
 
 
+# ── WhatsApp reaction tracking ───────────────────────────────────────────────
+
+@tool(
+    "whatsapp_clip_reactions",
+    "Current emoji reactions on a PSN clip's WhatsApp message. Returns "
+    "tracked=true only for clips that were forwarded via the WA bridge (not "
+    "coaching-only or IG-only clips). reaction_count is the number of distinct "
+    "senders reacting right now (removals are reflected instantly). "
+    "Unknown clip_id returns tracked=false with reaction_count=0.",
+    {"type": "object",
+     "properties": {
+         "clip_id": {"type": "string",
+                     "description": "message_uid from recent_clips."},
+     },
+     "required": ["clip_id"]})
+def _whatsapp_clip_reactions(clip_id: str = "") -> dict:
+    import wa_reactions as wr
+    wr.init()
+    return wr.reactions_for_clip(clip_id)
+
+
 COACH_TAGS = ("positioning", "rotation", "crosshair-placement", "timing",
               "decision-making", "movement", "gunskill", "map-awareness",
               "utility-usage", "communication", "clutch", "highlight", "fail")

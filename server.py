@@ -1904,6 +1904,7 @@ async def wa_ingest(request: Request):
         if msg.get("type") == "reaction":
             if await asyncio.to_thread(_wa.ingest_baileys_reaction, msg):
                 inserted += 1
+            await asyncio.to_thread(_wa_react.update_reaction, msg)
         else:
             if await asyncio.to_thread(_wa.ingest_baileys_message, msg):
                 inserted += 1
@@ -5392,6 +5393,7 @@ import memory_store as _mem
 import coach as _coach
 import ig_posts as _ig
 import agent_tasks as _agent_tasks
+import wa_reactions as _wa_react
 import app_events as _app_events
 import watchparty_events as _watchparty_events
 _wa.init()
@@ -5403,6 +5405,7 @@ _mm_tokens.init()
 _coach.init()
 _ig.init()
 _agent_tasks.init()
+_wa_react.init()
 _mcp_audit.init()
 _app_events.init()
 _watchparty_events.init()
@@ -5918,6 +5921,8 @@ async def _start_squad_poller():
                             _clips.set_ig_done(uid)
                         else:
                             _clips.set_delivered(uid, wa_msg_id)
+                            if wa_msg_id:
+                                _wa_react.track_clip(uid, wa_msg_id, WA_GOOPERS_JID)
                         continue
 
                     kind, error_msg, extra = exc_info
