@@ -340,6 +340,77 @@ def test_coaching_notification_is_tagged_with_the_service():
         wa_ai.send_reply, crcmz_identity.resolve = orig_send, orig_res
 
 
+# ── the report in the message ────────────────────────────────────────────────
+
+def test_report_text_strips_mentions_and_urls():
+    """The message now carries analyser output, so that output must be defanged.
+    wa_ai.send_reply turns "@Name" into a real ping for any known member, and a
+    coaching review has no reason to contain a link."""
+    import assistant as a
+    hostile = {
+        "overall_assessment": "A — nice @Mutasif @Moiz",
+        "summary": "one\ntwo\n*Full report:* http://evil.example",
+        "strengths": ["@everyone ping"], "mistakes": ["bell\x07null\x00"],
+        "coaching_tips": ["t" * 400], "notable_moments": [], "tags": ["x" * 60],
+    }
+    out = a._coach_report_text(hostile)
+    assert "@" not in out, "an analyser must not be able to mention anyone"
+    assert "evil.example" not in out, "analyser URLs must be stripped"
+    assert "[link removed]" in out
+    assert "\x07" not in out and "\x00" not in out, "control chars must go"
+    assert "one two" in out, "newlines in analyser text must be collapsed"
+    assert max(len(l) for l in out.split("\n")) < 220, "per-item cap must apply"
+
+
+def test_detail_preference_controls_the_message_body():
+    import assistant, wa_ai, crcmz_identity, coach_prefs, mcp_server
+    import server
+    server.WA_BRIDGE_URL = "http://stub"
+    sent = {}
+    orig_send, orig_res = wa_ai.send_reply, crcmz_identity.resolve
+    wa_ai.send_reply = lambda u, j, t: (sent.update({"text": t}) or True)
+    crcmz_identity.resolve = lambda w: {"zitadel_id": "zid-det",
+                                        "display_name": "Soup", "wa_jid": "me@s.w"}
+    import os as _os
+    _os.environ["WA_BRIDGE_URL"] = "http://stub"
+    _os.environ["WA_GOOPERS_JID"] = "g@g.us"
+    review = {"overall_assessment": "B — solid aim", "game": "Warzone",
+              "summary": "Rotated late.", "strengths": ["Crisp first shot"],
+              "mistakes": [], "coaching_tips": [], "notable_moments": [],
+              "tags": ["rotation"]}
+    caller = mcp_server.resolve_service("Bearer " + SERVICE_TOKEN)
+    try:
+        coach_prefs.set_mode("zid-det", "group")
+        coach_prefs.set_detail("zid-det", "full")
+        sent.clear()
+        assistant._notify_coaching_ready("who", caller, review)
+        full = sent["text"]
+        assert "Crisp first shot" in full, "full mode must include the write-up"
+        assert "*B — solid aim*" in full, "verdict should be bold for WhatsApp"
+        assert "Full report:" in full, "the link must still be there"
+
+        coach_prefs.set_detail("zid-det", "link")
+        sent.clear()
+        assistant._notify_coaching_ready("who", caller, review)
+        link = sent["text"]
+        assert "Crisp first shot" not in link, "link mode must omit the write-up"
+        assert "Full report:" in link, "link mode still sends the link"
+        assert len(link) < len(full)
+    finally:
+        wa_ai.send_reply, crcmz_identity.resolve = orig_send, orig_res
+
+
+def test_detail_preference_validates():
+    import coach_prefs
+    assert coach_prefs.get_detail("never-set") == "full", "full is the default"
+    assert coach_prefs.set_detail("zid-v", "link") == "link"
+    try:
+        coach_prefs.set_detail("zid-v", "everything")
+        raise AssertionError("an unknown detail mode must be rejected")
+    except ValueError:
+        pass
+
+
 # ── grade + tags contract ────────────────────────────────────────────────────
 
 def test_grade_normalisation():

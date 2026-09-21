@@ -3079,12 +3079,14 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
     try:
         import coach_prefs
         mode = coach_prefs.get_mode(sub)
+        detail = coach_prefs.get_detail(sub)
     except Exception:  # noqa: BLE001
-        mode = "group"
+        mode, detail = "group", "full"
 
     return {
         "scope": scope,
         "notify_mode": mode,
+        "detail_mode": detail,
         "counts": {
             "mine": len(mine),
             "squad": len(rows),
@@ -3135,10 +3137,17 @@ async def api_coaching_prefs(request: Request):
         body = {}
     import coach_prefs
     try:
-        mode = coach_prefs.set_mode(sub, (body.get("mode") or "").strip())
+        # Either axis may be sent on its own, so the UI can change one without
+        # having to know or resend the other.
+        if body.get("mode"):
+            coach_prefs.set_mode(sub, str(body["mode"]).strip())
+        if body.get("detail"):
+            coach_prefs.set_detail(sub, str(body["detail"]).strip())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"ok": True, "notify_mode": mode}
+    return {"ok": True,
+            "notify_mode": coach_prefs.get_mode(sub),
+            "detail_mode": coach_prefs.get_detail(sub)}
 
 
 @app.get("/api/clips/media")
@@ -8879,23 +8888,32 @@ function coachSetScope(sc){
   if(coachScope === sc) return;
   coachScope = sc; coachLoaded = false; loadCoach();
 }
-async function coachSetMode(mode){
+async function coachSetPref(patch){
   try{
     const r = await fetch('/api/coaching/prefs', {method:'POST',
-      headers:{'content-type':'application/json'}, body: JSON.stringify({mode:mode})});
+      headers:{'content-type':'application/json'}, body: JSON.stringify(patch)});
     const j = await r.json();
-    if(j.ok && window._coachData){ window._coachData.notify_mode = j.notify_mode;
-                                   coachRender(window._coachData); }
+    if(j.ok && window._coachData){
+      window._coachData.notify_mode = j.notify_mode;
+      window._coachData.detail_mode = j.detail_mode;
+      coachRender(window._coachData);
+    }
   }catch(e){ /* leave the current selection showing */ }
 }
+function coachSetMode(mode){ coachSetPref({mode:mode}); }
+function coachSetDetail(detail){ coachSetPref({detail:detail}); }
 
 function coachRender(d){
   window._coachData = d;
   const c = d.charts || {}, n = d.counts || {};
   const mode = d.notify_mode || 'group';
+  const detail = d.detail_mode || 'full';
   const modeBtn = (v, label, hint) =>
     '<button class="coach-mode'+(mode===v?' on':'')+'" title="'+hint+
     '" onclick="coachSetMode(\''+v+'\')">'+label+'</button>';
+  const detBtn = (v, label, hint) =>
+    '<button class="coach-mode'+(detail===v?' on':'')+'" title="'+hint+
+    '" onclick="coachSetDetail(\''+v+'\')">'+label+'</button>';
 
   const html =
   '<div class="coach-top">' +
@@ -8911,6 +8929,12 @@ function coachRender(d){
       modeBtn('dm','DM','Direct message me instead') +
       modeBtn('off','Off','No notification') +
     '</div>' +
+    (mode === 'off' ? '' :
+    '<div class="coach-notify">' +
+      '<span class="coach-nlbl">Message shows</span>' +
+      detBtn('full','Report','Send the full write-up in the message') +
+      detBtn('link','Link only','Keep the write-up on the platform') +
+    '</div>') +
   '</div>' +
   '<div class="coach-stats">' +
     '<div class="coach-stat"><b>'+(n.complete||0)+'</b><span>reviews</span></div>' +

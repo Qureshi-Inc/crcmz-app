@@ -1502,7 +1502,8 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
     notified = False
     note = None
     if coach_mod.claim_notification(review_id):
-        notified, note = _notify_coaching_ready(psn_user, caller)
+        notified, note = _notify_coaching_ready(
+            psn_user, caller, coach_mod.get(review_id))
         if not notified:
             coach_mod.release_notification(review_id)   # let a later submit retry
     return {"ok": True, "review_id": review_id, "status": status,
@@ -1562,8 +1563,69 @@ def _zid_for_psn(psn_user: str) -> str:
         return ""
 
 
-def _notify_coaching_ready(psn_user: str,
-                           caller: dict | None = None) -> tuple[bool, str | None]:
+_WA_STRIP = re.compile(r"[\u0000-\u0008\u000b-\u001f\u007f-\u009f]")
+# A coaching review has no reason to contain a link, and the message it goes into
+# ends with the real report URL. Leaving analyser-authored URLs in would let a
+# hostile clip caption, echoed into a summary, sit a lookalike link above the
+# genuine one.
+_WA_URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
+
+
+def _wa_safe(text: str, limit: int = 220) -> str:
+    """Neutralise analyser-authored text before it goes into a WhatsApp message.
+
+    Putting review content in the message means the analyser's output reaches
+    WhatsApp, so it has to be defanged first. The '@' matters most: wa_ai.send_reply
+    turns "@Name" into a real mention for any known member, so an analyser that
+    emitted "@Mutasif" would ping him. Stripping it keeps mentions something only
+    this template can do.
+    """
+    t = _WA_STRIP.sub("", str(text or ""))
+    t = t.replace("@", "")                 # no analyser-triggered mentions
+    t = _WA_URL.sub("[link removed]", t)   # no analyser-authored URLs
+    t = " ".join(t.split())                # collapse newlines that would fake structure
+    return t[:limit].rstrip()
+
+
+def _coach_report_text(review: dict, limit: int = 1400) -> str:
+    """The review as a WhatsApp message body: *single asterisks* for bold, bullets
+    rather than markdown lists, and every analyser string passed through _wa_safe."""
+    def _lst(v):
+        return v if isinstance(v, list) else []
+
+    parts: list[str] = []
+    verdict = _wa_safe(review.get("overall_assessment") or "", 120)
+    if verdict:
+        parts.append("*%s*" % verdict)
+    game = _wa_safe(review.get("game") or "", 60)
+    if game:
+        parts.append(game)
+    summary = _wa_safe(review.get("summary") or "", 320)
+    if summary:
+        parts.append("\n" + summary)
+
+    for title, key, cap in (("What worked", "strengths", 3),
+                            ("What cost you", "mistakes", 3),
+                            ("Work on this", "coaching_tips", 3),
+                            ("Moments", "notable_moments", 3)):
+        items = [_wa_safe(x, 160) for x in _lst(review.get(key))[:cap]]
+        items = [i for i in items if i]
+        if items:
+            parts.append("\n*%s*\n%s" % (title, "\n".join("• " + i for i in items)))
+
+    tags = [_wa_safe(t, 24) for t in _lst(review.get("tags"))[:4]]
+    tags = [t for t in tags if t]
+    if tags:
+        parts.append("\n" + " ".join("#" + t.replace("-", "") for t in tags))
+
+    body = "\n".join(parts).strip()
+    if len(body) > limit:
+        body = body[:limit].rstrip() + "…"
+    return body
+
+
+def _notify_coaching_ready(psn_user: str, caller: dict | None = None,
+                           review: dict | None = None) -> tuple[bool, str | None]:
     """Tell the member their review is ready, honouring their preference.
 
     Default is the WhatsApp group, since that is where the squad already shares
@@ -1587,8 +1649,9 @@ def _notify_coaching_ready(psn_user: str,
     try:
         import coach_prefs
         mode = coach_prefs.get_mode(zid)
+        detail = coach_prefs.get_detail(zid)
     except Exception:  # noqa: BLE001
-        mode = "group"
+        mode, detail = "group", "full"
     if mode == "off":
         return False, "member has coaching notifications turned off"
 
@@ -1600,19 +1663,22 @@ def _notify_coaching_ready(psn_user: str,
     label = (caller or {}).get("label", "")
     tag = f"[{label[:32].strip().title()}] " if label else ""
 
+    report = _coach_report_text(review) if (review and detail == "full") else ""
+    body = ("\n\n" + report + "\n") if report else "\n"
+
     if mode == "dm":
         jid = person.get("wa_jid", "")
         if not jid:
             return False, f"no WhatsApp JID known for {psn_user}"
-        text = (f"{tag}\U0001f9e0 Your clip review is ready.\n"
-                f"Read the breakdown: {link}")
+        text = (f"{tag}\U0001f9e0 Your clip review is ready.{body}"
+                f"\nFull report: {link}")
     else:
         jid = os.environ.get("WA_GOOPERS_JID", "")
         if not jid:
             return False, "WA_GOOPERS_JID not configured for group posting"
         # @Name is resolved to a real WhatsApp mention by the bridge helper.
-        text = (f"{tag}\U0001f9e0 @{name} your clip review is ready.\n"
-                f"Read the breakdown: {link}")
+        text = (f"{tag}\U0001f9e0 @{name} your clip review is ready.{body}"
+                f"\nFull report: {link}")
 
     try:
         import wa_ai

@@ -27,6 +27,11 @@ _lock = threading.Lock()
 MODES = ("group", "dm", "off")
 DEFAULT_MODE = "group"
 
+# How much of the review goes in the message. "full" sends the formatted report and
+# the link; "link" sends only the link and keeps the report on the platform.
+DETAILS = ("full", "link")
+DEFAULT_DETAIL = "full"
+
 
 def _load() -> dict:
     try:
@@ -73,6 +78,32 @@ def set_mode(zitadel_id: str, mode: str) -> str:
         data[zitadel_id] = entry
         _save(data)
     return mode
+
+
+def get_detail(zitadel_id: str) -> str:
+    """Whether to include the report body in the message, or just the link."""
+    if not zitadel_id:
+        return DEFAULT_DETAIL
+    with _lock:
+        entry = _load().get(zitadel_id) or {}
+    d = entry.get("detail") if isinstance(entry, dict) else None
+    return d if d in DETAILS else DEFAULT_DETAIL
+
+
+def set_detail(zitadel_id: str, detail: str) -> str:
+    if not zitadel_id:
+        raise ValueError("zitadel_id is required")
+    if detail not in DETAILS:
+        raise ValueError("detail must be one of %s" % (", ".join(DETAILS),))
+    with _lock:
+        data = _load()
+        entry = data.get(zitadel_id)
+        if not isinstance(entry, dict):
+            entry = {}
+        entry["detail"] = detail
+        data[zitadel_id] = entry
+        _save(data)
+    return detail
 
 
 def all_modes() -> dict[str, str]:
