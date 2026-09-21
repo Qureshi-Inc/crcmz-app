@@ -340,6 +340,81 @@ def test_coaching_notification_is_tagged_with_the_service():
         wa_ai.send_reply, crcmz_identity.resolve = orig_send, orig_res
 
 
+# ── dashboard data contract ──────────────────────────────────────────────────
+
+def test_grade_only_on_complete_reviews():
+    """A failed record arrived with overall_assessment "C — duplicate, see canonical
+    clip". Parsing read that as a C and put a grade badge on bookkeeping."""
+    import assistant as a
+    assert a._normalise_grade("C", "C — duplicate", "failed") == ""
+    assert a._normalise_grade("", "C — duplicate", "failed") == ""
+    assert a._normalise_grade("C", "C — good", "complete") == "C"
+    assert a._normalise_grade("", "Failed — awaiting archive", "complete") == ""
+
+
+def test_grade_modifiers_survive():
+    """C+ must not silently become C — strip(':-—') ate the trailing hyphen of B-."""
+    import assistant as a
+    assert a._normalise_grade("C+", "", "complete") == "C+"
+    assert a._normalise_grade("B-", "", "complete") == "B-"
+    assert a._normalise_grade("", "C+ — sharp CQB", "complete") == "C+"
+    assert a._normalise_grade("", "B- — decent", "complete") == "B-"
+    assert a._normalise_grade("F", "", "complete") == "", "F is off the scale"
+
+
+def test_coaching_api_counts_agree_and_feed_excludes_unfinished():
+    """The tab said 4 while the stat said 2: one counted every record, the other
+    only completed ones."""
+    import server, coach, uuid
+    coach.init()
+    sub = "zid-api-" + uuid.uuid4().hex[:6]
+    coach.upsert({"clip_id": "a-" + sub, "zitadel_id": sub, "psn_user": "p",
+                  "review_status": "complete", "grade": "C+",
+                  "overall_assessment": "C+ — ok", "tags": ["arc-raiders"],
+                  "mistakes": ["Ignored the objective clock entirely"]})
+    coach.upsert({"clip_id": "b-" + sub, "zitadel_id": sub, "psn_user": "p",
+                  "review_status": "failed", "overall_assessment": "C — duplicate",
+                  "tags": ["duplicate"]})
+    orig = server._get_session
+    server._get_session = lambda req: {"sub": sub}
+    try:
+        out = server.api_coaching(request=None, scope="me", limit=50)
+    finally:
+        server._get_session = orig
+    c = out["counts"]
+    assert c["mine"] == c["complete"] == 1, \
+        "every count must mean completed reviews: %s" % c
+    assert c["processing"] == 1, "unfinished records belong in their own count"
+    assert len(out["reviews"]) == 1, "the feed must not carry unfinished records"
+    assert out["reviews"][0]["status"] == "complete"
+    assert len(out["processing"]) == 1
+    assert out["processing"][0]["reason"] == "duplicate", \
+        "an unfinished record should say why, not show a grade"
+    grades = {g["label"]: g["count"] for g in out["charts"]["grades"]}
+    assert grades.get("C+") == 1, "C+ must keep its own bucket, not fold into C"
+    assert grades.get("C", 0) == 0, "the failed record must not reach the grade chart"
+
+
+def test_mistakes_carry_their_evidence():
+    """A recurring mistake is only coaching if you can get to the clip it came from."""
+    import server, coach, uuid
+    coach.init()
+    sub = "zid-ev-" + uuid.uuid4().hex[:6]
+    rid = coach.upsert({"clip_id": "e-" + sub, "zitadel_id": sub, "psn_user": "p",
+                        "review_status": "complete", "grade": "B",
+                        "mistakes": ["Pushed the corridor with the squad split"]})
+    orig = server._get_session
+    server._get_session = lambda req: {"sub": sub}
+    try:
+        out = server.api_coaching(request=None, scope="me", limit=50)
+    finally:
+        server._get_session = orig
+    mis = out["charts"]["mistakes"]
+    assert mis and mis[0]["count"] == 1
+    assert rid in mis[0]["reviews"], "the mistake must point back at its review"
+    assert len(mis[0]["label"]) > 30, "the label must not be pre-truncated server-side"
+
+
 # ── the report in the message ────────────────────────────────────────────────
 
 def test_report_text_strips_mentions_and_urls():

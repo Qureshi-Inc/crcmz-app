@@ -3046,16 +3046,19 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
     limit = max(1, min(int(limit or 50), 200))
     rows = _coach.list_reviews(limit=200)
     mine = [r for r in rows if (r.get("zitadel_id") or "") == sub]
-    shown = rows if scope == "squad" else mine
+    pool = rows if scope == "squad" else mine
 
     def _n(v):
         return v if isinstance(v, list) else []
 
-    # Aggregates for the charts. Counted over what is shown, so the squad view
-    # summarises the squad and the personal view summarises the member.
-    complete = [r for r in shown if r.get("review_status") == "complete"]
+    # "complete" is the only definition used for counts, charts and the feed. Mixing
+    # them was what made the tab say 4 while the stat said 2: the tab counted a
+    # duplicate and an awaiting-archive record as if they were coaching.
+    complete = [r for r in pool if r.get("review_status") == "complete"]
+    unfinished = [r for r in pool if r.get("review_status") != "complete"]
+
     tally: dict[str, int] = {}
-    mistakes: dict[str, int] = {}
+    mistakes: dict[str, dict] = {}
     per_day: dict[str, int] = {}
     per_player: dict[str, int] = {}
     grades: dict[str, int] = {}
@@ -3066,7 +3069,13 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
         for t in _n(r.get("tags")):
             tally[str(t)[:40]] = tally.get(str(t)[:40], 0) + 1
         for m in _n(r.get("mistakes")):
-            mistakes[str(m)[:60]] = mistakes.get(str(m)[:60], 0) + 1
+            key = str(m)[:200]
+            # Carry the reviews a mistake came from, so the UI can point at the
+            # evidence instead of just naming the pattern.
+            e = mistakes.setdefault(key, {"label": key, "count": 0, "reviews": []})
+            e["count"] += 1
+            if r.get("review_id") and r["review_id"] not in e["reviews"]:
+                e["reviews"].append(r["review_id"])
         ts = r.get("created_at") or 0
         if ts:
             day = _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
@@ -3076,6 +3085,7 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
 
     top = lambda d, n: [{"label": k, "count": v} for k, v in
                         sorted(d.items(), key=lambda kv: -kv[1])[:n]]
+
     try:
         import coach_prefs
         mode = coach_prefs.get_mode(sub)
@@ -3088,11 +3098,22 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
         "notify_mode": mode,
         "detail_mode": detail,
         "counts": {
-            "mine": len(mine),
-            "squad": len(rows),
+            # Everything here means completed reviews. Anything mid-pipeline is
+            # reported as `processing`, never mixed into these.
+            "mine": len([r for r in mine if r.get("review_status") == "complete"]),
+            "squad": len([r for r in rows if r.get("review_status") == "complete"]),
             "complete": len(complete),
-            "pending": len([r for r in shown if r.get("review_status") == "pending"]),
+            "processing": len(unfinished),
         },
+        "processing": [{
+            "clip_id": r.get("clip_id"),
+            "psn_user": r.get("psn_user"),
+            "status": r.get("review_status"),
+            "created_at": r.get("created_at"),
+            # Tags on an unfinished record are pipeline reasons, not coaching themes
+            # (awaiting-archive, duplicate), so they are labelled as such.
+            "reason": (_n(r.get("tags")) or [None])[0] or r.get("summary") or "",
+        } for r in unfinished[:20]],
         "reviews": [{
             "review_id": r.get("review_id"),
             "clip_id": r.get("clip_id"),
@@ -3109,17 +3130,23 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
             "coaching_tips": _n(r.get("coaching_tips")),
             "notable_moments": _n(r.get("notable_moments")),
             "tags": _n(r.get("tags")),
-        } for r in shown[:limit]],
+        } for r in complete[:limit]],
         "charts": {
             "tags": top(tally, 10),
-            "mistakes": top(mistakes, 8),
+            "mistakes": sorted(mistakes.values(),
+                               key=lambda m: -m["count"])[:8],
             "per_player": top(per_player, 10),
             "per_day": [{"label": k, "count": per_day[k]}
                         for k in sorted(per_day)][-30:],
             # Fixed S..D order, not frequency order: a grade axis that reorders
             # itself as data arrives is unreadable.
-            "grades": [{"label": g, "count": grades.get(g, 0)}
-                       for g in ("S", "A", "B", "C", "D")],
+            # Base grades always shown in order so the axis is stable, plus any
+            # modifier actually present — folding C+ into C loses the distinction
+            # the analyser bothered to make.
+            "grades": ([{"label": g, "count": grades.get(g, 0)}
+                        for g in ("S", "A", "B", "C", "D")]
+                       + [{"label": g, "count": n} for g, n in
+                          sorted(grades.items()) if g not in ("S","A","B","C","D")]),
         },
     }
 
@@ -6928,6 +6955,31 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .coach-sec h5.tip{color:#6cb6ff}  .coach-sec h5.mom{color:#ffb454}
   .coach-sec ul{margin:0;padding-left:18px}
   .coach-sec li{font-size:13px;line-height:1.55;margin-bottom:4px;overflow-wrap:anywhere}
+  /* recurring mistakes: wrapped, never truncated — this is the only copy of the text */
+  .coach-panel-wide{grid-column:1/-1}
+  .coach-mis{display:flex;flex-direction:column;gap:11px}
+  .coach-mis-row{padding:9px 11px;border-radius:9px;background:rgba(255,255,255,.03);
+    border:1px solid rgba(255,255,255,.06)}
+  .coach-mis-row.link{cursor:pointer}
+  .coach-mis-row.link:hover{border-color:#ff5570;background:rgba(255,85,112,.06)}
+  .coach-mis-top{display:flex;gap:9px;align-items:baseline}
+  .coach-mis-n{flex:0 0 auto;font-weight:700;font-size:12.5px;color:#ff5570;
+    font-variant-numeric:tabular-nums}
+  .coach-mis-txt{flex:1;font-size:13px;line-height:1.5;overflow-wrap:anywhere;
+    white-space:normal}
+  .coach-mis-track{display:block;height:4px;background:rgba(255,255,255,.06);
+    border-radius:3px;overflow:hidden;margin-top:8px}
+  .coach-mis-track i{display:block;height:100%;background:#ff5570;border-radius:3px}
+  .coach-mis-ev{display:inline-block;margin-top:7px;font-size:11px;color:#ff8ba0}
+  /* processing: pipeline bookkeeping, deliberately muted and not expandable */
+  .coach-proc{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
+  .coach-proc-row{display:flex;gap:9px;align-items:center;padding:8px 11px;
+    border-radius:8px;background:rgba(255,255,255,.02);
+    border:1px dashed rgba(255,255,255,.09);font-size:12.5px;color:#8b96a8}
+  .coach-proc-dot{width:6px;height:6px;border-radius:50%;background:#ffb454;
+    flex:0 0 auto}
+  .coach-proc-txt{flex:1;overflow-wrap:anywhere}
+  .coach-proc-when{flex:0 0 auto;font-size:11.5px}
   .coach-empty{color:#8b96a8;font-size:13px;padding:14px;background:rgba(255,255,255,.03);
     border-radius:10px;line-height:1.6}
   @media(max-width:620px){
@@ -8852,9 +8904,13 @@ function coachSpark(rows){
 
 function coachCard(r, i){
   const open = coachOpen === r.review_id;
-  const g = (r.grade||'').toUpperCase();
-  const badge = g ? '<span class="coach-grade" style="color:'+(COACH_GRADE_COLOR[g]||'#fff')+
-    ';border-color:'+(COACH_GRADE_COLOR[g]||'#555')+'">'+coachEsc(g)+'</span>' : '';
+  // Gate on status as well as presence: a failed record arrived with
+  // overall_assessment "C — duplicate", and a grade badge on bookkeeping reads as
+  // a real mark against the player.
+  const g = (r.status === 'complete') ? (r.grade||'').toUpperCase() : '';
+  const col = COACH_GRADE_COLOR[g] || COACH_GRADE_COLOR[g.charAt(0)] || '#8b96a8';
+  const badge = g ? '<span class="coach-grade" style="color:'+col+
+    ';border-color:'+col+'">'+coachEsc(g)+'</span>' : '';
   const chips = (r.tags||[]).map(t =>
     '<span class="coach-chip">'+coachEsc(t)+'</span>').join('');
   const list = (title, arr, cls) => (arr && arr.length)
@@ -8867,7 +8923,8 @@ function coachCard(r, i){
       list('Coaching tips', r.coaching_tips, 'tip') +
       list('Notable moments', r.notable_moments, 'mom') +
       '</div>' : '';
-  return '<div class="coach-card'+(open?' open':'')+'" onclick="coachToggle(\''+
+  return '<div class="coach-card'+(open?' open':'')+'" id="coach-r-'+
+    coachEsc(r.review_id)+'" onclick="coachToggle(\''+
     coachEsc(r.review_id)+'\')">' +
     '<div class="coach-head">' + badge +
       '<div class="coach-h-txt">' +
@@ -8882,9 +8939,13 @@ function coachCard(r, i){
     '</div>' + body + '</div>';
 }
 
-function coachToggle(id){
-  coachOpen = (coachOpen === id) ? null : id;
+function coachToggle(id, forceOpen){
+  coachOpen = (!forceOpen && coachOpen === id) ? null : id;
   if(window._coachData) coachRender(window._coachData);
+  if(forceOpen){
+    const el = document.getElementById('coach-r-'+id);
+    if(el && el.scrollIntoView) el.scrollIntoView({behavior:'smooth', block:'center'});
+  }
 }
 function coachSetScope(sc){
   if(coachScope === sc) return;
@@ -8917,6 +8978,29 @@ function coachRender(d){
     '<button class="coach-mode'+(detail===v?' on':'')+'" title="'+hint+
     '" onclick="coachSetDetail(\''+v+'\')">'+label+'</button>';
 
+  // Recurring mistakes are full sentences and the highest-value text on the page,
+  // so they get wrapped rows rather than the truncating bar layout. Tapping one
+  // opens the review it came from.
+  const mistakeRows = (rows) => {
+    if(!rows || !rows.length) return '<div class="coach-empty">no data yet</div>';
+    const max = Math.max.apply(null, rows.map(r => r.count)) || 1;
+    return '<div class="coach-mis">' + rows.map(r => {
+      const ev = (r.reviews || []);
+      const click = ev.length
+        ? ' onclick="coachToggle(\''+coachEsc(ev[0])+'\',1)" class="coach-mis-row link"'
+        : ' class="coach-mis-row"';
+      return '<div'+click+'>' +
+        '<div class="coach-mis-top">' +
+          '<span class="coach-mis-n">'+r.count+'\u00d7</span>' +
+          '<span class="coach-mis-txt">'+coachEsc(r.label)+'</span>' +
+        '</div>' +
+        '<span class="coach-mis-track"><i style="width:'+
+          Math.max(3, r.count/max*100).toFixed(1)+'%"></i></span>' +
+        (ev.length ? '<span class="coach-mis-ev">see report \u2192</span>' : '') +
+      '</div>';
+    }).join('') + '</div>';
+  };
+
   const html =
   '<div class="coach-top">' +
     '<div class="coach-tabs">' +
@@ -8940,19 +9024,27 @@ function coachRender(d){
   '</div>' +
   '<div class="coach-stats">' +
     '<div class="coach-stat"><b>'+(n.complete||0)+'</b><span>reviews</span></div>' +
-    '<div class="coach-stat"><b>'+(n.pending||0)+'</b><span>pending</span></div>' +
+    '<div class="coach-stat"><b>'+(n.processing||0)+'</b><span>processing</span></div>' +
     '<div class="coach-stat coach-stat-wide">'+coachSpark(c.per_day||[])+
       '<span>last 30 days</span></div>' +
   '</div>' +
   '<div class="coach-grid">' +
     '<div class="coach-panel"><h4>Grades</h4>'+coachBars(c.grades||[])+'</div>' +
     '<div class="coach-panel"><h4>Themes</h4>'+coachBars(c.tags||[], 'var(--neon)')+'</div>' +
-    '<div class="coach-panel"><h4>Recurring mistakes</h4>'+
-      coachBars(c.mistakes||[], '#ff5570')+'</div>' +
+    '<div class="coach-panel coach-panel-wide"><h4>Recurring mistakes</h4>'+
+      mistakeRows(c.mistakes||[])+'</div>' +
     (coachScope==='squad'
       ? '<div class="coach-panel"><h4>Reviews per player</h4>'+
         coachBars(c.per_player||[], '#6cb6ff')+'</div>' : '') +
   '</div>' +
+  ((d.processing||[]).length
+    ? '<h4 class="coach-lh">Processing</h4><div class="coach-proc">' +
+      d.processing.map(p =>
+        '<div class="coach-proc-row"><span class="coach-proc-dot"></span>' +
+        '<span class="coach-proc-txt">'+coachEsc(p.psn_user||'')+' · '+
+        coachEsc(p.reason||p.status)+'</span>' +
+        '<span class="coach-proc-when">'+coachWhen(p.created_at)+'</span></div>').join('') +
+      '</div>' : '') +
   '<h4 class="coach-lh">Reports</h4>' +
   ((d.reviews||[]).length
     ? '<div class="coach-list">'+d.reviews.map(coachCard).join('')+'</div>'

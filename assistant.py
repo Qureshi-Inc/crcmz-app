@@ -1483,7 +1483,7 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
         "zitadel_id": _zid_for_psn(psn_user) or (existing or {}).get("zitadel_id") or "",
         "game": game or (existing or {}).get("game") or "",
         "summary": summary, "overall_assessment": overall_assessment,
-        "grade": _normalise_grade(grade, overall_assessment),
+        "grade": _normalise_grade(grade, overall_assessment, status),
         "strengths": strengths or [], "mistakes": mistakes or [],
         "coaching_tips": coaching_tips or [], "notable_moments": notable_moments or [],
         "tags": _normalise_tags(tags), "model": model,
@@ -1517,20 +1517,32 @@ COACH_TAGS = ("positioning", "rotation", "crosshair-placement", "timing",
 COACH_GRADES = ("S", "A", "B", "C", "D")
 
 
-def _normalise_grade(grade: str, overall: str) -> str:
-    """Letter grade, from the explicit field or the leading token of the prose.
+def _normalise_grade(grade: str, overall: str, status: str = "complete") -> str:
+    """Letter grade, optionally with a +/- modifier, or "" when there isn't one.
 
-    The contract is "<GRADE> — <phrase>", so the fallback reads the first token.
-    Anything unrecognised is stored empty rather than guessed at — a wrong grade
-    would quietly skew every chart built on it.
+    Only a completed review can carry a grade. A failed record is pipeline
+    bookkeeping, and one arrived with overall_assessment "C — duplicate, see
+    canonical clip", which the prose fallback below happily read as a C and put a
+    grade badge on. Gating on status is what stops that, not better parsing.
+
+    The contract is "<GRADE> — <phrase>", so the fallback reads the leading token.
+    Anything unrecognised is stored empty rather than guessed at: a wrong grade
+    silently skews every chart built on it.
     """
-    g = (grade or "").strip().upper()
-    if g in COACH_GRADES:
+    if status != "complete":
+        return ""
+
+    def _clean(tok: str) -> str:
+        # Matched rather than stripped: strip(":-—") would eat the trailing hyphen
+        # of "B-" and silently promote it to a bare B.
+        m = re.match(r"^[\s:—-]*([SABCD])([+-])?[\s:—-]*$", tok.strip().upper())
+        return (m.group(1) + (m.group(2) or "")) if m else ""
+
+    g = _clean(grade or "")
+    if g:
         return g
-    head = (overall or "").strip().upper().split()
-    if head and head[0].strip(":-—") in COACH_GRADES:
-        return head[0].strip(":-—")
-    return ""
+    head = (overall or "").strip().split()
+    return _clean(head[0]) if head else ""
 
 
 def _normalise_tags(tags) -> list:
