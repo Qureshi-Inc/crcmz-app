@@ -649,8 +649,12 @@ def _squad() -> Any:
 
 
 @tool("recent_clips",
-      "Recently captured PSN clips: who shared them, when, how long, and their "
-      "status. `sender` must be an exact PSN online ID.",
+      "Recently captured PSN clips: who shared them, when, how long, their status, "
+      "and `message` — the PSN text posted with the clip, which is null unless the "
+      "sender typed something within 5 seconds of sharing. General PSN group chat is "
+      "not stored anywhere, so this is the only PSN message text that exists. Pass a "
+      "clip_id to clip_media_url to download the video. `sender` must be an exact "
+      "PSN online ID.",
       {"type": "object",
        "properties": {
            "limit": {"type": "integer", "description": "1-25, default 10."},
@@ -673,6 +677,10 @@ def _clips(limit: int = 10, sender: str = "", month: str = "") -> Any:
             "duration_seconds": r.get("duration_seconds"),
             "status": r.get("status"),
             "archived": r.get("archive_status") == "archived",
+            # The PSN text the sender posted alongside the clip. Often absent: the
+            # poller only captures a caption from the same sender within 5s of the
+            # clip, and general group chat is never stored at all.
+            "message": (r.get("body") or "") or None,
         })
     return out
 
@@ -710,6 +718,7 @@ def _clip_media_url(clip_id: str = "") -> dict:
         "file_size": row.get("file_size"),
         "duration_seconds": row.get("duration_seconds"),
         "sender": row.get("sender_online_id"),
+        "message": (row.get("body") or "") or None,
         # Whole-body download only; the server does not implement Range on this
         # route, so a client must not plan on resuming a partial fetch.
         "supports_range": False,

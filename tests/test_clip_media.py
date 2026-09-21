@@ -119,6 +119,25 @@ def test_tool_does_not_overclaim_range_support():
         "endpoint has no Range handling — advertising it would mislead clients"
 
 
+def test_caption_is_exposed_when_present():
+    """The poller stores a caption in clips.body; both tools must surface it, since
+    memory_search was otherwise the only way to reach PSN message text."""
+    import clips
+    clips.init()
+    withbody = [r for r in clips.list_clips(limit=200)
+                if (r.get("body") or "").strip()]
+    if not withbody:
+        return
+    row = withbody[0]
+    listed = _tool("recent_clips", {"limit": 25})
+    assert isinstance(listed, list) and listed, "recent_clips returned nothing"
+    assert "message" in listed[0], "recent_clips must expose the caption field"
+    if row.get("archive_status") == "archived":
+        one = _tool("clip_media_url", {"clip_id": row["message_uid"]})
+        assert one.get("message") == row["body"], \
+            "clip_media_url caption must match the stored body"
+
+
 # ── the endpoint ─────────────────────────────────────────────────────────────
 
 def test_media_endpoint_is_open_path_but_self_authed():
