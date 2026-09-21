@@ -1674,6 +1674,16 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
                        caption=caption)
     mcp_oauth.audit_write(zid, "ig_reel_share", f'{{"clip_id": "{clip_id}"}}', "ok")
 
+    # Dedupe: if notified_at is already set this is a watcher retry — return ok
+    # without sending a second message. claim_notification is atomic so concurrent
+    # retries can't both slip through, but we need to distinguish "already done"
+    # from "send failed" in the response so the watcher doesn't keep retrying.
+    post = ig_mod.get(post_id)
+    if post and post.get("notified_at"):
+        return {"ok": True, "post_id": post_id, "instagram_url": instagram_url,
+                **({"instagram_media_id": instagram_media_id} if instagram_media_id else {}),
+                "group_notified": True, "already_shared": True}
+
     notified = False
     note = None
     if ig_mod.claim_notification(post_id):
