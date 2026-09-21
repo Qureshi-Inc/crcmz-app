@@ -3007,9 +3007,14 @@ async def mcp_endpoint(request: Request):
 _REV_RE   = _re.compile(r"\brev\b",  _re.IGNORECASE)
 _FAIL_RE  = _re.compile(r"\bfail\b", _re.IGNORECASE)
 
-# How far back to search for an untagged clip when a follow-up text
-# arrives as a separate message.
+# Backward window: how far back to look for an untagged clip when a trigger
+# text arrives AFTER the clip (PS-app style: post clip, type emoji).
 REV_FOLLOWUP_WINDOW = 5 * 60  # seconds
+
+# Forward window: how far ahead a pending trigger text can be claimed by a
+# clip that arrives in a later poll batch (PS-console style: type emoji, then
+# post clip). Kept tighter than the backward window — console posts are bursts.
+TRIGGER_FORWARD_WINDOW = 2 * 60  # seconds
 
 
 def _wants_ig_post(caption: str) -> bool:
@@ -5425,6 +5430,10 @@ _threading.Thread(target=_startup_backfill, name="app-events-backfill", daemon=T
 
 _video_seen: set[str] = set()
 _video_initialized: bool = False
+# Pending console-style triggers: sender -> {text, ts, expires_at}.
+# Set when a trigger text has no backward-match and no same-batch forward clip;
+# consumed (and cleared) when the matching forward clip arrives.
+_pending_triggers: dict[str, dict] = {}
 _video_queue: "asyncio.Queue[str]" = None   # type: ignore[assignment]
 _watched_messengers: list = []
 
@@ -5778,57 +5787,119 @@ async def _start_squad_poller():
                                 )
                                 continue
 
-                            # Text messages — check for follow-up "rev" / "🔥" trigger.
-                            # Players often send the clip with no caption, then type
-                            # "rev" as a separate message. We look back REV_FOLLOWUP_WINDOW
-                            # seconds for the most recent untagged clip from the same
-                            # sender in the same group and backfill its caption.
+                            # Text messages — check for standalone trigger text
+                            # ("rev", "🔥", "fail", etc.) sent as a separate
+                            # message from the clip.
+                            #
+                            # Direction rules:
+                            #   PS console: emoji BEFORE clip (type then post).
+                            #   PS app:     emoji AFTER clip  (post then type).
+                            #
+                            # Priority order when a trigger text arrives:
+                            #   1. Forward guard: if a video clip from the same
+                            #      sender appears within CAPTION_WINDOW_MS later in
+                            #      the same poll batch, _adjacent_caption will attach
+                            #      this text to that clip — skip the backward lookup
+                            #      entirely so one emoji doesn't tag two clips.
+                            #   2. Backward DB match (app-style): most recent
+                            #      untagged clip within REV_FOLLOWUP_WINDOW. If
+                            #      found, consume as text_after_clip.
+                            #   3. Pending trigger (console-style cross-batch): no
+                            #      same-batch forward clip and no backward match →
+                            #      park the trigger in _pending_triggers; the next
+                            #      clip from this sender picks it up.
                             if msg_type == 1:
                                 text = (msg.get("body") or "").strip()
                                 if text and (_wants_coaching(text) or _wants_ig_post(text)
                                             or _wants_fail_tag(text)):
-                                    since = (
-                                        (psn_ts_ms / 1000.0 - REV_FOLLOWUP_WINDOW)
-                                        if psn_ts_ms
-                                        else (time.time() - REV_FOLLOWUP_WINDOW)
+                                    text_ts = (
+                                        psn_ts_ms / 1000.0
+                                        if psn_ts_ms else time.time()
                                     )
+
+                                    # ── 1. Forward guard (same-batch) ──────────
+                                    # Look at the next few messages in this batch.
+                                    # If any is a video clip from this sender within
+                                    # the _adjacent_caption window, skip — that clip
+                                    # will pick up this text as clip_caption.
+                                    _CAPTION_WINDOW_MS = 5000
+                                    _forward_in_batch = False
+                                    for _fi in range(idx + 1,
+                                                     min(len(msgs), idx + 4)):
+                                        _fm = msgs[_fi]
+                                        if _fm.get("messageType") != 210:
+                                            continue
+                                        if _fm.get("sender") != sender:
+                                            continue
+                                        try:
+                                            _fts = int(_fm.get("timestamp") or 0)
+                                            _fts_s = _fts / 1000.0
+                                        except (ValueError, TypeError):
+                                            continue
+                                        if abs(_fts_s - text_ts) <= (
+                                                _CAPTION_WINDOW_MS / 1000.0):
+                                            _forward_in_batch = True
+                                            break
+                                    if _forward_in_batch:
+                                        continue  # _adjacent_caption will handle it
+
+                                    # ── 2. Backward DB match (app-style) ───────
+                                    since = text_ts - REV_FOLLOWUP_WINDOW
                                     match = _clips.recent_untagged_by_sender(
                                         sender, wm._group_id, since)
                                     if match:
                                         clip_uid = match["message_uid"]
-                                        if _clips.set_message(clip_uid, text):
+                                        if _clips.set_message(
+                                                clip_uid, text,
+                                                source="text_after_clip"):
                                             logger.info(
-                                                "rev_followup uid=%s sender=%s text=%r",
+                                                "trigger_followup "
+                                                "uid=%s sender=%s text=%r "
+                                                "source=text_after_clip",
                                                 clip_uid, sender, text)
                                             if _wants_coaching(text):
                                                 _clips.set_coaching_only(clip_uid)
-                                                if not _coach.get_any_by_clip(clip_uid):
+                                                if not _coach.get_any_by_clip(
+                                                        clip_uid):
                                                     rid = _coach.claim_for_review(
                                                         clip_uid, sender,
-                                                        zitadel_id=_zid_for_psn(sender))
+                                                        zitadel_id=_zid_for_psn(
+                                                            sender))
                                                     if rid:
                                                         logger.info(
-                                                            "coach_queued_followup "
-                                                            "uid=%s review=%s",
+                                                            "coach_queued_followup"
+                                                            " uid=%s review=%s",
                                                             clip_uid, rid)
                                             elif _wants_ig_post(text):
                                                 if not _ig.get_by_clip(clip_uid):
                                                     pid = _ig.claim_for_post(
                                                         clip_uid, sender,
-                                                        zitadel_id=_zid_for_psn(sender))
+                                                        zitadel_id=_zid_for_psn(
+                                                            sender))
                                                     if pid:
                                                         logger.info(
-                                                            "ig_queued_followup "
-                                                            "uid=%s post=%s",
+                                                            "ig_queued_followup"
+                                                            " uid=%s post=%s",
                                                             clip_uid, pid)
                                             elif _wants_fail_tag(text):
-                                                # Message backfilled; downstream
-                                                # watcher reads recent_clips and
-                                                # handles IG posting itself.
                                                 logger.info(
-                                                    "fail_tag_followup uid=%s sender=%s",
+                                                    "fail_tag_followup"
+                                                    " uid=%s sender=%s",
                                                     clip_uid, sender)
                                             await _video_queue.put(clip_uid)
+                                        continue  # text consumed as app-style
+
+                                    # ── 3. Park as pending console-style trigger ─
+                                    _pending_triggers[sender] = {
+                                        "text":       text,
+                                        "ts":         text_ts,
+                                        "expires_at": text_ts + TRIGGER_FORWARD_WINDOW,
+                                    }
+                                    logger.info(
+                                        "trigger_pending sender=%s text=%r "
+                                        "expires_at=%.0f",
+                                        sender, text,
+                                        text_ts + TRIGGER_FORWARD_WINDOW)
                                 continue
 
                             # Video clip messages
@@ -5838,9 +5909,29 @@ async def _start_squad_poller():
                             if not ugc_id:
                                 continue
                             body_text = _adjacent_caption(msgs, idx, sender)
+                            body_source: str | None = None
+                            if not body_text:
+                                # Check for a pending console-style trigger from
+                                # this sender (emoji sent BEFORE the clip).
+                                clip_ts = (
+                                    psn_ts_ms / 1000.0 if psn_ts_ms
+                                    else time.time()
+                                )
+                                _pt = _pending_triggers.get(sender)
+                                if (_pt
+                                        and _pt["ts"] <= clip_ts
+                                        and clip_ts <= _pt["expires_at"]):
+                                    body_text = _pt["text"]
+                                    body_source = "text_before_clip"
+                                    del _pending_triggers[sender]
+                                    logger.info(
+                                        "trigger_pending_consumed uid=%s "
+                                        "sender=%s text=%r source=text_before_clip",
+                                        uid, sender, body_text)
                             is_new = _clips.claim(
                                 uid, ugc_id, wm._group_id, wm._group_name,
                                 sender, psn_ts_ms, body_text,
+                                body_source=body_source,
                             )
                             if is_new:
                                 logger.info(

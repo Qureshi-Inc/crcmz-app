@@ -115,10 +115,20 @@ def claim(
     sender: str,
     psn_created_ms: int | None = None,
     body: str = "",
+    body_source: str | None = None,
 ) -> bool:
-    """Insert clip if not already known. Returns True if this is a new clip."""
+    """Insert clip if not already known. Returns True if this is a new clip.
+
+    body_source overrides the auto-derived message_source when the body did not
+    come from the clip's own caption (e.g. 'text_before_clip' for a pending
+    console-style trigger that was matched at clip-arrival time).
+    """
     now = time.time()
     psn_created_at = (psn_created_ms / 1000.0) if psn_created_ms else None
+    if body:
+        source = body_source or "clip_caption"
+    else:
+        source = None
     with _lock, _conn() as db:
         db.execute(
             """INSERT OR IGNORE INTO clips
@@ -128,7 +138,7 @@ def claim(
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0.0, ?, ?)""",
             (message_uid, ugc_id, group_id, group_name,
              sender, psn_created_at, now, body or None,
-             "clip_caption" if body else None, now, now),
+             source, now, now),
         )
         db.commit()
         return db.execute("SELECT changes()").fetchone()[0] > 0
@@ -227,22 +237,27 @@ def set_coaching_done(message_uid: str) -> None:
         db.commit()
 
 
-def set_message(message_uid: str, text: str) -> bool:
-    """Backfill a caption from a follow-up text message sent after the clip.
+def set_message(message_uid: str, text: str,
+                source: str = "text_after_clip") -> bool:
+    """Backfill a caption from a standalone trigger text.
+
+    source values:
+      'text_after_clip'  — text sent after the clip (PS-app style, send clip then type emoji)
+      'text_before_clip' — text sent before the clip (PS-console style, type emoji then post)
 
     Only writes when body is currently NULL or empty — never overwrites an
-    existing caption. Returns True if the update was actually applied, False if
-    the clip already had a caption (safe to call redundantly).
+    existing caption. Returns True if the update was actually applied.
     """
     text = (text or "").strip()
     if not text:
         return False
+    source = source or "text_after_clip"
     now = time.time()
     with _lock, _conn() as db:
         cur = db.execute(
-            "UPDATE clips SET body=?, message_source='followup_text', updated_at=?"
+            "UPDATE clips SET body=?, message_source=?, updated_at=?"
             " WHERE message_uid=? AND (body IS NULL OR body='')",
-            (text, now, message_uid))
+            (text, source, now, message_uid))
         db.commit()
         return cur.rowcount > 0
 

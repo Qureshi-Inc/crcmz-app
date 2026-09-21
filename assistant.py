@@ -651,11 +651,12 @@ def _squad() -> Any:
 @tool("recent_clips",
       "Recently captured PSN clips: who shared them, when, how long, their status, "
       "and `message` — the PSN text associated with the clip. `message_source` tells "
-      "you where it came from: 'clip_caption' means the sender typed it within ~5s of "
-      "sharing (the normal case); 'followup_text' means they sent the clip with no "
-      "caption and then typed the text as a separate message within 5 minutes — both "
-      "sources are semantically equivalent for trigger matching (e.g. checking for "
-      "'rev' or '🔥'). `message_source` is null when there is no message at all. "
+      "you where it came from: 'clip_caption' = typed within ~5s of sharing; "
+      "'text_before_clip' = trigger text sent BEFORE the clip (PS console style); "
+      "'text_after_clip' = trigger text sent AFTER the clip (PS app style). "
+      "All three are semantically equivalent for trigger matching ('rev', '🔥', etc). "
+      "null = no message. Old records may show the legacy value 'followup_text' "
+      "(equivalent to text_after_clip). "
       "General PSN group chat is not stored, so this is the only PSN message text "
       "that exists. Pass a clip_id to clip_media_url to download the video. "
       "`sender` must be an exact PSN online ID.",
