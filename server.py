@@ -709,6 +709,10 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # Same deal: MCP clients send a bearer token, never a cookie. The
                # handler does its own auth check — see mcp_server.py.
                "/mcp",
+               # Clip media bytes for machine clients. Same bearer as /mcp, and the
+               # handler re-checks it; the clip id is a query param so this stays an
+               # exact path rather than an open prefix.
+               "/api/clips/media",
                # OAuth Authorization Server for per-user MCP tokens.  All of
                # these are browser-facing or machine-facing endpoints that must
                # be reachable before authentication.
@@ -2996,6 +3000,66 @@ async def mcp_endpoint(request: Request):
         # Notification-only request: the spec wants 202 and an empty body.
         return Response(status_code=status)
     return JSONResponse(body, status_code=status)
+
+
+@app.get("/api/clips/media")
+def api_clip_media(uid: str, request: Request):
+    """Stream one archived clip's MP4 to a bearer-authenticated machine client.
+
+    In `_OPEN_PATHS` because a machine sends a bearer token and never a cookie, so
+    this does its own auth — the same two paths `/mcp` accepts, so one token works
+    for both the metadata tools and the bytes.
+
+    `uid` is a query parameter, not a path segment, for two reasons: `_OPEN_PATHS`
+    matches paths exactly, so a path parameter would force a new open *prefix* into
+    the auth gate; and a message_uid contains '#', which is a fragment delimiter and
+    would be silently dropped from a path by some clients.
+
+    The file read comes only from the database row's storage key, never from the
+    request, so a caller cannot steer it at an arbitrary file.
+    """
+    message_uid = uid
+    from fastapi.responses import FileResponse, StreamingResponse
+
+    auth_header = request.headers.get("authorization", "")
+    caller = None
+    if not _mcp.authorised(auth_header):
+        caller = _mcp.resolve_caller(auth_header)
+        if caller is None:
+            return JSONResponse(
+                {"error": "invalid or missing bearer token — use the shared "
+                          "MCP_TOKEN or authenticate via OAuth at "
+                          f"https://{_PUBLIC_HOST}/oauth/authorize"},
+                status_code=401,
+                headers={"WWW-Authenticate": 'Bearer realm="crcmz-mcp"'})
+
+    row = _clips.get(message_uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="clip not found")
+    key = row.get("storage_key_original")
+    if not key or row.get("archive_status") != "archived":
+        raise HTTPException(status_code=409,
+                            detail="clip is not archived yet — no media to serve")
+
+    who = (caller or {}).get("zitadel_id", "shared-token")
+    logger.info("clip media served uid=%s key=%s caller=%s", message_uid, key, who)
+
+    filename = _re.sub(r"[^a-zA-Z0-9_.-]", "_", message_uid) + ".mp4"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+
+    path = _cstore.local_file(key)
+    if path:
+        # Whole-body send. Starlette 0.38's FileResponse has no Range handling, so
+        # this is not resumable — fine for a one-shot fetch, but do not advertise
+        # range support to clients on the back of it.
+        return FileResponse(path, media_type="video/mp4", filename=filename)
+    if not _cstore.available():
+        raise HTTPException(status_code=503, detail="clip storage unavailable")
+    size = row.get("file_size")
+    if size:
+        headers["Content-Length"] = str(int(size))
+    return StreamingResponse(_cstore.stream(key), media_type="video/mp4",
+                             headers=headers)
 
 
 @app.get("/mcp")

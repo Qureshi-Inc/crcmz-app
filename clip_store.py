@@ -96,6 +96,60 @@ def load(key: str) -> bytes | None:
     return data
 
 
+def local_file(key: str) -> Path | None:
+    """Resolved on-disk path for a key on the filesystem backend, else None.
+
+    Returning a path lets the caller hand the file to Starlette's FileResponse,
+    which serves Range requests — so a client can seek or resume instead of
+    pulling a whole 500 MB clip through app memory. S3 has no path, so callers
+    must fall back to `stream()` there.
+
+    The key comes from the database, never from a request, but this still
+    re-checks containment: one bad key with '..' in it would otherwise read any
+    file the process can see.
+    """
+    if CLIP_BUCKET:
+        return None
+    root = CLIP_LOCAL_DIR.resolve()
+    try:
+        path = (root / key).resolve()
+        path.relative_to(root)
+    except (ValueError, OSError):
+        logger.error("clip_store: key escapes the clip root, refusing: %r", key)
+        return None
+    return path if path.is_file() else None
+
+
+def stream(key: str, chunk_size: int = 1024 * 256):
+    """Yield MP4 bytes for a key without holding the whole clip in memory."""
+    if CLIP_BUCKET:
+        try:
+            body = _s3_client().get_object(Bucket=CLIP_BUCKET, Key=key)["Body"]
+        except Exception as exc:
+            logger.error("clip_store: S3 stream failed key=%s: %s", key, exc)
+            return
+        try:
+            while True:
+                chunk = body.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            body.close()
+        return
+
+    path = local_file(key)
+    if not path:
+        logger.error("clip_store: stream miss for key=%s", key)
+        return
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+
 def available() -> bool:
     """True if storage is configured and writable."""
     if CLIP_BUCKET:

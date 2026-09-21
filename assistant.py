@@ -667,6 +667,7 @@ def _clips(limit: int = 10, sender: str = "", month: str = "") -> Any:
     for r in rows:
         when = r.get("psn_created_at") or r.get("discovered_at")
         out.append({
+            "clip_id": r.get("message_uid"),
             "sender": r.get("sender_online_id"),
             "when": datetime.fromtimestamp(when).strftime("%Y-%m-%d %H:%M") if when else None,
             "duration_seconds": r.get("duration_seconds"),
@@ -674,6 +675,45 @@ def _clips(limit: int = 10, sender: str = "", month: str = "") -> Any:
             "archived": r.get("archive_status") == "archived",
         })
     return out
+
+
+@tool("clip_media_url",
+      "Given a clip_id from recent_clips, return the HTTP URL that serves that "
+      "clip's MP4 bytes, plus its size and duration. The URL needs the same bearer "
+      "token as this MCP connection; it is not public. Only archived clips have "
+      "media — for anything else this explains why there is none rather than "
+      "returning a URL that would 409.",
+      {"type": "object",
+       "properties": {"clip_id": {"type": "string",
+                                  "description": "message_uid from recent_clips."}},
+       "required": ["clip_id"]})
+def _clip_media_url(clip_id: str = "") -> dict:
+    import urllib.parse
+    import clips as clips_mod
+    clip_id = (clip_id or "").strip()
+    if not clip_id:
+        return {"error": "clip_id is required — take it from recent_clips."}
+    row = clips_mod.get(clip_id)
+    if not row:
+        return {"error": "no clip with that clip_id"}
+    if row.get("archive_status") != "archived" or not row.get("storage_key_original"):
+        return {"error": "clip is not archived, so no media is stored for it",
+                "status": row.get("status"),
+                "archive_status": row.get("archive_status")}
+    host = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
+    return {
+        "clip_id": clip_id,
+        "url": "https://%s/api/clips/media?uid=%s" % (
+            host, urllib.parse.quote(clip_id, safe="")),
+        "auth": "send the same Authorization: Bearer token used for MCP",
+        "content_type": "video/mp4",
+        "file_size": row.get("file_size"),
+        "duration_seconds": row.get("duration_seconds"),
+        "sender": row.get("sender_online_id"),
+        # Whole-body download only; the server does not implement Range on this
+        # route, so a client must not plan on resuming a partial fetch.
+        "supports_range": False,
+    }
 
 
 # ── Buttons and people ────────────────────────────────────────────────────────
