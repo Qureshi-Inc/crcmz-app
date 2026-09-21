@@ -725,6 +725,40 @@ def _clip_media_url(clip_id: str = "") -> dict:
     }
 
 
+@tool("clip_storage_status",
+      "How full the clip archive is: the storage backend (S3 bucket or local "
+      "path), total bytes and file count stored, the archived clip count from "
+      "the database, and free/total disk space for a local backend. Read-only. "
+      "Use this to watch storage and warn before it fills up.",
+      {"type": "object", "properties": {}, "required": []})
+def _clip_storage_status() -> dict:
+    import shutil
+    from datetime import datetime, timezone
+    import clip_store as cstore
+    import clips as clips_mod
+    usage = cstore.usage()
+    out: dict = {
+        "backend": cstore.backend(),
+        "archive_bytes": usage.get("bytes"),
+        "archive_files": usage.get("files"),
+        "db_archived_clips": (clips_mod.stats() or {}).get("archived") or 0,
+    }
+    if usage.get("error"):
+        out["scan_error"] = usage["error"]
+    if usage.get("truncated"):
+        out["scan_truncated"] = True
+    if not cstore.CLIP_BUCKET:
+        # Local backend: the real constraint is the disk this path sits on.
+        try:
+            du = shutil.disk_usage(str(cstore.CLIP_LOCAL_DIR))
+            out["disk_total_bytes"] = du.total
+            out["disk_free_bytes"] = du.free
+        except OSError as exc:
+            out["disk_error"] = str(exc)
+    out["measured_at"] = datetime.now(timezone.utc).isoformat()
+    return out
+
+
 # ── Buttons and people ────────────────────────────────────────────────────────
 # The soundboard is what the squad actually presses, so "what buttons do we have"
 # is one of the most asked questions -- and until `soundboard.py` existed the

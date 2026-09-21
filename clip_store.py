@@ -165,5 +165,48 @@ def available() -> bool:
         return False
 
 
+def usage() -> dict:
+    """Storage-level archive usage: total bytes and file count under clips/.
+
+    Local backend walks the clip root; S3 lists the bucket with a paginator
+    (capped at 500 pages / ~500k objects with a truncation flag). Returns
+    {"bytes": int|None, "files": int|None, ...}; bytes/files are None with an
+    "error" key when the scan itself fails, so callers can distinguish "empty"
+    from "unknown".
+    """
+    if CLIP_BUCKET:
+        try:
+            paginator = _s3_client().get_paginator("list_objects_v2")
+            total, files, pages, truncated = 0, 0, 0, False
+            for page in paginator.paginate(Bucket=CLIP_BUCKET, Prefix="clips/"):
+                pages += 1
+                if pages > 500:
+                    truncated = True
+                    logger.warning("clip_store: usage scan truncated at 500 pages")
+                    break
+                for obj in page.get("Contents", []):
+                    total += obj.get("Size", 0)
+                    files += 1
+            out = {"bytes": total, "files": files}
+            if truncated:
+                out["truncated"] = True
+            return out
+        except Exception as exc:
+            logger.error("clip_store: usage scan failed: %s", exc)
+            return {"bytes": None, "files": None, "error": str(exc)}
+
+    total, files = 0, 0
+    root = CLIP_LOCAL_DIR
+    if root.exists():
+        for dirpath, _dirnames, filenames in os.walk(root):
+            for fn in filenames:
+                try:
+                    total += (Path(dirpath) / fn).stat().st_size
+                    files += 1
+                except OSError:
+                    pass
+    return {"bytes": total, "files": files}
+
+
 def backend() -> str:
     return f"s3://{CLIP_BUCKET}" if CLIP_BUCKET else str(CLIP_LOCAL_DIR)
