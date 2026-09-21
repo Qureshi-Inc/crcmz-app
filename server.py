@@ -3071,11 +3071,16 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
         for m in _n(r.get("mistakes")):
             key = str(m)[:200]
             # Carry the reviews a mistake came from, so the UI can point at the
-            # evidence instead of just naming the pattern.
-            e = mistakes.setdefault(key, {"label": key, "count": 0, "reviews": []})
+            # evidence instead of just naming the pattern. Members are tracked
+            # too, so squad scope can require a pattern to be genuinely shared.
+            e = mistakes.setdefault(key, {"label": key, "count": 0,
+                                          "reviews": [], "members": []})
             e["count"] += 1
             if r.get("review_id") and r["review_id"] not in e["reviews"]:
                 e["reviews"].append(r["review_id"])
+            mid = r.get("zitadel_id") or r.get("psn_user") or ""
+            if mid and mid not in e["members"]:
+                e["members"].append(mid)
         ts = r.get("created_at") or 0
         if ts:
             day = _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
@@ -3093,6 +3098,7 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
 
     # Sightings: cross-player observations mined from review text ("Deception
     # revived him"). Squad scope only — they are inherently about other people.
+    roster = []
     if squad_view:
         try:
             import crcmz_identity
@@ -3110,7 +3116,31 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
     # review ids that would link a pattern back to someone's report.
     mis_list = sorted(mistakes.values(), key=lambda m: -m["count"])[:8]
     if squad_view:
-        mis_list = [{"label": m["label"], "count": m["count"]} for m in mis_list]
+        # Squad scope is aggregate-only: a "pattern" only exists once two or
+        # more members share it, and its text must not name anyone — no "Moiz
+        # kept looting", no squadmate names, no he/him pointing at the sender.
+        # Scrubbing first also merges the same mistake worded with different
+        # names into one shared pattern. Fails closed: if the scrub can't run,
+        # the pattern stays out of squad scope.
+        shared: dict[str, dict] = {}
+        for m in mistakes.values():
+            try:
+                label = coach_sightings.scrub_names(m["label"], roster)
+            except Exception:  # noqa: BLE001
+                continue
+            if not label:
+                continue
+            g = shared.setdefault(label, {"label": label, "members": []})
+            for mid in m["members"]:
+                if mid not in g["members"]:
+                    g["members"].append(mid)
+        mis_list = sorted(
+            ({"label": g["label"], "count": len(g["members"])}
+             for g in shared.values() if len(g["members"]) >= 2),
+            key=lambda d: -d["count"])[:8]
+    else:
+        for m in mis_list:
+            m.pop("members", None)  # server-side bookkeeping, not API data
     if squad_view:
         reviews_out = [{
             "grade": r.get("grade") or "",
@@ -9253,9 +9283,15 @@ function coachRender(d){
   // Recurring mistakes are full sentences and the highest-value text on the page,
   // so they get wrapped rows rather than the truncating bar layout. Tapping one
   // opens the review it came from. A 1x sighting is a note, not a pattern, and
-  // renders neutral; only 2x+ gets the red habit treatment.
+  // renders neutral; only 2x+ gets the red habit treatment. In squad scope the
+  // server only sends patterns shared by 2+ members with names scrubbed out,
+  // so the empty state says what it takes for one to appear.
   const mistakeRows = (rows) => {
-    if(!rows || !rows.length) return '<div class="coach-empty">no data yet</div>';
+    if(!rows || !rows.length)
+      return '<div class="coach-empty">' + (coachScope==='squad'
+        ? 'No shared patterns yet \u2014 one shows up once two or more squad '+
+          'members\u2019 reviews show the same mistake.'
+        : 'no data yet') + '</div>';
     const max = Math.max.apply(null, rows.map(r => r.count)) || 1;
     return '<div class="coach-mis">' + rows.map(r => {
       const ev = (r.reviews || []);

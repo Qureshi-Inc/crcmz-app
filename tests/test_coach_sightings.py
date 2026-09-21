@@ -138,6 +138,52 @@ def test_empty_roster_or_reviews():
                          []) == []
 
 
+def test_scrub_single_name_and_pronoun():
+    out = sight.scrub_names("Deception revived him mid-fight.", ROSTER)
+    assert out == "a squadmate revived them mid-fight.", out
+
+
+def test_scrub_own_name_removed():
+    out = sight.scrub_names("Moiiz kept looting with a FULL backpack.",
+                            ROSTER)
+    assert out == "a squadmate kept looting with a FULL backpack.", out
+    assert "Moiiz" not in out and "moiiz" not in out
+
+
+def test_scrub_two_names_become_squadmates():
+    out = sight.scrub_names(
+        "Deception and Ace were ahead while he hugged a wall behind.", ROSTER)
+    assert out == "squadmates were ahead while they hugged a wall behind.", out
+
+
+def test_scrub_sentence_start_pronoun():
+    out = sight.scrub_names("He pushed alone and his greed got him killed.",
+                            ROSTER)
+    assert out == "They pushed alone and their greed got them killed.", out
+
+
+def test_scrub_leaves_plain_text_alone():
+    text = ("Kept looting with a FULL backpack (14/14) after the 90-second "
+            "extraction warning.")
+    assert sight.scrub_names(text, ROSTER) == text
+
+
+def test_scrub_short_alias_stays_case_sensitive():
+    out = sight.scrub_names("He flew like an ace pilot through the gap.",
+                            ROSTER)
+    assert out == "They flew like an ace pilot through the gap.", out
+
+
+def test_scrub_enemy_names_untouched():
+    out = sight.scrub_names("EnemyPlayer123 downed him in the open.", ROSTER)
+    assert out == "EnemyPlayer123 downed them in the open.", out
+
+
+def test_scrub_empty():
+    assert sight.scrub_names("", ROSTER) == ""
+    assert sight.scrub_names(None, ROSTER) == ""
+
+
 if __name__ == "__main__":
     print("squad sightings")
     for name, fn in sorted(globals().items()):

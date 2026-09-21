@@ -117,3 +117,71 @@ def extract(complete_reviews, roster):
                     })
     sightings.sort(key=lambda x: x["created_at"] or 0, reverse=True)
     return sightings[:_MAX_SIGHTINGS]
+
+
+def _recase(replacement):
+    def fn(m):
+        w = m.group(0)
+        if w.isupper():
+            return replacement.upper()
+        if w[:1].isupper():
+            return replacement[:1].upper() + replacement[1:]
+        return replacement
+    return fn
+
+
+_PRONOUN_FIXES = (
+    (_re.compile(r"\bhimself\b", _re.IGNORECASE), _recase("themself")),
+    (_re.compile(r"\bhim\b", _re.IGNORECASE), _recase("them")),
+    (_re.compile(r"\bhis\b", _re.IGNORECASE), _recase("their")),
+    (_re.compile(r"\bhe\b", _re.IGNORECASE), _recase("they")),
+)
+
+
+def scrub_names(text, roster):
+    """Anonymize review text for squad scope.
+
+    Replaces roster-member mentions with "a squadmate"/"squadmates" (same
+    alias/case rules as sightings matching) and neutralizes gendered
+    pronouns — review text is written about the clip sender, so "he"
+    always identifies them. Used for squad-visible mistake patterns, which
+    must never reveal whose report a pattern came from.
+    """
+    text = " ".join(str(text or "").split())
+    if not text:
+        return text
+    mentioned = set()
+    spans = []
+    for entry in roster or []:
+        rx_long, rx_short = _compile(entry)
+        hit = False
+        for rx in (rx_long, rx_short):
+            if rx is None:
+                continue
+            for m in rx.finditer(text):
+                spans.append((m.start(), m.end()))
+                hit = True
+        if hit:
+            mentioned.add(entry.get("key") or entry.get("label") or "")
+    if spans:
+        word = "a squadmate" if len(mentioned) <= 1 else "squadmates"
+        spans.sort()
+        merged = []
+        for s, e in spans:
+            if merged and s <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], e)
+            else:
+                merged.append([s, e])
+        parts, last = [], 0
+        for s, e in merged:
+            parts.append(text[last:s])
+            parts.append(word)
+            last = e
+        parts.append(text[last:])
+        text = "".join(parts)
+        text = _re.sub(r"\ba squadmate and a squadmate\b", "two squadmates",
+                       text)
+        text = _re.sub(r"\bsquadmates and squadmates\b", "squadmates", text)
+    for rx, fix in _PRONOUN_FIXES:
+        text = rx.sub(fix, text)
+    return " ".join(text.split())
