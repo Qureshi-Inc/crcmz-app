@@ -415,6 +415,47 @@ def test_mistakes_carry_their_evidence():
     assert len(mis[0]["label"]) > 30, "the label must not be pre-truncated server-side"
 
 
+def test_squad_scope_is_aggregate_only():
+    """Squad members must not read each other's full reports."""
+    import server, coach, uuid, json
+    coach.init()
+    sub_a = "zid-sq-a-" + uuid.uuid4().hex[:6]
+    sub_b = "zid-sq-b-" + uuid.uuid4().hex[:6]
+    coach.upsert({"clip_id": "sa-" + sub_a, "zitadel_id": sub_a, "psn_user": "alice",
+                  "review_status": "complete", "grade": "B",
+                  "overall_assessment": "B — solid", "summary": "s",
+                  "mistakes": ["Pushed alone"], "coaching_tips": ["Wait"],
+                  "tags": ["push"]})
+    coach.upsert({"clip_id": "sb-" + sub_b, "zitadel_id": sub_b, "psn_user": "bob",
+                  "review_status": "complete", "grade": "C",
+                  "overall_assessment": "C — ok", "summary": "s2",
+                  "mistakes": ["Pushed alone"], "coaching_tips": ["Wait"],
+                  "tags": ["push"]})
+    orig = server._get_session
+    server._get_session = lambda req: {"sub": sub_a}
+    try:
+        me = server.api_coaching(request=None, scope="me", limit=50)
+        squad = server.api_coaching(request=None, scope="squad", limit=50)
+    finally:
+        server._get_session = orig
+    # me-scope still carries the member's own full report
+    assert len(me["reviews"]) == 1
+    assert me["reviews"][0]["psn_user"] == "alice"
+    assert me["reviews"][0]["overall_assessment"] == "B — solid"
+    assert me["charts"]["mistakes"], "evidence must survive in me scope"
+    # squad scope: anonymous grade/game/time points only
+    for r in squad["reviews"]:
+        assert set(r.keys()) <= {"grade", "game", "created_at"}, r.keys()
+    blob = json.dumps(squad)
+    assert "alice" not in blob and "bob" not in blob
+    assert "Pushed alone" not in blob and "B — solid" not in blob
+    # mistake patterns lose their evidence links in squad scope
+    for m in squad["charts"]["mistakes"]:
+        assert "reviews" not in m, "a pattern must not link back to a report"
+    assert "per_player" not in squad["charts"]
+    assert squad["processing"] == [], "no per-person processing rows for the squad"
+
+
 # ── the report in the message ────────────────────────────────────────────────
 
 def test_report_text_strips_mentions_and_urls():
@@ -733,6 +774,43 @@ console.log('moments render ok');
 """)
     if out is not None:
         assert "moments render ok" in out
+
+
+def test_coach_squad_hides_report_list():
+    """In squad scope the page shows patterns, never anyone's report cards."""
+    out = _node_eval(
+        "var __els = {};\n"
+        "var document = {getElementById: function(id){ return __els[id] = __els[id] || {}; }};\n"
+        "var window = {};\n" + _coach_js_source() + """
+const squadData = {scope:'squad', counts:{mine:1, squad:2, complete:2, processing:0},
+  notify_mode:'dm', detail_mode:'full', processing:[],
+  reviews:[{grade:'B', game:'Warzone', created_at:3000},
+           {grade:'C', game:'ARC Raiders', created_at:2000}],
+  charts:{tags:[], mistakes:[{label:'Pushed alone', count:2}],
+          per_day:[], grades:[{label:'B', count:1},{label:'C', count:1}]}};
+coachScope = 'squad';
+coachRender(squadData);
+const squadHtml = __els['coach-inner'].innerHTML;
+if (/coach-card/.test(squadHtml)) throw new Error('squad must not render report cards');
+if (/see report/.test(squadHtml)) throw new Error('evidence links must not appear in squad');
+if (/Reviews per player/.test(squadHtml)) throw new Error('per-player panel must be gone');
+if (!/Full reports are private/.test(squadHtml)) throw new Error('privacy note missing');
+if (!/Squad focus/.test(squadHtml)) throw new Error('squad hero missing');
+if (!/Pushed alone/.test(squadHtml)) throw new Error('shared patterns must survive');
+// me-scope still renders the member's own reports
+coachScope = 'me';
+coachRender({scope:'me', counts:{mine:1, squad:2, complete:1, processing:0},
+  notify_mode:'dm', detail_mode:'full', processing:[],
+  reviews:[{review_id:'r1', grade:'B', status:'complete', psn_user:'alice',
+    game:'Warzone', created_at:3000, overall_assessment:'B', summary:'s',
+    strengths:[], mistakes:[], coaching_tips:[], notable_moments:[], tags:[]}],
+  charts:{tags:[], mistakes:[], per_day:[], grades:[{label:'B', count:1}]}});
+if (!/coach-card/.test(__els['coach-inner'].innerHTML))
+  throw new Error('me scope lost its reports');
+console.log('squad privacy ok');
+""")
+    if out is not None:
+        assert "squad privacy ok" in out
 
 
 if __name__ == "__main__":

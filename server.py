@@ -3046,7 +3046,8 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
     limit = max(1, min(int(limit or 50), 200))
     rows = _coach.list_reviews(limit=200)
     mine = [r for r in rows if (r.get("zitadel_id") or "") == sub]
-    pool = rows if scope == "squad" else mine
+    squad_view = scope == "squad"
+    pool = rows if squad_view else mine
 
     def _n(v):
         return v if isinstance(v, list) else []
@@ -3060,7 +3061,6 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
     tally: dict[str, int] = {}
     mistakes: dict[str, dict] = {}
     per_day: dict[str, int] = {}
-    per_player: dict[str, int] = {}
     grades: dict[str, int] = {}
     for r in complete:
         g = (r.get("grade") or "").strip().upper()
@@ -3080,8 +3080,6 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
         if ts:
             day = _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
             per_day[day] = per_day.get(day, 0) + 1
-        who = r.get("psn_user") or "unknown"
-        per_player[who] = per_player.get(who, 0) + 1
 
     top = lambda d, n: [{"label": k, "count": v} for k, v in
                         sorted(d.items(), key=lambda kv: -kv[1])[:n]]
@@ -3092,6 +3090,39 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
         detail = coach_prefs.get_detail(sub)
     except Exception:  # noqa: BLE001
         mode, detail = "group", "full"
+
+    # Privacy: the squad tab is aggregate-only. Individual reports — grades,
+    # mistakes, tips, moments, and who they belong to — never leave the server
+    # for another member. Squad scope gets anonymous grade/game/time points
+    # (enough for the trend and the hero delta) and pattern counts without the
+    # review ids that would link a pattern back to someone's report.
+    mis_list = sorted(mistakes.values(), key=lambda m: -m["count"])[:8]
+    if squad_view:
+        mis_list = [{"label": m["label"], "count": m["count"]} for m in mis_list]
+    if squad_view:
+        reviews_out = [{
+            "grade": r.get("grade") or "",
+            "game": r.get("game"),
+            "created_at": r.get("created_at"),
+        } for r in complete[:limit]]
+    else:
+        reviews_out = [{
+            "review_id": r.get("review_id"),
+            "clip_id": r.get("clip_id"),
+            "psn_user": r.get("psn_user"),
+            "is_mine": (r.get("zitadel_id") or "") == sub,
+            "game": r.get("game"),
+            "created_at": r.get("created_at"),
+            "status": r.get("review_status"),
+            "summary": r.get("summary"),
+            "overall_assessment": r.get("overall_assessment"),
+            "grade": r.get("grade") or "",
+            "strengths": _n(r.get("strengths")),
+            "mistakes": _n(r.get("mistakes")),
+            "coaching_tips": _n(r.get("coaching_tips")),
+            "notable_moments": _n(r.get("notable_moments")),
+            "tags": _n(r.get("tags")),
+        } for r in complete[:limit]]
 
     return {
         "scope": scope,
@@ -3113,29 +3144,11 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
             # Tags on an unfinished record are pipeline reasons, not coaching themes
             # (awaiting-archive, duplicate), so they are labelled as such.
             "reason": (_n(r.get("tags")) or [None])[0] or r.get("summary") or "",
-        } for r in unfinished[:20]],
-        "reviews": [{
-            "review_id": r.get("review_id"),
-            "clip_id": r.get("clip_id"),
-            "psn_user": r.get("psn_user"),
-            "is_mine": (r.get("zitadel_id") or "") == sub,
-            "game": r.get("game"),
-            "created_at": r.get("created_at"),
-            "status": r.get("review_status"),
-            "summary": r.get("summary"),
-            "overall_assessment": r.get("overall_assessment"),
-            "grade": r.get("grade") or "",
-            "strengths": _n(r.get("strengths")),
-            "mistakes": _n(r.get("mistakes")),
-            "coaching_tips": _n(r.get("coaching_tips")),
-            "notable_moments": _n(r.get("notable_moments")),
-            "tags": _n(r.get("tags")),
-        } for r in complete[:limit]],
+        } for r in unfinished[:20]] if not squad_view else [],
+        "reviews": reviews_out,
         "charts": {
             "tags": top(tally, 10),
-            "mistakes": sorted(mistakes.values(),
-                               key=lambda m: -m["count"])[:8],
-            "per_player": top(per_player, 10),
+            "mistakes": mis_list,
             "per_day": [{"label": k, "count": per_day[k]}
                         for k in sorted(per_day)][-30:],
             # Fixed S..D order, not frequency order: a grade axis that reorders
@@ -9272,11 +9285,10 @@ function coachRender(d){
     '<div class="coach-panel"><h4>Grades</h4>'+coachBars(c.grades||[])+'</div>' +
     '<div class="coach-panel"><h4>Themes</h4>'+coachBars(c.tags||[], 'var(--neon)')+'</div>' +
     '<div class="coach-panel coach-panel-wide"><h4>Mistake patterns</h4>'+
-      '<div class="coach-sub">\u00d72 or more means it\u2019s a habit \u2014 tap to see the report</div>'+
+      '<div class="coach-sub">'+(coachScope==='squad'
+        ? 'Shared patterns across the squad \u2014 individual reports stay private'
+        : '\u00d72 or more means it\u2019s a habit \u2014 tap to see the report')+'</div>'+
       mistakeRows(c.mistakes||[])+'</div>' +
-    (coachScope==='squad'
-      ? '<div class="coach-panel"><h4>Reviews per player</h4>'+
-        coachBars(c.per_player||[], '#6cb6ff')+'</div>' : '') +
   '</div>' +
   ((d.processing||[]).length
     ? '<h4 class="coach-lh">Processing</h4><div class="coach-proc">' +
@@ -9287,12 +9299,15 @@ function coachRender(d){
         '<span class="coach-proc-when">'+coachWhen(p.created_at)+'</span></div>').join('') +
       '</div>' : '') +
   '<h4 class="coach-lh">Reports</h4>' +
-  ((d.reviews||[]).length
-    ? '<div class="coach-tools" id="coach-tools">'+coachToolbarHtml(d)+'</div>' +
-      '<div class="coach-list" id="coach-reports-list">'+coachReportListHtml(d)+'</div>'
-    : '<div class="coach-empty">No reviews yet. Post a clip in the PSN group and '+
-      'send <b>rev</b> as its own message within about 5 seconds — that is what '+
-      'queues it for analysis.</div>');
+  (coachScope === 'squad'
+    ? '<div class="coach-empty">Full reports are private \u2014 each member sees '+
+      'only their own under <b>Mine</b>. This tab shows the squad\u2019s shared patterns.</div>'
+    : ((d.reviews||[]).length
+      ? '<div class="coach-tools" id="coach-tools">'+coachToolbarHtml(d)+'</div>' +
+        '<div class="coach-list" id="coach-reports-list">'+coachReportListHtml(d)+'</div>'
+      : '<div class="coach-empty">No reviews yet. Post a clip in the PSN group and '+
+        'send <b>rev</b> as its own message within about 5 seconds — that is what '+
+        'queues it for analysis.</div>'));
   document.getElementById('coach-inner').innerHTML = html;
 }
 
