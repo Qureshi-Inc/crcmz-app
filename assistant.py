@@ -1717,6 +1717,167 @@ def _ig_clips_recent(limit: int = 20) -> list:
     return ig_mod.recent(limit=max(1, min(int(limit or 20), 100)))
 
 
+# ── Agent task queue ────────────────────────────────────────────────────────
+
+@write_tool(
+    "task_submit",
+    "File a backend implementation task for the AI agent. Write `body` as a "
+    "complete, self-contained prompt — include context, files to change, expected "
+    "behaviour, and how to verify. The agent reads `body` verbatim when it claims "
+    "the task; it has no access to the conversation that produced it. Higher "
+    "`priority` tasks are worked first (default 0). Rate limit: 200 per hour.",
+    {"type": "object",
+     "properties": {
+         "title":    {"type": "string",
+                      "description": "Short title, used as a commit-message prefix."},
+         "body":     {"type": "string",
+                      "description": "Full implementation prompt. Be specific about "
+                                     "files, behaviour, and verification steps."},
+         "priority": {"type": "integer",
+                      "description": "Higher runs first. Default 0."},
+     },
+     "required": ["title", "body"]})
+def _task_submit(caller: dict, title: str = "", body: str = "",
+                 priority: int = 0) -> dict:
+    import agent_tasks as at_mod
+    import mcp_oauth
+
+    title = (title or "").strip()
+    body  = (body or "").strip()
+    if not title:
+        return {"ok": False, "error": "title is required"}
+    if not body:
+        return {"ok": False, "error": "body is required"}
+
+    zid = caller.get("zitadel_id", "")
+    if not mcp_oauth.within_rate_limit(zid, "task_submit", 200, 3600):
+        return {"ok": False, "error": "rate limit: 200 tasks per hour"}
+
+    at_mod.init()
+    created_by = (caller.get("label") or zid or "unknown")
+    task_id = at_mod.submit(title, body,
+                            priority=max(0, int(priority or 0)),
+                            created_by=created_by)
+    mcp_oauth.audit_write(zid, "task_submit", f'{{"task_id": "{task_id}"}}', "ok")
+    return {"ok": True, "task_id": task_id}
+
+
+@tool(
+    "task_list",
+    "List tasks in the agent queue. Default status='open'. Also accepts "
+    "'in_progress', 'done', 'failed', or 'all'. Ordered by priority desc, "
+    "then oldest first within the same priority. `body` is included so the "
+    "agent can read the full prompt without a second call. Limit 1–100.",
+    {"type": "object",
+     "properties": {
+         "status": {"type": "string",
+                    "description": "open | in_progress | done | failed | all. Default open."},
+         "limit":  {"type": "integer", "description": "1–100. Default 20."},
+     }})
+def _task_list(status: str = "open", limit: int = 20) -> list:
+    import agent_tasks as at_mod
+    at_mod.init()
+    return at_mod.list_tasks(status=status or "open",
+                             limit=max(1, min(int(limit or 20), 100)))
+
+
+@write_tool(
+    "task_claim",
+    "Claim an open task before starting work. Atomic — only one agent can "
+    "claim a given task; returns ok=false if another agent beat you to it. "
+    "Always claim before implementing so the queue doesn't get double-worked. "
+    "Scope: task_claim.",
+    {"type": "object",
+     "properties": {
+         "task_id":    {"type": "string", "description": "Task id from task_list."},
+         "agent_name": {"type": "string",
+                        "description": "Identifier for this agent instance."},
+     },
+     "required": ["task_id", "agent_name"]})
+def _task_claim(caller: dict, task_id: str = "", agent_name: str = "") -> dict:
+    import agent_tasks as at_mod
+    import mcp_oauth
+
+    task_id    = (task_id or "").strip()
+    agent_name = (agent_name or "").strip()
+    if not task_id:
+        return {"ok": False, "error": "task_id is required"}
+    if not agent_name:
+        return {"ok": False, "error": "agent_name is required"}
+
+    zid = caller.get("zitadel_id", "")
+    at_mod.init()
+    ok = at_mod.claim(task_id, agent_name)
+    if ok:
+        mcp_oauth.audit_write(zid, "task_claim",
+                              f'{{"task_id": "{task_id}", "agent": "{agent_name}"}}', "ok")
+    return {"ok": ok,
+            **({"error": "task not found or already claimed"} if not ok else {})}
+
+
+@write_tool(
+    "task_complete",
+    "Mark a claimed task as done. Include result_notes with the commit SHA, "
+    "files touched, and how to verify the change. Only succeeds from "
+    "in_progress status. Scope: task_complete.",
+    {"type": "object",
+     "properties": {
+         "task_id":      {"type": "string", "description": "Task id."},
+         "result_notes": {"type": "string",
+                          "description": "What was done: commit SHA, files changed, "
+                                         "verification steps."},
+     },
+     "required": ["task_id"]})
+def _task_complete(caller: dict, task_id: str = "",
+                   result_notes: str = "") -> dict:
+    import agent_tasks as at_mod
+    import mcp_oauth
+
+    task_id = (task_id or "").strip()
+    if not task_id:
+        return {"ok": False, "error": "task_id is required"}
+
+    zid = caller.get("zitadel_id", "")
+    at_mod.init()
+    ok = at_mod.complete(task_id, result_notes=result_notes or "")
+    if ok:
+        mcp_oauth.audit_write(zid, "task_complete",
+                              f'{{"task_id": "{task_id}"}}', "ok")
+    return {"ok": ok,
+            **({"error": "task not found or not in_progress"} if not ok else {})}
+
+
+@write_tool(
+    "task_release",
+    "Return an in-progress task to open so it can be retried. Use when you "
+    "cannot complete the task — blocked, out of context, or wrong scope. "
+    "The note is appended to result_notes so the next agent sees why it was "
+    "released. Scope: task_claim.",
+    {"type": "object",
+     "properties": {
+         "task_id": {"type": "string", "description": "Task id."},
+         "note":    {"type": "string",
+                     "description": "Why the task was released (optional but helpful)."},
+     },
+     "required": ["task_id"]})
+def _task_release(caller: dict, task_id: str = "", note: str = "") -> dict:
+    import agent_tasks as at_mod
+    import mcp_oauth
+
+    task_id = (task_id or "").strip()
+    if not task_id:
+        return {"ok": False, "error": "task_id is required"}
+
+    zid = caller.get("zitadel_id", "")
+    at_mod.init()
+    ok = at_mod.release(task_id, note=note or "")
+    if ok:
+        mcp_oauth.audit_write(zid, "task_release",
+                              f'{{"task_id": "{task_id}"}}', "ok")
+    return {"ok": ok,
+            **({"error": "task not found or not in_progress"} if not ok else {})}
+
+
 COACH_TAGS = ("positioning", "rotation", "crosshair-placement", "timing",
               "decision-making", "movement", "gunskill", "map-awareness",
               "utility-usage", "communication", "clutch", "highlight", "fail")
