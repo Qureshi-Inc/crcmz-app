@@ -3039,6 +3039,84 @@ def _zid_for_psn(psn_user: str) -> str:
         return ""
 
 
+# How long after the last observed play sample a session is still considered
+# active for game-attribution purposes. Mirrors game_history.SESSION_GAP_SEC.
+_GAME_SESSION_GAP = 20 * 60  # seconds
+
+# The live game-list fetch is checked within this window of the clip timestamp.
+# 2 h covers brief AFK breaks between gameplay and sending the clip.
+_GAME_ATTRIBUTION_WINDOW = 2 * 60 * 60  # seconds
+
+
+def _game_from_sessions(sender: str, clip_ts: float) -> tuple[str, str] | tuple[None, None]:
+    """Look up game/title_id from observed play_sessions for sender at clip_ts."""
+    try:
+        import game_history as _gh
+        with _gh._conn() as db:
+            row = db.execute(
+                "SELECT game FROM play_sessions"
+                " WHERE online_id=? AND started_at<=? AND last_seen_at>=?"
+                " ORDER BY started_at DESC LIMIT 1",
+                (sender, clip_ts, clip_ts - _GAME_SESSION_GAP)).fetchone()
+            if row:
+                # look up title_id from game_titles by name
+                tid_row = db.execute(
+                    "SELECT title_id FROM game_titles"
+                    " WHERE online_id=? AND name=? LIMIT 1",
+                    (sender, row[0])).fetchone()
+                return row[0], (tid_row[0] if tid_row else "")
+    except Exception:  # noqa: BLE001
+        pass
+    return None, None
+
+
+def _game_from_live_titles(account_id: str, clip_ts: float) -> tuple[str, str] | tuple[None, None]:
+    """Fetch sender's game list live; pick the most recent title played within window."""
+    if not account_id:
+        return None, None
+    try:
+        import psn_data as _pd
+        titles = _pd.fetch_user_titles(account_id, psn_auth.access_token, limit=5)
+        best_name = best_tid = None
+        best_gap = _GAME_ATTRIBUTION_WINDOW + 1
+        for t in titles:
+            name = (t.get("name") or "").strip()
+            tid  = (t.get("titleId") or "").strip()
+            lp_str = t.get("lastPlayedDateTime") or ""
+            if not name or not lp_str:
+                continue
+            try:
+                import datetime as _dt
+                lp_ts = _dt.datetime.fromisoformat(
+                    lp_str.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                continue
+            gap = clip_ts - lp_ts
+            if 0 <= gap < best_gap:
+                best_gap = gap
+                best_name = name
+                best_tid  = tid
+        if best_name:
+            return best_name, best_tid or ""
+    except Exception:  # noqa: BLE001
+        pass
+    return None, None
+
+
+def _resolve_clip_game(sender: str, account_id: str,
+                       clip_ts: float) -> tuple[str, str] | tuple[None, None]:
+    """Best-effort game attribution for a clip.
+
+    Priority:
+    1. Local play_sessions (exact session overlap, no network call)
+    2. Live game-list fetch (handles gaps in session coverage)
+    """
+    game, tid = _game_from_sessions(sender, clip_ts)
+    if game:
+        return game, tid
+    return _game_from_live_titles(account_id, clip_ts)
+
+
 def _wants_coaching(caption: str) -> bool:
     """True when the clip's caption asks for a coaching review.
 
@@ -5428,6 +5506,38 @@ def _startup_backfill() -> None:
 
 _threading.Thread(target=_startup_backfill, name="app-events-backfill", daemon=True).start()
 
+
+def _backfill_game_names() -> None:
+    """One-time startup pass: attribute games to recent clips via play_sessions.
+
+    No network calls — uses only the local play_sessions DB. Clips from
+    sessions the presence poller didn't observe stay untagged and will get
+    a live attribution next time a new clip arrives from the same sender.
+    """
+    try:
+        since = _time.time() - 7 * 24 * 3600  # last 7 days
+        untagged = _clips.untagged_game_clips(since, limit=200)
+        tagged = 0
+        for clip in untagged:
+            clip_ts = clip.get("psn_created_at") or clip.get("created_at") or 0
+            sender  = clip.get("sender_online_id") or ""
+            uid     = clip.get("message_uid") or ""
+            if not clip_ts or not sender or not uid:
+                continue
+            game, tid = _game_from_sessions(sender, float(clip_ts))
+            if game:
+                _clips.set_game(uid, game, tid or "")
+                tagged += 1
+        if tagged:
+            logger.info("game_backfill: tagged %d/%d recent clips from sessions",
+                        tagged, len(untagged))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("game_backfill failed: %s", exc)
+
+
+_threading.Thread(target=_backfill_game_names, name="game-name-backfill",
+                  daemon=True).start()
+
 _video_seen: set[str] = set()
 _video_initialized: bool = False
 # Pending console-style triggers: sender -> {text, ts, expires_at}.
@@ -5928,6 +6038,7 @@ async def _start_squad_poller():
                                         "trigger_pending_consumed uid=%s "
                                         "sender=%s text=%r source=text_before_clip",
                                         uid, sender, body_text)
+                            sender_account_id = msg.get("senderAccountId") or ""
                             is_new = _clips.claim(
                                 uid, ugc_id, wm._group_id, wm._group_name,
                                 sender, psn_ts_ms, body_text,
@@ -5938,6 +6049,16 @@ async def _start_squad_poller():
                                     "clip_detected uid=%s ugcId=%s sender=%s group=%s",
                                     uid, ugc_id, sender, wm._group_name,
                                 )
+                                # Attribute the game without blocking the poller.
+                                _clip_ts = (psn_ts_ms / 1000.0
+                                            if psn_ts_ms else _time.time())
+                                _game, _tid = _resolve_clip_game(
+                                    sender, sender_account_id, _clip_ts)
+                                if _game:
+                                    _clips.set_game(uid, _game, _tid or "")
+                                    logger.info(
+                                        "clip_game uid=%s game=%r title_id=%r",
+                                        uid, _game, _tid)
                                 if _wants_coaching(body_text):
                                     # "rev" means analyse this, not share it: keep it
                                     # out of the montage and, in the worker below, out

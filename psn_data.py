@@ -351,6 +351,30 @@ def _recent_game(client: httpx.Client, token: str) -> dict:
     return _pick_recent_game(_fetch_titles(client, token))
 
 
+def fetch_user_titles(account_id: str, token: str,
+                      limit: int = 5) -> list[dict]:
+    """Fetch the game title list for any PSN account (not just 'me').
+
+    Returns the raw title dicts with at least: name, titleId, lastPlayedDateTime.
+    Returns [] on any error. Used to attribute game names to incoming clips.
+    """
+    if not account_id or not token:
+        return []
+    try:
+        with httpx.Client(timeout=10) as client:
+            r = client.get(
+                f"{GAMELIST}/users/{account_id}/titles",
+                params={"categories": "ps4_game,ps5_native_game",
+                        "limit": str(max(1, min(limit, 20)))},
+                headers=_headers(token),
+            )
+        if r.status_code != 200:
+            return []
+        return r.json().get("titles") or []
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _remember(online_id: str, titles: list[dict]) -> None:
     """Persist a title list, never letting a storage problem break the sweep.
 

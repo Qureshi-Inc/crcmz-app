@@ -97,6 +97,12 @@ def init() -> None:
         if "message_source" not in cols:
             db.execute("ALTER TABLE clips ADD COLUMN message_source TEXT")
             db.commit()
+        if "game_name" not in cols:
+            db.execute("ALTER TABLE clips ADD COLUMN game_name TEXT")
+            db.commit()
+        if "title_id" not in cols:
+            db.execute("ALTER TABLE clips ADD COLUMN title_id TEXT")
+            db.commit()
         # One-time backfill: clips inserted before message_source was added have a
         # non-null body but no source label. They all came from the poller's
         # _adjacent_caption window, so they are clip_caption.
@@ -277,6 +283,33 @@ def recent_untagged_by_sender(sender: str, group_id: str, since_ts: float) -> di
             " LIMIT 1",
             (sender, group_id, since_ts)).fetchone()
     return dict(row) if row else None
+
+
+def set_game(message_uid: str, game_name: str, title_id: str = "") -> None:
+    """Record the game a clip was captured from. No-op if already set."""
+    game_name = (game_name or "").strip()
+    if not game_name or not message_uid:
+        return
+    now = time.time()
+    with _lock, _conn() as db:
+        db.execute(
+            "UPDATE clips SET game_name=?, title_id=?, updated_at=?"
+            " WHERE message_uid=? AND (game_name IS NULL OR game_name='')",
+            (game_name, (title_id or "").strip() or None, now, message_uid))
+        db.commit()
+
+
+def untagged_game_clips(since_ts: float, limit: int = 200) -> list[dict]:
+    """Recent clips with no game_name, for startup backfill."""
+    with _conn() as db:
+        rows = db.execute(
+            "SELECT message_uid, sender_online_id, psn_created_at, created_at"
+            " FROM clips WHERE (game_name IS NULL OR game_name='')"
+            "   AND COALESCE(psn_created_at, created_at) >= ?"
+            " ORDER BY COALESCE(psn_created_at, created_at) DESC"
+            " LIMIT ?",
+            (since_ts, limit)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def set_ig_done(message_uid: str) -> None:

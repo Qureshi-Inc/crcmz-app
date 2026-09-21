@@ -657,6 +657,9 @@ def _squad() -> Any:
       "All three are semantically equivalent for trigger matching ('rev', '🔥', etc). "
       "null = no message. Old records may show the legacy value 'followup_text' "
       "(equivalent to text_after_clip). "
+      "`game` is the PSN game title the clip was captured from (e.g. 'Battlefield™ 6'); "
+      "`title_id` is the PSN title ID (e.g. 'PPSA19534_00'). Both are null for clips "
+      "ingested before this feature or when attribution failed. "
       "General PSN group chat is not stored, so this is the only PSN message text "
       "that exists. Pass a clip_id to clip_media_url to download the video. "
       "`sender` must be an exact PSN online ID.",
@@ -683,6 +686,8 @@ def _clips(limit: int = 10, sender: str = "", month: str = "") -> Any:
             "duration_seconds": r.get("duration_seconds"),
             "status": r.get("status"),
             "archived": r.get("archive_status") == "archived",
+            "game": r.get("game_name"),
+            "title_id": r.get("title_id"),
             "message": msg,
             "message_source": r.get("message_source") if msg else None,
         })

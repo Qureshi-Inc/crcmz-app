@@ -279,6 +279,8 @@ class PSNMessenger:
             messages.append({
                 "sender": (sender_obj.get("onlineId", "unknown")
                            if isinstance(sender_obj, dict) else str(sender_obj)),
+                "senderAccountId": (sender_obj.get("accountId", "")
+                                    if isinstance(sender_obj, dict) else ""),
                 "body": msg.get("body", ""),
                 "timestamp": msg.get("createdTimestamp", msg.get("messageUid", "")),
                 "messageUid": msg.get("messageUid", ""),
