@@ -52,6 +52,76 @@ def test_rev_trigger_word_boundary():
         assert not server._wants_coaching(c), "%r must NOT request coaching" % c
 
 
+# ── rev clips stay out of the normal pipeline ────────────────────────────────
+
+def test_rev_clip_is_archived_but_not_forwarded_or_montaged():
+    """A "rev" clip is a request for analysis, not something being shared. It must
+    still be archived, because that is what the coach pipeline fetches, but it must
+    reach neither WhatsApp, nor Discord, nor the montage."""
+    import server, clips, clip_store
+    # These are module constants read at import time, so setting os.environ here
+    # would be too late — server is already imported by the time this runs.
+    server.WA_BRIDGE_URL = "http://stub"
+    server.WA_GOOPERS_JID = "g@g.us"
+    clips.init()
+    real = [r for r in clips.list_clips(limit=300)
+            if r.get("archive_status") == "archived"
+            and clip_store.local_file(r.get("storage_key_original") or "")]
+    if not real:
+        return                      # no archived bytes in this image to replay
+    base = real[0]
+
+    sent = {"wa": [], "discord": []}
+    orig_wa, orig_dc = server._send_to_wa, server._send_to_discord
+    server._send_to_wa = lambda u, d, s_, b: sent["wa"].append(u) or "wa-1"
+    server._send_to_discord = lambda u, d, s_, b: sent["discord"].append(u)
+    try:
+        import uuid as _uuid
+        run = _uuid.uuid4().hex[:6]
+        for uid, body, is_rev in ((f"t-rev-{run}", "rev this", True),
+                                  (f"t-plain-{run}", "sick shot", False)):
+            clips.claim(uid, base["ugc_id"], "g", "G", "moiiz41510",
+                        1789956485000, body)
+            clips.set_archived(uid, base["storage_key_original"],
+                               file_size=base.get("file_size"),
+                               sha256=base.get("sha256"))
+            if is_rev:
+                clips.set_coaching_only(uid)
+            server._process_clip_job(uid, clips.get(uid))
+            if is_rev:
+                clips.set_coaching_done(uid)
+            row = clips.get(uid)
+            if is_rev:
+                assert uid not in sent["wa"], "a rev clip must not reach WhatsApp"
+                assert uid not in sent["discord"], "a rev clip must not reach Discord"
+                assert not row.get("montage_eligible"), \
+                    "a rev clip must not be montage-eligible"
+                assert row.get("whatsapp_delivered_at") is None, \
+                    "a clip that never went to WhatsApp must not record a delivery"
+                assert row.get("archive_status") == "archived", \
+                    "it must still be archived — that is what Muse fetches"
+                assert row.get("status") in ("delivered", "failed"), \
+                    "must be terminal, or the worker requeues it forever"
+            else:
+                assert uid in sent["wa"], "a normal clip must still go to WhatsApp"
+                assert row.get("montage_eligible"), \
+                    "a normal clip must stay montage-eligible"
+    finally:
+        server._send_to_wa, server._send_to_discord = orig_wa, orig_dc
+
+
+def test_coaching_clip_does_not_need_whatsapp_config():
+    """The WhatsApp config guard must not block a clip that never uses WhatsApp."""
+    import inspect
+    import server
+    src = inspect.getsource(server._process_clip_job)
+    assert "coaching_only = _wants_coaching(body)" in src
+    guard = src.index("WA_BRIDGE_URL or WA_GOOPERS_JID not configured")
+    flag = src.index("coaching_only = _wants_coaching(body)")
+    assert flag < guard, \
+        "the coaching check must precede the WhatsApp config guard"
+
+
 # ── scoped service tokens ────────────────────────────────────────────────────
 
 def test_service_token_resolves_with_its_scope():
@@ -206,11 +276,14 @@ def test_pending_review_is_not_notified():
 
 
 def test_claim_for_review_is_idempotent():
-    import coach
+    import coach, uuid
     coach.init()
-    first = coach.claim_for_review("test-clip-claim", "somebody")
+    # Unique per run: /data may be a mounted volume that survives between runs, and
+    # a fixed id would make this pass only the first time.
+    cid = "test-clip-claim-" + uuid.uuid4().hex[:8]
+    first = coach.claim_for_review(cid, "somebody")
     assert first, "first claim should create a review"
-    again = coach.claim_for_review("test-clip-claim", "somebody")
+    again = coach.claim_for_review(cid, "somebody")
     assert again is None, "re-seeing the same clip must not queue it twice"
 
 

@@ -189,6 +189,33 @@ def set_archived(
         db.commit()
 
 
+def set_coaching_only(message_uid: str) -> None:
+    """Mark a clip as coaching-only: kept out of the monthly montage.
+
+    A clip the sender tagged "rev" is a request for analysis, not something they
+    are sharing for the highlight reel, so it must not be swept into a montage.
+    """
+    with _lock, _conn() as db:
+        db.execute("UPDATE clips SET montage_eligible = 0, updated_at = ? "
+                   "WHERE message_uid = ?", (time.time(), message_uid))
+        db.commit()
+
+
+def set_coaching_done(message_uid: str) -> None:
+    """Terminal state for a coaching-only clip: archived, deliberately not sent.
+
+    Uses the 'delivered' status because that is what TERMINAL contains, and a clip
+    left in a non-terminal state is requeued forever. But wa_message_id and
+    whatsapp_delivered_at stay NULL — this clip never went to WhatsApp, and
+    recording a delivery timestamp would be a lie the UI and recent_clips repeat.
+    """
+    now = time.time()
+    with _lock, _conn() as db:
+        db.execute("UPDATE clips SET status='delivered', updated_at=? "
+                   "WHERE message_uid=?", (now, message_uid))
+        db.commit()
+
+
 def set_delivered(message_uid: str, wa_message_id: str | None = None) -> None:
     now = time.time()
     with _lock, _conn() as db:

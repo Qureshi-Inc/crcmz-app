@@ -5450,13 +5450,16 @@ def _process_clip_job(message_uid: str, job: dict) -> str | None:
     Raises ClipNotReady, ClipUnauthorized, ClipRateLimited, ClipError.
     Stage awareness: if already archived, loads from store and skips to send.
     """
-    if not WA_BRIDGE_URL or not WA_GOOPERS_JID:
-        raise ClipError("WA_BRIDGE_URL or WA_GOOPERS_JID not configured")
-
     ugc_id   = job["ugc_id"]
     sender   = job["sender_online_id"]
     group_id = job.get("psn_group_id", "")
     body     = job.get("body") or ""
+    # A coaching clip is downloaded and archived but never forwarded, so it must not
+    # be blocked by WhatsApp configuration it will never use. Checked after `body` is
+    # read, which is why this guard moved down from the top of the function.
+    coaching_only = _wants_coaching(body)
+    if not coaching_only and (not WA_BRIDGE_URL or not WA_GOOPERS_JID):
+        raise ClipError("WA_BRIDGE_URL or WA_GOOPERS_JID not configured")
 
     # ── Resume from archive if available ──────────────────────────────────────
     storage_key = job.get("storage_key_original")
@@ -5465,6 +5468,10 @@ def _process_clip_job(message_uid: str, job: dict) -> str | None:
         video_bytes = _cstore.load(storage_key)
         if not video_bytes:
             raise ClipError(f"archived clip missing from store: {storage_key}")
+        if coaching_only:
+            logger.info("clip_coaching_only uid=%s — archived, not forwarded",
+                        message_uid)
+            return None
         _send_to_discord(message_uid, video_bytes, sender, body)
         return _send_to_wa(message_uid, video_bytes, sender, body)
 
@@ -5499,6 +5506,11 @@ def _process_clip_job(message_uid: str, job: dict) -> str | None:
     )
 
     # ── Send ─────────────────────────────────────────────────────────────────
+    # A "rev" clip is archived so the coach pipeline can fetch it, then stops here.
+    # The archive above already ran, which is what clip_media_url serves to Muse.
+    if coaching_only:
+        logger.info("clip_coaching_only uid=%s — archived, not forwarded", message_uid)
+        return None
     _send_to_discord(message_uid, result.data, sender, body)
     return _send_to_wa(message_uid, result.data, sender, body)
 
@@ -5658,6 +5670,10 @@ async def _start_squad_poller():
                                     uid, ugc_id, sender, wm._group_name,
                                 )
                                 if _wants_coaching(body_text):
+                                    # "rev" means analyse this, not share it: keep it
+                                    # out of the montage and, in the worker below, out
+                                    # of WhatsApp and Discord too.
+                                    _clips.set_coaching_only(uid)
                                     rid = _coach.claim_for_review(
                                         uid, sender, zitadel_id=_zid_for_psn(sender))
                                     if rid:
@@ -5710,7 +5726,12 @@ async def _start_squad_poller():
                         exc_info = ("error", f"unexpected: {e}", 0)
 
                     if exc_info is None:
-                        _clips.set_delivered(uid, wa_msg_id)
+                        # A coaching clip is archived but never forwarded, so it must
+                        # not be recorded as WhatsApp-delivered.
+                        if _wants_coaching(job.get("body") or ""):
+                            _clips.set_coaching_done(uid)
+                        else:
+                            _clips.set_delivered(uid, wa_msg_id)
                         continue
 
                     kind, error_msg, extra = exc_info
