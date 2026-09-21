@@ -533,6 +533,108 @@ def test_player_profile_tool_registered_and_read_only():
         "characterisation data is a read; it must not sit in the write registry"
 
 
+# ── coach dashboard template ─────────────────────────────────────────────────
+
+def _coach_js_source():
+    """The AI Coach JS section extracted verbatim from the dashboard template."""
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "server.py")).read()
+    m = re.search(r"(let coachLoaded = false, coachScope = 'me', coachOpen = null;.*?)"
+                  r"\n\nconst PANEL_LOADERS", src, re.S)
+    assert m, "coach JS section moved — update the extractor"
+    return m.group(1)
+
+
+def _node_eval(js_body):
+    """Run JS through node, skipping cleanly where node is unavailable."""
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which("node"):
+        print("    (node unavailable — skipped)")
+        return None
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(js_body)
+        path = f.name
+    try:
+        r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
+    finally:
+        os.unlink(path)
+    assert r.returncode == 0, "node failed: %s" % (r.stderr or r.stdout)
+    return r.stdout
+
+
+def test_coach_template_has_focus_hero():
+    """The redesign's landmarks must survive future template edits."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "server.py")).read()
+    for marker in ("coach-hero", "coach-prefs", "coachTrend", "coachHero",
+                   "coachGradeVal", "Mistake patterns", "Trajectory",
+                   "Next session:", "coach-mis-row"):
+        assert marker in src, "template lost %r" % marker
+    assert "Recurring mistakes</h4>" not in src, \
+        "the old section name is gone — 1x sightings are not recurring"
+
+
+def test_coach_js_parses():
+    out = _node_eval("'use strict';\n" + _coach_js_source() +
+                     "\nconsole.log('parsed ok');")
+    if out is not None:
+        assert "parsed ok" in out
+
+
+def test_coach_grade_math():
+    """S=5..D=1, modifiers nudge a third of a step; C+ keeps its orange."""
+    out = _node_eval(_coach_js_source() + """
+const cases = [['S',5],['A',4],['B',3],['C',2],['D',1],
+  ['C+',2.33],['B-',2.67],['A+',4.33],['s',5],[' c+ ',2.33],['D-',0.67]];
+for (const [g, want] of cases) {
+  const got = coachGradeVal(g);
+  if (got === null || Math.abs(got - want) > 0.01)
+    throw new Error(g + ': got ' + got + ', want ' + want);
+}
+for (const bad of ['', null, undefined, 'F', 'n/a'])
+  if (coachGradeVal(bad) !== null) throw new Error('expected null for ' + bad);
+if (coachGradeCol('C+') !== '#ffb454') throw new Error('C+ must stay orange');
+if (coachGradeCol('B-') !== '#6cb6ff') throw new Error('B- must stay blue');
+if (coachGradeCol('S') !== '#ffd447') throw new Error('S color');
+console.log('grade math ok');
+""")
+    if out is not None:
+        assert "grade math ok" in out
+
+
+def test_coach_hero_handles_empty_and_single():
+    """Empty state coaches the user to post; one review shows no delta."""
+    out = _node_eval(_coach_js_source() + """
+const empty = {reviews: [], charts: {mistakes: []}};
+const h0 = coachHero(empty, 'me');
+if (!/No completed reviews yet/.test(h0)) throw new Error('empty hero: ' + h0.slice(0,120));
+if (!/nothing to plot yet/.test(h0)) throw new Error('empty trajectory: ' + h0.slice(0,120));
+const one = {reviews: [{review_id:'r1', grade:'C+', game:'ARC Raiders',
+  created_at: 1789983000, coaching_tips:['Disengage on first contact']}],
+  charts: {mistakes: []}};
+const h1 = coachHero(one, 'me');
+if (!/C\\+/.test(h1)) throw new Error('single hero lost the grade');
+if (/\u25b2|\u25bc/.test(h1)) throw new Error('no previous review, so no delta allowed');
+if (!/Next session:/.test(h1)) throw new Error('single hero should still give a drill');
+if (!/not enough reviews yet/.test(h1)) throw new Error('single-review trend honesty');
+const two = {reviews: [
+    {review_id:'r2', grade:'C+', game:'ARC Raiders', created_at: 1789983000, coaching_tips:['t']},
+    {review_id:'r1', grade:'C', game:'ARC Raiders', created_at: 1789896600, coaching_tips:['t']}],
+  charts: {mistakes: [{label:'Ignored the objective clock', count:2, reviews:['r2','r1']}]}};
+const h2 = coachHero(two, 'me');
+if (!/\u25b2 up from C/.test(h2)) throw new Error('delta missing: ' + h2.slice(0,200));
+if (!/Showing up <b>2\\u00d7<\\/b>/.test(h2)) throw new Error('top habit missing');
+const hs = coachHero(two, 'squad');
+if (!/Squad focus/.test(hs)) throw new Error('squad label: ' + hs.slice(0,120));
+console.log('hero states ok');
+""")
+    if out is not None:
+        assert "hero states ok" in out
+
+
 if __name__ == "__main__":
     print("coaching pipeline")
     for name, fn in sorted(globals().items()):

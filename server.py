@@ -6982,7 +6982,41 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .coach-proc-when{flex:0 0 auto;font-size:11.5px}
   .coach-empty{color:#8b96a8;font-size:13px;padding:14px;background:rgba(255,255,255,.03);
     border-radius:10px;line-height:1.6}
+  /* ── focus hero: the page should coach, not just tabulate ── */
+  .coach-prefs{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .coach-hero{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;
+    background:linear-gradient(135deg,rgba(255,47,214,.09),rgba(34,230,255,.05));
+    border:1px solid rgba(255,47,214,.28);border-radius:14px;
+    padding:16px;margin-bottom:16px}
+  .coach-hero h4{margin:0 0 10px;font-size:11px;text-transform:uppercase;
+    letter-spacing:1.1px;color:var(--neon);font-weight:700}
+  .coach-focus-grade{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+  .coach-focus-grade .g{font-size:36px;font-weight:800;line-height:1;
+    text-shadow:0 0 18px currentColor}
+  .coach-delta{font-size:12.5px;font-weight:700;white-space:nowrap}
+  .coach-delta.up{color:#3ddc9a} .coach-delta.down{color:#ff5570}
+  .coach-delta.flat{color:#8b96a8}
+  .coach-focus-line{font-size:13.5px;line-height:1.55;margin:0 0 10px;
+    overflow-wrap:anywhere;color:#d7dde8}
+  .coach-focus-line b{color:#ffb454}
+  .coach-drill{font-size:13px;line-height:1.5;margin:0;padding:10px 12px;
+    background:rgba(108,182,255,.08);border:1px solid rgba(108,182,255,.28);
+    border-radius:9px;overflow-wrap:anywhere;color:#d7dde8}
+  .coach-drill b{color:#6cb6ff}
+  .coach-trend{width:100%;height:132px;display:block}
+  .coach-trend-lbl{font-size:9px;fill:#8b96a8;font-weight:700}
+  /* collapsed report titles clamp to two lines so the list scans */
+  .coach-card:not(.open) .coach-title{display:-webkit-box;-webkit-line-clamp:2;
+    -webkit-box-orient:vertical;overflow:hidden}
+  /* zero-count grade rows stay on the axis but recede */
+  .coach-bar-row.zero{opacity:.35}
+  /* a 1x mistake is a note, not a pattern: keep it neutral */
+  .coach-mis-row.solo .coach-mis-n{color:#8b96a8}
+  .coach-mis-row.solo .coach-mis-track i{background:#8b96a8}
+  .coach-sub{font-size:11px;color:#8b96a8;margin:-6px 0 11px;font-weight:500}
   @media(max-width:620px){
+    .coach-hero{grid-template-columns:1fr}
+    .coach-prefs{width:100%}
     .coach-top{flex-direction:column;align-items:stretch}
     .coach-grid{grid-template-columns:1fr}
     .coach-stat-wide{grid-column:span 2}
@@ -8876,30 +8910,110 @@ function coachWhen(ts){
 }
 const COACH_GRADE_COLOR = {S:'#ffd447', A:'#3ddc9a', B:'#6cb6ff', C:'#ffb454', D:'#ff5570'};
 
+/* Grade -> number for trend math. S=5 down to D=1; a modifier nudges a third
+   of a step, so C+ (2.33) still reads above C (2) without pretending to be B. */
+function coachGradeVal(g){
+  const s = String(g||'').toUpperCase().trim();
+  const base = {S:5,A:4,B:3,C:2,D:1}[s.charAt(0)];
+  if(base == null) return null;
+  return base + (s.indexOf('+') >= 0 ? 0.33 : s.indexOf('-') >= 0 ? -0.33 : 0);
+}
+/* Badge/bar colour for a grade, modifier included: C+ is still orange. */
+function coachGradeCol(g){
+  const s = String(g||'').toUpperCase();
+  return COACH_GRADE_COLOR[s] || COACH_GRADE_COLOR[s.charAt(0)] || '#8b96a8';
+}
+
 /* Horizontal bars. Values are drawn as a share of the largest, so a single
    review does not render as an empty chart. */
 function coachBars(rows, color){
   if(!rows || !rows.length) return '<div class="coach-empty">no data yet</div>';
   const max = Math.max.apply(null, rows.map(r => r.count)) || 1;
-  return '<div class="coach-bars">' + rows.map(r =>
-    '<div class="coach-bar-row">' +
+  return '<div class="coach-bars">' + rows.map(r => {
+    // Grades call without an explicit colour; a modifier like C+ falls back to
+    // its base letter so the chart keeps one colour per grade.
+    const c = color || coachGradeCol(r.label);
+    return '<div class="coach-bar-row'+(r.count ? '' : ' zero')+'">' +
       '<span class="coach-bar-lbl" title="'+coachEsc(r.label)+'">'+coachEsc(r.label)+'</span>' +
       '<span class="coach-bar-track"><i style="width:'+
-        Math.max(2, r.count/max*100).toFixed(1)+'%;background:'+
-        (color || (COACH_GRADE_COLOR[r.label] || 'var(--neon)'))+'"></i></span>' +
+        Math.max(2, r.count/max*100).toFixed(1)+'%;background:'+c+'"></i></span>' +
       '<span class="coach-bar-n">'+r.count+'</span>' +
-    '</div>').join('') + '</div>';
+    '</div>';
+  }).join('') + '</div>';
 }
-/* Sparkline of reviews per day. */
+/* Sparkline of reviews per day. Drawn with headroom and a zero baseline so a
+   flat 1/day line reads as quiet, not maxed out. */
 function coachSpark(rows){
   if(!rows || rows.length < 2) return '';
   const max = Math.max.apply(null, rows.map(r => r.count)) || 1;
-  const w = 100, h = 28, step = w / (rows.length - 1);
-  const pts = rows.map((r,i) => (i*step).toFixed(2)+','+(h - r.count/max*(h-4)).toFixed(2));
+  const w = 100, h = 28, step = w / (rows.length - 1), top = max * 1.25;
+  const pts = rows.map((r,i) => (i*step).toFixed(2)+','+(h - 3 - r.count/top*(h-7)).toFixed(2));
   return '<svg class="coach-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" '+
     'aria-label="reviews per day">' +
+    '<line x1="0" y1="'+(h-1)+'" x2="'+w+'" y2="'+(h-1)+'" stroke="rgba(255,255,255,.14)" stroke-width="1"/>' +
     '<polyline fill="none" stroke="var(--neon)" stroke-width="1.5" points="'+pts.join(' ')+'"/>' +
     '</svg>';
+}
+/* Grade trajectory: last 12 completed reviews, oldest -> newest, on an S..D
+   grid. Answers "am I improving?" at a glance. */
+function coachTrend(reviews){
+  const pts = (reviews||[]).filter(r => coachGradeVal(r.grade) != null)
+    .slice(0, 12).reverse();
+  if(pts.length < 2) return '<div class="coach-empty">not enough reviews yet</div>';
+  const w = 240, h = 132, padL = 20, padB = 8, padT = 10;
+  const y = v => padT + (1 - (v - 0.67) / (5.33 - 0.67)) * (h - padT - padB);
+  const x = i => padL + i * (w - padL - 10) / (pts.length - 1);
+  const grid = ['S','A','B','C','D'].map((g,i) =>
+    '<line x1="'+padL+'" y1="'+y(5-i).toFixed(1)+'" x2="'+w+'" y2="'+y(5-i).toFixed(1)+
+    '" stroke="rgba(255,255,255,.08)"/>' +
+    '<text x="4" y="'+(y(5-i)+3).toFixed(1)+'" class="coach-trend-lbl">'+g+'</text>').join('');
+  const line = pts.map((r,i) =>
+    x(i).toFixed(1)+','+y(coachGradeVal(r.grade)).toFixed(1)).join(' ');
+  const dots = pts.map((r,i) =>
+    '<circle cx="'+x(i).toFixed(1)+'" cy="'+y(coachGradeVal(r.grade)).toFixed(1)+
+    '" r="5" fill="'+coachGradeCol(r.grade)+'" stroke="#05030f" stroke-width="1.5"><title>'+
+    coachEsc(r.grade)+' · '+coachEsc(r.game||'')+' · '+coachWhen(r.created_at)+'</title></circle>'
+  ).join('');
+  return '<svg class="coach-trend" viewBox="0 0 '+w+' '+h+'" role="img" aria-label="grade trend">'+
+    grid +
+    '<polyline fill="none" stroke="var(--neon)" stroke-width="1.5" points="'+line+'"/>' +
+    dots + '</svg>';
+}
+/* The page's job is to coach, not just tabulate: latest grade with its move,
+   the pattern that keeps repeating, and one drill for next session. */
+function coachHero(d, scope){
+  const revs = d.reviews || [];
+  const who = scope === 'squad' ? 'Squad' : 'Your';
+  if(!revs.length){
+    return '<div class="coach-hero"><div><h4>'+who+' focus</h4>'+
+      '<p class="coach-focus-line">No completed reviews yet. Post a clip in the PSN group '+
+      'and send <b>rev</b> as its own message within about 5 seconds — that is what '+
+      'queues it for analysis.</p></div>'+
+      '<div><h4>Trajectory</h4><div class="coach-empty">nothing to plot yet</div></div></div>';
+  }
+  const latest = revs[0], prev = revs[1];
+  const lv = coachGradeVal(latest.grade), pv = prev ? coachGradeVal(prev.grade) : null;
+  let delta = '';
+  if(lv != null && pv != null){
+    if(lv > pv) delta = '<span class="coach-delta up">▲ up from '+coachEsc(prev.grade)+'</span>';
+    else if(lv < pv) delta = '<span class="coach-delta down">▼ down from '+coachEsc(prev.grade)+'</span>';
+    else delta = '<span class="coach-delta flat">= holding '+coachEsc(latest.grade)+'</span>';
+  }
+  const gradeHtml = latest.grade
+    ? '<div class="coach-focus-grade"><span class="g" style="color:'+
+      coachGradeCol(latest.grade)+'">'+coachEsc(latest.grade)+'</span>'+delta+'</div>' : '';
+  const mis = (d.charts && d.charts.mistakes) || [];
+  const top = mis.filter(m => m.count >= 2)[0];
+  const focusLine = top
+    ? '<p class="coach-focus-line">Showing up <b>'+top.count+'×</b>: '+coachEsc(top.label)+'</p>'
+    : '<p class="coach-focus-line">No repeated mistakes yet — '+
+      (revs.length < 3 ? 'early days, keep the clips coming.'
+                      : 'a clean sheet across '+revs.length+' reviews.')+'</p>';
+  const tip = (latest.coaching_tips && latest.coaching_tips[0]) || '';
+  const drill = tip ? '<p class="coach-drill"><b>Next session:</b> '+coachEsc(tip)+'</p>' : '';
+  return '<div class="coach-hero"><div><h4>'+who+' focus</h4>'+
+    gradeHtml + focusLine + drill + '</div>'+
+    '<div><h4>Trajectory</h4>'+coachTrend(revs)+'</div></div>';
 }
 
 function coachCard(r, i){
@@ -8980,16 +9094,18 @@ function coachRender(d){
 
   // Recurring mistakes are full sentences and the highest-value text on the page,
   // so they get wrapped rows rather than the truncating bar layout. Tapping one
-  // opens the review it came from.
+  // opens the review it came from. A 1x sighting is a note, not a pattern, and
+  // renders neutral; only 2x+ gets the red habit treatment.
   const mistakeRows = (rows) => {
     if(!rows || !rows.length) return '<div class="coach-empty">no data yet</div>';
     const max = Math.max.apply(null, rows.map(r => r.count)) || 1;
     return '<div class="coach-mis">' + rows.map(r => {
       const ev = (r.reviews || []);
+      const cls = 'coach-mis-row' + (ev.length ? ' link' : '') + (r.count < 2 ? ' solo' : '');
       const click = ev.length
-        ? ' onclick="coachToggle(\''+coachEsc(ev[0])+'\',1)" class="coach-mis-row link"'
-        : ' class="coach-mis-row"';
-      return '<div'+click+'>' +
+        ? ' onclick="coachToggle(\''+coachEsc(ev[0])+'\',1)"'
+        : '';
+      return '<div class="'+cls+'"'+click+'>' +
         '<div class="coach-mis-top">' +
           '<span class="coach-mis-n">'+r.count+'\u00d7</span>' +
           '<span class="coach-mis-txt">'+coachEsc(r.label)+'</span>' +
@@ -9009,19 +9125,18 @@ function coachRender(d){
       '<button class="coach-tab'+(coachScope==='squad'?' on':'')+
         '" onclick="coachSetScope(\'squad\')">Squad ('+(n.squad||0)+')</button>' +
     '</div>' +
-    '<div class="coach-notify">' +
-      '<span class="coach-nlbl">Notify me</span>' +
+    '<div class="coach-prefs">' +
+      '<span class="coach-nlbl">Notify</span>' +
       modeBtn('group','Group','Post in the WhatsApp group') +
       modeBtn('dm','DM','Direct message me instead') +
       modeBtn('off','Off','No notification') +
+      (mode === 'off' ? '' :
+        '<span class="coach-nlbl">Shows</span>' +
+        detBtn('full','Report','Send the full write-up in the message') +
+        detBtn('link','Link only','Keep the write-up on the platform')) +
     '</div>' +
-    (mode === 'off' ? '' :
-    '<div class="coach-notify">' +
-      '<span class="coach-nlbl">Message shows</span>' +
-      detBtn('full','Report','Send the full write-up in the message') +
-      detBtn('link','Link only','Keep the write-up on the platform') +
-    '</div>') +
   '</div>' +
+  coachHero(d, coachScope) +
   '<div class="coach-stats">' +
     '<div class="coach-stat"><b>'+(n.complete||0)+'</b><span>reviews</span></div>' +
     '<div class="coach-stat"><b>'+(n.processing||0)+'</b><span>processing</span></div>' +
@@ -9031,7 +9146,8 @@ function coachRender(d){
   '<div class="coach-grid">' +
     '<div class="coach-panel"><h4>Grades</h4>'+coachBars(c.grades||[])+'</div>' +
     '<div class="coach-panel"><h4>Themes</h4>'+coachBars(c.tags||[], 'var(--neon)')+'</div>' +
-    '<div class="coach-panel coach-panel-wide"><h4>Recurring mistakes</h4>'+
+    '<div class="coach-panel coach-panel-wide"><h4>Mistake patterns</h4>'+
+      '<div class="coach-sub">\u00d72 or more means it\u2019s a habit \u2014 tap to see the report</div>'+
       mistakeRows(c.mistakes||[])+'</div>' +
     (coachScope==='squad'
       ? '<div class="coach-panel"><h4>Reviews per player</h4>'+
