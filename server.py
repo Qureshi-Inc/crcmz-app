@@ -3370,8 +3370,15 @@ def api_clip_media(uid: str, request: Request):
         raise HTTPException(status_code=404, detail="clip not found")
     key = row.get("storage_key_original")
     if not key or row.get("archive_status") != "archived":
-        raise HTTPException(status_code=409,
-                            detail="clip is not archived yet — no media to serve")
+        # Healing: derived key may exist in the store even when the DB flag is stale
+        derived = _cstore.storage_key(message_uid, row.get("psn_created_at"))
+        if _cstore.exists(derived):
+            logger.warning("clip media: healing stale archive_status uid=%s", message_uid)
+            _clips.set_archived(message_uid, derived)
+            key = derived
+        else:
+            raise HTTPException(status_code=409,
+                                detail="clip is not archived yet — no media to serve")
 
     who = (caller or {}).get("zitadel_id", "shared-token")
     logger.info("clip media served uid=%s key=%s caller=%s", message_uid, key, who)
@@ -5538,6 +5545,35 @@ def _backfill_game_names() -> None:
 _threading.Thread(target=_backfill_game_names, name="game-name-backfill",
                   daemon=True).start()
 
+
+def _heal_stale_archive_flags() -> None:
+    """Startup scan: flip archive_status to 'archived' for clips whose media
+    is already in the clip store but whose DB flag was never committed (e.g.
+    server crashed between _cstore.archive() and set_archived())."""
+    try:
+        since = _time.time() - 7 * 24 * 3600
+        candidates = _clips.non_archived_recent(since, limit=200)
+        healed = 0
+        for clip in candidates:
+            uid     = clip.get("message_uid") or ""
+            created = clip.get("psn_created_at")
+            if not uid:
+                continue
+            derived_key = _cstore.storage_key(uid, created)
+            if _cstore.exists(derived_key):
+                _clips.set_archived(uid, derived_key)
+                healed += 1
+                logger.info("clip_archive: healed stale flag at startup uid=%s", uid)
+        if healed:
+            logger.info("clip_archive: startup heal complete — fixed %d/%d clips",
+                        healed, len(candidates))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("clip_archive heal startup failed: %s", exc)
+
+
+_threading.Thread(target=_heal_stale_archive_flags, name="archive-flag-heal",
+                  daemon=True).start()
+
 _video_seen: set[str] = set()
 _video_initialized: bool = False
 # Pending console-style triggers: sender -> {text, ts, expires_at}.
@@ -5715,6 +5751,25 @@ def _process_clip_job(message_uid: str, job: dict) -> str | None:
             return None
         _send_to_discord(message_uid, video_bytes, sender, body)
         return _send_to_wa(message_uid, video_bytes, sender, body)
+
+    # ── Healing path: archive write succeeded but set_archived() never ran ────
+    # Derived key is deterministic, so we can check for a stored file even when
+    # the DB flag is stale (e.g. server crashed after _cstore.archive() but
+    # before set_archived() committed).
+    _derived_key = _cstore.storage_key(message_uid, job.get("psn_created_at"))
+    if _cstore.exists(_derived_key):
+        logger.warning("clip_archive: healing stale archive_status uid=%s", message_uid)
+        _clips.set_archived(message_uid, _derived_key)
+        if coaching_only:
+            logger.info("clip_coaching_only uid=%s — healed, not forwarded", message_uid)
+            return None
+        if ig_only:
+            logger.info("clip_ig_only uid=%s — healed, awaiting IG post", message_uid)
+            return None
+        _healed = _cstore.load(_derived_key)
+        if _healed:
+            _send_to_discord(message_uid, _healed, sender, body)
+            return _send_to_wa(message_uid, _healed, sender, body)
 
     # ── Resolve + download ────────────────────────────────────────────────────
     _clips.mark(message_uid, _clips.RESOLVING)

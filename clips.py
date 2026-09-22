@@ -312,6 +312,18 @@ def untagged_game_clips(since_ts: float, limit: int = 200) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def non_archived_recent(since_ts: float, limit: int = 200) -> list[dict]:
+    """Recent clips whose archive_status is not 'archived', for startup healing."""
+    with _conn() as db:
+        rows = db.execute(
+            "SELECT message_uid, psn_created_at, sender_online_id FROM clips"
+            " WHERE archive_status != 'archived'"
+            "   AND COALESCE(psn_created_at, created_at) >= ?"
+            " ORDER BY COALESCE(psn_created_at, created_at) DESC LIMIT ?",
+            (since_ts, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def set_ig_done(message_uid: str) -> None:
     """Terminal state for an IG-posted clip: archived, not sent via WA bridge.
 

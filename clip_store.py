@@ -150,6 +150,17 @@ def stream(key: str, chunk_size: int = 1024 * 256):
             yield chunk
 
 
+def exists(key: str) -> bool:
+    """Cheap existence check without loading bytes."""
+    if CLIP_BUCKET:
+        try:
+            _s3_client().head_object(Bucket=CLIP_BUCKET, Key=key)
+            return True
+        except Exception:
+            return False
+    return (CLIP_LOCAL_DIR / key).exists()
+
+
 def available() -> bool:
     """True if storage is configured and writable."""
     if CLIP_BUCKET:
