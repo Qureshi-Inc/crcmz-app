@@ -3241,6 +3241,7 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
     else:
         for m in mis_list:
             m.pop("members", None)  # server-side bookkeeping, not API data
+    my_feedback = {} if squad_view else _coach.list_my_feedback(sub)
     if squad_view:
         reviews_out = [{
             "grade": r.get("grade") or "",
@@ -3264,6 +3265,10 @@ def api_coaching(request: Request, scope: str = "me", limit: int = 50):
             "coaching_tips": _n(r.get("coaching_tips")),
             "notable_moments": _n(r.get("notable_moments")),
             "tags": _n(r.get("tags")),
+            # voice_comms is private: only included for the owning player's own reviews.
+            # It must never appear in squad aggregates, mistake patterns, or sightings.
+            "voice_comms": r.get("voice_comms") if (r.get("zitadel_id") or "") == sub else None,
+            "my_feedback": my_feedback.get(r.get("review_id") or ""),
         } for r in complete[:limit]]
 
     return {
@@ -3331,6 +3336,40 @@ async def api_coaching_prefs(request: Request):
     return {"ok": True,
             "notify_mode": coach_prefs.get_mode(sub),
             "detail_mode": coach_prefs.get_detail(sub)}
+
+
+@app.post("/api/coaching/feedback")
+async def api_coaching_feedback(request: Request):
+    """Submit or update feedback on a coaching review.
+
+    One row per (review_id, player) — resubmitting updates the existing row.
+    Squad scoping: the review must exist in this platform's DB. Any authenticated
+    member of this squad may submit; a review that does not exist returns 404.
+    """
+    session = _get_session(request)
+    sub = (session or {}).get("sub", "") or ""
+    if not sub:
+        raise HTTPException(status_code=401, detail="sign in first")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    review_id = str(body.get("review_id") or "").strip()
+    if not review_id:
+        raise HTTPException(status_code=400, detail="review_id required")
+    if not _coach.get(review_id):
+        raise HTTPException(status_code=404, detail="review not found in this squad")
+    rating = str(body.get("rating") or "").strip()
+    if rating not in ("up", "down"):
+        raise HTTPException(status_code=400, detail="rating must be 'up' or 'down'")
+    tags = body.get("tags") or []
+    if not isinstance(tags, list):
+        tags = []
+    comment = str(body.get("comment") or "").strip()[:500]
+    fid = _coach.submit_feedback(review_id, sub, rating, tags, comment)
+    if not fid:
+        raise HTTPException(status_code=400, detail="feedback rejected — bad input")
+    return {"ok": True, "feedback_id": fid}
 
 
 @app.get("/api/clips/media")
@@ -7373,6 +7412,32 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     font-weight:700}
   .coach-sec h5.good{color:#3ddc9a} .coach-sec h5.bad{color:#ff5570}
   .coach-sec h5.tip{color:#6cb6ff}  .coach-sec h5.mom{color:#ffb454}
+  .coach-sec h5.vc{color:#b48aff}
+  .coach-voice-pre{margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;
+    overflow-wrap:anywhere;color:#c8cdd6;background:rgba(255,255,255,.03);
+    border:1px solid rgba(180,138,255,.15);border-radius:6px;padding:8px 10px}
+  .fb-widget{margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.07)}
+  .fb-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .fb-lbl{font-size:11px;color:#8b96a8;text-transform:uppercase;letter-spacing:.7px;flex:1}
+  .fb-thumb{font:inherit;font-size:18px;background:none;border:1px solid rgba(255,255,255,.12);
+    border-radius:6px;padding:3px 8px;cursor:pointer;color:#d7dde8;transition:border-color .15s}
+  .fb-thumb:hover{border-color:#6cb6ff}
+  .fb-thumb.fb-on{border-color:var(--neon);background:rgba(100,200,130,.12)}
+  .fb-tags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+  .fb-tag{font:inherit;font-size:11px;padding:3px 8px;border-radius:99px;cursor:pointer;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);color:#9ba8bb;
+    transition:all .15s}
+  .fb-tag:hover{border-color:#6cb6ff;color:#d7dde8}
+  .fb-tag.fb-tag-on{background:rgba(108,182,255,.15);border-color:#6cb6ff;color:#6cb6ff}
+  .fb-comment{width:100%;box-sizing:border-box;background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#d7dde8;
+    font:inherit;font-size:12px;padding:6px 8px;resize:vertical;min-height:54px;
+    margin-bottom:7px;outline:none}
+  .fb-comment:focus{border-color:#6cb6ff}
+  .fb-submit{font:inherit;font-size:12px;padding:5px 14px;border-radius:6px;cursor:pointer;
+    background:rgba(100,200,130,.15);border:1px solid #3ddc9a;color:#3ddc9a}
+  .fb-submit:hover{background:rgba(100,200,130,.25)}
+  .fb-saved{font-size:12px;color:#3ddc9a;margin-left:8px}
   .coach-sec ul{margin:0;padding-left:18px}
   .coach-sec li{font-size:13px;line-height:1.55;margin-bottom:4px;overflow-wrap:anywhere}
   .coach-mom-t{font-family:ui-monospace,monospace;font-size:11.5px;color:#ffb454;
@@ -9339,6 +9404,52 @@ document.addEventListener('click', e=>{
    purpose: this app must not depend on a CDN that can fail to load. */
 let coachLoaded = false, coachScope = 'me', coachOpen = null;
 let coachQ = '', coachGame = 'all', coachPlayer = 'all', coachSort = 'new';
+// feedback state per review_id: {rating, tags[], comment, _saved}
+const _coachFb = {};
+function _coachFbState(rid){ return _coachFb[rid] || (_coachFb[rid] = {rating:'',tags:[],comment:'',_saved:false}); }
+function coachFbRate(rid, r, e){
+  e.stopPropagation();
+  const s = _coachFbState(rid);
+  s.rating = (s.rating === r) ? '' : r;
+  s._saved = false;
+  _coachFbPatchCard(rid);
+}
+function coachFbTag(rid, tag, e){
+  e.stopPropagation();
+  const s = _coachFbState(rid);
+  const i = s.tags.indexOf(tag);
+  if(i >= 0) s.tags.splice(i,1); else s.tags.push(tag);
+  s._saved = false;
+  _coachFbPatchCard(rid);
+}
+function coachFbComment(rid, el, e){
+  e.stopPropagation();
+  _coachFbState(rid).comment = el.value;
+}
+async function coachFbSubmit(rid, e){
+  e.stopPropagation();
+  const s = _coachFbState(rid);
+  if(!s.rating){ alert('Pick 👍 or 👎 first.'); return; }
+  try{
+    const r = await fetch('/api/coaching/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({review_id:rid,rating:s.rating,tags:s.tags,comment:s.comment})});
+    if(!r.ok){ const t=await r.text(); alert('Error: '+t); return; }
+    s._saved = true;
+    _coachFbPatchCard(rid);
+  }catch(err){ alert('Submit failed: '+err.message); }
+}
+function _coachFbPatchCard(rid){
+  // Merge server data with local _coachFb state, re-render just this card.
+  if(!window._coachData) return;
+  const rev = (window._coachData.reviews||[]).find(r => r.review_id === rid);
+  if(!rev) return;
+  rev.my_feedback = _coachFb[rid];
+  const el = document.getElementById('coach-r-'+rid);
+  if(!el) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = coachCard(rev, true);
+  el.replaceWith(tmp.firstChild);
+}
 
 function coachEsc(s){
   return String(s==null?'':s).replace(/[&<>"']/g, c =>
@@ -9487,12 +9598,40 @@ function coachCard(r, i){
   const momentsSec = moments
     ? '<div class="coach-sec"><h5 class="mom">Notable moments</h5><ul>' +
       moments + '</ul></div>' : '';
+  const voiceSec = (r.voice_comms && r.is_mine)
+    ? '<div class="coach-sec coach-voice"><h5 class="vc">Squad voice</h5>' +
+      '<pre class="coach-voice-pre">'+coachEsc(r.voice_comms)+'</pre></div>'
+    : '';
+  const FEEDBACK_TAGS = ['wrong-grade','wrong-player','missed-moment','bad-tip','transcript-wrong','other'];
+  const fb = r.my_feedback || {};
+  const fbWidget = r.status === 'complete' ? (function(){
+    const rid = r.review_id;
+    const up = fb.rating === 'up', dn = fb.rating === 'down';
+    const tagChips = FEEDBACK_TAGS.map(t => {
+      const sel = (fb.tags||[]).includes(t);
+      return '<button class="fb-tag'+(sel?' fb-tag-on':'')+'" onclick="coachFbTag(\''+coachJsStr(rid)+'\',\''+t+'\',event)">'+coachEsc(t)+'</button>';
+    }).join('');
+    return '<div class="fb-widget" onclick="event.stopPropagation()">' +
+      '<div class="fb-row">' +
+        '<span class="fb-lbl">Feedback</span>' +
+        '<button class="fb-thumb'+(up?' fb-on':'')+'" title="Accurate" onclick="coachFbRate(\''+coachJsStr(rid)+'\',\'up\',event)">👍</button>' +
+        '<button class="fb-thumb'+(dn?' fb-on':'')+'" title="Inaccurate" onclick="coachFbRate(\''+coachJsStr(rid)+'\',\'down\',event)">👎</button>' +
+      '</div>' +
+      (fb.rating ? '<div class="fb-tags">'+tagChips+'</div>' +
+        '<textarea class="fb-comment" placeholder="Optional comment (max 500 chars)" maxlength="500" onchange="coachFbComment(\''+coachJsStr(rid)+'\',this,event)" onclick="event.stopPropagation()">'+coachEsc(fb.comment||'')+'</textarea>' +
+        '<button class="fb-submit" onclick="coachFbSubmit(\''+coachJsStr(rid)+'\',event)">Submit</button>'
+      : '') +
+      (fb._saved ? '<span class="fb-saved">✓ saved</span>' : '') +
+    '</div>';
+  })() : '';
   const body = open ? '<div class="coach-body">' +
       (r.summary ? '<p class="coach-sum">'+coachEsc(r.summary)+'</p>' : '') +
       list('Strengths', r.strengths, 'good') +
       list('Mistakes', r.mistakes, 'bad') +
       list('Coaching tips', r.coaching_tips, 'tip') +
       momentsSec +
+      voiceSec +
+      fbWidget +
       '</div>' : '';
   return '<div class="coach-card'+(open?' open':'')+'" id="coach-r-'+
     coachEsc(r.review_id)+'" onclick="coachToggle(\''+
@@ -9634,6 +9773,13 @@ function coachSetDetail(detail){ coachSetPref({detail:detail}); }
 
 function coachRender(d){
   window._coachData = d;
+  // Seed feedback state from server data so the widget shows prior submissions.
+  (d.reviews||[]).forEach(r => {
+    if(r.my_feedback && !_coachFb[r.review_id]){
+      _coachFb[r.review_id] = Object.assign(
+        {rating:'',tags:[],comment:'',_saved:true}, r.my_feedback);
+    }
+  });
   const c = d.charts || {}, n = d.counts || {};
   const mode = d.notify_mode || 'group';
   const detail = d.detail_mode || 'full';

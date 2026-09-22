@@ -31,6 +31,12 @@ def _conn() -> sqlite3.Connection:
     return c
 
 
+_FEEDBACK_TAGS = frozenset((
+    "wrong-grade", "wrong-player", "missed-moment",
+    "bad-tip", "transcript-wrong", "other",
+))
+
+
 def init() -> None:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock, _conn() as db:
@@ -79,6 +85,24 @@ def init() -> None:
             db.execute("ALTER TABLE coach_reviews ADD COLUMN notified_at REAL")
         if "voice_comms" not in cols:
             db.execute("ALTER TABLE coach_reviews ADD COLUMN voice_comms TEXT")
+        db.commit()
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS review_feedback (
+                id             TEXT PRIMARY KEY,
+                review_id      TEXT NOT NULL REFERENCES coach_reviews(review_id),
+                player_zid     TEXT NOT NULL,
+                squad_id       TEXT NOT NULL DEFAULT 'crcmz',
+                rating         TEXT NOT NULL CHECK(rating IN ('up','down')),
+                tags           TEXT NOT NULL DEFAULT '[]',
+                comment        TEXT,
+                created_at     REAL NOT NULL,
+                updated_at     REAL NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_feedback_player_review
+                ON review_feedback(review_id, player_zid);
+            CREATE INDEX IF NOT EXISTS idx_feedback_review
+                ON review_feedback(review_id);
+        """)
         db.commit()
     logger.info("coach: DB ready at %s", _DB_PATH)
 
@@ -327,6 +351,110 @@ def backfill_pending(limit: int = 5) -> list[dict]:
     except Exception as e:  # noqa: BLE001
         logger.warning("coach.backfill_pending failed: %s", e)
         return []
+
+
+def submit_feedback(review_id: str, player_zid: str, rating: str,
+                    tags: list[str], comment: str = "") -> str | None:
+    """Upsert a feedback row. Returns the feedback id, or None on bad input.
+
+    One row per (review_id, player_zid) — resubmitting updates rather than
+    inserting a duplicate. Tags are validated against the fixed set.
+    """
+    if not review_id or not player_zid:
+        return None
+    if rating not in ("up", "down"):
+        return None
+    valid_tags = [t for t in (tags or []) if t in _FEEDBACK_TAGS]
+    with _lock, _conn() as db:
+        exists = db.execute(
+            "SELECT id FROM review_feedback WHERE review_id=? AND player_zid=?",
+            (review_id, player_zid)).fetchone()
+        now = time.time()
+        if exists:
+            db.execute(
+                "UPDATE review_feedback SET rating=?, tags=?, comment=?, updated_at=?"
+                " WHERE review_id=? AND player_zid=?",
+                (rating, json.dumps(valid_tags), (comment or "").strip() or None,
+                 now, review_id, player_zid))
+            db.commit()
+            return exists["id"]
+        fid = str(uuid.uuid4())
+        db.execute(
+            "INSERT INTO review_feedback (id, review_id, player_zid, rating, tags, comment,"
+            " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            (fid, review_id, player_zid, rating,
+             json.dumps(valid_tags), (comment or "").strip() or None, now, now))
+        db.commit()
+        return fid
+
+
+def list_my_feedback(player_zid: str) -> dict[str, dict]:
+    """All feedback by this player, keyed by review_id."""
+    if not player_zid:
+        return {}
+    with _lock, _conn() as db:
+        rows = db.execute(
+            "SELECT * FROM review_feedback WHERE player_zid=?", (player_zid,)
+        ).fetchall()
+    out = {}
+    for row in rows:
+        d = dict(row)
+        try:
+            d["tags"] = json.loads(d.get("tags") or "[]")
+        except Exception:  # noqa: BLE001
+            d["tags"] = []
+        out[d["review_id"]] = d
+    return out
+
+
+def get_feedback(review_id: str, player_zid: str) -> dict | None:
+    with _lock, _conn() as db:
+        row = db.execute(
+            "SELECT * FROM review_feedback WHERE review_id=? AND player_zid=?",
+            (review_id, player_zid)).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["tags"] = json.loads(d.get("tags") or "[]")
+    except Exception:  # noqa: BLE001
+        d["tags"] = []
+    return d
+
+
+def feedback_patterns(since_ts: float, min_count: int = 2) -> list[dict]:
+    """Aggregate feedback by game for the weekly digest.
+
+    Returns per-game patterns where >= min_count players share a tag.
+    Player ids are never included — only counts and example review_ids.
+    """
+    with _lock, _conn() as db:
+        rows = db.execute(
+            """SELECT rf.review_id, rf.tags, cr.game
+               FROM review_feedback rf
+               JOIN coach_reviews cr ON cr.review_id = rf.review_id
+               WHERE rf.created_at >= ?""",
+            (since_ts,)).fetchall()
+
+    # (game, tag) -> {count, review_ids}
+    buckets: dict[tuple[str, str], dict] = {}
+    for row in rows:
+        game = (row["game"] or "unknown").strip() or "unknown"
+        try:
+            tags = json.loads(row["tags"] or "[]")
+        except Exception:  # noqa: BLE001
+            tags = []
+        for tag in tags:
+            key = (game, tag)
+            entry = buckets.setdefault(key, {"game": game, "tag": tag,
+                                             "count": 0, "review_ids": []})
+            entry["count"] += 1
+            rid = row["review_id"]
+            if rid not in entry["review_ids"]:
+                entry["review_ids"].append(rid)
+
+    return [v for v in sorted(buckets.values(), key=lambda x: -x["count"])
+            if v["count"] >= min_count]
 
 
 def count_by_status() -> dict[str, int]:
