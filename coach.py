@@ -77,6 +77,8 @@ def init() -> None:
             # sent once, on the pending -> complete transition: the analyser retries
             # submits, and without this column every retry would DM again.
             db.execute("ALTER TABLE coach_reviews ADD COLUMN notified_at REAL")
+        if "voice_comms" not in cols:
+            db.execute("ALTER TABLE coach_reviews ADD COLUMN voice_comms TEXT")
         db.commit()
     logger.info("coach: DB ready at %s", _DB_PATH)
 
@@ -123,6 +125,24 @@ def release_notification(review_id: str) -> None:
         db.execute("UPDATE coach_reviews SET notified_at=NULL WHERE review_id=?",
                    (review_id,))
         db.commit()
+
+
+def patch_voice_comms(review_id: str, content: str) -> bool:
+    """Add or replace the voice_comms section on an existing review. No-op on unknown id.
+
+    Returns True if a row was updated. Does NOT touch notified_at or any other
+    field — this is intentionally a narrow in-place patch so the WhatsApp
+    notification flow is never re-triggered.
+    """
+    content = (content or "").strip()
+    if not content or not review_id:
+        return False
+    with _lock, _conn() as db:
+        cur = db.execute(
+            "UPDATE coach_reviews SET voice_comms=? WHERE review_id=?",
+            (content, review_id))
+        db.commit()
+        return cur.rowcount > 0
 
 
 def claim_for_review(clip_id: str, psn_user: str = "", game: str = "",
@@ -240,6 +260,7 @@ def upsert(review_data: dict) -> str:
         # column list resets it to NULL on every resubmit, and the member gets
         # DM'd again each time the analyser retries.
         "notified_at",
+        "voice_comms",
     ]
     vals = [d.get(c) for c in cols]
     placeholders = ", ".join("?" * len(cols))
