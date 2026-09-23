@@ -2604,31 +2604,65 @@ def _bot_label() -> str:
 _BOT_LABEL = _bot_label()
 
 
+_SUMMARY_REQUEST_TEXTS = (
+    '%catch me up%', '%summarize%', '%what did i miss%',
+    '%tldr%', '%fill me in%', '%what happened%',
+)
+
+# Bot responses land in the DB under the user's own sender_jid with from_me=0
+# (the bridge echoes the bot's sent message back as an inbound). These are short
+# auto-phrases — match them so they don't anchor the catch-me-up window.
+_BOT_ECHO_PATTERNS = (
+    '%my ai machine%', '%brain glitch%', '%📋%', '%couldn%t find any messages%',
+    '%catchup for%', '%AI model is offline%', '%AI model timed out%',
+)
+
+
 def _messages_since_sender(sender_jid: str, group_jid: str) -> list[dict]:
-    """Return all messages in the group after sender's last message before this one."""
+    """Return all messages in the group after sender's last message before this one.
+
+    We want the anchor to be the last time the sender *actually spoke*, not the
+    last time the bot echoed a message under their JID. The WA bridge stores
+    bot-sent messages with from_me=0 under the sender's JID, which would otherwise
+    set the anchor to "right now" (the bot's most recent reply) and produce an
+    empty transcript. We filter those out with two exclusion lists:
+    summary-request phrases and known bot echo phrases.
+    """
     import sqlite3 as _sq
+    import time as _t
     try:
         conn = _sq.connect(_WA_DB_PATH)
         conn.row_factory = _sq.Row
-        # Find sender's most recent message before now (exclude from_me bot messages)
-        # Exclude the "catch me up" message itself so we find the prior message
-        row = conn.execute("""
-            SELECT timestamp FROM whatsapp_messages
-            WHERE group_jid = ? AND sender_jid = ? AND from_me = 0
-              AND LOWER(COALESCE(text,'')) NOT LIKE '%catch me up%'
-              AND LOWER(COALESCE(text,'')) NOT LIKE '%summarize%'
-              AND LOWER(COALESCE(text,'')) NOT LIKE '%what did i miss%'
-              AND LOWER(COALESCE(text,'')) NOT LIKE '%tldr%'
-              AND LOWER(COALESCE(text,'')) NOT LIKE '%fill me in%'
-              AND LOWER(COALESCE(text,'')) NOT LIKE '%what happened%'
-            ORDER BY timestamp DESC LIMIT 1
-        """, (group_jid, sender_jid)).fetchone()
+
+        def _not_summary_or_echo(col: str = "text") -> str:
+            parts = (
+                [f"LOWER(COALESCE({col},'')) NOT LIKE ?" for _ in _SUMMARY_REQUEST_TEXTS]
+                + [f"LOWER(COALESCE({col},'')) NOT LIKE ?" for _ in _BOT_ECHO_PATTERNS]
+            )
+            return " AND ".join(parts)
+
+        exclusions = list(_SUMMARY_REQUEST_TEXTS) + list(_BOT_ECHO_PATTERNS)
+
+        row = conn.execute(
+            f"""SELECT timestamp FROM whatsapp_messages
+               WHERE group_jid = ? AND sender_jid = ? AND from_me = 0
+                 AND {_not_summary_or_echo()}
+               ORDER BY timestamp DESC LIMIT 1""",
+            (group_jid, sender_jid) + tuple(exclusions),
+        ).fetchone()
+
+        now = int(_t.time())
         if not row:
-            # No prior message found — fall back to last 2 hours
-            import time as _t
-            since_ts = int(_t.time()) - 7200
+            since_ts = now - 7200
         else:
             since_ts = row["timestamp"]
+            # If the anchor is within the last 90 minutes, the window is very short.
+            # This usually means a bot echo or a "brb" message set the anchor recently
+            # with nothing new since. Expand to at least 4 hours so the sender actually
+            # gets a summary of activity they likely missed.
+            if now - since_ts < 5400:  # 90 min
+                expanded = now - 14400  # 4 hours
+                since_ts = min(since_ts, expanded)
         # from_me rows are the BOT's own messages, and they must be included. Without
         # them the transcript has a missing participant: "can you search the web" reads
         # as aimed at whichever human is nearest in the window, which is how a request
