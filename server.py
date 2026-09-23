@@ -2633,13 +2633,29 @@ def _messages_since_sender(sender_jid: str, group_jid: str) -> list[dict]:
         # them the transcript has a missing participant: "can you search the web" reads
         # as aimed at whichever human is nearest in the window, which is how a request
         # made to the bot got summarised as one member telling another what to build.
+        #
+        # The sender's own "catch me up" / summary-request message is excluded: it is
+        # in the DB with a timestamp after since_ts and would otherwise appear as the
+        # last line of the transcript ("Moiz asked to catch me up"), which the model
+        # faithfully reproduces as the final news item — making the summary useless.
         msgs = conn.execute("""
             SELECT sender_name, timestamp, text, has_photo, has_video, has_audio,
                    from_me
             FROM whatsapp_messages
             WHERE group_jid = ? AND timestamp > ?
+              AND NOT (
+                from_me = 0 AND sender_jid = ?
+                AND (
+                  LOWER(COALESCE(text,'')) LIKE '%catch me up%'
+                  OR LOWER(COALESCE(text,'')) LIKE '%summarize%'
+                  OR LOWER(COALESCE(text,'')) LIKE '%what did i miss%'
+                  OR LOWER(COALESCE(text,'')) LIKE '%tldr%'
+                  OR LOWER(COALESCE(text,'')) LIKE '%fill me in%'
+                  OR LOWER(COALESCE(text,'')) LIKE '%what happened%'
+                )
+              )
             ORDER BY timestamp ASC
-        """, (group_jid, since_ts)).fetchall()
+        """, (group_jid, since_ts, sender_jid)).fetchall()
         conn.close()
         return [dict(r) for r in msgs]
     except Exception as e:
@@ -2784,9 +2800,10 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
             _wa_typing(group_jid, True)
     _threading.Thread(target=_typing_loop, daemon=True).start()
 
+    import httpx as _hx
+    llm_error: str = ""
     try:
         base, _m, key = assistant._config()
-        import httpx as _hx
         r = _hx.post(f"{base}/chat/completions",
                      headers={"Authorization": f"Bearer {key}"} if key else {},
                      json={"model": _SUMMARY_MODEL,
@@ -2799,15 +2816,24 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
         r.raise_for_status()
         summary = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
         summary = _re.sub(r"<think>.*?</think>", "", summary, flags=_re.DOTALL).strip()
+    except _hx.ConnectError:
+        logger.warning("summarize: AI model unreachable (oMLX/Ollama offline)")
+        llm_error = "AI model is offline right now — start oMLX and try again."
+        summary = ""
+    except _hx.TimeoutException:
+        logger.warning("summarize: LLM timed out")
+        llm_error = "AI model timed out — it may be loading, try again in a moment."
+        summary = ""
     except Exception as e:
         logger.warning("summarize: LLM error: %s", e)
+        llm_error = "AI model error — try again."
         summary = ""
     finally:
         _stop_typing.set()
         _wa_typing(group_jid, False)
 
     if not summary:
-        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "brain glitched trying to summarize, try again")
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, llm_error or "couldn't generate summary, try again")
         return
 
     _tts_and_send(summary, group_jid)
