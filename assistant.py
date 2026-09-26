@@ -1888,11 +1888,15 @@ def _task_release(caller: dict, task_id: str = "", note: str = "") -> dict:
 
 @tool(
     "whatsapp_clip_reactions",
-    "Current emoji reactions on a PSN clip's WhatsApp message. Returns "
-    "tracked=true only for clips that were forwarded via the WA bridge (not "
-    "coaching-only or IG-only clips). reaction_count is the number of distinct "
-    "senders reacting right now (removals are reflected instantly). "
-    "Unknown clip_id returns tracked=false with reaction_count=0.",
+    "Current tap-reactions on a PSN clip's WhatsApp message. Returns "
+    "tracked=true only for clips forwarded via the WA bridge (not coaching-only "
+    "or IG-only clips). reaction_count is the number of distinct senders reacting "
+    "right now; removals are reflected instantly. The 'reactions' list contains "
+    "one entry per sender with fields: emoji (the exact Unicode emoji they tapped, "
+    "e.g. '🔥' or '🛑'), sender (display name), and at (ISO timestamp). Use the "
+    "emoji field to detect veto signals — a 🛑 tap-reaction means the sender "
+    "wants the clip suppressed, just like a 🛑 text message. "
+    "Unknown clip_id returns tracked=false with reaction_count=0 and reactions=[].",
     {"type": "object",
      "properties": {
          "clip_id": {"type": "string",
