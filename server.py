@@ -8168,11 +8168,6 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     border-color:rgba(255,80,80,.55); color:#ff6060;
     box-shadow:0 0 16px rgba(255,60,60,.25); }
   .wp-cam-note { font-size:12px; color:var(--dim); line-height:1.5; }
-  .wp-vol-bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-    margin-bottom:8px; padding:6px 0; }
-  .wp-vol-lbl { font-size:12px; color:var(--dim); white-space:nowrap; }
-  .wp-vol-slider { flex:1; min-width:80px; max-width:120px; accent-color:var(--neon);
-    cursor:pointer; }
   .wp-stage { position:relative; width:100%; aspect-ratio:16/9; border-radius:16px;
     overflow:hidden; background:#000; border:1px solid var(--line);
     box-shadow:0 18px 40px rgba(0,0,0,.5); }
@@ -8218,10 +8213,24 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-device-bar { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
   .wp-device-bar .sfield { font-size:12px; padding:8px 10px; flex:1;
     min-width:140px; margin-bottom:0; }
-  /* overlay off: cams sit in a centered row above the player. Auto margins
-     (not justify-content:center) so an overflowing row still scrolls to the start. */
-  .wp-tv-layout:not(.orbs-overlay) .wp-orbs > .wp-orb:first-child { margin-left:auto; }
-  .wp-tv-layout:not(.orbs-overlay) .wp-orbs > .wp-orb:last-child { margin-right:auto; }
+  /* overlay off, narrow screens: cams sit in a centered row above the player. Auto
+     margins (not justify-content:center) so an overflowing row still scrolls to the start. */
+  @media (max-width:1023px){
+    .wp-tv-layout:not(.orbs-overlay) .wp-orbs > .wp-orb:first-child { margin-left:auto; }
+    .wp-tv-layout:not(.orbs-overlay) .wp-orbs > .wp-orb:last-child { margin-right:auto; } }
+  /* overlay off, desktop: cams run down a column beside the player. contain:size keeps
+     the column from growing the row, so it scrolls at the player's height instead. */
+  @media (min-width:1024px){
+    .wp-tv-layout:not(.orbs-overlay):not(.wp-fs) { flex-direction:row-reverse;
+      align-items:stretch; gap:12px; }
+    .wp-tv-layout:not(.orbs-overlay):not(.wp-fs) .wp-stage { flex:1; min-width:0; }
+    .wp-tv-layout:not(.orbs-overlay):not(.wp-fs) .wp-orbs { flex:0 0 auto; width:88px;
+      contain:size; flex-direction:column; align-items:center; gap:8px; margin:0;
+      padding:2px 0; overflow-x:hidden; overflow-y:auto; scroll-snap-type:y proximity;
+      transition:width .26s cubic-bezier(.3,.8,.3,1); }
+    .wp-tv-layout:not(.orbs-overlay):not(.wp-fs) .wp-orbs:has(.big) { width:160px; }
+    .wp-tv-layout:not(.orbs-overlay):not(.wp-fs) .wp-orbs::-webkit-scrollbar { width:5px; }
+    .wp-tv-layout:not(.orbs-overlay):not(.wp-fs) .wp-orbs:empty { display:none; } }
   /* ── camera overlay mode ─────────────────────────────────────────────────── */
   .wp-tv-layout.orbs-overlay { position:relative; flex-direction:column !important; }
   .wp-tv-layout.orbs-overlay .wp-stage { flex:none !important; width:100% !important; }
@@ -8237,7 +8246,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-tv-layout.orbs-overlay .wp-orbs:hover { opacity:1; }
   /* lift the cams (and fullscreen chat) clear of the player's controls while they show */
   .wp-tv-layout.orbs-overlay.wp-ctrls .wp-orbs,
-  .wp-tv-layout.wp-fs.wp-ctrls .wp-orbs { bottom:62px; }
+  .wp-tv-layout.wp-fs.wp-ctrls .wp-orbs { bottom:84px; }
   .wp-tv-layout.orbs-overlay .wp-orbs::-webkit-scrollbar { display:none; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb { width:62px !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb-ring { width:56px !important; height:56px !important; }
@@ -8277,7 +8286,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     position:absolute; left:18px; bottom:16px; z-index:12;
     width:min(400px, calc(100vw - 36px)); pointer-events:none;
     transition:bottom .35s cubic-bezier(.3,.8,.3,1); }
-  .wp-tv-layout.wp-fs.wp-ctrls .wp-fsc { bottom:68px; }
+  .wp-tv-layout.wp-fs.wp-ctrls .wp-fsc { bottom:86px; }
   .wp-fsc-feed { display:flex; flex-direction:column; justify-content:flex-end; }
   .wp-fsc-msg { display:grid; grid-template-rows:1fr; margin-top:8px;
     animation:wpFscIn .5s cubic-bezier(.2,.9,.25,1.12) both;
@@ -8326,26 +8335,114 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     transform:scale(.8); opacity:0; transition:transform .25s ease, opacity .25s ease; }
   .wp-fsc-in:focus-within button { transform:scale(1); opacity:1; }
   @media (max-width:560px){ .wp-tv-layout.wp-fs .wp-fsc { left:10px; }
-    .wp-tv-layout.wp-fs.wp-ctrls .wp-fsc { bottom:58px; } }
+    .wp-tv-layout.wp-fs.wp-ctrls .wp-fsc { bottom:76px; } }
   @media (prefers-reduced-motion:reduce){
     .wp-fsc-msg { animation:none; transition:opacity .3s; }
     .wp-fsc-msg.out { transform:none; filter:none; } }
-  /* our fullscreen (player + cams); the player's own fullscreen is turned off.
-     Sits bottom-right, just above the player's control bar. */
-  .wp-fs-btn { position:absolute; right:10px; bottom:54px; z-index:13;
-    width:42px; height:42px; border-radius:12px; cursor:pointer; padding:0;
-    display:grid; place-items:center; color:#fff;
-    background:rgba(10,8,22,.5); border:1px solid rgba(255,255,255,.16);
-    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
-    opacity:0; transform:translateY(4px);
-    transition:opacity .25s ease, transform .25s ease, background .2s ease; }
-  .wp-fs-btn svg { width:22px; height:22px; }
-  .wp-fs-btn .ex, .wp-fs .wp-fs-btn .en { display:none; }
-  .wp-fs .wp-fs-btn .ex { display:block; }
-  .wp-tv-layout.wp-ctrls .wp-fs-btn, .wp-fs-btn:hover, .wp-fs-btn:focus-visible {
-    opacity:1; transform:none; }
-  .wp-fs-btn:hover { background:rgba(255,47,214,.35); }
-  @media (hover:none){ .wp-fs-btn { opacity:.75; transform:none; } }
+  /* ── custom player controls, overlaid on the stage ─────────────────────── */
+  .wp-stage { -webkit-user-select:none; user-select:none; }
+  .wp-tap { position:absolute; inset:0; z-index:5; -webkit-tap-highlight-color:transparent; }
+  .wp-tv-layout.wp-yt-fresh .wp-tap { pointer-events:none; }  /* first tap starts YouTube */
+  .wp-tv-layout.wp-fs.wp-idle, .wp-tv-layout.wp-fs.wp-idle * { cursor:none !important; }
+  .wp-flash { position:absolute; left:50%; top:50%; width:76px; height:76px;
+    margin:-38px 0 0 -38px; border-radius:50%; display:grid; place-items:center;
+    background:rgba(8,6,20,.5); color:#fff; opacity:0; pointer-events:none; z-index:6;
+    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
+  .wp-flash svg { width:34px; height:34px; }
+  .wp-flash.go { animation:wpFlash .65s cubic-bezier(.2,.8,.3,1); }
+  @keyframes wpFlash { 0% { opacity:.95; transform:scale(.7); }
+    100% { opacity:0; transform:scale(1.4); } }
+  .wp-bar { position:absolute; left:0; right:0; bottom:0; z-index:14;
+    padding:30px 12px 8px; pointer-events:none;
+    background:linear-gradient(to top, rgba(4,2,14,.88), rgba(4,2,14,.5) 55%, transparent);
+    opacity:0; transform:translateY(10px);
+    transition:opacity .28s ease, transform .28s cubic-bezier(.3,.8,.3,1); }
+  .wp-tv-layout.wp-ctrls .wp-bar { opacity:1; transform:none; pointer-events:auto; }
+  .wp-seek { position:relative; height:18px; margin:0 4px 2px; cursor:pointer;
+    touch-action:none; }
+  .wp-seek-track { position:absolute; left:0; right:0; top:50%; height:4px; margin-top:-2px;
+    border-radius:3px; background:rgba(255,255,255,.2); overflow:hidden;
+    transition:height .15s ease, margin-top .15s ease; }
+  .wp-seek:hover .wp-seek-track, .wp-seek.drag .wp-seek-track { height:6px; margin-top:-3px; }
+  .wp-seek-buf, .wp-seek-fill { position:absolute; left:0; top:0; bottom:0; width:0; }
+  .wp-seek-buf { background:rgba(255,255,255,.26); }
+  .wp-seek-fill { background:linear-gradient(90deg, var(--cyan), var(--neon)); }
+  .wp-seek-knob { position:absolute; top:50%; left:0; width:14px; height:14px;
+    margin:-7px 0 0 -7px; border-radius:50%; background:#fff; pointer-events:none;
+    box-shadow:0 0 0 4px rgba(255,47,214,.35), 0 2px 6px rgba(0,0,0,.5);
+    transform:scale(0); transition:transform .15s ease; }
+  .wp-seek:hover .wp-seek-knob, .wp-seek.drag .wp-seek-knob { transform:scale(1); }
+  .wp-seek-tip { position:absolute; bottom:20px; transform:translateX(-50%);
+    padding:3px 8px; border-radius:7px; font-size:12px; font-weight:700; color:#fff;
+    background:rgba(10,8,22,.88); border:1px solid rgba(255,255,255,.1);
+    font-variant-numeric:tabular-nums; white-space:nowrap; pointer-events:none;
+    opacity:0; transition:opacity .15s ease; }
+  .wp-seek:hover .wp-seek-tip, .wp-seek.drag .wp-seek-tip { opacity:1; }
+  .wp-tv-layout.wp-live .wp-seek { visibility:hidden; }
+  .wp-bar-row { display:flex; align-items:center; gap:2px; }
+  .wp-bar-sp { flex:1; min-width:4px; }
+  .wp-bar-div { flex:none; width:1px; height:22px; margin:0 5px; background:rgba(255,255,255,.16); }
+  .wp-cb { flex:none; position:relative; width:40px; height:40px; padding:0; border:0;
+    border-radius:12px; background:transparent; color:#fff; cursor:pointer;
+    display:grid; place-items:center; -webkit-tap-highlight-color:transparent;
+    transition:background .15s ease, color .15s ease, transform .12s ease; }
+  .wp-cb:hover { background:rgba(255,255,255,.13); }
+  .wp-cb:active { transform:scale(.9); }
+  .wp-cb:focus-visible { outline:2px solid var(--cyan); outline-offset:1px; }
+  .wp-cb svg { width:22px; height:22px; filter:drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+  .wp-cb.on { color:var(--neon); background:rgba(255,47,214,.16); }
+  .wp-cb.off { color:#ff6b7a; background:rgba(255,60,80,.18); }
+  .wp-cb.leave { color:#ff6b7a; }
+  .wp-cb.leave:hover { background:rgba(255,60,80,.3); color:#fff; }
+  .wp-cb.spin svg { animation:wpSpin .7s cubic-bezier(.3,.8,.3,1); }
+  @keyframes wpSpin { to { transform:rotate(360deg); } }
+  .wp-time { flex:none; padding:0 8px; font-size:13px; font-weight:600; color:#fff;
+    font-variant-numeric:tabular-nums; white-space:nowrap; text-shadow:0 1px 2px #000; }
+  .wp-tv-layout.wp-live .wp-time { color:#ff5a6e; font-weight:800; letter-spacing:.6px; }
+  .wp-volg { display:flex; align-items:center; flex:none; }
+  .wp-volg input { width:0; min-width:0; margin:0; padding:0; opacity:0;
+    accent-color:var(--neon); cursor:pointer;
+    transition:width .25s cubic-bezier(.3,.8,.3,1), opacity .2s ease, margin .25s ease; }
+  .wp-volg:hover input, .wp-volg:focus-within input { width:76px; opacity:1; margin:0 6px 0 2px; }
+  .wp-tv-layout.wp-nomedia .wp-media-only { display:none !important; }
+  @media (hover:none){ .wp-hide-touch { display:none !important; } }
+  @media (max-width:520px){
+    .wp-bar { padding:26px 6px 4px; }
+    .wp-cb { width:37px; height:37px; border-radius:11px; }
+    .wp-cb svg { width:21px; height:21px; }
+    .wp-time { font-size:12px; padding:0 4px; }
+    .wp-bar-div { margin:0 2px; }
+    .wp-hide-sm { display:none !important; } }
+  /* per-person menu (long-press / right-click a camera tile) */
+  .wp-orb { -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
+  .wp-orb-inner video.novid { opacity:0; }
+  .wp-orb.pmuted .wp-orb-ring::after { content:"🔇"; position:absolute; left:4px; top:4px;
+    font-size:10px; line-height:1; padding:2px 3px; border-radius:6px;
+    background:rgba(0,0,0,.65); }
+  .wp-pop { position:fixed; z-index:10001; width:236px; box-sizing:border-box; padding:8px;
+    border-radius:16px; color:#fff; font-family:"Rajdhani",sans-serif;
+    background:rgba(14,10,30,.93); border:1px solid rgba(255,255,255,.12);
+    -webkit-backdrop-filter:blur(18px) saturate(1.4); backdrop-filter:blur(18px) saturate(1.4);
+    box-shadow:0 18px 50px rgba(0,0,0,.6);
+    animation:wpPopIn .2s cubic-bezier(.2,.9,.3,1.2) both; }
+  @keyframes wpPopIn { from { opacity:0; transform:scale(.9) translateY(6px); } }
+  .wp-pop-head { display:flex; align-items:center; gap:9px; padding:3px 6px 9px;
+    margin-bottom:5px; border-bottom:1px solid rgba(255,255,255,.08); font-size:15.5px; }
+  .wp-pop-head b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wp-pop-av { flex:none; width:28px; height:28px; border-radius:8px; display:grid;
+    place-items:center; font-size:12px; font-weight:700; }
+  .wp-pop-row { display:flex; align-items:center; gap:11px; width:100%; padding:9px 10px;
+    border:0; border-radius:10px; background:none; color:#fff; cursor:pointer;
+    font:inherit; font-size:15px; font-weight:600; text-align:left; }
+  .wp-pop-row:hover { background:rgba(255,255,255,.08); }
+  .wp-pop-row svg { flex:none; width:20px; height:20px; }
+  .wp-pop-row.off, .wp-pop-row.danger { color:#ff6b7a; }
+  .wp-pop-vol { display:flex; align-items:center; gap:10px; padding:6px 10px 8px; }
+  .wp-pop-vol svg { flex:none; width:18px; height:18px; color:var(--dim); }
+  .wp-pop-vol input { flex:1; min-width:0; accent-color:var(--neon); }
+  .wp-pop-vol span { width:38px; text-align:right; font-size:13px; color:var(--dim);
+    font-variant-numeric:tabular-nums; }
+  .wp-pop-hint { padding:2px 10px 8px; font-size:12.5px; color:var(--dim); }
   .wp-btn.ghost.active { background:rgba(255,47,214,.12) !important;
     border-color:rgba(255,47,214,.45) !important; color:var(--neon) !important; }
   /* ── controls below the player ───────────────────────────────────────────── */
@@ -8747,10 +8844,40 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div class="wp-tv-layout">
       <div class="wp-orbs" id="wpOrbs"></div>
       <div class="wp-stage" id="wpStage">
-        <button class="wp-fs-btn" id="wpStageFsBtn" onclick="wpToggleStageFs()" title="Fullscreen with cameras"><svg class="en" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg><svg class="ex" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button>
-        <video id="wpVideo" playsinline controls controlslist="nofullscreen" ondblclick="wpToggleStageFs()" style="display:none"></video>
+        <video id="wpVideo" playsinline style="display:none"></video>
         <div id="wpYt" style="display:none"></div>
         <div class="wp-empty" id="wpEmpty">Nothing playing yet.<br>Paste a video link below to start the party.</div>
+        <div class="wp-tap" id="wpTap"></div>
+        <div class="wp-flash" id="wpFlash"></div>
+        <div class="wp-bar" id="wpBar">
+          <div class="wp-seek wp-media-only" id="wpSeek">
+            <div class="wp-seek-track"><div class="wp-seek-buf" id="wpSeekBuf"></div><div class="wp-seek-fill" id="wpSeekFill"></div></div>
+            <div class="wp-seek-knob" id="wpSeekKnob"></div>
+            <div class="wp-seek-tip" id="wpSeekTip">0:00</div>
+          </div>
+          <div class="wp-bar-row">
+            <button class="wp-cb wp-media-only" id="wpPlayBtn" onclick="wpUserTogglePlay()" title="Play / pause (k)"></button>
+            <div class="wp-volg wp-media-only wp-hide-sm">
+              <button class="wp-cb" id="wpVolBtn" onclick="wpTogglePlayerMute()" title="Mute video"></button>
+              <input type="range" id="wpVideoVol" min="0" max="1" step="0.05" value="1"
+                oninput="wpSetPlayerVol(this.value)" aria-label="Video volume">
+            </div>
+            <span class="wp-time wp-media-only" id="wpTimeLbl">0:00</span>
+            <span class="wp-bar-sp"></span>
+            <div class="wp-volg wp-hide-touch" id="wpCamVolG">
+              <button class="wp-cb" id="wpCamVolBtn" onclick="wpToggleCamsMute()" title="Mute everyone's mics (for you)"></button>
+              <input type="range" id="wpCamVol" min="0" max="1" step="0.05" value="1"
+                oninput="wpSetCamVol(this.value)" aria-label="Everyone's volume">
+            </div>
+            <button class="wp-cb" id="wpBarMic" onclick="wpToggleMute()" title="Mute mic (m)" style="display:none"></button>
+            <button class="wp-cb" id="wpBarCam" onclick="wpToggleVideo()" title="Join with camera + mic"></button>
+            <button class="wp-cb leave wp-hide-sm" id="wpBarLeave" onclick="wpToggleCam()" title="Leave call" style="display:none"></button>
+            <span class="wp-bar-div"></span>
+            <button class="wp-cb" id="wpSyncBtn" onclick="wpUserSync(this)" title="Re-sync to the room"></button>
+            <button class="wp-cb" id="wpOverlayBtn" onclick="wpToggleOverlay()" title="Cams over the video"></button>
+            <button class="wp-cb" id="wpBarFs" onclick="wpToggleStageFs()" title="Fullscreen (f)"></button>
+          </div>
+        </div>
       </div>
       <div class="wp-fsc" id="wpFsc">
         <div class="wp-fsc-feed" id="wpFscFeed"></div>
@@ -8766,20 +8893,9 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <select class="sfield" id="wpOutSel" title="Speaker / headset output" style="display:none" onchange="wpApplyOutDevice()"></select>
     </div>
     <div class="wp-cam-bar">
-      <button class="wp-btn ghost" id="wpCamBtn" onclick="wpToggleCam()">📷 Turn on camera</button>
-      <button class="wp-btn ghost wp-ptt" id="wpPttBtn" style="display:none">🎤 Mute</button>
-      <button class="wp-btn ghost" id="wpFsBtn" onclick="wpFsOpen()" title="Camera grid fullscreen">⛶ Cams</button>
-      <button class="wp-btn ghost" id="wpOverlayBtn" onclick="wpToggleOverlay()" title="Camera overlay on video">📌 Overlay</button>
-      <button class="wp-btn ghost" id="wpSyncBtn" onclick="wpForceSync()" title="Re-sync to room">📍 Sync</button>
+      <button class="wp-btn" id="wpCamBtn" onclick="wpToggleCam()">📷 Join with camera/mic</button>
+      <button class="wp-btn ghost" id="wpFsBtn" onclick="wpFsOpen()" title="Camera grid fullscreen">⛶ Camera grid</button>
       <span class="wp-cam-note" id="wpCamNote"></span>
-    </div>
-    <div class="wp-vol-bar">
-      <label class="wp-vol-lbl">🎬 Video</label>
-      <input type="range" class="wp-vol-slider" id="wpVideoVol" min="0" max="1" step="0.05" value="1"
-        oninput="wpSetPlayerVol(this.value)" title="Video volume">
-      <label class="wp-vol-lbl">👥 Cams</label>
-      <input type="range" class="wp-vol-slider" id="wpCamVol" min="0" max="1" step="0.05" value="1"
-        oninput="wpSetCamVol(this.value)" title="Camera orb volume">
     </div>
     <div class="wp-controls">
       <div class="wp-ctrl-row">
@@ -12000,7 +12116,7 @@ const WP = {
   cfg:null, sock:null, room:'', clientId:'', names:{}, roster:[], me:'', myName:'Viewer',
   video:'', kind:'', yt:null, ytLoading:null, hls:null, hlsLoading:null, applying:0, tsTimer:null,
   booted:false, tries:0, reconnectTimer:null, presence:null, chat:[], pendingTS:0,
-  playerVol:1, camVol:1,
+  playerVol:1, camVol:1, playerMuted:false, camMuted:false, ytState:-1, peerPrefs:null,
 };
 const WP_MAX_TRIES = 6;
 
@@ -12232,6 +12348,8 @@ const WPC = {
   gesture:false,
   camFs:false,      // is the fullscreen camera grid open
   facingMode:'user',// 'user' (front) or 'environment' (back)
+  camOff:false,     // joined, but our camera is paused (mic keeps going)
+  remoteCamOff:{},  // clientId -> they paused their camera
 };
 const WP_ICE = [{ urls:[
   'stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302',
@@ -12239,6 +12357,384 @@ const WP_ICE = [{ urls:[
 // The orbs are ~66px, so a tiny stream looks identical to a big one and keeps
 // the mesh affordable on phone uplinks.
 const WP_CAM_BITRATE = 260000;
+
+// ── player control bar (overlaid on the stage) ─────────────────────────────
+const WP_SPK = '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="none"/>';
+const WP_MIC = '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>';
+const WP_CAM = '<rect x="3" y="6.5" width="12.5" height="11" rx="2.5"/><path d="M15.5 10.5l5-3v9l-5-3z"/>';
+const WP_ICO = Object.fromEntries(Object.entries({
+  play:    '<path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/>',
+  pause:   '<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" stroke="none"/>',
+  vol:     WP_SPK+'<path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  volLow:  WP_SPK+'<path d="M15.5 9a4 4 0 0 1 0 6"/>',
+  volMute: WP_SPK+'<path d="M16 9.5l5 5M21 9.5l-5 5"/>',
+  mic:     WP_MIC,
+  micOff:  WP_MIC+'<path d="M4 4l16 16"/>',
+  cam:     WP_CAM,
+  camOff:  WP_CAM+'<path d="M3 3l18 18"/>',
+  leave:   '<path d="M3.5 14.5c4.8-4.4 12.2-4.4 17 0l-2.2 2.4-3.3-1.4v-2.3a9 9 0 0 0-6 0v2.3l-3.3 1.4z" fill="currentColor" stroke="none"/>',
+  sync:    '<path d="M20 12a8 8 0 0 1-14 5.3M4 12a8 8 0 0 1 14-5.3"/><path d="M18 3v4h-4M6 21v-4h4"/>',
+  overlay: '<rect x="3" y="5" width="18" height="14" rx="2.5"/><rect x="11.5" y="11.5" width="7" height="5" rx="1" fill="currentColor" stroke="none"/>',
+  people:  '<circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 5.6a3 3 0 0 1 0 5.8M17.5 14a5 5 0 0 1 3.5 5"/>',
+  peopleOff:'<circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M15.5 11l5 5M20.5 11l-5 5"/>',
+  flip:    '<path d="M4 8.5h11.5l-3-3M20 15.5H8.5l3 3"/>',
+  big:     '<path d="M14 4h6v6M10 20H4v-6M20 4l-6.5 6.5M4 20l6.5-6.5"/>',
+  small:   '<path d="M20 10h-6V4M4 14h6v6M14 10l6.5-6.5M10 14l-6.5 6.5"/>',
+  fs:      '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
+  fsExit:  '<path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/>',
+}).map(([k,p])=>[k,'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+p+'</svg>']));
+function wpIco(btn, name){
+  if(btn && btn.dataset.ico !== name){ btn.dataset.ico = name; btn.innerHTML = WP_ICO[name]; }
+}
+// iOS ignores element volume (it always reads back 1); offer mute only there.
+const WP_CAN_VOL = (()=>{ try{ const a=document.createElement('audio'); a.volume=.5; return a.volume===.5; }catch(e){ return false; } })();
+
+// Why the bar is up: recent activity, the pointer resting on it, a drag, an
+// open per-person menu, or the video not playing.
+const WPB = { active:false, t:0, hover:false, drag:false, dragT:0, ptr:'mouse', clickT:0 };
+function wpIsPlaying(){
+  if(WP.kind==='file'){ const v=$('wpVideo'); return !!(v && !v.paused && !v.ended); }
+  if(WP.kind==='yt') return WP.ytState===1 || WP.ytState===3;
+  return false;
+}
+function wpBarShowSync(){
+  const layout = wpFsLayout(); if(!layout) return;
+  const show = WPB.active || WPB.hover || WPB.drag || !!$('wpPop') || !wpIsPlaying();
+  layout.classList.toggle('wp-ctrls', show);
+  layout.classList.toggle('wp-idle', !show);
+}
+function wpBarPoke(ms){
+  WPB.active = true; clearTimeout(WPB.t);
+  WPB.t = setTimeout(()=>{ WPB.active = false; wpBarShowSync(); }, ms || 2600);
+  wpBarShowSync();
+}
+function wpBarHide(){ clearTimeout(WPB.t); WPB.active = false; wpBarShowSync(); }
+
+function wpDur(){
+  if(WP.kind==='file'){ const v=$('wpVideo'); return v ? v.duration : NaN; }
+  if(WP.kind==='yt' && WP.yt && WP.yt.getDuration){ try{ return WP.yt.getDuration(); }catch(e){} }
+  return NaN;
+}
+function wpBuffered(){
+  if(WP.kind==='file'){
+    const v=$('wpVideo'); if(!v || !v.buffered) return 0;
+    for(let i=v.buffered.length-1; i>=0; i--)
+      if(v.buffered.start(i) <= v.currentTime + .5) return v.buffered.end(i);
+    return 0;
+  }
+  if(WP.kind==='yt' && WP.yt && WP.yt.getVideoLoadedFraction){
+    try{ return WP.yt.getVideoLoadedFraction() * wpDur(); }catch(e){}
+  }
+  return 0;
+}
+function wpFmt(sec){
+  sec = Math.max(0, Math.floor(sec||0));
+  const h = Math.floor(sec/3600), m = Math.floor(sec%3600/60), x = String(sec%60).padStart(2,'0');
+  return h ? h+':'+String(m).padStart(2,'0')+':'+x : m+':'+x;
+}
+// Cheap, polled: time, seek bar, play icon, volume icons.
+function wpBarTick(){
+  const layout = wpFsLayout(); if(!layout) return;
+  if(!layout.offsetParent && !layout.classList.contains('wp-fs')) return;   // tab hidden
+  wpIco($('wpPlayBtn'), wpIsPlaying() ? 'pause' : 'play');
+  const dur = wpDur(), live = WP.kind==='file' && dur===Infinity;
+  const ok = isFinite(dur) && dur > 0;
+  const cur = WPB.drag ? WPB.dragT : (wpTime() || 0);
+  layout.classList.toggle('wp-live', live);
+  const pct = ok ? Math.min(100, cur/dur*100) + '%' : '0%';
+  const fill=$('wpSeekFill'), knob=$('wpSeekKnob'), buf=$('wpSeekBuf'), lbl=$('wpTimeLbl');
+  if(fill) fill.style.width = pct;
+  if(knob) knob.style.left = pct;
+  if(buf) buf.style.width = ok ? Math.min(100, wpBuffered()/dur*100) + '%' : '0%';
+  if(lbl){
+    const t = live ? '● LIVE' : wpFmt(cur) + ' / ' + (ok ? wpFmt(dur) : '--:--');
+    if(lbl.textContent !== t) lbl.textContent = t;
+  }
+  const pv = WP.playerMuted ? 0 : WP.playerVol;
+  wpIco($('wpVolBtn'), pv===0 ? 'volMute' : pv < .5 ? 'volLow' : 'vol');
+  wpBarShowSync();
+}
+setInterval(wpBarTick, 250);
+
+function wpBarMediaSync(){
+  const layout = wpFsLayout(); if(!layout) return;
+  layout.classList.toggle('wp-nomedia', !WP.kind);
+  // Until a YouTube video has started, taps go to its own play button (mobile
+  // browsers only let the iframe start itself from a real tap).
+  layout.classList.toggle('wp-yt-fresh', WP.kind==='yt' && (WP.ytState===-1 || WP.ytState===5));
+}
+// Party buttons: mic, camera, leave, overlay, fullscreen.
+function wpBarPartySync(){
+  const mic=$('wpBarMic'), cam=$('wpBarCam'), leave=$('wpBarLeave'), ov=$('wpOverlayBtn'), fs=$('wpBarFs');
+  if(mic){
+    mic.style.display = WPC.on ? '' : 'none';
+    wpIco(mic, WPC.muted ? 'micOff' : 'mic');
+    mic.classList.toggle('off', WPC.muted);
+    mic.title = WPC.muted ? 'Unmute mic (m)' : 'Mute mic (m)';
+  }
+  if(cam){
+    cam.style.display = (WPC.on && WPC.micOnly) ? 'none' : '';
+    wpIco(cam, (WPC.on && WPC.camOff) ? 'camOff' : 'cam');
+    cam.classList.toggle('off', WPC.on && WPC.camOff);
+    cam.classList.toggle('on', !WPC.on);
+    cam.title = !WPC.on ? 'Join with camera + mic' : WPC.camOff ? 'Turn camera on' : 'Turn camera off (keep mic)';
+  }
+  if(leave){ leave.style.display = WPC.on ? '' : 'none'; wpIco(leave, 'leave'); }
+  const layout = wpFsLayout();
+  if(ov){ wpIco(ov, 'overlay'); ov.classList.toggle('on', !!(layout && layout.classList.contains('orbs-overlay'))); }
+  if(fs){
+    const on = !!(layout && layout.classList.contains('wp-fs'));
+    wpIco(fs, on ? 'fsExit' : 'fs'); fs.title = on ? 'Exit fullscreen (f)' : 'Fullscreen (f)';
+  }
+  wpIco($('wpSyncBtn'), 'sync');
+  const cv=$('wpCamVolBtn');
+  if(cv){
+    const mutedAll = WP.camMuted || WP.camVol===0;
+    wpIco(cv, mutedAll ? 'peopleOff' : 'people');
+    cv.classList.toggle('off', mutedAll);
+  }
+  const cr=$('wpCamVol'); if(cr && document.activeElement!==cr) cr.value = WP.camMuted ? 0 : WP.camVol;
+}
+
+function wpUserTogglePlay(){
+  if(!WP.kind) return;
+  const playing = wpIsPlaying();
+  playing ? wpPause() : wpPlay();
+  const f=$('wpFlash');
+  if(f){ f.innerHTML = WP_ICO[playing ? 'pause' : 'play']; f.classList.remove('go'); void f.offsetWidth; f.classList.add('go'); }
+  setTimeout(wpBarTick, 60);
+}
+// Seeks from our bar. File seeks broadcast through the <video> 'seeked' event;
+// YouTube has no seek event, so announce those directly.
+function wpUserSeek(t){
+  const d = wpDur(); if(!isFinite(t)) return;
+  t = Math.max(0, isFinite(d) && d > 0 ? Math.min(t, d - .25) : t);
+  if(WP.kind==='file'){ const v=$('wpVideo'); if(v) v.currentTime = t; }
+  else if(WP.kind==='yt' && WP.yt && WP.yt.seekTo){
+    try{ WP.yt.seekTo(t, true); }catch(e){}
+    WP.sock?.emit('CMD:seek', t);
+  }
+  setTimeout(wpBarTick, 60);
+}
+function wpUserSync(btn){
+  wpForceSync();
+  if(btn){ btn.classList.remove('spin'); void btn.offsetWidth; btn.classList.add('spin'); }
+}
+
+(function wpBindBar(){
+  const layout = wpFsLayout(), bar=$('wpBar'), tap=$('wpTap'), seek=$('wpSeek'), v=$('wpVideo');
+  if(!layout || !bar || !tap) return;
+  layout.addEventListener('pointermove', e=>{ if(e.pointerType==='mouse') wpBarPoke(); });
+  layout.addEventListener('mouseleave', ()=>{ WPB.hover = false; wpBarHide(); });
+  bar.addEventListener('pointerenter', e=>{ if(e.pointerType==='mouse'){ WPB.hover = true; wpBarShowSync(); } });
+  bar.addEventListener('pointerleave', e=>{ if(e.pointerType==='mouse'){ WPB.hover = false; wpBarPoke(); } });
+  bar.addEventListener('pointerdown', e=>{ if(e.pointerType!=='mouse') wpBarPoke(4000); });
+  // Mouse: click plays/pauses, double-click fullscreens. Touch: tap shows/hides the bar.
+  tap.addEventListener('pointerdown', e=>{ WPB.ptr = e.pointerType || 'mouse'; });
+  tap.addEventListener('click', ()=>{
+    if(WPB.ptr !== 'mouse'){
+      if(WPB.active && layout.classList.contains('wp-ctrls')) wpBarHide(); else wpBarPoke(3500);
+      return;
+    }
+    clearTimeout(WPB.clickT);
+    WPB.clickT = setTimeout(wpUserTogglePlay, 220);
+  });
+  tap.addEventListener('dblclick', ()=>{ clearTimeout(WPB.clickT); wpToggleStageFs(); });
+  if(v) ['play','pause','ended','emptied','loadeddata','durationchange','progress']
+    .forEach(n => v.addEventListener(n, wpBarTick));
+
+  if(seek){
+    const frac = e=>{ const r=seek.getBoundingClientRect(); return Math.max(0, Math.min(1, (e.clientX-r.left)/r.width)); };
+    const tip = e=>{
+      const d=wpDur(), el=$('wpSeekTip'); if(!el || !(isFinite(d) && d>0)) return;
+      const f=frac(e); el.textContent = wpFmt(f*d);
+      el.style.left = 'clamp(24px, '+(f*100)+'%, calc(100% - 24px))';
+    };
+    seek.addEventListener('pointerdown', e=>{
+      const d=wpDur(); if(!(isFinite(d) && d>0)) return;
+      e.preventDefault();
+      try{ seek.setPointerCapture(e.pointerId); }catch(_){}
+      WPB.drag = true; seek.classList.add('drag');
+      WPB.dragT = frac(e)*d; tip(e); wpBarTick();
+    });
+    seek.addEventListener('pointermove', e=>{
+      tip(e);
+      if(WPB.drag){ WPB.dragT = frac(e)*wpDur(); wpBarTick(); }
+    });
+    const end = commit => ()=>{
+      if(!WPB.drag) return;
+      WPB.drag = false; seek.classList.remove('drag');
+      if(commit) wpUserSeek(WPB.dragT);
+      wpBarPoke();
+    };
+    seek.addEventListener('pointerup', end(true));
+    seek.addEventListener('pointercancel', end(false));
+  }
+  wpBarMediaSync(); wpBarPartySync(); wpBarTick();
+})();
+
+// Keyboard: k/space play-pause, ←/→ seek 5s (j/l 10s), f fullscreen, m mic, c camera.
+addEventListener('keydown', e=>{
+  if(e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+  const k = String(e.key).toLowerCase();
+  if(k==='m'){ if(!e.repeat) wpToggleMute(); return; }
+  const layout = wpFsLayout();
+  const watching = (layout && layout.classList.contains('wp-fs')) || ($('p-watch') && $('p-watch').classList.contains('on'));
+  if(!watching) return;
+  if((k===' ' || k==='enter') && t && t.tagName==='BUTTON') return;   // let the focused button act
+  if(k===' ' || k==='k'){ if(!WP.kind) return; e.preventDefault(); if(!e.repeat) wpUserTogglePlay(); wpBarPoke(); }
+  else if(k==='f'){ if(!e.repeat) wpToggleStageFs(); }
+  else if(k==='c'){ if(!e.repeat && WPC.on) wpToggleVideo(); }
+  else if(k==='arrowleft' || k==='arrowright' || k==='j' || k==='l'){
+    if(!WP.kind) return;
+    e.preventDefault();
+    const step = (k==='j' || k==='l') ? 10 : 5;
+    wpUserSeek((wpTime()||0) + ((k==='arrowleft' || k==='j') ? -step : step));
+    wpBarPoke();
+  }
+});
+
+// ── per-person audio + menu ─────────────────────────────────────────────────
+// Stored by display name, since clientIds change on every visit.
+function wpPeerKey(id){ return 'n:' + String((WP.names||{})[id] || id).toLowerCase(); }
+function wpPeerPrefs(){
+  if(!WP.peerPrefs){
+    try{ WP.peerPrefs = JSON.parse(localStorage.getItem('wpPeerVol') || '{}') || {}; }
+    catch(e){ WP.peerPrefs = {}; }
+  }
+  return WP.peerPrefs;
+}
+function wpPeerPref(id){
+  const p = wpPeerPrefs()[wpPeerKey(id)];
+  return { v: (p && isFinite(p.v)) ? Math.max(0, Math.min(1, p.v)) : 1, m: !!(p && p.m) };
+}
+function wpSetPeerPref(id, patch){
+  const all = wpPeerPrefs(), k = wpPeerKey(id);
+  const cur = Object.assign(wpPeerPref(id), patch);
+  if(cur.v === 1 && !cur.m) delete all[k]; else all[k] = cur;
+  try{ localStorage.setItem('wpPeerVol', JSON.stringify(all)); }catch(e){}
+  wpApplyPeerAudio();
+}
+function wpApplyPeerAudio(){
+  document.querySelectorAll('.wp-orb[data-k]').forEach(el=>{
+    const k = el.dataset.k; if(k==='me') return;
+    const pr = wpPeerPref(k);
+    el.classList.toggle('pmuted', pr.m);
+    const v = el.querySelector('video'); if(!v) return;
+    if(!el.closest('#wpOrbs')){ v.muted = true; return; }
+    v.muted = WP.camMuted || pr.m;
+    try{ v.volume = Math.max(0, Math.min(1, WP.camVol * pr.v)); }catch(e){}
+  });
+  wpBarPartySync();
+}
+
+// Tap a tile to enlarge it; long-press (or right-click) for its menu.
+function wpBindOrbPress(el){
+  let t = 0, sx = 0, sy = 0;
+  const clear = ()=>{ clearTimeout(t); t = 0; };
+  el.addEventListener('pointerdown', e=>{
+    if(e.button > 0) return;
+    sx = e.clientX; sy = e.clientY; clear();
+    t = setTimeout(()=>{
+      t = 0; el._lp = true;
+      try{ navigator.vibrate && navigator.vibrate(12); }catch(_){}
+      wpPopOpen(el);
+    }, 450);
+  });
+  el.addEventListener('pointermove', e=>{ if(t && Math.hypot(e.clientX-sx, e.clientY-sy) > 10) clear(); });
+  ['pointerup','pointercancel','pointerleave'].forEach(n=> el.addEventListener(n, clear));
+  el.addEventListener('contextmenu', e=>{
+    e.preventDefault(); clear();
+    const p = $('wpPop');
+    if(p && p._for === el && Date.now() - p._at < 900) return;   // long-press already opened it
+    wpPopOpen(el);
+  });
+  el.addEventListener('click', ()=>{
+    if(el._lp){ el._lp = false; return; }
+    el.classList.toggle('big');
+  });
+}
+function wpPopClose(){
+  const p = $('wpPop'); if(p) p.remove();
+  wpBarShowSync();
+}
+function wpPopOpen(el){
+  wpPopClose();
+  if(!el || !el.isConnected) return;
+  const k = el.dataset.k, me = k==='me';
+  const name = me ? (WP.myName || 'You') : ((WP.names||{})[k] || 'Viewer');
+  const row = (act, ico, label, cls)=>
+    '<button class="wp-pop-row '+(cls||'')+'" data-act="'+act+'">'+WP_ICO[ico]+'<span>'+label+'</span></button>';
+  let h = '<div class="wp-pop-head"><span class="wp-pop-av" style="background:'+wpTint(name)+'">'+
+    esc(wpInitials(name))+'</span><b>'+esc(name)+(me ? ' (you)' : '')+'</b></div>';
+  if(me){
+    if(!WPC.on) h += row('join', 'cam', 'Join call (cam + mic)');
+    else {
+      h += row('mic', WPC.muted ? 'micOff' : 'mic', WPC.muted ? 'Unmute mic' : 'Mute mic', WPC.muted ? 'off' : '');
+      if(!WPC.micOnly){
+        h += row('cam', WPC.camOff ? 'camOff' : 'cam', WPC.camOff ? 'Turn camera on' : 'Turn camera off', WPC.camOff ? 'off' : '');
+        if(!WPC.camOff) h += row('flip', 'flip', 'Flip camera');
+      }
+      h += row('leave', 'leave', 'Leave call', 'danger');
+    }
+  } else {
+    const pr = wpPeerPref(k);
+    h += row('pmute', pr.m ? 'volMute' : 'vol', pr.m ? 'Unmute for me' : 'Mute for me', pr.m ? 'off' : '');
+    if(WP_CAN_VOL){
+      const pv = pr.m ? 0 : pr.v;
+      h += '<div class="wp-pop-vol">'+WP_ICO.volLow+'<input type="range" min="0" max="1" step="0.05" value="'+pv+
+        '" aria-label="Volume for '+esc(name)+'"><span>'+Math.round(pv*100)+'%</span></div>';
+    } else {
+      h += '<div class="wp-pop-hint">Use your phone\'s volume buttons for level.</div>';
+    }
+  }
+  const big = el.classList.contains('big');
+  h += row('big', big ? 'small' : 'big', big ? 'Shrink tile' : 'Enlarge tile');
+
+  const pop = document.createElement('div');
+  pop.id = 'wpPop'; pop.className = 'wp-pop'; pop.innerHTML = h;
+  pop._for = el; pop._at = Date.now(); pop._w = innerWidth;
+  pop.addEventListener('contextmenu', e=> e.preventDefault());
+  pop.addEventListener('click', e=>{
+    const b = e.target.closest('[data-act]'); if(!b) return;
+    const act = b.dataset.act;
+    if(act==='mic'){ wpToggleMute(); wpPopOpen(el); }
+    else if(act==='cam'){ wpToggleVideo(); wpPopOpen(el); }
+    else if(act==='flip'){ wpPopClose(); wpFlipCam(); }
+    else if(act==='leave' || act==='join'){ wpPopClose(); wpToggleCam(); }
+    else if(act==='pmute'){ wpSetPeerPref(k, {m: !wpPeerPref(k).m}); wpPopOpen(el); }
+    else if(act==='big'){ el.classList.toggle('big'); wpPopClose(); }
+  });
+  const range = pop.querySelector('.wp-pop-vol input');
+  if(range) range.addEventListener('input', ()=>{
+    const val = Number(range.value);
+    wpSetPeerPref(k, val > 0 ? {v:val, m:false} : {m:true});
+    range.nextElementSibling.textContent = Math.round(val*100) + '%';
+    const mb = pop.querySelector('[data-act="pmute"]');
+    if(mb){ mb.classList.toggle('off', val===0);
+      mb.innerHTML = WP_ICO[val===0 ? 'volMute' : 'vol'] + '<span>' + (val===0 ? 'Unmute for me' : 'Mute for me') + '</span>'; }
+  });
+  // Real fullscreen only renders what's inside the fullscreen element.
+  (document.fullscreenElement || document.webkitFullscreenElement || document.body).appendChild(pop);
+  const r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+  const left = Math.max(8, Math.min(innerWidth - pw - 8, r.left + r.width/2 - pw/2));
+  let top = r.top - ph - 8, below = false;
+  if(top < 8){ top = Math.min(innerHeight - ph - 8, r.bottom + 8); below = true; }
+  pop.style.left = left + 'px'; pop.style.top = Math.max(8, top) + 'px';
+  pop.style.transformOrigin = (r.left + r.width/2 - left) + 'px ' + (below ? 'top' : 'bottom');
+  wpBarShowSync();
+}
+document.addEventListener('pointerdown', e=>{
+  const p = $('wpPop');
+  if(p && !p.contains(e.target)) wpPopClose();
+}, true);
+addEventListener('keydown', e=>{
+  if(e.key==='Escape' && $('wpPop')){ e.stopImmediatePropagation(); wpPopClose(); }
+}, true);
+// Width only: phone toolbars change the height while you scroll.
+addEventListener('resize', ()=>{ const p=$('wpPop'); if(p && p._w !== innerWidth) wpPopClose(); });
 
 function wpSignal(to, msg){
   if(WP.sock && WP.sock.connected) WP.sock.emit('signal', {to, msg});
@@ -12256,8 +12752,11 @@ function wpLive(){
     .filter(id => id && id !== WP.clientId);
 }
 
+// `vid:false` means joined with the camera paused, so peers show initials
+// instead of the black frames a disabled track sends.
+function wpCamMsg(on){ return {t:'cam', on:!!on, vid:!!on && !WPC.camOff}; }
 function wpAnnounceCam(on){
-  wpLive().forEach(id=> wpSignal(id, {t:'cam', on:!!on}));
+  wpLive().forEach(id=> wpSignal(id, wpCamMsg(on)));
 }
 
 // ── device enumeration ──────────────────────────────────────────────────────
@@ -12351,7 +12850,7 @@ async function wpToggleCam(){
         return;
       }
     }
-    WPC.muted = false;
+    WPC.muted = false; WPC.camOff = false;
     WPC.stream = stream; WPC.on = true;
 
     // A camera can be revoked from the OS/browser mid-call.
@@ -12377,6 +12876,7 @@ async function wpToggleCam(){
 function wpCamStop(){
   WPC.on = false;
   WPC.muted = false;
+  WPC.camOff = false;
   WPC.micOnly = false;
   wpAnnounceCam(false);
   Object.keys(WPC.peers).forEach(id=>{
@@ -12426,27 +12926,32 @@ async function wpRemountMic(){
 }
 
 function wpCamSync(){
-  const b=$('wpCamBtn'), p=$('wpPttBtn'), flip=$('wpFlipBtn');
-  if(b) b.textContent = WPC.on
-    ? (WPC.micOnly ? '🎤 Mic on — tap to leave' : '📷 Turn off camera')
-    : '📷 Join (camera/mic)';
-  if(p){
-    p.style.display = WPC.on ? '' : 'none';
-    p.textContent = WPC.muted ? '🔇 Unmute' : '🎤 Mute';
-    p.classList.toggle('hot', WPC.muted);
-    if(WPC.on) wpMuteWire();
+  const b=$('wpCamBtn'), flip=$('wpFlipBtn');
+  if(b){
+    b.textContent = WPC.on ? '📴 Leave call' : '📷 Join with camera/mic';
+    b.classList.toggle('ghost', WPC.on);
   }
-  if(flip) flip.style.display = (WPC.on && !WPC.micOnly) ? '' : 'none';
+  if(flip) flip.style.display = (WPC.on && !WPC.micOnly && !WPC.camOff) ? '' : 'none';
+  wpBarPartySync();
   wpCamNote('');
   wpRenderOrbs();
   wpMiniSync();
+}
+// Camera off/on while staying in the call (mic keeps working). Before joining,
+// the same button joins.
+function wpToggleVideo(){
+  if(!WPC.on){ wpToggleCam(); return; }
+  if(WPC.micOnly || !WPC.stream) return;
+  WPC.camOff = !WPC.camOff;
+  WPC.stream.getVideoTracks().forEach(t=>{ t.enabled = !WPC.camOff; });
+  wpAnnounceCam(true);
+  wpCamSync();
 }
 function wpToggleOverlay(){
   const layout = document.querySelector('.wp-tv-layout');
   if(!layout) return;
   const on = layout.classList.toggle('orbs-overlay');
-  const btn = $('wpOverlayBtn');
-  if(btn) btn.classList.toggle('active', on);
+  wpBarPartySync();
   try{ localStorage.setItem('wpOrbOverlay', on ? '1' : '0'); }catch(e){}
 }
 
@@ -12467,25 +12972,11 @@ function wpToggleStageFs(){
     if(r && r.catch) r.catch(()=>{});
   }catch(e){}
 }
-// Track when the player's controls are likely on screen (recent pointer
-// activity, or the video is paused) as .wp-ctrls on the layout, so the
-// fullscreen button shows and the cams / chat lift clear of the controls.
-(function wpBindStageActivity(){
-  const layout = wpFsLayout(), v = $('wpVideo'); if(!layout) return;
-  let active = false, t = 0;
-  const paused = ()=> v && v.style.display !== 'none' && v.paused;
-  const sync = ()=> layout.classList.toggle('wp-ctrls', active || paused());
-  const poke = ()=>{ active = true; sync(); clearTimeout(t);
-    t = setTimeout(()=>{ active = false; sync(); }, 2600); };
-  ['mousemove','touchstart','pointerdown'].forEach(ev => layout.addEventListener(ev, poke, {passive:true}));
-  layout.addEventListener('mouseleave', ()=>{ clearTimeout(t); active = false; sync(); });
-  if(v) ['play','pause','ended','emptied','loadeddata'].forEach(ev => v.addEventListener(ev, sync));
-  sync();
-})();
 function wpStageFsSync(on){
   const layout = wpFsLayout(); if(!layout) return;
   layout.classList.toggle('wp-fs', on);
   document.body.style.overflow = on ? 'hidden' : '';
+  wpBarPartySync();
 }
 async function wpExitAllFs(){
   // exitFullscreen pops one level of the fullscreen stack; unwind all of it
@@ -12530,8 +13021,7 @@ function wpInitOverlay(){
     if(localStorage.getItem('wpOrbOverlay') === '1'){
       const layout = document.querySelector('.wp-tv-layout');
       if(layout){ layout.classList.add('orbs-overlay'); }
-      const btn = $('wpOverlayBtn');
-      if(btn) btn.classList.add('active');
+      wpBarPartySync();
     }
   }catch(e){}
 }
@@ -12539,7 +13029,7 @@ function wpInitOverlay(){
 function wpCamNote(msg){
   const n=$('wpCamNote'); if(!n) return;
   n.textContent = msg !== '' ? msg
-    : (WPC.on ? (WPC.muted ? 'Mic muted — tap 🔇 to unmute.' : 'Mic live — tap 🎤 to mute.') : '');
+    : (WPC.on ? 'Long-press or right-click a camera to mute someone or set their volume.' : '');
 }
 
 // ── mute toggle ─────────────────────────────────────────────────────────────
@@ -12550,18 +13040,6 @@ function wpToggleMute(){
   wpCamSync();
   wpOrbState();
 }
-function wpMuteWire(){
-  const b=$('wpPttBtn');
-  if(!b || b.dataset.wired) return;
-  b.dataset.wired = '1';
-  b.addEventListener('click', ()=> wpToggleMute());
-  addEventListener('keydown', e=>{
-    if(e.repeat || String(e.key).toLowerCase()!=='m') return;
-    const t=e.target; if(t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-    wpToggleMute();
-  });
-}
-
 // ── Watch Party mini-bar ─────────────────────────────────────────────────────
 function wpMiniSync(){
   const bar = $('wpMiniBar'); if(!bar) return;
@@ -12654,6 +13132,7 @@ async function wpFlipCam(){
       }catch(e2){ wpCamNote('Could not flip camera.'); return; }
     }
     if(!newTrack) return;
+    newTrack.enabled = !WPC.camOff;
 
     // Swap into every peer sender — no ICE renegotiation needed.
     await Promise.all(Object.values(WPC.peers).map(async p=>{
@@ -12769,7 +13248,7 @@ function wpDropPeer(id){
 }
 function wpDropAllPeers(){
   Object.keys(WPC.peers).forEach(wpDropPeer);
-  WPC.remoteCam = {};
+  WPC.remoteCam = {}; WPC.remoteCamOff = {};
   wpRenderOrbs();
 }
 
@@ -12778,6 +13257,8 @@ async function wpOnSignal(from, msg){
 
   if(msg.t==='cam'){
     WPC.remoteCam[from] = !!msg.on;
+    if(msg.on && msg.vid===false) WPC.remoteCamOff[from] = true;
+    else delete WPC.remoteCamOff[from];
     if(msg.on) wpPeer(from, true);
     else if(!WPC.on) wpDropPeer(from);
     wpRenderOrbs();
@@ -12811,10 +13292,11 @@ function wpReconcilePeers(){
   wpLive().forEach(id=>{ alive[id] = 1; });
   Object.keys(WPC.peers).forEach(id=>{ if(!alive[id]) wpDropPeer(id); });
   Object.keys(WPC.remoteCam).forEach(id=>{ if(!alive[id]) delete WPC.remoteCam[id]; });
+  Object.keys(WPC.remoteCamOff).forEach(id=>{ if(!alive[id]) delete WPC.remoteCamOff[id]; });
   if(!WPC.on) return;
   Object.keys(alive).forEach(id=>{
     if(WPC.peers[id]) return;
-    wpSignal(id, {t:'cam', on:true});
+    wpSignal(id, wpCamMsg(true));
     wpPeer(id, true);
   });
 }
@@ -12898,6 +13380,7 @@ function wpRenderOrbs(){
   _wpRenderOrbsInto($('wpOrbs'));
   if(WPC.camFs) _wpRenderOrbsInto($('wpOrbsFs'));
   wpOrbState();
+  wpApplyPeerAudio();
 }
 
 function _wpRenderOrbsInto(box){
@@ -12919,7 +13402,7 @@ function _wpRenderOrbsInto(box){
         '<span class="wp-orb-ini"></span></div>' +
         '<span class="wp-orb-badge"></span></div>' +
         '<div class="wp-orb-name"></div>';
-      el.addEventListener('click', ()=> el.classList.toggle('big'));
+      wpBindOrbPress(el);
       existing[v.k] = el;
     }
     if(box.children[i] !== el) box.insertBefore(el, box.children[i] || null);
@@ -12940,24 +13423,34 @@ function _wpRenderOrbsInto(box){
 
     const stream = v.me ? (WPC.on ? WPC.stream : null)
                         : ((WPC.peers[v.id] && WPC.peers[v.id].stream) || null);
-    const hasVideo = !!(stream && stream.getVideoTracks()
+    const camOff = v.me ? WPC.camOff : !!WPC.remoteCamOff[v.id];
+    const hasVideo = !camOff && !!(stream && stream.getVideoTracks()
       .some(t=> t.readyState==='live' && !t.muted));
+    // Peers keep a (hidden) <video> even without picture: it is what plays their
+    // mic, so mic-only and camera-paused people stay audible. Only the strip plays
+    // audio; the camera grid is a muted mirror of it.
+    const wantEl = hasVideo || (!v.me && !!stream);
     let vid = inner.querySelector('video');
-    if(hasVideo){
+    if(wantEl){
       if(!vid){
         vid = document.createElement('video');
         vid.autoplay = true; vid.playsInline = true;
         vid.setAttribute('playsinline','');
         inner.insertBefore(vid, inner.firstChild);
       }
-      vid.muted = v.me;
-      vid.volume = v.me ? 1 : WP.camVol;
+      vid.classList.toggle('novid', !hasVideo);
+      if(v.me || box.id !== 'wpOrbs') vid.muted = true;
+      else {
+        const pr = wpPeerPref(v.id);
+        vid.muted = WP.camMuted || pr.m;
+        try{ vid.volume = Math.max(0, Math.min(1, WP.camVol * pr.v)); }catch(e){}
+      }
       if(vid.srcObject !== stream){
         vid.srcObject = stream;
         const pr = vid.play();
         if(pr && pr.catch) pr.catch(()=> wpNeedGesture());
       }
-      ini.style.display = 'none';
+      ini.style.display = hasVideo ? 'none' : '';
     } else {
       if(vid){ vid.srcObject = null; vid.remove(); }
       ini.style.display = '';
@@ -13132,14 +13625,35 @@ function wpForceSync(){
 }
 function wpSetPlayerVol(v){
   WP.playerVol = Math.max(0, Math.min(1, Number(v)));
-  const vid=$('wpVideo'); if(vid) vid.volume = WP.playerVol;
+  if(WP.playerVol > 0) WP.playerMuted = false;
+  wpApplyPlayerVol();
+}
+function wpTogglePlayerMute(){
+  if(!WP.playerMuted && WP.playerVol === 0) WP.playerVol = 1;
+  else WP.playerMuted = !WP.playerMuted;
+  wpApplyPlayerVol();
+}
+function wpApplyPlayerVol(){
+  const vid=$('wpVideo');
+  if(vid){ vid.volume = WP.playerVol; vid.muted = WP.playerMuted; }
   if(WP.kind==='yt' && WP.yt){
-    try{ WP.yt.setVolume(Math.round(WP.playerVol*100)); }catch(e){}
+    try{
+      WP.yt.setVolume(Math.round(WP.playerVol*100));
+      if(WP.playerMuted || !WP.playerVol) WP.yt.mute(); else WP.yt.unMute();
+    }catch(e){}
   }
+  const r=$('wpVideoVol'); if(r && document.activeElement!==r) r.value = WP.playerMuted ? 0 : WP.playerVol;
+  wpBarTick();
 }
 function wpSetCamVol(v){
   WP.camVol = Math.max(0, Math.min(1, Number(v)));
-  document.querySelectorAll('.wp-orb video').forEach(el=>{ el.volume = WP.camVol; });
+  if(WP.camVol > 0) WP.camMuted = false;
+  wpApplyPeerAudio();
+}
+function wpToggleCamsMute(){
+  if(!WP.camMuted && WP.camVol === 0) WP.camVol = 1;
+  else WP.camMuted = !WP.camMuted;
+  wpApplyPeerAudio();
 }
 
 function wpApplyHost(h){
@@ -13156,7 +13670,9 @@ function wpApplyHost(h){
 function wpMount(url){
   WP.video = url || '';
   const vid=$('wpVideo'), ytBox=$('wpYt'), empty=$('wpEmpty');
-  if(vid) vid.volume = WP.playerVol;
+  if(vid){ vid.volume = WP.playerVol; vid.muted = WP.playerMuted; }
+  WP.ytState = -1;
+  wpPopClose();
   const urlIn=$('wpUrl'); if(urlIn && document.activeElement!==urlIn) urlIn.value = WP.video;
   // tear down
   if(WP.yt && WP.yt.destroy){ try{ WP.yt.destroy(); }catch(e){} }
@@ -13165,16 +13681,17 @@ function wpMount(url){
   if(vid){ vid.pause(); vid.removeAttribute('src'); vid.load(); vid.style.display='none'; }
   if(ytBox){ ytBox.style.display='none'; ytBox.innerHTML=''; }
   WP.kind='';
+  wpBarMediaSync();
   if(!WP.video){ if(empty){ empty.style.display='grid'; empty.innerHTML='Nothing playing yet.<br>Paste a video link below to start the party.'; } return; }
   if(empty) empty.style.display='none';
 
   const ytId = wpYtId(WP.video);
-  if(ytId){ WP.kind='yt'; wpMountYt(ytId); return; }
+  if(ytId){ WP.kind='yt'; wpBarMediaSync(); wpMountYt(ytId); return; }
   if(/\.m3u8/i.test(WP.video)){
-    WP.kind='file'; vid.style.display='block'; wpMountHls(WP.video); return;
+    WP.kind='file'; wpBarMediaSync(); vid.style.display='block'; wpMountHls(WP.video); return;
   }
   if(/^\/api\/watch\/proxy\?/.test(WP.video) || /^https?:\/\//i.test(WP.video)){
-    WP.kind='file'; vid.style.display='block'; vid.src=WP.video;
+    WP.kind='file'; wpBarMediaSync(); vid.style.display='block'; vid.src=WP.video;
     if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
       vid.addEventListener('loadedmetadata', ()=>{ vid.currentTime=t; }, {once:true}); }
     return;
@@ -13218,10 +13735,16 @@ function wpMountYt(id){
     if(!$('wpYtTarget')) return;
     WP.yt = new YT.Player('wpYtTarget', {
       videoId:id, width:'100%', height:'100%',
-      playerVars:{ playsinline:1, rel:0, modestbranding:1, origin:location.origin },
+      // Our own bar drives the player, so YouTube's controls/keys/fullscreen are off.
+      playerVars:{ playsinline:1, rel:0, modestbranding:1, controls:0, disablekb:1, fs:0,
+                   iv_load_policy:3, origin:location.origin },
       events:{
-        onReady:()=>{ if(WP.pendingTS){ WP.yt.seekTo(WP.pendingTS,true); WP.pendingTS=0; } },
+        onReady:()=>{
+          if(WP.pendingTS){ WP.yt.seekTo(WP.pendingTS,true); WP.pendingTS=0; }
+          wpApplyPlayerVol();
+        },
         onStateChange:(e)=>{
+          WP.ytState = e.data; wpBarMediaSync(); wpBarTick();
           if(WP.applying) return;
           if(e.data===YT.PlayerState.PLAYING) WP.sock?.emit('CMD:play');
           if(e.data===YT.PlayerState.PAUSED)  WP.sock?.emit('CMD:pause');
