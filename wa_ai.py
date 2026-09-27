@@ -39,7 +39,7 @@ _RECENT_KEEP = 20
 # Persisted to disk so docker restarts don't break swipe-reply.
 _recent_sent_ids: list[str] = []
 _SENT_IDS_KEEP = 60
-_SENT_IDS_FILE = os.path.join(os.path.dirname(__file__), "data", "sent_ids.json")
+_SENT_IDS_FILE = os.path.join(os.environ.get("WA_AI_DATA_DIR", "/data"), "sent_ids.json")
 
 
 def _load_sent_ids() -> None:
@@ -67,7 +67,7 @@ def _save_sent_ids() -> None:
 _load_sent_ids()
 
 # name → JID map built from ingest messages so the model can @mention correctly.
-_MEMBER_JIDS_FILE = os.path.join(os.path.dirname(__file__), "data", "member_jids.json")
+_MEMBER_JIDS_FILE = os.path.join(os.environ.get("WA_AI_DATA_DIR", "/data"), "member_jids.json")
 _member_jids: dict[str, str] = {}   # display_name (lowercased) → full JID
 
 
