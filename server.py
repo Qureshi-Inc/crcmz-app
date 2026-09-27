@@ -8216,6 +8216,19 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     background:rgba(255,60,60,.1); border:1px solid rgba(255,60,60,.35);
     color:#ff8f9f; display:none; }
   .wp-err.on { display:block; }
+  /* ── Watch Party TV / side-by-side layout ────────────────────────────────── */
+  .wp-tv-layout { display:flex; flex-direction:column; }
+  .wp-device-bar { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+  .wp-device-bar .sfield { font-size:12px; padding:8px 10px; flex:1;
+    min-width:140px; margin-bottom:0; }
+  @media (min-width:1024px){
+    .wp-tv-layout { flex-direction:row-reverse; align-items:flex-start; gap:12px; }
+    .wp-tv-layout .wp-stage { flex:1; width:auto; }
+    .wp-tv-layout .wp-orbs {
+      flex:0 0 90px; width:90px; flex-direction:column;
+      overflow-x:hidden; overflow-y:auto; max-height:80vh;
+      margin-bottom:0; padding:2px 2px 6px; }
+  }
 
   /* ── Huddle (revamped) ──────────────────────────────────────────────────── */
   /* NOTE: do NOT set display here — .panel{display:none} must win when not active */
@@ -8608,7 +8621,18 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <div class="pip-title" style="margin:0;flex:1">🍿 Watch Party</div>
       <span class="wp-pill off" id="wpPresence"><span class="wp-dot"></span><span id="wpPresenceTxt">connecting…</span></span>
     </div>
-    <div class="wp-orbs" id="wpOrbs"></div>
+    <div class="wp-tv-layout">
+      <div class="wp-orbs" id="wpOrbs"></div>
+      <div class="wp-stage" id="wpStage">
+        <video id="wpVideo" playsinline controls style="display:none"></video>
+        <div id="wpYt" style="display:none"></div>
+        <div class="wp-empty" id="wpEmpty">Nothing playing yet.<br>Paste a video link below to start the party.</div>
+      </div>
+    </div>
+    <div class="wp-device-bar">
+      <select class="sfield" id="wpMicSel" title="Microphone / audio input" onchange="wpApplyMicDevice()"></select>
+      <select class="sfield" id="wpOutSel" title="Speaker / headset output" style="display:none" onchange="wpApplyOutDevice()"></select>
+    </div>
     <div class="wp-cam-bar">
       <button class="wp-btn ghost" id="wpCamBtn" onclick="wpToggleCam()">📷 Turn on camera</button>
       <button class="wp-btn ghost wp-ptt" id="wpPttBtn" style="display:none">🎤 Mute</button>
@@ -8623,11 +8647,6 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <label class="wp-vol-lbl">👥 Cams</label>
       <input type="range" class="wp-vol-slider" id="wpCamVol" min="0" max="1" step="0.05" value="1"
         oninput="wpSetCamVol(this.value)" title="Camera orb volume">
-    </div>
-    <div class="wp-stage" id="wpStage">
-      <video id="wpVideo" playsinline controls style="display:none"></video>
-      <div id="wpYt" style="display:none"></div>
-      <div class="wp-empty" id="wpEmpty">Nothing playing yet.<br>Paste a video link below to start the party.</div>
     </div>
     <div class="wp-row">
       <input class="sfield" id="wpUrl" type="text" autocomplete="off" spellcheck="false"
@@ -11887,6 +11906,7 @@ async function loadWatch(){
     return;
   }
   WP.booted = true;
+  wpEnumerateDevices();
   wpStatus('connecting…', false);
   let cfg;
   try{
@@ -12097,6 +12117,50 @@ function wpAnnounceCam(on){
   wpLive().forEach(id=> wpSignal(id, {t:'cam', on:!!on}));
 }
 
+// ── device enumeration ──────────────────────────────────────────────────────
+async function wpEnumerateDevices(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  try{
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const mics = devs.filter(d=>d.kind==='audioinput');
+    const spks = devs.filter(d=>d.kind==='audiooutput');
+    const ms = $('wpMicSel'), os = $('wpOutSel');
+    if(ms && mics.length){
+      const cur = ms.value;
+      ms.innerHTML = '<option value="">Default mic</option>' +
+        mics.map((d,i)=>`<option value="${d.deviceId}">${d.label||'Mic '+(i+1)}</option>`).join('');
+      if(cur) ms.value = cur;
+    }
+    if(os){
+      if(spks.length > 1){
+        os.style.display = '';
+        const cur = os.value;
+        os.innerHTML = '<option value="">Default speaker</option>' +
+          spks.map((d,i)=>`<option value="${d.deviceId}">${d.label||'Speaker '+(i+1)}</option>`).join('');
+        if(cur) os.value = cur;
+      } else {
+        os.style.display = 'none';
+      }
+    }
+  }catch(e){}
+}
+
+function wpMicDeviceId(){
+  const s = $('wpMicSel'); return (s && s.value) ? s.value : null;
+}
+
+async function wpApplyMicDevice(){
+  if(WPC.on && WPC.stream) await wpRemountMic();
+}
+
+function wpApplyOutDevice(){
+  const s = $('wpOutSel'); if(!s) return;
+  const id = s.value;
+  document.querySelectorAll('#wpOrbs video, #wpVideo').forEach(v=>{
+    if(v.setSinkId) v.setSinkId(id).catch(()=>{});
+  });
+}
+
 // ── local camera ────────────────────────────────────────────────────────────
 async function wpToggleCam(){
   if(WPC.busy) return;
@@ -12110,11 +12174,15 @@ async function wpToggleCam(){
     wpCamNote('Asking for camera permission…');
     let stream;
     try{
+      const micId = wpMicDeviceId();
       stream = await navigator.mediaDevices.getUserMedia({
         video:{ width:{ideal:320}, height:{ideal:320},
                 frameRate:{ideal:15,max:20}, facingMode:'user' },
-        audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+        audio: Object.assign(
+          { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+          micId ? {deviceId:{exact:micId}} : {}),
       });
+      await wpEnumerateDevices(); // re-populate with labels now we have permission
     }catch(e){
       const n = (e && e.name) || '';
       wpCamNote(
@@ -12166,8 +12234,11 @@ async function wpRemountMic(){
   if(!WPC.on || !WPC.stream) return;
   let newTrack;
   try{
+    const micId = wpMicDeviceId();
     const fresh = await navigator.mediaDevices.getUserMedia({
-      audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+      audio: Object.assign(
+        { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+        micId ? {deviceId:{exact:micId}} : {}),
     });
     newTrack = fresh.getAudioTracks()[0];
   }catch(e){
