@@ -8218,14 +8218,10 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-device-bar { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
   .wp-device-bar .sfield { font-size:12px; padding:8px 10px; flex:1;
     min-width:140px; margin-bottom:0; }
-  @media (min-width:1024px){
-    .wp-tv-layout { flex-direction:row-reverse; align-items:flex-start; gap:12px; }
-    .wp-tv-layout .wp-stage { flex:1; width:auto; }
-    .wp-tv-layout .wp-orbs {
-      flex:0 0 auto; min-width:96px; flex-direction:column; align-items:center;
-      overflow-x:hidden; overflow-y:auto; max-height:80vh;
-      margin-bottom:0; padding:2px 2px 6px; }
-  }
+  /* overlay off: cams sit in a centered row above the player. Auto margins
+     (not justify-content:center) so an overflowing row still scrolls to the start. */
+  .wp-tv-layout:not(.orbs-overlay) .wp-orbs > .wp-orb:first-child { margin-left:auto; }
+  .wp-tv-layout:not(.orbs-overlay) .wp-orbs > .wp-orb:last-child { margin-right:auto; }
   /* ── camera overlay mode ─────────────────────────────────────────────────── */
   .wp-tv-layout.orbs-overlay { position:relative; flex-direction:column !important; }
   .wp-tv-layout.orbs-overlay .wp-stage { flex:none !important; width:100% !important; }
@@ -8253,12 +8249,6 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-tv-layout:not(.orbs-overlay) .wp-orb-inner { border-radius:9.5px; }
   .wp-tv-layout:not(.orbs-overlay) .wp-orb-badge { right:3px; bottom:3px; }
   /* ── stage fullscreen: video fills the screen, cams float top-center ────── */
-  .wp-fs-btn { position:absolute; top:10px; left:10px; z-index:11;
-    width:36px; height:36px; border-radius:10px; cursor:pointer;
-    display:grid; place-items:center; font-size:18px; line-height:1;
-    background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.18); color:#fff;
-    opacity:.55; transition:opacity .2s; }
-  .wp-fs-btn:hover { opacity:1; }
   .wp-tv-layout.wp-fs { position:fixed; inset:0; z-index:9998; display:block !important;
     width:100vw; height:100vh; height:100dvh; background:#000; }
   .wp-tv-layout.wp-fs .wp-stage { width:100% !important; height:100% !important;
@@ -8676,8 +8666,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div class="wp-tv-layout">
       <div class="wp-orbs" id="wpOrbs"></div>
       <div class="wp-stage" id="wpStage">
-        <button class="wp-fs-btn" id="wpStageFsBtn" onclick="wpToggleStageFs()" title="Fullscreen with cameras">⛶</button>
-        <video id="wpVideo" playsinline controls controlslist="nofullscreen" disablepictureinpicture style="display:none"></video>
+        <video id="wpVideo" playsinline controls style="display:none"></video>
         <div id="wpYt" style="display:none"></div>
         <div class="wp-empty" id="wpEmpty">Nothing playing yet.<br>Paste a video link below to start the party.</div>
       </div>
@@ -12371,36 +12360,49 @@ function wpToggleOverlay(){
   try{ localStorage.setItem('wpOrbOverlay', on ? '1' : '0'); }catch(e){}
 }
 
-// Fullscreen the whole layout (stage + cams), not the player — native video /
-// YouTube fullscreen only shows the player element, so the cams would vanish.
-// iPhone Safari has no element fullscreen; fall back to a fixed full-viewport.
-function wpToggleStageFs(){
-  const layout = document.querySelector('.wp-tv-layout'); if(!layout) return;
-  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-  if(fsEl || layout.classList.contains('wp-fs')){
-    if(fsEl) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-    wpStageFsSync(false);
-    return;
-  }
-  const req = layout.requestFullscreen || layout.webkitRequestFullscreen;
-  wpStageFsSync(true);
-  if(req){
-    try{
-      const p = req.call(layout);
-      if(p && p.catch) p.catch(()=>{});   // keep the CSS fallback on refusal
-    }catch(e){}
-  }
-}
+// The player's own fullscreen button (native <video> or YouTube's) only
+// fullscreens the player, which hides the cams. Let it go fullscreen, then
+// immediately hand fullscreen to the whole layout (stage + cams) instead.
+// Pressing the player's button again while we're fullscreen exits.
+function wpFsLayout(){ return document.querySelector('.wp-tv-layout'); }
 function wpStageFsSync(on){
-  const layout = document.querySelector('.wp-tv-layout'); if(!layout) return;
+  const layout = wpFsLayout(); if(!layout) return;
   layout.classList.toggle('wp-fs', on);
   document.body.style.overflow = on ? 'hidden' : '';
-  const b = $('wpStageFsBtn'); if(b) b.title = on ? 'Exit fullscreen' : 'Fullscreen with cameras';
 }
-['fullscreenchange','webkitfullscreenchange'].forEach(ev =>
-  document.addEventListener(ev, ()=>{
-    if(!(document.fullscreenElement || document.webkitFullscreenElement)) wpStageFsSync(false);
-  }));
+async function wpExitAllFs(){
+  // exitFullscreen pops one level of the fullscreen stack; unwind all of it
+  for(let i=0; i<3 && (document.fullscreenElement || document.webkitFullscreenElement); i++){
+    try{ await (document.exitFullscreen || document.webkitExitFullscreen).call(document); }
+    catch(e){ break; }
+  }
+  wpStageFsSync(false);
+}
+function wpOnFsChange(){
+  const layout = wpFsLayout(); if(!layout) return;
+  const fe = document.fullscreenElement || document.webkitFullscreenElement;
+  if(!fe){ wpStageFsSync(false); return; }
+  if(fe === layout){ wpStageFsSync(true); return; }
+  if(!layout.contains(fe)) return;
+  // the player itself went fullscreen
+  if(layout.classList.contains('wp-fs')){ wpExitAllFs(); return; }
+  const req = layout.requestFullscreen || layout.webkitRequestFullscreen;
+  try{
+    const r = req && req.call(layout);
+    if(r && r.catch) r.catch(()=>{});   // refused: stay in plain player fullscreen
+  }catch(e){}
+}
+document.addEventListener('fullscreenchange', wpOnFsChange);
+document.addEventListener('webkitfullscreenchange', wpOnFsChange);
+// iPhone Safari has no element fullscreen — its <video> goes native. Back out
+// of that and fill the viewport with the layout instead.
+(function wpBindIosFs(){
+  const v = $('wpVideo'); if(!v) return;
+  v.addEventListener('webkitbeginfullscreen', ()=>{
+    if(document.fullscreenEnabled || document.webkitFullscreenEnabled) return;
+    setTimeout(()=>{ try{ v.webkitExitFullscreen(); }catch(e){} wpStageFsSync(true); }, 0);
+  });
+})();
 addEventListener('keydown', e=>{
   if(e.key==='Escape' && !WPC.camFs && !document.fullscreenElement &&
      document.querySelector('.wp-tv-layout.wp-fs')) wpStageFsSync(false);
@@ -13042,7 +13044,7 @@ function wpMountYt(id){
     if(!$('wpYtTarget')) return;
     WP.yt = new YT.Player('wpYtTarget', {
       videoId:id, width:'100%', height:'100%',
-      playerVars:{ playsinline:1, rel:0, modestbranding:1, fs:0, origin:location.origin },
+      playerVars:{ playsinline:1, rel:0, modestbranding:1, origin:location.origin },
       events:{
         onReady:()=>{ if(WP.pendingTS){ WP.yt.seekTo(WP.pendingTS,true); WP.pendingTS=0; } },
         onStateChange:(e)=>{
