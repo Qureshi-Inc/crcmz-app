@@ -8118,9 +8118,6 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-orb.big { width:154px; }
   .wp-orb.big .wp-orb-ring { width:146px; height:146px; }
   .wp-orb.big .wp-orb-ini { font-size:46px; }
-  .wp-orb.speaking { width:154px; }
-  .wp-orb.speaking .wp-orb-ring { width:146px; height:146px; }
-  .wp-orb.speaking .wp-orb-ini { font-size:46px; }
   @media (max-width:560px){
     .wp-orb { width:60px; }
     .wp-orb-ring { width:54px; height:54px; }
@@ -8129,9 +8126,6 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     .wp-orb.big { width:124px; }
     .wp-orb.big .wp-orb-ring { width:118px; height:118px; }
     .wp-orb.big .wp-orb-ini { font-size:38px; }
-    .wp-orb.speaking { width:124px; }
-    .wp-orb.speaking .wp-orb-ring { width:118px; height:118px; }
-    .wp-orb.speaking .wp-orb-ini { font-size:38px; }
   }
   /* back-camera has no mirror */
   .wp-orb.me.no-mirror .wp-orb-inner video { transform:none !important; }
@@ -8165,8 +8159,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     background:rgba(0,0,0,.7) !important; border-color:transparent !important; }
   .wp-orbs-grid .wp-orb-name { font-size:13px !important; text-align:center; padding:0 4px; }
   /* Speaking glow works on rectangular tiles too */
-  .wp-orbs-grid .wp-orb.talking .wp-orb-ring,
-  .wp-orbs-grid .wp-orb.speaking .wp-orb-ring {
+  .wp-orbs-grid .wp-orb.talking .wp-orb-ring {
     box-shadow:0 0 0 3px rgba(140,255,43,.4),0 0 20px rgba(140,255,43,.25) !important; }
   .wp-cam-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin-bottom:10px; }
@@ -8229,7 +8222,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     .wp-tv-layout { flex-direction:row-reverse; align-items:flex-start; gap:12px; }
     .wp-tv-layout .wp-stage { flex:1; width:auto; }
     .wp-tv-layout .wp-orbs {
-      flex:0 0 96px; width:96px; flex-direction:column;
+      flex:0 0 auto; min-width:96px; flex-direction:column; align-items:center;
       overflow-x:hidden; overflow-y:auto; max-height:80vh;
       margin-bottom:0; padding:2px 2px 6px; }
   }
@@ -8250,6 +8243,38 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb { width:62px !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb-ring { width:56px !important; height:56px !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb-ini { font-size:18px !important; }
+  .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb.big { width:132px !important; }
+  .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb.big .wp-orb-ring { width:124px !important; height:124px !important; }
+  .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb.big .wp-orb-ini { font-size:40px !important; }
+  .wp-tv-layout.orbs-overlay .wp-orbs:has(.wp-orb.big) { width:142px !important; }
+  /* sidebar / strip mode: fixed rounded squares; click a tile to enlarge it */
+  .wp-tv-layout:not(.orbs-overlay) .wp-orb-ring,
+  .wp-tv-layout:not(.orbs-overlay) .wp-orb-inner { border-radius:12px; }
+  .wp-tv-layout:not(.orbs-overlay) .wp-orb-inner { border-radius:9.5px; }
+  .wp-tv-layout:not(.orbs-overlay) .wp-orb-badge { right:3px; bottom:3px; }
+  /* ── stage fullscreen: video fills the screen, cams float top-center ────── */
+  .wp-fs-btn { position:absolute; top:10px; left:10px; z-index:11;
+    width:36px; height:36px; border-radius:10px; cursor:pointer;
+    display:grid; place-items:center; font-size:18px; line-height:1;
+    background:rgba(0,0,0,.5); border:1px solid rgba(255,255,255,.18); color:#fff;
+    opacity:.55; transition:opacity .2s; }
+  .wp-fs-btn:hover { opacity:1; }
+  .wp-tv-layout.wp-fs { position:fixed; inset:0; z-index:9998; display:block !important;
+    width:100vw; height:100vh; height:100dvh; background:#000; }
+  .wp-tv-layout.wp-fs .wp-stage { width:100% !important; height:100% !important;
+    aspect-ratio:auto; border:0; border-radius:0; box-shadow:none; }
+  .wp-tv-layout.wp-fs .wp-orbs {
+    position:absolute; top:10px; left:50%; right:auto; transform:translateX(-50%);
+    z-index:10; flex-direction:row !important; align-items:flex-start;
+    width:auto !important; max-width:92vw; max-height:none !important;
+    min-width:0; overflow-x:auto; overflow-y:hidden;
+    background:rgba(0,0,0,.28); border-radius:12px;
+    padding:6px 8px 4px !important; margin:0 !important;
+    opacity:.85; transition:opacity .2s; scrollbar-width:none; }
+  .wp-tv-layout.wp-fs .wp-orbs:hover { opacity:1; }
+  .wp-tv-layout.wp-fs .wp-orbs:has(.wp-orb.big) { width:auto !important; }
+  .wp-tv-layout.wp-fs .wp-orbs::-webkit-scrollbar { display:none; }
+  .wp-tv-layout.wp-fs .wp-orb-name { color:#fff; text-shadow:0 1px 3px #000; }
   .wp-btn.ghost.active { background:rgba(255,47,214,.12) !important;
     border-color:rgba(255,47,214,.45) !important; color:var(--neon) !important; }
   /* ── controls below the player ───────────────────────────────────────────── */
@@ -8651,7 +8676,8 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div class="wp-tv-layout">
       <div class="wp-orbs" id="wpOrbs"></div>
       <div class="wp-stage" id="wpStage">
-        <video id="wpVideo" playsinline controls style="display:none"></video>
+        <button class="wp-fs-btn" id="wpStageFsBtn" onclick="wpToggleStageFs()" title="Fullscreen with cameras">⛶</button>
+        <video id="wpVideo" playsinline controls controlslist="nofullscreen" disablepictureinpicture style="display:none"></video>
         <div id="wpYt" style="display:none"></div>
         <div class="wp-empty" id="wpEmpty">Nothing playing yet.<br>Paste a video link below to start the party.</div>
       </div>
@@ -12345,6 +12371,41 @@ function wpToggleOverlay(){
   try{ localStorage.setItem('wpOrbOverlay', on ? '1' : '0'); }catch(e){}
 }
 
+// Fullscreen the whole layout (stage + cams), not the player — native video /
+// YouTube fullscreen only shows the player element, so the cams would vanish.
+// iPhone Safari has no element fullscreen; fall back to a fixed full-viewport.
+function wpToggleStageFs(){
+  const layout = document.querySelector('.wp-tv-layout'); if(!layout) return;
+  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+  if(fsEl || layout.classList.contains('wp-fs')){
+    if(fsEl) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    wpStageFsSync(false);
+    return;
+  }
+  const req = layout.requestFullscreen || layout.webkitRequestFullscreen;
+  wpStageFsSync(true);
+  if(req){
+    try{
+      const p = req.call(layout);
+      if(p && p.catch) p.catch(()=>{});   // keep the CSS fallback on refusal
+    }catch(e){}
+  }
+}
+function wpStageFsSync(on){
+  const layout = document.querySelector('.wp-tv-layout'); if(!layout) return;
+  layout.classList.toggle('wp-fs', on);
+  document.body.style.overflow = on ? 'hidden' : '';
+  const b = $('wpStageFsBtn'); if(b) b.title = on ? 'Exit fullscreen' : 'Fullscreen with cameras';
+}
+['fullscreenchange','webkitfullscreenchange'].forEach(ev =>
+  document.addEventListener(ev, ()=>{
+    if(!(document.fullscreenElement || document.webkitFullscreenElement)) wpStageFsSync(false);
+  }));
+addEventListener('keydown', e=>{
+  if(e.key==='Escape' && !WPC.camFs && !document.fullscreenElement &&
+     document.querySelector('.wp-tv-layout.wp-fs')) wpStageFsSync(false);
+});
+
 function wpInitOverlay(){
   try{
     if(localStorage.getItem('wpOrbOverlay') === '1'){
@@ -12807,7 +12868,6 @@ function wpOrbState(){
     const m = WPC.levels[k];
     const talking = !!(m && m.loud) && (k!=='me' || !WPC.muted);
     el.classList.toggle('talking', talking);
-    el.classList.toggle('speaking', talking);
     if(k==='me'){
       const badge = el.querySelector('.wp-orb-badge');
       const txt = WPC.on ? (WPC.muted ? '🔇' : '🎤') : '';
@@ -12982,7 +13042,7 @@ function wpMountYt(id){
     if(!$('wpYtTarget')) return;
     WP.yt = new YT.Player('wpYtTarget', {
       videoId:id, width:'100%', height:'100%',
-      playerVars:{ playsinline:1, rel:0, modestbranding:1, origin:location.origin },
+      playerVars:{ playsinline:1, rel:0, modestbranding:1, fs:0, origin:location.origin },
       events:{
         onReady:()=>{ if(WP.pendingTS){ WP.yt.seekTo(WP.pendingTS,true); WP.pendingTS=0; } },
         onStateChange:(e)=>{
