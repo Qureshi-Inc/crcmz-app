@@ -12736,13 +12736,6 @@ function wpBind(s){
     clearWatchdog();
     const code = String(err?.message||'');
     wpLog('sock.connect_error', {code}, 'warn');
-    if(code==='KICKED'){
-      // A moderator removed us; the server refuses us until the ban lapses.
-      wpStatus('removed', false);
-      wpErr('A moderator removed you from this watch party. Try again in a few minutes.');
-      WP.booted = false;
-      return;
-    }
     if(code==='AUTH_REQUIRED' || code==='INVALID_WATCH_TICKET' || code==='WRONG_ROOM'){
       // Ticket problem, not a network problem: a fresh one may work once.
       wpErr('Watch pass rejected — refreshing your sign-in.');
@@ -12777,7 +12770,7 @@ function wpBind(s){
     });
     const by = d && d.by ? ' by '+d.by : '';
     wpStatus('removed', false);
-    wpErr('You were removed from the watch party'+by+'. Try again in a few minutes.');
+    wpErr('You were removed from the watch party'+by+'. Reload the page to rejoin.');
     WP.booted = false;
   });
   s.on('watch:presence', d => { WP.presence = d; wpRenderPresence(); });
@@ -14605,7 +14598,7 @@ function wpConfetti(e, count){
 // ── kick (moderators only) ───────────────────────────────────────────────────
 function wpKick(clientId, name){
   if(!WP.isMod || !WP.sock || !WP.sock.connected) return;
-  if(!confirm('Remove '+name+' from the watch party? They can\'t rejoin for 10 minutes.')) return;
+  if(!confirm('Remove this '+name+' session from the watch party? Their other devices stay, and they can rejoin by reloading.')) return;
   WP.sock.emit('CMD:kickUser', {userToBeKicked: clientId});
   toast('Removed '+name);
 }
