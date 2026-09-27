@@ -8226,12 +8226,12 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-tv-layout.orbs-overlay { position:relative; flex-direction:column !important; }
   .wp-tv-layout.orbs-overlay .wp-stage { flex:none !important; width:100% !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs {
-    position:absolute; top:10px; right:10px; z-index:10;
-    flex-direction:column !important; flex:none !important;
-    width:72px !important; max-height:82% !important;
-    overflow-y:auto; overflow-x:hidden;
+    position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:10;
+    flex-direction:row !important; flex:none !important; align-items:flex-start;
+    width:auto !important; max-width:calc(100% - 20px);
+    overflow-x:auto; overflow-y:hidden;
     background:rgba(0,0,0,.28); border-radius:12px;
-    padding:5px 3px !important; margin-bottom:0 !important;
+    padding:6px 8px 4px !important; margin-bottom:0 !important;
     opacity:.8; transition:opacity .2s;
     scrollbar-width:none; }
   .wp-tv-layout.orbs-overlay .wp-orbs:hover { opacity:1; }
@@ -8242,7 +8242,6 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb.big { width:132px !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb.big .wp-orb-ring { width:124px !important; height:124px !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb.big .wp-orb-ini { font-size:40px !important; }
-  .wp-tv-layout.orbs-overlay .wp-orbs:has(.wp-orb.big) { width:142px !important; }
   /* sidebar / strip mode: fixed rounded squares; click a tile to enlarge it */
   .wp-tv-layout:not(.orbs-overlay) .wp-orb-ring,
   .wp-tv-layout:not(.orbs-overlay) .wp-orb-inner { border-radius:12px; }
@@ -8262,7 +8261,6 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     padding:6px 8px 4px !important; margin:0 !important;
     opacity:.85; transition:opacity .2s; scrollbar-width:none; }
   .wp-tv-layout.wp-fs .wp-orbs:hover { opacity:1; }
-  .wp-tv-layout.wp-fs .wp-orbs:has(.wp-orb.big) { width:auto !important; }
   .wp-tv-layout.wp-fs .wp-orbs::-webkit-scrollbar { display:none; }
   .wp-tv-layout.wp-fs .wp-orb-name { color:#fff; text-shadow:0 1px 3px #000; }
   /* ── fullscreen inline chat: bubbles live 30s, then drift out ──────────── */
