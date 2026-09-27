@@ -5069,7 +5069,7 @@ async def watch_report_event(request: Request):
 async def watch_rally(request: Request):
     """Send a 'Join us!' text to the WhatsApp group via the baily bridge.
 
-    Proxies to WA_BRIDGE_URL/send with mentionAll=true so @everyone is tagged.
+    Proxies to WA_BRIDGE_URL/send with mentionAll=true so everyone is tagged (@all).
     """
     if not _watch_same_origin(request):
         return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
@@ -13143,7 +13143,7 @@ async function wpRally(){
     }
     const watchingStr = videoLabel ? 'watching '+videoLabel : 'in the watch party';
     const link = location.origin+'/watch';
-    const msg = '@everyone! '+names+' are on CRCMZ app '+watchingStr+'. Join now fuckers! '+link;
+    const msg = '@all '+names+' are on CRCMZ app '+watchingStr+'. Join now fuckers! '+link;
 
     const r = await fetch('/api/watch/rally', {method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg})});
