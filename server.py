@@ -8265,6 +8265,78 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-tv-layout.wp-fs .wp-orbs:has(.wp-orb.big) { width:auto !important; }
   .wp-tv-layout.wp-fs .wp-orbs::-webkit-scrollbar { display:none; }
   .wp-tv-layout.wp-fs .wp-orb-name { color:#fff; text-shadow:0 1px 3px #000; }
+  /* ── fullscreen inline chat: bubbles live 30s, then drift out ──────────── */
+  .wp-fsc { display:none; }
+  .wp-tv-layout.wp-fs .wp-fsc { display:flex; flex-direction:column; gap:8px;
+    position:absolute; left:18px; bottom:68px; z-index:12;
+    width:min(400px, calc(100vw - 36px)); pointer-events:none; }
+  .wp-fsc-feed { display:flex; flex-direction:column; justify-content:flex-end; }
+  .wp-fsc-msg { display:grid; grid-template-rows:1fr; margin-top:8px;
+    animation:wpFscIn .5s cubic-bezier(.2,.9,.25,1.12) both;
+    transition:grid-template-rows .55s cubic-bezier(.4,0,.2,1),
+      margin-top .55s cubic-bezier(.4,0,.2,1), opacity .45s ease,
+      transform .55s cubic-bezier(.4,0,.2,1), filter .45s ease; }
+  .wp-fsc-msg > div { min-height:0; overflow:hidden; }
+  .wp-fsc-msg.out { grid-template-rows:0fr; margin-top:0; opacity:0;
+    transform:translateX(-24px) scale(.96); filter:blur(3px); }
+  @keyframes wpFscIn {
+    from { opacity:0; transform:translateY(18px) scale(.94); filter:blur(6px); }
+    to   { opacity:1; transform:none; filter:none; } }
+  .wp-fsc-bub { position:relative; display:inline-block; max-width:100%;
+    box-sizing:border-box; padding:8px 13px 9px; border-radius:14px 14px 14px 5px;
+    background:rgba(10,8,22,.52); border:1px solid rgba(255,255,255,.1);
+    -webkit-backdrop-filter:blur(14px) saturate(1.4); backdrop-filter:blur(14px) saturate(1.4);
+    box-shadow:0 8px 24px rgba(0,0,0,.35); overflow:hidden;
+    font-size:14.5px; line-height:1.42; color:#fff; word-break:break-word;
+    text-shadow:0 1px 2px rgba(0,0,0,.5); }
+  .wp-fsc-bub .who { font-weight:700; margin-right:6px; }
+  .wp-fsc-msg.me .wp-fsc-bub { background:rgba(58,14,62,.55);
+    border-color:rgba(255,47,214,.28); }
+  .wp-fsc-msg.sys .wp-fsc-bub { font-size:12.5px; font-style:italic;
+    color:rgba(255,255,255,.75); padding:5px 12px; border-radius:999px; }
+  /* lifetime bar drains over the message's 30s */
+  .wp-fsc-bub::after { content:""; position:absolute; left:0; bottom:0; height:2px;
+    width:100%; transform-origin:left; background:var(--hue, var(--neon)); opacity:.7;
+    animation:wpFscLife var(--life,30s) linear both; }
+  @keyframes wpFscLife { from { transform:scaleX(1); } to { transform:scaleX(0); } }
+  .wp-fsc-in { pointer-events:auto; display:flex; align-items:center; gap:6px;
+    width:210px; max-width:100%; padding:4px 4px 4px 13px; box-sizing:border-box;
+    border-radius:999px; background:rgba(10,8,22,.4);
+    border:1px solid rgba(255,255,255,.12);
+    -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+    opacity:.55; transition:width .35s cubic-bezier(.3,.8,.3,1), opacity .25s ease,
+      border-color .25s ease, background .25s ease, box-shadow .25s ease; }
+  .wp-fsc-in:hover { opacity:.85; }
+  .wp-fsc-in:focus-within { width:100%; opacity:1; background:rgba(10,8,22,.68);
+    border-color:rgba(255,47,214,.55); box-shadow:0 0 0 4px rgba(255,47,214,.12); }
+  .wp-fsc-in input { flex:1; min-width:0; background:none; border:0; outline:none;
+    color:#fff; font-size:14px; padding:6px 0; }
+  .wp-fsc-in input::placeholder { color:rgba(255,255,255,.55); }
+  .wp-fsc-in button { flex:none; width:32px; height:32px; border-radius:50%; border:0;
+    cursor:pointer; color:#fff; font-size:14px;
+    background:linear-gradient(135deg, var(--neon), #9d5cff);
+    transform:scale(.8); opacity:0; transition:transform .25s ease, opacity .25s ease; }
+  .wp-fsc-in:focus-within button { transform:scale(1); opacity:1; }
+  @media (max-width:560px){ .wp-tv-layout.wp-fs .wp-fsc { left:10px; bottom:58px; } }
+  @media (prefers-reduced-motion:reduce){
+    .wp-fsc-msg { animation:none; transition:opacity .3s; }
+    .wp-fsc-msg.out { transform:none; filter:none; } }
+  /* our fullscreen (player + cams); the player's own fullscreen is turned off.
+     Sits bottom-right, just above the player's control bar. */
+  .wp-fs-btn { position:absolute; right:10px; bottom:54px; z-index:13;
+    width:42px; height:42px; border-radius:12px; cursor:pointer; padding:0;
+    display:grid; place-items:center; color:#fff;
+    background:rgba(10,8,22,.5); border:1px solid rgba(255,255,255,.16);
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+    opacity:0; transform:translateY(4px);
+    transition:opacity .25s ease, transform .25s ease, background .2s ease; }
+  .wp-fs-btn svg { width:22px; height:22px; }
+  .wp-fs-btn .ex, .wp-fs .wp-fs-btn .en { display:none; }
+  .wp-fs .wp-fs-btn .ex { display:block; }
+  .wp-stage.wp-active .wp-fs-btn, .wp-fs-btn:hover, .wp-fs-btn:focus-visible {
+    opacity:1; transform:none; }
+  .wp-fs-btn:hover { background:rgba(255,47,214,.35); }
+  @media (hover:none){ .wp-fs-btn { opacity:.75; transform:none; } }
   .wp-btn.ghost.active { background:rgba(255,47,214,.12) !important;
     border-color:rgba(255,47,214,.45) !important; color:var(--neon) !important; }
   /* ── controls below the player ───────────────────────────────────────────── */
@@ -8666,9 +8738,18 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div class="wp-tv-layout">
       <div class="wp-orbs" id="wpOrbs"></div>
       <div class="wp-stage" id="wpStage">
-        <video id="wpVideo" playsinline controls style="display:none"></video>
+        <button class="wp-fs-btn" id="wpStageFsBtn" onclick="wpToggleStageFs()" title="Fullscreen with cameras"><svg class="en" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg><svg class="ex" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/></svg></button>
+        <video id="wpVideo" playsinline controls controlslist="nofullscreen" ondblclick="wpToggleStageFs()" style="display:none"></video>
         <div id="wpYt" style="display:none"></div>
         <div class="wp-empty" id="wpEmpty">Nothing playing yet.<br>Paste a video link below to start the party.</div>
+      </div>
+      <div class="wp-fsc" id="wpFsc">
+        <div class="wp-fsc-feed" id="wpFscFeed"></div>
+        <div class="wp-fsc-in">
+          <input id="wpFscIn" type="text" maxlength="500" autocomplete="off"
+            placeholder="💬 Chat… (Enter)" onkeydown="wpFscKey(event)">
+          <button onmousedown="event.preventDefault()" onclick="wpFscSend()" title="Send">➤</button>
+        </div>
       </div>
     </div>
     <div class="wp-device-bar">
@@ -12112,7 +12193,7 @@ function wpBind(s){
     if(Math.abs(cur - med) > 3) wpRemote(()=>wpSeek(med));
   });
   s.on('chatinit', arr => { WP.chat = Array.isArray(arr)?arr.slice(-60):[]; wpRenderChat(); });
-  s.on('REC:chat', m => { WP.chat.push(m); WP.chat=WP.chat.slice(-60); wpRenderChat(); });
+  s.on('REC:chat', m => { WP.chat.push(m); WP.chat=WP.chat.slice(-60); wpRenderChat(); wpFscPush(m); });
 }
 
 // ── presence ────────────────────────────────────────────────────────────────
@@ -12365,6 +12446,27 @@ function wpToggleOverlay(){
 // immediately hand fullscreen to the whole layout (stage + cams) instead.
 // Pressing the player's button again while we're fullscreen exits.
 function wpFsLayout(){ return document.querySelector('.wp-tv-layout'); }
+function wpToggleStageFs(){
+  const layout = wpFsLayout(); if(!layout) return;
+  if(document.fullscreenElement || document.webkitFullscreenElement || layout.classList.contains('wp-fs')){
+    wpExitAllFs(); return;
+  }
+  wpStageFsSync(true);   // CSS full-viewport right away; real fullscreen on top if allowed
+  const req = layout.requestFullscreen || layout.webkitRequestFullscreen;
+  try{
+    const r = req && req.call(layout);
+    if(r && r.catch) r.catch(()=>{});
+  }catch(e){}
+}
+// show the fullscreen button while the pointer is active over the player
+(function wpBindStageActivity(){
+  const st = $('wpStage'); if(!st) return;
+  let t = 0;
+  const poke = ()=>{ st.classList.add('wp-active'); clearTimeout(t);
+    t = setTimeout(()=>st.classList.remove('wp-active'), 2600); };
+  ['mousemove','touchstart','pointerdown'].forEach(ev => st.addEventListener(ev, poke, {passive:true}));
+  st.addEventListener('mouseleave', ()=>{ clearTimeout(t); st.classList.remove('wp-active'); });
+})();
 function wpStageFsSync(on){
   const layout = wpFsLayout(); if(!layout) return;
   layout.classList.toggle('wp-fs', on);
@@ -12926,6 +13028,63 @@ function wpSendChat(){
   WP.sock.emit('CMD:chatV2', {msg});
   i.value='';
 }
+
+// ── fullscreen inline chat ──────────────────────────────────────────────────
+// Every message also lands in the fullscreen feed for 30s (it's only visible
+// while fullscreen, so entering fullscreen shows the last 30s of chat).
+const WP_FSC_LIFE = 30000, WP_FSC_MAX = 6;
+function wpHue(seed){
+  let h=0; const s=String(seed||'');
+  for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+  return 'hsl('+(h%360)+' 95% 72%)';
+}
+function wpFscPush(m){
+  const feed=$('wpFscFeed'); if(!feed || !m) return;
+  let html, cls='';
+  if(m.cmd==='host'){ cls='sys'; html=esc(WP.names[m.id]||'Someone')+' started a video'; }
+  else if(m.cmd) return;
+  else {
+    const me = m.id===WP.clientId;
+    const who = me ? 'You' : (WP.names[m.id] || 'Viewer');
+    if(me) cls='me';
+    html = '<span class="who" style="color:'+wpHue(WP.names[m.id]||who)+'">'+
+           esc(who)+'</span>'+esc(m.msg||'');
+  }
+  const el=document.createElement('div');
+  el.className='wp-fsc-msg '+cls;
+  el.innerHTML='<div><div class="wp-fsc-bub">'+html+'</div></div>';
+  const who = el.querySelector('.who'); if(who) el.style.setProperty('--hue', who.style.color);
+  el.style.setProperty('--life', (WP_FSC_LIFE/1000)+'s');
+  feed.appendChild(el);
+  el._t = setTimeout(()=>wpFscDrop(el), WP_FSC_LIFE);
+  // too many on screen: retire the oldest early
+  const live = feed.querySelectorAll('.wp-fsc-msg:not(.out)');
+  for(let i=0; i < live.length - WP_FSC_MAX; i++) wpFscDrop(live[i]);
+}
+function wpFscDrop(el){
+  if(!el || el.classList.contains('out')) return;
+  clearTimeout(el._t);
+  el.classList.add('out');
+  setTimeout(()=>el.remove(), 650);
+}
+function wpFscSend(){
+  const i=$('wpFscIn'); if(!i) return;
+  const msg=i.value.trim(); if(!msg) return;
+  if(!WP.sock || !WP.sock.connected) return;
+  WP.sock.emit('CMD:chatV2', {msg});
+  i.value='';
+}
+function wpFscKey(e){
+  if(e.key==='Enter'){ e.preventDefault(); if(e.target.value.trim()) wpFscSend(); else e.target.blur(); }
+  e.stopPropagation();
+}
+// In fullscreen, Enter (outside a text field) jumps into the chat box.
+addEventListener('keydown', e=>{
+  if(e.key!=='Enter' || !document.querySelector('.wp-tv-layout.wp-fs')) return;
+  const a=document.activeElement;
+  if(a && (a.tagName==='INPUT' || a.tagName==='TEXTAREA' || a.isContentEditable)) return;
+  const i=$('wpFscIn'); if(i){ e.preventDefault(); i.focus(); }
+});
 
 // ── player ──────────────────────────────────────────────────────────────────
 const wpYtId = url => {
