@@ -8226,15 +8226,18 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-tv-layout.orbs-overlay { position:relative; flex-direction:column !important; }
   .wp-tv-layout.orbs-overlay .wp-stage { flex:none !important; width:100% !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs {
-    position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:10;
-    flex-direction:row !important; flex:none !important; align-items:flex-start;
+    position:absolute; bottom:14px; left:50%; transform:translateX(-50%); z-index:10;
+    flex-direction:row !important; flex:none !important; align-items:flex-end;
     width:auto !important; max-width:calc(100% - 20px);
     overflow-x:auto; overflow-y:hidden;
     background:rgba(0,0,0,.28); border-radius:12px;
     padding:6px 8px 4px !important; margin-bottom:0 !important;
-    opacity:.8; transition:opacity .2s;
+    opacity:.8; transition:opacity .2s, bottom .35s cubic-bezier(.3,.8,.3,1);
     scrollbar-width:none; }
   .wp-tv-layout.orbs-overlay .wp-orbs:hover { opacity:1; }
+  /* lift the cams (and fullscreen chat) clear of the player's controls while they show */
+  .wp-tv-layout.orbs-overlay.wp-ctrls .wp-orbs,
+  .wp-tv-layout.wp-fs.wp-ctrls .wp-orbs { bottom:62px; }
   .wp-tv-layout.orbs-overlay .wp-orbs::-webkit-scrollbar { display:none; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb { width:62px !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb-ring { width:56px !important; height:56px !important; }
@@ -8242,32 +8245,39 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb.big { width:132px !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb.big .wp-orb-ring { width:124px !important; height:124px !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb.big .wp-orb-ini { font-size:40px !important; }
-  /* sidebar / strip mode: fixed rounded squares; click a tile to enlarge it */
-  .wp-tv-layout:not(.orbs-overlay) .wp-orb-ring,
-  .wp-tv-layout:not(.orbs-overlay) .wp-orb-inner { border-radius:12px; }
-  .wp-tv-layout:not(.orbs-overlay) .wp-orb-inner { border-radius:9.5px; }
-  .wp-tv-layout:not(.orbs-overlay) .wp-orb-badge { right:3px; bottom:3px; }
+  /* cams are fixed rounded squares in every mode; click a tile to enlarge it */
+  .wp-tv-layout .wp-orb-ring { border-radius:12px; }
+  .wp-tv-layout .wp-orb-inner { border-radius:9.5px; }
+  .wp-tv-layout .wp-orb-badge { right:3px; bottom:3px; }
   /* ── stage fullscreen: video fills the screen, cams float top-center ────── */
   .wp-tv-layout.wp-fs { position:fixed; inset:0; z-index:9998; display:block !important;
     width:100vw; height:100vh; height:100dvh; background:#000; }
   .wp-tv-layout.wp-fs .wp-stage { width:100% !important; height:100% !important;
     aspect-ratio:auto; border:0; border-radius:0; box-shadow:none; }
   .wp-tv-layout.wp-fs .wp-orbs {
-    position:absolute; top:10px; left:50%; right:auto; transform:translateX(-50%);
-    z-index:10; flex-direction:row !important; align-items:flex-start;
+    position:absolute; top:auto; bottom:14px; left:50%; right:auto; transform:translateX(-50%);
+    z-index:10; flex-direction:row !important; align-items:flex-end;
     width:auto !important; max-width:92vw; max-height:none !important;
     min-width:0; overflow-x:auto; overflow-y:hidden;
     background:rgba(0,0,0,.28); border-radius:12px;
     padding:6px 8px 4px !important; margin:0 !important;
-    opacity:.85; transition:opacity .2s; scrollbar-width:none; }
+    opacity:.85; transition:opacity .2s, bottom .35s cubic-bezier(.3,.8,.3,1);
+    scrollbar-width:none; }
   .wp-tv-layout.wp-fs .wp-orbs:hover { opacity:1; }
+  /* phones: bottom is crowded by chat + controls, keep cams top-center there */
+  @media (max-width:700px){
+    .wp-tv-layout.orbs-overlay .wp-orbs, .wp-tv-layout.wp-fs .wp-orbs,
+    .wp-tv-layout.orbs-overlay.wp-ctrls .wp-orbs, .wp-tv-layout.wp-fs.wp-ctrls .wp-orbs {
+      top:10px; bottom:auto; align-items:flex-start; } }
   .wp-tv-layout.wp-fs .wp-orbs::-webkit-scrollbar { display:none; }
   .wp-tv-layout.wp-fs .wp-orb-name { color:#fff; text-shadow:0 1px 3px #000; }
   /* ── fullscreen inline chat: bubbles live 30s, then drift out ──────────── */
   .wp-fsc { display:none; }
   .wp-tv-layout.wp-fs .wp-fsc { display:flex; flex-direction:column; gap:8px;
-    position:absolute; left:18px; bottom:68px; z-index:12;
-    width:min(400px, calc(100vw - 36px)); pointer-events:none; }
+    position:absolute; left:18px; bottom:16px; z-index:12;
+    width:min(400px, calc(100vw - 36px)); pointer-events:none;
+    transition:bottom .35s cubic-bezier(.3,.8,.3,1); }
+  .wp-tv-layout.wp-fs.wp-ctrls .wp-fsc { bottom:68px; }
   .wp-fsc-feed { display:flex; flex-direction:column; justify-content:flex-end; }
   .wp-fsc-msg { display:grid; grid-template-rows:1fr; margin-top:8px;
     animation:wpFscIn .5s cubic-bezier(.2,.9,.25,1.12) both;
@@ -8315,7 +8325,8 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     background:linear-gradient(135deg, var(--neon), #9d5cff);
     transform:scale(.8); opacity:0; transition:transform .25s ease, opacity .25s ease; }
   .wp-fsc-in:focus-within button { transform:scale(1); opacity:1; }
-  @media (max-width:560px){ .wp-tv-layout.wp-fs .wp-fsc { left:10px; bottom:58px; } }
+  @media (max-width:560px){ .wp-tv-layout.wp-fs .wp-fsc { left:10px; }
+    .wp-tv-layout.wp-fs.wp-ctrls .wp-fsc { bottom:58px; } }
   @media (prefers-reduced-motion:reduce){
     .wp-fsc-msg { animation:none; transition:opacity .3s; }
     .wp-fsc-msg.out { transform:none; filter:none; } }
@@ -8331,7 +8342,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-fs-btn svg { width:22px; height:22px; }
   .wp-fs-btn .ex, .wp-fs .wp-fs-btn .en { display:none; }
   .wp-fs .wp-fs-btn .ex { display:block; }
-  .wp-stage.wp-active .wp-fs-btn, .wp-fs-btn:hover, .wp-fs-btn:focus-visible {
+  .wp-tv-layout.wp-ctrls .wp-fs-btn, .wp-fs-btn:hover, .wp-fs-btn:focus-visible {
     opacity:1; transform:none; }
   .wp-fs-btn:hover { background:rgba(255,47,214,.35); }
   @media (hover:none){ .wp-fs-btn { opacity:.75; transform:none; } }
@@ -12456,14 +12467,20 @@ function wpToggleStageFs(){
     if(r && r.catch) r.catch(()=>{});
   }catch(e){}
 }
-// show the fullscreen button while the pointer is active over the player
+// Track when the player's controls are likely on screen (recent pointer
+// activity, or the video is paused) as .wp-ctrls on the layout, so the
+// fullscreen button shows and the cams / chat lift clear of the controls.
 (function wpBindStageActivity(){
-  const st = $('wpStage'); if(!st) return;
-  let t = 0;
-  const poke = ()=>{ st.classList.add('wp-active'); clearTimeout(t);
-    t = setTimeout(()=>st.classList.remove('wp-active'), 2600); };
-  ['mousemove','touchstart','pointerdown'].forEach(ev => st.addEventListener(ev, poke, {passive:true}));
-  st.addEventListener('mouseleave', ()=>{ clearTimeout(t); st.classList.remove('wp-active'); });
+  const layout = wpFsLayout(), v = $('wpVideo'); if(!layout) return;
+  let active = false, t = 0;
+  const paused = ()=> v && v.style.display !== 'none' && v.paused;
+  const sync = ()=> layout.classList.toggle('wp-ctrls', active || paused());
+  const poke = ()=>{ active = true; sync(); clearTimeout(t);
+    t = setTimeout(()=>{ active = false; sync(); }, 2600); };
+  ['mousemove','touchstart','pointerdown'].forEach(ev => layout.addEventListener(ev, poke, {passive:true}));
+  layout.addEventListener('mouseleave', ()=>{ clearTimeout(t); active = false; sync(); });
+  if(v) ['play','pause','ended','emptied','loadeddata'].forEach(ev => v.addEventListener(ev, sync));
+  sync();
 })();
 function wpStageFsSync(on){
   const layout = wpFsLayout(); if(!layout) return;
