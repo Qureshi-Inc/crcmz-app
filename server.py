@@ -8216,7 +8216,11 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     background:rgba(255,60,60,.1); border:1px solid rgba(255,60,60,.35);
     color:#ff8f9f; display:none; }
   .wp-err.on { display:block; }
-  /* ── Watch Party TV / side-by-side layout ────────────────────────────────── */
+  /* ── Watch Party: full-bleed page ───────────────────────────────────────── */
+  #p-watch {
+    width:100vw; margin-left:calc(50% - 50vw);
+    padding:0 16px 24px; box-sizing:border-box; }
+  /* ── TV / side-by-side layout ────────────────────────────────────────────── */
   .wp-tv-layout { display:flex; flex-direction:column; }
   .wp-device-bar { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
   .wp-device-bar .sfield { font-size:12px; padding:8px 10px; flex:1;
@@ -8225,10 +8229,14 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     .wp-tv-layout { flex-direction:row-reverse; align-items:flex-start; gap:12px; }
     .wp-tv-layout .wp-stage { flex:1; width:auto; }
     .wp-tv-layout .wp-orbs {
-      flex:0 0 90px; width:90px; flex-direction:column;
+      flex:0 0 96px; width:96px; flex-direction:column;
       overflow-x:hidden; overflow-y:auto; max-height:80vh;
       margin-bottom:0; padding:2px 2px 6px; }
   }
+  /* ── controls below the player ───────────────────────────────────────────── */
+  .wp-controls { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+  .wp-ctrl-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .wp-ctrl-row .sfield { flex:1; min-width:0; margin-bottom:0; }
 
   /* ── Huddle (revamped) ──────────────────────────────────────────────────── */
   /* NOTE: do NOT set display here — .panel{display:none} must win when not active */
@@ -8648,17 +8656,25 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <input type="range" class="wp-vol-slider" id="wpCamVol" min="0" max="1" step="0.05" value="1"
         oninput="wpSetCamVol(this.value)" title="Camera orb volume">
     </div>
-    <div class="wp-row">
-      <input class="sfield" id="wpUrl" type="text" autocomplete="off" spellcheck="false"
-        placeholder="https://… video link or YouTube URL"
-        onkeydown="if(event.key==='Enter')wpSetVideo()">
-      <button class="wp-btn" id="wpSetBtn" onclick="wpSetVideo()">▶ Play for everyone</button>
-      <button class="wp-btn ghost" onclick="wpSetVideo('')">Clear</button>
-      <button class="wp-btn ghost" onclick="wpEditNickname()">✏️ Name</button>
-      <button class="wp-btn ghost" id="wpRallyBtn" onclick="wpRally()">📣 Rally</button>
+    <div class="wp-controls">
+      <div class="wp-ctrl-row">
+        <input class="sfield" id="wpTitle" type="text" autocomplete="off" spellcheck="false"
+          placeholder="📺 What are we watching? (shows in rally message)">
+      </div>
+      <div class="wp-ctrl-row">
+        <input class="sfield" id="wpUrl" type="text" autocomplete="off" spellcheck="false"
+          placeholder="https://… video link or YouTube URL"
+          onkeydown="if(event.key==='Enter')wpSetVideo()">
+        <button class="wp-btn" id="wpSetBtn" onclick="wpSetVideo()">▶ Play</button>
+        <button class="wp-btn ghost" onclick="wpSetVideo('')">✕ Clear</button>
+      </div>
+      <div class="wp-ctrl-row">
+        <p class="wp-note" id="wpNote" style="flex:1;margin:0">Everyone in this room sees the same thing — play, pause and seek are shared.</p>
+        <button class="wp-btn ghost" onclick="wpEditNickname()">✏️ Name</button>
+        <button class="wp-btn ghost" id="wpRallyBtn" onclick="wpRally()">📣 Rally</button>
+      </div>
     </div>
     <div class="wp-err" id="wpErr"></div>
-    <p class="wp-note" id="wpNote">Everyone in this room sees the same thing — play, pause and seek are shared.</p>
     <div class="wp-chat">
       <div class="wp-chat-log" id="wpChatLog"></div>
       <div class="wp-chat-in">
@@ -12081,6 +12097,7 @@ const WPC = {
   stream:null,      // our local MediaStream (video + mic)
   on:false,         // are we publishing
   muted:false,      // is our mic muted
+  micOnly:false,    // joined with audio only (no camera found)
   peers:{},         // clientId -> {pc, polite, makingOffer, ignoreOffer, stream}
   remoteCam:{},     // clientId -> did they announce a camera
   levels:{},        // 'me'|clientId -> {ctx, an, data, loud}  (speaking detection)
@@ -12171,26 +12188,42 @@ async function wpToggleCam(){
        || !window.RTCPeerConnection){
       wpCamNote('This browser can\'t share a camera.'); return;
     }
-    wpCamNote('Asking for camera permission…');
+    wpCamNote('Asking for permission…');
+    WPC.micOnly = false;
     let stream;
+    const micId = wpMicDeviceId();
+    const audioConstraints = Object.assign(
+      { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+      micId ? {deviceId:{exact:micId}} : {});
     try{
-      const micId = wpMicDeviceId();
       stream = await navigator.mediaDevices.getUserMedia({
         video:{ width:{ideal:320}, height:{ideal:320},
                 frameRate:{ideal:15,max:20}, facingMode:'user' },
-        audio: Object.assign(
-          { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
-          micId ? {deviceId:{exact:micId}} : {}),
+        audio: audioConstraints,
       });
-      await wpEnumerateDevices(); // re-populate with labels now we have permission
+      await wpEnumerateDevices();
     }catch(e){
       const n = (e && e.name) || '';
-      wpCamNote(
-        n==='NotAllowedError' ? 'Camera blocked — allow it in your browser settings.' :
-        n==='NotFoundError'   ? 'No camera found on this device.' :
-        n==='NotReadableError'? 'Your camera is in use by another app.' :
-                                'Could not start the camera.');
-      return;
+      if(n==='NotFoundError' || n==='DevicesNotFoundError'){
+        wpCamNote('No camera found — joining with mic only…');
+        try{
+          stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+          WPC.micOnly = true;
+          await wpEnumerateDevices();
+        }catch(e2){
+          wpCamNote(
+            (e2.name||'')===('NotAllowedError')
+              ? 'Mic blocked — allow it in your browser settings.'
+              : 'Could not access the mic.');
+          return;
+        }
+      } else {
+        wpCamNote(
+          n==='NotAllowedError' ? 'Camera/mic blocked — allow it in your browser settings.' :
+          n==='NotReadableError'? 'Camera is in use by another app.' :
+                                  'Could not start the camera.');
+        return;
+      }
     }
     WPC.muted = false;
     WPC.stream = stream; WPC.on = true;
@@ -12218,6 +12251,7 @@ async function wpToggleCam(){
 function wpCamStop(){
   WPC.on = false;
   WPC.muted = false;
+  WPC.micOnly = false;
   wpAnnounceCam(false);
   Object.keys(WPC.peers).forEach(id=>{
     // Keep the connection if they're still sending us video; otherwise there's
@@ -12267,14 +12301,16 @@ async function wpRemountMic(){
 
 function wpCamSync(){
   const b=$('wpCamBtn'), p=$('wpPttBtn'), flip=$('wpFlipBtn');
-  if(b) b.textContent = WPC.on ? '📷 Turn off camera' : '📷 Turn on camera';
+  if(b) b.textContent = WPC.on
+    ? (WPC.micOnly ? '🎤 Mic on — tap to leave' : '📷 Turn off camera')
+    : '📷 Join (camera/mic)';
   if(p){
     p.style.display = WPC.on ? '' : 'none';
     p.textContent = WPC.muted ? '🔇 Unmute' : '🎤 Mute';
     p.classList.toggle('hot', WPC.muted);
     if(WPC.on) wpMuteWire();
   }
-  if(flip) flip.style.display = WPC.on ? '' : 'none';
+  if(flip) flip.style.display = (WPC.on && !WPC.micOnly) ? '' : 'none';
   wpCamNote('');
   wpRenderOrbs();
   wpMiniSync();
@@ -12988,9 +13024,9 @@ async function wpRally(){
     const viewers = (WP.presence?.viewers||[]).map(v=>v.name).filter(Boolean);
     const names = viewers.length ? viewers.join(', ') : 'We';
 
-    // Video title: try YT player first, then parse the URL
-    let videoLabel = '';
-    if(WP.video){
+    // Video title: manual title field first, then YT player, then URL parse
+    let videoLabel = ($('wpTitle')?.value.trim()) || '';
+    if(!videoLabel && WP.video){
       const ytId = wpYtId(WP.video);
       if(ytId && WP.yt?.getVideoData){
         try{ videoLabel = WP.yt.getVideoData().title || ''; }catch(e){}
