@@ -1,11 +1,18 @@
 """Watch Party history: what was watched, by whom, and where it was left off.
 
-Two tables:
+Three tables:
 
 * ``watch_items``    — one row per video URL, with metadata looked up from free,
                         keyless sources (YouTube oEmbed, Wikipedia, TVmaze, iTunes).
 * ``watch_progress`` — one row per (Zitadel sub, video URL): last position,
                         duration, room, and when it was last watched.
+* ``watch_chat``     — Watch Party chat messages, filed under the video that was
+                        on when they were sent (copied from the realtime server,
+                        which only keeps its last 100 entries in memory).
+
+A title is only ever what a viewer typed or what the source itself reported
+(YouTube, or the page title the extractor read). File names are never guessed
+at: an HLS stream is "master.m3u8" whatever the film is.
 
 Playback position lives here, not in ``watchparty_events`` (that store is for
 semantic events only).
@@ -80,7 +87,21 @@ def init() -> None:
                 ON watch_progress(user_id, updated_at);
             CREATE INDEX IF NOT EXISTS idx_wh_progress_room
                 ON watch_progress(room, updated_at);
+            CREATE TABLE IF NOT EXISTS watch_chat (
+                room      TEXT NOT NULL,
+                ts        REAL NOT NULL,
+                sender    TEXT NOT NULL,     -- WatchParty clientId
+                name      TEXT,
+                msg       TEXT NOT NULL,
+                video     TEXT,              -- watch_items.url on at the time
+                video_ts  REAL,
+                PRIMARY KEY (room, ts, sender, msg)
+            );
+            CREATE INDEX IF NOT EXISTS idx_wh_chat_video ON watch_chat(video, ts);
         """)
+        cols = {r[1] for r in db.execute("PRAGMA table_info(watch_items)")}
+        if "extracted_title" not in cols:
+            db.execute("ALTER TABLE watch_items ADD COLUMN extracted_title TEXT")
         db.commit()
     logger.info("watch_history: DB ready at %s", _DB_PATH)
 
@@ -108,6 +129,7 @@ def record_progress(
     display_name: str = "",
     title_hint: str = "",
     source_url: str = "",
+    extracted_title: str = "",
 ) -> bool:
     """Upsert one viewer's position in one video. Returns False if rejected."""
     url = _clean_url(url)
@@ -129,27 +151,17 @@ def record_progress(
                                  or dur - pos <= min(_FINISHED_TAIL_S, dur * 0.1))))
     source_url = _clean_url(source_url) if source_url else ""
     title_hint = (title_hint or "").strip()[:200]
+    extracted_title = clean_page_title(extracted_title)
     now = time.time()
     with _lock, _conn() as db:
         db.execute(
-            """INSERT INTO watch_items (url, source_url, title_hint, first_seen)
-               VALUES (?, ?, ?, ?)
+            """INSERT INTO watch_items (url, source_url, title_hint, extracted_title, first_seen)
+               VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(url) DO UPDATE SET
-                 source_url = COALESCE(NULLIF(excluded.source_url, ''), watch_items.source_url),
-                 title_hint = COALESCE(NULLIF(excluded.title_hint, ''), watch_items.title_hint),
-                 -- A new typed title means the old lookup may have matched the
-                 -- wrong film: clear it so enrich() looks again. YouTube's own
-                 -- title is authoritative, so leave that alone.
-                 title = CASE WHEN excluded.title_hint IS NOT NULL
-                                AND excluded.title_hint IS NOT watch_items.title_hint
-                                AND COALESCE(watch_items.meta_source, '') <> 'youtube_oembed'
-                              THEN NULL ELSE watch_items.title END,
-                 meta_fetched_at = CASE WHEN excluded.title_hint IS NOT NULL
-                                AND excluded.title_hint IS NOT watch_items.title_hint
-                                AND COALESCE(watch_items.meta_source, '') <> 'youtube_oembed'
-                              THEN NULL ELSE watch_items.meta_fetched_at END""",
-            (url, source_url or None, title_hint or None, now),
+                 source_url = COALESCE(NULLIF(excluded.source_url, ''), watch_items.source_url)""",
+            (url, source_url or None, title_hint or None, extracted_title or None, now),
         )
+        _apply_title(db, url, typed=title_hint, extracted=extracted_title)
         db.execute(
             """INSERT INTO watch_progress
                  (user_id, url, display_name, room, position, duration, finished,
@@ -165,6 +177,46 @@ def record_progress(
             (user_id, url, (display_name or "")[:64], (room or "")[:64], pos, dur,
              finished, now, now),
         )
+        db.commit()
+    return True
+
+
+def _apply_title(db, url: str, *, typed: str = "", extracted: str = "") -> None:
+    """Store a newly seen title. When the name we'd look up changes, drop the
+    old lookup (it may have matched the wrong film) so enrich() runs again.
+    YouTube's own title is authoritative, so that is left alone."""
+    row = db.execute("SELECT title_hint, extracted_title, meta_source FROM watch_items WHERE url = ?",
+                     (url,)).fetchone()
+    if not row:
+        return
+    new_typed = typed or row["title_hint"]
+    new_ext = extracted or row["extracted_title"]
+    before = row["title_hint"] or row["extracted_title"]
+    after = new_typed or new_ext
+    reset = after != before and (row["meta_source"] or "") != "youtube_oembed"
+    db.execute(
+        f"""UPDATE watch_items SET title_hint = ?, extracted_title = ?
+            {", title = NULL, year = NULL, description = NULL, overview = NULL, poster = NULL,"
+             " genres = NULL, meta_source = NULL, meta_url = NULL, meta_fetched_at = NULL" if reset else ""}
+            WHERE url = ?""",
+        (new_typed, new_ext, url),
+    )
+
+
+def set_title(url: str, title: str) -> bool:
+    """A viewer named (or renamed) a video by hand. Returns False if unknown."""
+    title = (title or "").strip()[:200]
+    url = _clean_url(url)
+    if not url or not title:
+        return False
+    with _lock, _conn() as db:
+        if not db.execute("SELECT 1 FROM watch_items WHERE url = ?", (url,)).fetchone():
+            return False
+        # Typed titles always win, so reset even if it matches the extracted one.
+        db.execute("""UPDATE watch_items SET title_hint = ?, title = NULL, year = NULL,
+                        description = NULL, overview = NULL, poster = NULL, genres = NULL,
+                        meta_source = NULL, meta_url = NULL, meta_fetched_at = NULL
+                      WHERE url = ?""", (title, url))
         db.commit()
     return True
 
@@ -213,7 +265,9 @@ _ITEM_FIELDS = ("url", "source_url", "kind", "title", "year", "description",
 
 def _item(row: sqlite3.Row) -> dict:
     d = {k: row[k] for k in _ITEM_FIELDS}
-    d["title"] = d["title"] or row["title_hint"] or guess_title(row["url"])
+    d["title"] = d["title"] or row["title_hint"] or row["extracted_title"] or ""
+    d["named_by"] = ("viewer" if row["title_hint"] else
+                     "source" if row["extracted_title"] or d["meta_source"] == "youtube_oembed" else None)
     return d
 
 
@@ -256,6 +310,9 @@ def list_history(*, room: str | None = None, user_id: str | None = None,
             if not include_finished and ref and ref["finished"]:
                 continue
             d = _item(item)
+            d["chat_count"] = db.execute(
+                "SELECT COUNT(*) FROM watch_chat WHERE video = ?" + (" AND room = ?" if room else ""),
+                [u["url"]] + ([room] if room else [])).fetchone()[0]
             d.update({
                 "last_watched_at": u["last"],
                 "room": latest["room"] if latest else None,
@@ -292,6 +349,88 @@ def resume_point(url: str, *, user_id: str | None = None, room: str | None = Non
                 a.append(room)
             row = db.execute(q + " ORDER BY updated_at DESC LIMIT 1", a).fetchone()
     return dict(row) if row else None
+
+
+# ── chat ─────────────────────────────────────────────────────────────────────
+
+
+def _iso_ts(v) -> float | None:
+    if isinstance(v, (int, float)):
+        return float(v) / (1000 if v > 1e11 else 1)
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _video_at(db, room: str, ts: float) -> str | None:
+    """Best guess at what was playing in `room` at `ts`, for messages older
+    than the first video change we can see."""
+    r = db.execute("SELECT video FROM watch_chat WHERE room = ? AND ts <= ? AND video IS NOT NULL "
+                   "ORDER BY ts DESC LIMIT 1", (room, ts)).fetchone()
+    if r:
+        return r["video"]
+    r = db.execute("SELECT url FROM watch_progress WHERE room = ? AND started_at <= ? "
+                   "ORDER BY updated_at DESC LIMIT 1", (room, ts + 60)).fetchone()
+    return r["url"] if r else None
+
+
+def ingest_room_chat(room: str, chat: list, name_map: dict | None = None,
+                     current_video: str = "") -> int:
+    """Copy a room's in-memory chat into the store (idempotent). The realtime
+    server logs every video change in the same list, so each message is filed
+    under the video that was on when it was sent. Returns rows added."""
+    room = (room or "").strip("/")[:64]
+    if not room or not isinstance(chat, list):
+        return 0
+    name_map = name_map or {}
+    rows = []
+    with _lock, _conn() as db:
+        hosts = [m for m in chat if isinstance(m, dict) and m.get("cmd") == "host"]
+        video = None if hosts else (_clean_url(current_video or "") or current_video or None)
+        seen_host = False
+        for m in chat:
+            if not isinstance(m, dict):
+                continue
+            ts = _iso_ts(m.get("timestamp"))
+            if ts is None:
+                continue
+            if m.get("cmd") == "host":
+                raw = str(m.get("msg") or "")
+                video, seen_host = (_clean_url(raw) or raw or None), True
+                continue
+            if m.get("cmd") or m.get("system") or not isinstance(m.get("msg"), str):
+                continue
+            text = m["msg"].strip()
+            if not text:
+                continue
+            v = video if (seen_host or not hosts) else _video_at(db, room, ts)
+            sender = str(m.get("id") or "")[:64]
+            vts = m.get("videoTS")
+            rows.append((room, ts, sender, (name_map.get(sender) or "")[:64], text[:2000], v,
+                         float(vts) if isinstance(vts, (int, float)) else None))
+        if not rows:
+            return 0
+        before = db.total_changes
+        db.executemany("INSERT OR IGNORE INTO watch_chat (room, ts, sender, name, msg, video, video_ts) "
+                       "VALUES (?,?,?,?,?,?,?)", rows)
+        db.commit()
+        return db.total_changes - before
+
+
+def chat_for(url: str, *, room: str | None = None, limit: int = 500) -> list[dict]:
+    """Messages sent while `url` was playing, oldest first."""
+    limit = max(1, min(int(limit or 500), 2000))
+    q = "SELECT ts, name, msg, video_ts FROM watch_chat WHERE video = ?"
+    a: list = [url]
+    if room:
+        q += " AND room = ?"
+        a.append(room)
+    with _lock, _conn() as db:
+        rows = db.execute(q + " ORDER BY ts DESC LIMIT ?", (*a, limit)).fetchall()
+    return [{"ts": r["ts"], "name": r["name"] or "", "msg": r["msg"], "video_ts": r["video_ts"]}
+            for r in reversed(rows)]
 
 
 # ── metadata (free, keyless sources) ─────────────────────────────────────────
@@ -341,6 +480,40 @@ def parse_title(text: str) -> dict:
     return out
 
 
+_SITE_SPLIT_RE = re.compile(r"\s+[|\-–—•:]\s+")
+_WATCH_RE = re.compile(r"^(?:watch|stream|download)\s+|\s+(?:online|full movie|free|hd|"
+                       r"full hd|in hd|streaming|with subtitles?|eng ?sub)\b.*$", re.I)
+
+
+def clean_page_title(t: str) -> str:
+    """A video/page title as the extractor saw it, minus site cruft
+    ("Watch Unabomber Online Free HD | SiteName" -> "Unabomber")."""
+    t = html.unescape((t or "").strip())[:300]
+    if not t:
+        return ""
+    parts = [p for p in _SITE_SPLIT_RE.split(t) if p.strip()]
+    if len(parts) > 1:
+        t = max(parts[:2], key=len) if len(parts[0]) < 3 else parts[0]
+    t = _WATCH_RE.sub("", t).strip(" -–|:")
+    if re.fullmatch(r"(?i)(master|index|playlist|video|stream|manifest|chunklist\w*|file|"
+                    r"download|embed|player|watch)(\.\w+)?", t):
+        return ""
+    return t[:200]
+
+
+_STOP = {"the", "a", "an", "of", "and", "in", "on", "to", "part", "film", "movie"}
+
+
+def _words(t: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9]+", (t or "").lower()) if w not in _STOP}
+
+
+def _title_matches(want: str, got: str) -> bool:
+    """Verification: every significant word we asked for is in what we got."""
+    w = _words(want)
+    return bool(w) and w <= _words(got)
+
+
 def _strip_html(s: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", s or "")).strip()
 
@@ -363,6 +536,8 @@ def _tvmaze_meta(c, p: dict) -> dict | None:
     if r.status_code != 200:
         return None
     show = r.json()
+    if not _title_matches(p["title"], show.get("name") or ""):
+        return None
     img = (show.get("image") or {})
     meta = {
         "kind": "episode" if p.get("season") else "show",
@@ -398,7 +573,7 @@ def _wikipedia_meta(c, p: dict) -> dict | None:
     want = p["title"].lower()
     for h in hits:
         title = h.get("title") or ""
-        if want.split()[0] not in title.lower():
+        if not _title_matches(want, re.sub(r"\s*\(.*?\)$", "", title)):
             continue
         s = c.get("https://en.wikipedia.org/api/rest_v1/page/summary/" + quote(title.replace(" ", "_")))
         if s.status_code != 200:
@@ -431,7 +606,7 @@ def _itunes_meta(c, p: dict) -> dict | None:
     if p.get("year"):
         res.sort(key=lambda x: (x.get("releaseDate") or "")[:4] != p["year"])
     for m in res:
-        if not m.get("trackName"):
+        if not m.get("trackName") or not _title_matches(p["title"], m["trackName"]):
             continue
         return {
             "kind": "movie",
@@ -447,7 +622,8 @@ def _itunes_meta(c, p: dict) -> dict | None:
 
 
 def lookup_meta(url: str, hint: str = "") -> dict:
-    """Best-effort metadata for a video. Never raises; {} when nothing matched."""
+    """Best-effort metadata for a video, from its YouTube id or a title a
+    viewer/the source gave. Never raises; {} when nothing matched."""
     import httpx
 
     try:
@@ -455,7 +631,9 @@ def lookup_meta(url: str, hint: str = "") -> dict:
                           follow_redirects=True) as c:
             if _YT_RE.search(url):
                 return _youtube_meta(c, url) or {}
-            p = parse_title(guess_title(url, hint))
+            if not (hint or "").strip():
+                return {}          # no name to go on: don't guess from the URL
+            p = parse_title(hint)
             if not p["title"] or len(p["title"]) < 2:
                 return {}
             order = ([_tvmaze_meta, _wikipedia_meta] if p.get("season")
@@ -478,9 +656,9 @@ def enrich(url: str) -> None:
     if not needs_meta(url):
         return
     with _lock, _conn() as db:
-        row = db.execute("SELECT title_hint, source_url FROM watch_items WHERE url = ?",
+        row = db.execute("SELECT title_hint, extracted_title, source_url FROM watch_items WHERE url = ?",
                          (url,)).fetchone()
-    hint = (row["title_hint"] if row else "") or ""
+    hint = (row["title_hint"] or row["extracted_title"] if row else "") or ""
     src = (row["source_url"] if row else "") or ""
     # The page URL (e.g. the YouTube link behind an extracted stream) names the
     # video better than the stream URL does.

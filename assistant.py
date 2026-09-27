@@ -1205,15 +1205,18 @@ def _watchparty_events_list(limit: int = 10, event_type: str | None = None,
       "Watch Party history: videos/movies the squad watched, newest first, with "
       "metadata (title, year, poster, overview), who watched, and where each person "
       "left off (position/duration in seconds, finished flag). Filter by room slug "
-      "or by person (name, PSN id or WhatsApp name).",
+      "or by person (name, PSN id or WhatsApp name). chat_count is how many chat "
+      "messages were sent while each one was on; include_chat=true adds them "
+      "(time, name, text, video position), up to 200 per video.",
       {"type": "object", "properties": {
           "limit":            {"type": "integer", "description": "1-50, default 10"},
+          "include_chat":     {"type": "boolean", "description": "add the chat from each video, default false"},
           "room_id":          {"type": "string", "description": "room slug, e.g. 'crcmz'"},
           "person":           {"type": "string", "description": "only this person's history"},
           "include_finished": {"type": "boolean", "description": "default true"},
       }})
 def _watch_history(limit: int = 10, room_id: str | None = None, person: str | None = None,
-                   include_finished: bool = True) -> dict:
+                   include_finished: bool = True, include_chat: bool = False) -> dict:
     import watch_history as _wh
     user_id = None
     if person:
@@ -1227,13 +1230,18 @@ def _watch_history(limit: int = 10, room_id: str | None = None, person: str | No
         include_finished=include_finished is not False,
     )
     keep = ("title", "year", "kind", "description", "overview", "poster", "genres",
-            "meta_url", "room", "position", "duration", "finished", "last_watched_at")
-    return {"items": [
-        {**{k: it.get(k) for k in keep},
-         "viewers": [{"name": v["name"], "position": v["position"],
-                      "finished": v["finished"], "updated_at": v["updated_at"]}
-                     for v in it["viewers"]]}
-        for it in items]}
+            "meta_url", "room", "position", "duration", "finished", "last_watched_at",
+            "named_by", "chat_count")
+    out = []
+    for it in items:
+        d = {**{k: it.get(k) for k in keep},
+             "viewers": [{"name": v["name"], "position": v["position"],
+                          "finished": v["finished"], "updated_at": v["updated_at"]}
+                         for v in it["viewers"]]}
+        if include_chat is True:
+            d["chat"] = _wh.chat_for(it["url"], room=room_id or it.get("room"), limit=200)
+        out.append(d)
+    return {"items": out}
 
 
 @tool("watch_diagnostics",
@@ -1306,8 +1314,9 @@ def _watchparty_rooms(room_id: str | None = None) -> dict:
 
 
 @tool("watchparty_chat",
-      "Get chat messages for a WatchParty room. Returns live in-memory messages only — "
-      "chat is not persisted, so messages are lost on container restart. "
+      "Get chat messages for a WatchParty room. Returns live in-memory messages only "
+      "(the last 100 entries); for older chat, filed per video, use watch_history "
+      "with include_chat=true. "
       "Each message has: id (opaque viewerId), msg (text), system (bool), timestamp. "
       "nameMap maps viewerId -> display name.",
       {"type": "object", "required": ["room_id"], "properties": {

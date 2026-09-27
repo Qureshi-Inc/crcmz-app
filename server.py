@@ -68,6 +68,7 @@ _RL_LIMITS = {
     "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
     "watch_extract": (5, 60.0),  # yt-dlp URL extraction (subprocess, keep tight)
     "watch_history": (40, 60.0),  # playback progress pings (one per ~15s per tab)
+    "watch_history_title": (10, 60.0),  # naming a video by hand
     "watch_log": (30, 60.0),    # client diagnostics batches (one per ~10s per tab)
     "assistant": (10, 60.0),    # platform assistant (each ask = several local LLM calls)
     "facts_add": (12, 60.0),    # squad facts (shared prompt context, keep it civil)
@@ -4633,6 +4634,7 @@ async def watch_history_progress(request: Request):
         display_name=viewer["displayName"],
         title_hint=str(body.get("title") or ""),
         source_url=str(body.get("source") or ""),
+        extracted_title=str(body.get("extracted_title") or ""),
     )
     if not ok:
         return JSONResponse({"detail": "invalid video"}, status_code=400)
@@ -4666,6 +4668,71 @@ async def watch_history_list(request: Request, room: str = "", mine: int = 0, li
                        "updated_at": me["updated_at"]} if me else None)
         out.append(it)
     return JSONResponse({"items": out}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/watch/history/title")
+async def watch_history_title(request: Request):
+    """Name (or rename) a video in history by hand; the lookup runs again."""
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    _rate_limit("watch_history_title", viewer["zitadelSubject"])
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    url = str((body or {}).get("url") or "").strip()
+    title = str((body or {}).get("title") or "").strip()
+    if not await asyncio.to_thread(_watch_history.set_title, url, title):
+        return JSONResponse({"detail": "unknown video or empty title"}, status_code=400)
+    logger.info("watch history: %s named %s -> %r", viewer["displayName"], url[:80], title)
+    asyncio.create_task(_watch_enrich(url))
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/watch/history/chat")
+async def watch_history_chat(request: Request, url: str = "", room: str = ""):
+    """Chat sent in a room while this video was on."""
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    room_c = watch_mod.canonical_room(room) or ""
+    if not room_c or not watch_mod.is_allowed_room(room_c):
+        return JSONResponse({"detail": "unknown room"}, status_code=400)
+    msgs = await asyncio.to_thread(_watch_history.chat_for, url.strip(), room=room_c)
+    return JSONResponse({"messages": msgs}, headers={"Cache-Control": "no-store"})
+
+
+_WP_INTERNAL = os.environ.get("WATCHPARTY_INTERNAL_URL", "http://watchparty-watchparty-1:8080").rstrip("/")
+
+
+async def _watch_chat_poller() -> None:
+    """The realtime server keeps only its last 100 chat entries, in memory.
+    Copy them into history every few seconds so they outlive restarts."""
+    import httpx
+    async with httpx.AsyncClient(timeout=5) as c:
+        while True:
+            try:
+                r = await c.get(f"{_WP_INTERNAL}/internal/rooms")
+                if r.status_code == 200:
+                    rooms = r.json()
+                    for rm in rooms if isinstance(rooms, list) else []:
+                        if rm.get("chat"):
+                            await asyncio.to_thread(
+                                _watch_history.ingest_room_chat,
+                                str(rm.get("roomId") or "").strip("/"), rm["chat"],
+                                rm.get("nameMap") or {}, str(rm.get("video") or ""))
+            except Exception as e:  # noqa: BLE001
+                logger.debug("watch chat poll failed: %s", e)
+            await asyncio.sleep(5)
+
+
+@app.on_event("startup")
+async def _start_watch_chat_poller():
+    asyncio.create_task(_watch_chat_poller())
+    logger.info("watch chat poller started (5s)")
 
 
 @app.delete("/api/watch/history")
@@ -8448,6 +8515,19 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-hact a, .wp-hact .x { color:var(--dim); text-decoration:none; font-size:13px; padding:6px 8px;
     border-radius:8px; background:none; border:0; cursor:pointer; }
   .wp-hact a:hover, .wp-hact .x:hover { color:#fff; background:rgba(255,255,255,.08); }
+  .wp-hcard { flex-wrap:wrap; cursor:pointer; }
+  .wp-hcard.open { grid-column:1/-1; border-color:rgba(255,47,214,.4); }
+  .wp-htitle .unnamed { color:var(--dim); font-style:italic; font-weight:600; }
+  .wp-hchatn { color:var(--cyan); }
+  .wp-hchat { flex-basis:100%; max-height:320px; overflow-y:auto; margin-top:2px; padding:8px 4px 2px;
+    border-top:1px solid rgba(255,255,255,.08); font-size:13px; line-height:1.4; cursor:auto; }
+  .wp-hchat .m { display:flex; gap:8px; padding:3px 4px; border-radius:6px; }
+  .wp-hchat .m:hover { background:rgba(255,255,255,.04); }
+  .wp-hchat .t { flex:none; color:var(--dim); font-size:11.5px; min-width:44px; padding-top:1px;
+    font-variant-numeric:tabular-nums; }
+  .wp-hchat .n { font-weight:700; color:var(--neon); margin-right:5px; }
+  .wp-hchat .v { flex:none; margin-left:auto; color:var(--dim); font-size:11.5px; padding-top:1px; }
+  .wp-hchat .e { color:var(--dim); padding:4px; }
   .wp-chat { margin-top:14px; border:1px solid var(--line); border-radius:16px;
     background:rgba(255,255,255,.02); overflow:hidden; }
   .wp-chat-log { max-height:240px; overflow-y:auto; padding:12px 14px;
@@ -8508,6 +8588,9 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   /* lift the cams (and fullscreen chat) clear of the player's controls while they show */
   .wp-tv-layout.orbs-overlay.wp-ctrls .wp-orbs,
   .wp-tv-layout.wp-fs.wp-ctrls .wp-orbs { bottom:84px; }
+  /* ...and clear of the emoji tray too, so every emoji stays clickable */
+  .wp-tv-layout.orbs-overlay.wp-rx-open .wp-orbs,
+  .wp-tv-layout.wp-fs.wp-rx-open .wp-orbs { bottom:140px; }
   .wp-tv-layout.orbs-overlay .wp-orbs::-webkit-scrollbar { display:none; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb { width:62px !important; }
   .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb-ring { width:56px !important; height:56px !important; }
@@ -8597,6 +8680,9 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-fsc-in:focus-within button { transform:scale(1); opacity:1; }
   @media (max-width:560px){ .wp-tv-layout.wp-fs .wp-fsc { left:10px; }
     .wp-tv-layout.wp-fs.wp-ctrls .wp-fsc { bottom:76px; } }
+  /* the emoji tray sits where the chat does: lift the chat above it while open */
+  .wp-tv-layout.wp-fs.wp-rx-open .wp-fsc { bottom:136px; }
+  @media (max-width:560px){ .wp-tv-layout.wp-fs.wp-rx-open .wp-fsc { bottom:122px; } }
   @media (prefers-reduced-motion:reduce){
     .wp-fsc-msg { animation:none; transition:opacity .3s; }
     .wp-fsc-msg.out { transform:none; filter:none; } }
@@ -12810,7 +12896,10 @@ const WPB = { active:false, t:0, hover:false, drag:false, dragT:0, ptr:'mouse', 
 // Reaction tray / history state (declared here: the bar code reads them at load).
 const WPR = { tray:false, sent:[], seen:{}, burstAt:{} };
 const WPH = { view:'room', items:[], src:{}, url:'', lastPost:0, wasPlaying:false,
-              posted:false, resume:null, loadT:null };
+              posted:false, resume:null, loadT:null,
+              title:{},              // stream url -> title the extractor read off the page
+              typedFor:null, typedAt:0,  // which video the typed title belongs to
+              open:null, chat:{} };  // expanded card (url) and its loaded messages
 function wpIsPlaying(){
   if(WP.kind==='file'){ const v=$('wpVideo'); return !!(v && !v.paused && !v.ended); }
   if(WP.kind==='yt') return WP.ytState===1 || WP.ytState===3;
@@ -14332,6 +14421,7 @@ async function wpSetVideo(forced){
     const d = await r.json();
     wpErr('');
     WPH.src[d.url] = url;   // so history can re-extract when the stream URL expires
+    if(d.title) WPH.title[d.url] = d.title;
     WP.sock.emit('CMD:host', d.url);
   }catch(e){ wpErr('Could not extract a video from that link.'); }
   finally{ if(btn) btn.disabled=false; }
@@ -14428,6 +14518,7 @@ function wpRxToggleTray(on){
   WPR.tray = on === undefined ? !WPR.tray : !!on;
   $('wpRxTray')?.classList.toggle('on', WPR.tray);
   $('wpRxBtn')?.classList.toggle('on', WPR.tray);
+  document.querySelector('.wp-tv-layout')?.classList.toggle('wp-rx-open', WPR.tray);
   if(WPR.tray) wpBarPoke(); else wpBarShowSync();
 }
 
@@ -14540,6 +14631,29 @@ function wpVideoLabel(typedOnly){
   return label;
 }
 
+// History titles come only from what someone typed for this video or what
+// the source itself says (YouTube, the page the stream was extracted from) —
+// never from the file name, which for HLS is just "master.m3u8".
+function wpTypedTitle(){
+  const v = ($('wpTitle')?.value.trim()) || '';
+  return v && WPH.typedFor === WP.video ? v : '';
+}
+function wpSourceTitle(){
+  if(WP.video && wpYtId(WP.video) && WP.yt?.getVideoData){
+    try{ const t = WP.yt.getVideoData().title; if(t) return t; }catch(e){}
+  }
+  return WPH.title[WP.video] || '';
+}
+$('wpTitle')?.addEventListener('input', ()=>{ WPH.typedFor = WP.video; WPH.typedAt = Date.now(); });
+// Typing a title and then loading the video is the usual order, so a title
+// typed shortly before a video change goes with the new video. Otherwise a
+// title left over from the last video is cleared rather than carried over.
+function wpTitleVideoChanged(){
+  const box = $('wpTitle'); if(!box || !box.value.trim()) return;
+  if(Date.now() - WPH.typedAt < 180000) WPH.typedFor = WP.video;
+  else if(WPH.typedFor !== WP.video){ box.value = ''; WPH.typedFor = null; }
+}
+
 function wpHistPost(){
   if(!WP.video || !WP.kind) return;
   const t = wpTime(); if(t === null || !isFinite(t) || t < 5) return;
@@ -14550,7 +14664,8 @@ function wpHistPost(){
     method:'POST', keepalive:true, headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       url: WP.video, position: t, duration: isFinite(d) && d > 0 ? d : null,
-      room: WP.room, title: wpVideoLabel(true), source: WPH.src[WP.video] || '',
+      room: WP.room, title: wpTypedTitle(), extracted_title: wpSourceTitle(),
+      source: WPH.src[WP.video] || '',
     }),
   }).then(r => {
     // First ping for a video: metadata is being looked up, show it shortly.
@@ -14559,7 +14674,7 @@ function wpHistPost(){
 }
 
 setInterval(()=>{
-  if(WP.video !== WPH.url){ WPH.url = WP.video; WPH.posted = false; WPH.wasPlaying = false; }
+  if(WP.video !== WPH.url){ WPH.url = WP.video; WPH.posted = false; WPH.wasPlaying = false; wpTitleVideoChanged(); }
   if(!WP.video || !WP.kind) return;
   const playing = wpIsPlaying();
   if(playing && Date.now() - WPH.lastPost >= 15000) wpHistPost();
@@ -14619,20 +14734,24 @@ function wpHistRender(){
     const poster = it.poster
       ? '<img loading="lazy" alt="" src="'+esc(it.poster)+'" onerror="this.remove()">' : '';
     const playing = it.url === WP.video;
-    return '<div class="wp-hcard" style="animation-delay:'+Math.min(i,10)*35+'ms" title="'+esc(it.overview||'')+'">'+
+    const open = WPH.open === it.url;
+    const nChat = it.chat_count || 0;
+    return '<div class="wp-hcard'+(open?' open':'')+'" style="animation-delay:'+Math.min(i,10)*35+'ms" title="'+esc(it.overview||'')+'" onclick="wpHistOpen('+i+',event)">'+
       '<div class="wp-hposter'+(yt?' yt':'')+'">'+esc((it.title||'?').trim().charAt(0).toUpperCase())+poster+
         (pct ? '<div class="wp-hprog"><i style="width:'+pct.toFixed(1)+'%"></i></div>' : '')+'</div>'+
       '<div class="wp-hbody">'+
-        '<div class="wp-htitle">'+esc(it.title||'Untitled')+(it.year && !yt ? ' <span>('+esc(it.year)+')</span>' : '')+'</div>'+
+        '<div class="wp-htitle">'+(it.title ? esc(it.title) : '<span class="unnamed">Untitled video — tap ✎ to name it</span>')+(it.year && !yt ? ' <span>('+esc(it.year)+')</span>' : '')+'</div>'+
         '<div class="wp-hmeta">'+kind+(it.description ? ' · '+esc(it.description) : '')+'</div>'+
-        '<div class="wp-hleft">'+left+(whoTxt ? ' · '+esc(whoTxt) : '')+' · '+wpAgo(it.last_watched_at)+'</div>'+
+        '<div class="wp-hleft">'+left+(whoTxt ? ' · '+esc(whoTxt) : '')+' · '+wpAgo(it.last_watched_at)+
+          (nChat ? ' · <span class="wp-hchatn">💬 '+nChat+'</span>' : '')+'</div>'+
         '<div class="wp-hact">'+
           (playing ? '<button class="wp-btn ghost" disabled>● Playing</button>'
             : '<button class="wp-btn" onclick="wpHistResume('+i+')">'+(done || pos < 10 ? '▶ Play' : '▶ Resume '+wpFmt(pos))+'</button>')+
           (it.meta_url ? '<a href="'+esc(it.meta_url)+'" target="_blank" rel="noopener" title="About this title">ⓘ</a>' : '')+
+          (yt ? '' : '<button class="x" onclick="wpHistRename('+i+')" title="Name this video">✎</button>')+
           (mine ? '<button class="x" onclick="wpHistForget('+i+')" title="Remove from my history">✕</button>' : '')+
         '</div>'+
-      '</div></div>';
+      '</div>'+(open ? '<div class="wp-hchat">'+wpHistChatHtml(it.url)+'</div>' : '')+'</div>';
   }).join('');
 }
 
@@ -14642,7 +14761,7 @@ function wpHistResume(i){
   const mine = it.mine;
   const done = mine ? mine.finished : it.finished;
   const t = done ? 0 : Math.max(0, (mine ? mine.position : it.position) - 3);  // a little run-up
-  const title = $('wpTitle'); if(title && it.title) title.value = it.title;
+  const title = $('wpTitle'); if(title && it.title && it.named_by === 'viewer'){ title.value = it.title; WPH.typedAt = Date.now(); }
   $('wpStage')?.scrollIntoView({behavior:'smooth', block:'center'});
   if(WP.video === it.url){ if(t > 0) wpUserSeek(t); return; }
   // Extracted stream URLs expire; re-resolve from the page they came from.
@@ -14662,6 +14781,56 @@ function wpHistApplyResume(){
   WPH.resume = null;
   wpUserSeek(r.t);
   toast('▶ Resumed at '+wpFmt(r.t));
+}
+
+// Tap a card to see the chat from while it was on.
+async function wpHistOpen(i, ev){
+  if(ev && ev.target.closest('button, a, .wp-hchat')) return;
+  const it = WPH.items[i]; if(!it) return;
+  WPH.open = WPH.open === it.url ? null : it.url;
+  wpHistRender();
+  if(!WPH.open) return;
+  const room = it.room || WP.room || '';
+  try{
+    const r = await fetch('/api/watch/history/chat?url='+encodeURIComponent(it.url)+'&room='+encodeURIComponent(room),
+                          {headers:{'Accept':'application/json'}});
+    if(!r.ok) throw new Error(r.status);
+    WPH.chat[it.url] = (await r.json()).messages || [];
+  }catch(e){ WPH.chat[it.url] = 'error'; }
+  if(WPH.open === it.url){
+    wpHistRender();
+    const box = document.querySelector('.wp-hcard.open .wp-hchat'); if(box) box.scrollTop = box.scrollHeight;
+  }
+}
+
+function wpHistChatHtml(url){
+  const m = WPH.chat[url];
+  if(m === undefined) return '<div class="e">Loading messages…</div>';
+  if(m === 'error') return '<div class="e">Couldn\'t load the chat.</div>';
+  if(!m.length) return '<div class="e">No messages while this was on.</div>';
+  let day = '';
+  return m.map(x => {
+    const d = new Date(x.ts*1000);
+    const dd = d.toLocaleDateString();
+    const head = dd !== day ? (day = dd, '<div class="e">'+esc(dd)+'</div>') : '';
+    return head + '<div class="m"><span class="t">'+d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})+'</span>'+
+      '<span><span class="n">'+esc(x.name||'someone')+'</span>'+esc(x.msg)+'</span>'+
+      (x.video_ts != null ? '<span class="v" title="Where the video was">'+wpFmt(x.video_ts)+'</span>' : '')+'</div>';
+  }).join('');
+}
+
+async function wpHistRename(i){
+  const it = WPH.items[i]; if(!it) return;
+  const t = prompt('What is this video called?', it.title || '');
+  if(t === null || !t.trim()) return;
+  try{
+    const r = await fetch('/api/watch/history/title', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({url: it.url, title: t.trim()})});
+    if(!r.ok) throw new Error(r.status);
+    it.title = t.trim(); it.year = null; it.description = ''; it.poster = ''; it.meta_url = ''; it.named_by = 'viewer';
+    wpHistRender();
+    clearTimeout(WPH.loadT); WPH.loadT = setTimeout(wpHistLoad, 5000);   // lookup runs server-side
+  }catch(e){ toast('Couldn\'t rename it'); }
 }
 
 async function wpHistForget(i){
