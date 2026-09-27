@@ -58,6 +58,7 @@ STORES: dict[str, list[str] | None] = {
     "/data/app_events.db":    ["app_events_list"],
     "/data/watchparty_events.db": ["watchparty_events_list"],
     "/data/watch_history.db": ["watch_history"],
+    "/data/watch_diag.db": ["watch_diagnostics"],
 
     "/data/mm_tokens.db": None,         # Mattermost OAuth access/refresh tokens.
                                        # Same rule as mcp_user_tokens — tokens

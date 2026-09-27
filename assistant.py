@@ -1236,6 +1236,46 @@ def _watch_history(limit: int = 10, room_id: str | None = None, person: str | No
         for it in items]}
 
 
+@tool("watch_diagnostics",
+      "Watch Party client diagnostics: the raw timeline each viewer's browser recorded "
+      "(socket connect/disconnect/reconnect, video set/play/pause/seek sent and "
+      "received, sync drift corrections, autoplay blocks, video errors/stalls, "
+      "camera and peer connection states, JS errors, periodic heartbeats with "
+      "position and paused state). Oldest first. Use it to reconstruct incidents "
+      "like 'video paused for one person' or 'cams went black'. Set summary=true "
+      "for counts by event type and who reported.",
+      {"type": "object", "properties": {
+          "room_id":       {"type": "string", "description": "room slug, e.g. 'crcmz'"},
+          "person":        {"type": "string", "description": "only this person's browser"},
+          "since_minutes": {"type": "integer", "description": "look back this far, default 60"},
+          "level":         {"type": "string", "enum": ["debug", "info", "warn", "error"],
+                            "description": "'warn' returns warnings and errors"},
+          "types":         {"type": "array", "items": {"type": "string"},
+                            "description": "only these event types, e.g. ['sock.disconnect','play.blocked']"},
+          "limit":         {"type": "integer", "description": "1-500, default 200 (most recent kept)"},
+          "summary":       {"type": "boolean", "description": "counts instead of events"},
+      }})
+def _watch_diagnostics(room_id: str | None = None, person: str | None = None,
+                       since_minutes: int = 60, level: str | None = None,
+                       types: list | None = None, limit: int = 200,
+                       summary: bool = False) -> dict:
+    import watch_diag as _wd
+    if summary:
+        return _wd.summary(room=room_id or None, since_minutes=since_minutes or 60)
+    user_id = None
+    if person:
+        who = _ident().resolve(person)
+        if not who or not who.get("zitadel_id"):
+            return {"events": [], "note": f"no known person matches {person!r}"}
+        user_id = who["zitadel_id"]
+    return {"events": _wd.list_events(
+        room=room_id or None, user_id=user_id,
+        since_minutes=since_minutes or 60, level=level or None,
+        types=[str(t) for t in types][:20] if types else None,
+        limit=max(1, min(int(limit or 200), 500)),
+    )}
+
+
 _WP_INTERNAL_URL = __import__("os").environ.get(
     "WATCHPARTY_INTERNAL_URL", "http://watchparty-watchparty-1:8080"
 )

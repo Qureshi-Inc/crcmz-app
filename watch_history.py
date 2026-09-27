@@ -136,7 +136,18 @@ def record_progress(
                VALUES (?, ?, ?, ?)
                ON CONFLICT(url) DO UPDATE SET
                  source_url = COALESCE(NULLIF(excluded.source_url, ''), watch_items.source_url),
-                 title_hint = COALESCE(NULLIF(excluded.title_hint, ''), watch_items.title_hint)""",
+                 title_hint = COALESCE(NULLIF(excluded.title_hint, ''), watch_items.title_hint),
+                 -- A new typed title means the old lookup may have matched the
+                 -- wrong film: clear it so enrich() looks again. YouTube's own
+                 -- title is authoritative, so leave that alone.
+                 title = CASE WHEN excluded.title_hint IS NOT NULL
+                                AND excluded.title_hint IS NOT watch_items.title_hint
+                                AND COALESCE(watch_items.meta_source, '') <> 'youtube_oembed'
+                              THEN NULL ELSE watch_items.title END,
+                 meta_fetched_at = CASE WHEN excluded.title_hint IS NOT NULL
+                                AND excluded.title_hint IS NOT watch_items.title_hint
+                                AND COALESCE(watch_items.meta_source, '') <> 'youtube_oembed'
+                              THEN NULL ELSE watch_items.meta_fetched_at END""",
             (url, source_url or None, title_hint or None, now),
         )
         db.execute(

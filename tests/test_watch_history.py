@@ -24,3 +24,15 @@ assert wh.parse_title("The.Bear.S02E06.Fishes.1080p")["season"] == 2
 assert wh.parse_title("Dune Part Two (2024) [2160p]") == {"title": "Dune Part Two", "year": "2024", "season": None, "episode": None}
 assert wh.delete_for_user("u1", U) and not wh.list_history(user_id="u1")
 print("test_watch_history: ok")
+
+# A typed title re-opens the metadata lookup; the same title again doesn't.
+V = "https://cdn.example/movie.mp4"
+wh.record_progress(user_id="u1", url=V, position=5)
+wh._save_meta(V, {"title": "Wrong Film", "source": "wikipedia"})
+assert not wh.needs_meta(V)
+wh.record_progress(user_id="u1", url=V, position=6, title_hint="Heat 1995")
+assert wh.needs_meta(V)
+wh._save_meta(V, {"title": "Heat", "source": "wikipedia"})
+wh.record_progress(user_id="u1", url=V, position=7, title_hint="Heat 1995")
+assert not wh.needs_meta(V)
+print("test_watch_history: retitle ok")

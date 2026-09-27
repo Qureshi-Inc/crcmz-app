@@ -68,6 +68,7 @@ _RL_LIMITS = {
     "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
     "watch_extract": (5, 60.0),  # yt-dlp URL extraction (subprocess, keep tight)
     "watch_history": (40, 60.0),  # playback progress pings (one per ~15s per tab)
+    "watch_log": (30, 60.0),    # client diagnostics batches (one per ~10s per tab)
     "assistant": (10, 60.0),    # platform assistant (each ask = several local LLM calls)
     "facts_add": (12, 60.0),    # squad facts (shared prompt context, keep it civil)
 }
@@ -4685,6 +4686,47 @@ async def watch_history_forget(request: Request):
     return JSONResponse({"ok": True, "removed": removed})
 
 
+_WATCH_LOG_LOUD = {"warn", "error"}
+
+
+@app.post("/api/watch/log")
+async def watch_log(request: Request):
+    """Diagnostics from a viewer's Watch tab: socket, sync, player and camera
+    events, batched. Stored for the watch_diagnostics MCP tool; warnings and
+    errors are echoed to stdout so they show in the container log too."""
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    _rate_limit("watch_log", viewer["zitadelSubject"])
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict) or not isinstance(body.get("events"), list):
+        return JSONResponse({"detail": "JSON body with events[] required"}, status_code=400)
+    room = watch_mod.canonical_room(body.get("room")) or ""
+    if room and not watch_mod.is_allowed_room(room):
+        room = ""
+    events = body["events"]
+    n = await asyncio.to_thread(
+        _watch_diag.record_batch,
+        user_id=viewer["zitadelSubject"],
+        name=viewer["displayName"],
+        room=room,
+        client_id=str(body.get("clientId") or ""),
+        session=str(body.get("session") or ""),
+        events=events,
+    )
+    for ev in events[:_watch_diag.MAX_BATCH]:
+        if isinstance(ev, dict) and ev.get("level") in _WATCH_LOG_LOUD:
+            logger.warning("watch[%s] %s %s: %s", room or "-", viewer["displayName"],
+                           str(ev.get("type"))[:48],
+                           json.dumps(ev.get("data"), default=str)[:400])
+    return JSONResponse({"ok": True, "stored": n}, headers={"Cache-Control": "no-store"})
+
+
 # Internal browser-extract service (crcmz-browser-extract container, same coolify network).
 _BROWSER_EXTRACT_URL = os.environ.get("BROWSER_EXTRACT_URL", "http://crcmz-browser-extract:8091")
 _BROWSER_EXTRACT_KEY = os.environ.get("BROWSER_EXTRACT_API_KEY", "")
@@ -5733,6 +5775,7 @@ import wa_reactions as _wa_react
 import app_events as _app_events
 import watchparty_events as _watchparty_events
 import watch_history as _watch_history
+import watch_diag as _watch_diag
 _wa.init()
 _facts.init()
 _chat.init()
@@ -5747,6 +5790,7 @@ _mcp_audit.init()
 _app_events.init()
 _watchparty_events.init()
 _watch_history.init()
+_watch_diag.init()
 _mem.init()
 
 
@@ -8336,6 +8380,74 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     border-color:rgba(255,255,255,.14); color:var(--dim); }
   .wp-btn:disabled { opacity:.45; cursor:default; }
   .wp-note { font-size:12px; color:var(--dim); margin:8px 0 0; line-height:1.6; }
+  /* Reactions: floating emoji, tray, and the 3-of-a-kind celebration. */
+  .wp-rx { position:absolute; inset:0; pointer-events:none; overflow:hidden; z-index:6; }
+  .wp-rx-f { position:absolute; bottom:70px; display:flex; flex-direction:column;
+    align-items:center; gap:2px; will-change:transform, opacity; }
+  .wp-rx-f b { font-size:34px; line-height:1; filter:drop-shadow(0 3px 8px rgba(0,0,0,.45)); }
+  .wp-rx-f span { font:700 10.5px/1 "Rajdhani",sans-serif; color:#fff; letter-spacing:.3px;
+    background:rgba(0,0,0,.5); padding:2px 6px; border-radius:6px; white-space:nowrap;
+    max-width:90px; overflow:hidden; text-overflow:ellipsis; }
+  .wp-rx-c { position:absolute; left:0; top:0; font-size:30px; line-height:1;
+    will-change:transform, opacity; }
+  .wp-rx-big { position:absolute; left:50%; top:45%; font-size:110px; line-height:1;
+    transform:translate(-50%,-50%); filter:drop-shadow(0 0 30px rgba(255,47,214,.6)); }
+  .wp-rx-big small { position:absolute; right:-34px; bottom:-6px; font:800 28px/1 "Rajdhani",sans-serif;
+    color:#fff; text-shadow:0 2px 10px rgba(0,0,0,.7); }
+  .wp-rx-tray { position:absolute; left:50%; bottom:74px; z-index:8; display:flex; gap:2px;
+    padding:6px; border-radius:999px; background:rgba(18,14,30,.86);
+    border:1px solid rgba(255,255,255,.14); backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px); box-shadow:0 12px 36px rgba(0,0,0,.5);
+    transform:translate(-50%,10px) scale(.9); opacity:0; pointer-events:none;
+    transition:opacity .16s, transform .2s cubic-bezier(.2,.9,.3,1.3); }
+  .wp-rx-tray.on { opacity:1; transform:translate(-50%,0) scale(1); pointer-events:auto; }
+  .wp-rx-tray button { width:42px; height:42px; border:0; border-radius:50%; background:none;
+    font-size:25px; line-height:1; cursor:pointer; transition:transform .12s, background .12s; }
+  .wp-rx-tray button:hover { background:rgba(255,255,255,.12); transform:translateY(-3px) scale(1.18); }
+  .wp-rx-tray button:active { transform:scale(.85); }
+  @media (max-width:560px){
+    .wp-rx-tray { bottom:66px; max-width:calc(100% - 16px); overflow-x:auto; }
+    .wp-rx-tray button { width:38px; height:38px; font-size:22px; }
+    .wp-rx-f b { font-size:28px; }
+    .wp-rx-big { font-size:80px; }
+  }
+
+  /* History */
+  .wp-hist { margin-top:14px; border:1px solid var(--line); border-radius:16px;
+    background:rgba(255,255,255,.02); padding:12px 14px 14px; }
+  .wp-hist-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .wp-hist-rf { padding:7px 11px; }
+  .wp-seg { display:flex; background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1);
+    border-radius:10px; padding:2px; }
+  .wp-seg button { border:0; background:none; color:var(--dim); padding:6px 11px; border-radius:8px;
+    font:700 12.5px "Rajdhani",sans-serif; letter-spacing:.3px; cursor:pointer; }
+  .wp-seg button.on { background:rgba(255,47,214,.18); color:var(--neon); }
+  .wp-hist-list { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px,1fr)); gap:10px; }
+  .wp-hist-empty { color:var(--dim); font-size:13px; padding:6px 2px; }
+  .wp-hcard { display:flex; gap:12px; padding:10px; border-radius:14px;
+    background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.07);
+    transition:background .15s, border-color .15s; animation:wpHIn .35s ease both; }
+  .wp-hcard:hover { background:rgba(255,255,255,.06); border-color:rgba(255,47,214,.3); }
+  @keyframes wpHIn { from { opacity:0; transform:translateY(6px); } }
+  .wp-hposter { position:relative; flex:none; width:76px; height:112px; border-radius:10px;
+    overflow:hidden; background:linear-gradient(135deg,#3a1d5c,#12304a); display:grid;
+    place-items:center; font:800 30px "Rajdhani",sans-serif; color:rgba(255,255,255,.55); }
+  .wp-hposter.yt { width:112px; height:63px; align-self:center; }
+  .wp-hposter img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .wp-hprog { position:absolute; left:0; right:0; bottom:0; height:4px; background:rgba(0,0,0,.55); }
+  .wp-hprog i { display:block; height:100%; background:var(--neon); }
+  .wp-hbody { min-width:0; flex:1; display:flex; flex-direction:column; gap:3px; }
+  .wp-htitle { font-weight:700; font-size:14.5px; line-height:1.25; color:#fff;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .wp-htitle span { color:var(--dim); font-weight:600; }
+  .wp-hmeta, .wp-hleft { font-size:12px; color:var(--dim); line-height:1.4;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .wp-hleft b { color:var(--cyan); font-weight:700; }
+  .wp-hact { margin-top:auto; display:flex; gap:6px; align-items:center; padding-top:5px; }
+  .wp-hact .wp-btn { padding:7px 12px; font-size:12.5px; }
+  .wp-hact a, .wp-hact .x { color:var(--dim); text-decoration:none; font-size:13px; padding:6px 8px;
+    border-radius:8px; background:none; border:0; cursor:pointer; }
+  .wp-hact a:hover, .wp-hact .x:hover { color:#fff; background:rgba(255,255,255,.08); }
   .wp-chat { margin-top:14px; border:1px solid var(--line); border-radius:16px;
     background:rgba(255,255,255,.02); overflow:hidden; }
   .wp-chat-log { max-height:240px; overflow-y:auto; padding:12px 14px;
@@ -8499,6 +8611,13 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); }
   .wp-flash svg { width:34px; height:34px; }
   .wp-flash.go { animation:wpFlash .65s cubic-bezier(.2,.8,.3,1); }
+  .wp-unblock { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:13;
+    display:none; align-items:center; gap:8px; padding:12px 18px; border-radius:999px;
+    border:1px solid rgba(255,255,255,.25); background:rgba(8,6,20,.72); color:#fff;
+    font:600 15px/1 inherit; cursor:pointer;
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); }
+  .wp-unblock.on { display:inline-flex; }
+  .wp-unblock svg { width:20px; height:20px; }
   @keyframes wpFlash { 0% { opacity:.95; transform:scale(.7); }
     100% { opacity:0; transform:scale(1.4); } }
   .wp-bar { position:absolute; left:0; right:0; bottom:0; z-index:14;
@@ -8998,6 +9117,9 @@ _DASHBOARD_TMPL = r"""<!doctype html>
         <div class="wp-empty" id="wpEmpty">Nothing playing yet.<br>Paste a video link below to start the party.</div>
         <div class="wp-tap" id="wpTap"></div>
         <div class="wp-flash" id="wpFlash"></div>
+        <button type="button" class="wp-unblock" id="wpUnblock" onclick="wpUnblock()"></button>
+        <div class="wp-rx" id="wpRx" aria-hidden="true"></div>
+        <div class="wp-rx-tray" id="wpRxTray" role="toolbar" aria-label="Reactions"></div>
         <div class="wp-bar" id="wpBar">
           <div class="wp-seek wp-media-only" id="wpSeek">
             <div class="wp-seek-track"><div class="wp-seek-buf" id="wpSeekBuf"></div><div class="wp-seek-fill" id="wpSeekFill"></div></div>
@@ -9021,6 +9143,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
             <button class="wp-cb" id="wpBarMic" onclick="wpToggleMute()" title="Mute mic (m)" style="display:none"></button>
             <button class="wp-cb" id="wpBarCam" onclick="wpToggleVideo()" title="Join with camera + mic"></button>
             <button class="wp-cb leave wp-hide-sm" id="wpBarLeave" onclick="wpToggleCam()" title="Leave call" style="display:none"></button>
+            <button class="wp-cb" id="wpRxBtn" onclick="wpRxToggleTray()" title="React (e) — 3 of the same = celebration"></button>
             <span class="wp-bar-div"></span>
             <button class="wp-cb" id="wpSyncBtn" onclick="wpUserSync(this)" title="Re-sync to the room"></button>
             <button class="wp-cb" id="wpOverlayBtn" onclick="wpToggleOverlay()" title="Cams over the video"></button>
@@ -9072,6 +9195,17 @@ _DASHBOARD_TMPL = r"""<!doctype html>
           placeholder="Say something…" onkeydown="if(event.key==='Enter')wpSendChat()">
         <button class="wp-btn" onclick="wpSendChat()">➤</button>
       </div>
+    </div>
+    <div class="wp-hist">
+      <div class="wp-hist-head">
+        <div class="pip-title" style="margin:0;flex:1">🕘 History</div>
+        <div class="wp-seg" id="wpHistSeg">
+          <button class="on" data-v="room" onclick="wpHistView('room')">This room</button>
+          <button data-v="mine" onclick="wpHistView('mine')">Just me</button>
+        </div>
+        <button class="wp-btn ghost wp-hist-rf" onclick="wpHistLoad()" title="Refresh">↻</button>
+      </div>
+      <div class="wp-hist-list" id="wpHist"><div class="wp-hist-empty">Loading…</div></div>
     </div>
   </div>
 
@@ -12269,6 +12403,80 @@ const WP = {
 };
 const WP_MAX_TRIES = 6;
 
+// ── diagnostics ─────────────────────────────────────────────────────────────
+// A ring of what this tab saw (socket, sync, player, cams, errors), shipped to
+// /api/watch/log in batches. Read it back with the watch_diagnostics MCP tool.
+// URLs are logged without their query string: stream links carry tokens.
+const WPD = { buf:[], session:Math.random().toString(36).slice(2,10), inflight:false,
+              soon:null, errs:{}, waitAt:0 };
+function wpShort(u){
+  if(!u) return '';
+  try{
+    const x = new URL(u, location.origin);
+    const inner = x.searchParams.get('url');
+    if(inner && /^\/api\/watch\/proxy/.test(x.pathname)) return 'proxy:'+wpShort(inner);
+    return (x.host+x.pathname).slice(0,140);
+  }catch(e){ return String(u).split('?')[0].slice(0,140); }
+}
+function wpLog(type, data, level){
+  const ev = {ts:Date.now()/1000, type, level:level||'info'};
+  if(data !== undefined) ev.data = data;
+  WPD.buf.push(ev);
+  if(WPD.buf.length > 400) WPD.buf.splice(0, WPD.buf.length-400);
+  if((level==='warn' || level==='error') && !WPD.soon)
+    WPD.soon = setTimeout(()=>{ WPD.soon=null; wpLogFlush(); }, 2500);
+}
+function wpLogFlush(){
+  if(!WPD.buf.length || !WP.cfg || WPD.inflight) return;
+  const events = WPD.buf.splice(0, 120);
+  WPD.inflight = true;
+  fetch('/api/watch/log', {
+    method:'POST', keepalive:true, headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({room:WP.room, clientId:WP.clientId, session:WPD.session, events}),
+  }).then(r=>{
+    // Server/network trouble: keep the batch for next time (the ring caps it).
+    if(r.status >= 500 || r.status === 429) WPD.buf.unshift(...events);
+  }).catch(()=>{ WPD.buf.unshift(...events); })
+    .finally(()=>{ WPD.inflight = false; });
+}
+function wpSnap(){
+  const v = $('wpVideo'), peers = {};
+  Object.entries((typeof WPC!=='undefined' && WPC.peers) || {}).forEach(([id,p])=>{
+    peers[(WP.names[id]||id.slice(0,6))] = p.pc.connectionState+'/'+p.pc.iceConnectionState;
+  });
+  const t = wpTime(), d = wpDur();
+  return {
+    video: wpShort(WP.video), kind: WP.kind,
+    t: t===null ? null : Math.round(t*10)/10, dur: isFinite(d) ? Math.round(d) : null,
+    playing: wpIsPlaying(), yt: WP.kind==='yt' ? WP.ytState : undefined,
+    rs: WP.kind==='file' && v ? v.readyState : undefined,
+    muted: WP.kind==='file' && v ? v.muted : undefined,
+    sock: !!(WP.sock && WP.sock.connected), vis: document.visibilityState,
+    cam: typeof WPC!=='undefined' ? (WPC.on ? (WPC.micOnly ? 'mic' : 'on') : 'off') : undefined,
+    roster: (WP.roster||[]).length, peers,
+  };
+}
+setInterval(wpLogFlush, 10000);
+setInterval(()=>{ if(WP.sock) wpLog('heartbeat', wpSnap(), 'debug'); }, 30000);
+addEventListener('pagehide', ()=>{ wpLog('page.hide', wpSnap()); wpLogFlush(); });
+document.addEventListener('visibilitychange', ()=>{
+  wpLog('page.visibility', {state:document.visibilityState, playing:wpIsPlaying()});
+  if(document.visibilityState==='hidden') wpLogFlush();
+});
+addEventListener('online',  ()=> wpLog('net.online'));
+addEventListener('offline', ()=> wpLog('net.offline', null, 'warn'));
+function wpLogErr(msg, where){
+  const k = String(msg).slice(0,200);
+  WPD.errs[k] = (WPD.errs[k]||0) + 1;
+  if(WPD.errs[k] <= 3) wpLog('js.error', {msg:k, where}, 'error');   // no floods
+}
+addEventListener('error', e=>{
+  if(e && e.message) wpLogErr(e.message, (e.filename||'').split('/').pop()+':'+e.lineno+':'+e.colno);
+});
+addEventListener('unhandledrejection', e=>{
+  const r = e && e.reason; wpLogErr('unhandled: '+((r && (r.message||r.name)) || r), '');
+});
+
 function wpErr(msg){
   const e=$('wpErr'); if(!e) return;
   e.textContent = msg || ''; e.classList.toggle('on', !!msg);
@@ -12323,13 +12531,17 @@ async function loadWatch(){
     cfg = await r.json();
   }catch(e){
     WP.booted=false; wpStatus('offline', false);
+    wpLog('boot.config_failed', {err:String(e && e.message || e)}, 'error');
     wpErr('Watch Party is not available right now.'); return;
   }
   WP.cfg = cfg;
   WP.room = cfg.defaultRoom || 'crcmz';
   WP.me = cfg.viewer?.id || '';
   WP.myName = cfg.viewer?.name || 'Viewer';
+  WP.isMod = !!cfg.viewer?.mod;
   WP.clientId = wpClientId();
+  wpLog('page.boot', {ua:navigator.userAgent.slice(0,160), w:innerWidth, h:innerHeight,
+    standalone: !!(navigator.standalone || matchMedia('(display-mode: standalone)').matches)});
   if(typeof window.io === 'undefined'){
     const base = (cfg.origin||'') + (cfg.socketPath||'/socket.io');
     try{ await wpScript(base + '/socket.io.js'); }
@@ -12353,6 +12565,7 @@ async function wpTicket(){
   }
   const d = await r.json();
   if(d.viewer?.name) WP.myName = d.viewer.name;
+  if(d.viewer && 'mod' in d.viewer) WP.isMod = !!d.viewer.mod;
   return d.ticket;
 }
 
@@ -12360,7 +12573,10 @@ async function wpConnect(){
   clearTimeout(WP.reconnectTimer); WP.reconnectTimer=null;
   let ticket;
   try{ ticket = await wpTicket(); }
-  catch(e){ wpErr(e.message || 'Could not join the watch party.'); wpRetry(e.message||''); return; }
+  catch(e){
+    wpLog('sock.ticket_failed', {err:String(e && e.message || e)}, 'warn');
+    wpErr(e.message || 'Could not join the watch party.'); wpRetry(e.message||''); return;
+  }
   if(!ticket){ WP.booted=false; return; } // 401 → navigating to login
   wpErr('');
 
@@ -12381,6 +12597,7 @@ async function wpConnect(){
 function wpRetry(reason){
   if(WP.reconnectTimer) return;
   if(WP.tries >= WP_MAX_TRIES){
+    wpLog('sock.gave_up', {tries:WP.tries, reason}, 'error');
     wpStatus('disconnected', false);
     wpErr('Lost the connection to the watch party. ' + (reason||''));
     wpChatSys('Disconnected. Switch tabs back to Watch to retry.');
@@ -12388,6 +12605,7 @@ function wpRetry(reason){
     return;
   }
   const delay = Math.min(30000, 1000 * Math.pow(2, WP.tries));
+  wpLog('sock.retry', {try:WP.tries+1, delay, reason});
   WP.tries += 1;
   wpStatus('reconnecting…', false);
   WP.reconnectTimer = setTimeout(()=>{ WP.reconnectTimer=null; wpConnect(); }, delay);
@@ -12398,17 +12616,30 @@ function wpBind(s){
   // fires within 15s (e.g. WebSocket upgrade silently hangs on mobile), force
   // a retry so the user isn't stuck on "connecting" indefinitely.
   const watchdog = setTimeout(()=>{
-    if(WP.sock === s && !s.connected) wpRetry('Connection timed out');
+    if(WP.sock === s && !s.connected){ wpLog('sock.timeout', null, 'warn'); wpRetry('Connection timed out'); }
   }, 15000);
+  // Log every command this tab sends, whichever code path sends it.
+  const emit0 = s.emit.bind(s);
+  s.emit = (ev, ...a)=>{
+    if(ev==='CMD:host') wpLog('cmd.host', {video:wpShort(a[0]), prev:wpShort(WP.video)});
+    else if(ev==='CMD:play' || ev==='CMD:pause') wpLog('cmd.'+ev.slice(4), {t:wpTime()});
+    else if(ev==='CMD:seek') wpLog('cmd.seek', {to:Number(a[0])||0, t:wpTime()});
+    else if(ev==='CMD:kickUser') wpLog('cmd.kick', a[0]);
+    return emit0(ev, ...a);
+  };
   const clearWatchdog = ()=> clearTimeout(watchdog);
 
   s.on('connect', ()=>{
     clearWatchdog();
+    wpLog('sock.connect', {sid:s.id, tries:WP.tries,
+      away: WP.lastHost ? Math.round((Date.now()-WP.lastHost.at)/1000) : null});
     WP.tries = 0; wpErr('');
+    WP.awaitHost = true;
     wpStatus('connected', true);
     wpMiniSync();
     s.emit('watch:presence:get');
     s.emit('CMD:askHost');
+    wpHistLoad();
     if(WP.tsTimer) clearInterval(WP.tsTimer);
     WP.tsTimer = setInterval(()=>{
       if(!s.connected) return;
@@ -12418,6 +12649,7 @@ function wpBind(s){
   s.on('connect_error', (err)=>{
     clearWatchdog();
     const code = String(err?.message||'');
+    wpLog('sock.connect_error', {code}, 'warn');
     if(code==='KICKED'){
       // A moderator removed us; the server refuses us until the ban lapses.
       wpStatus('removed', false);
@@ -12433,8 +12665,11 @@ function wpBind(s){
     }
     wpRetry(code);
   });
-  s.on('disconnect', ()=>{
+  s.on('disconnect', (reason)=>{
     clearWatchdog();
+    // Remember what was on, in case the server restarted and forgot the room.
+    WP.lastHost = WP.video ? {url:WP.video, t:wpTime(), paused:!wpIsPlaying(), at:Date.now()} : null;
+    wpLog('sock.disconnect', Object.assign({reason:String(reason||'')}, wpSnap()), 'warn');
     if(WP.tsTimer){ clearInterval(WP.tsTimer); WP.tsTimer=null; }
     // Peer connections are addressed by socket id server-side, so they're all
     // dead now. Our own camera stays on and re-announces once we're back.
@@ -12444,9 +12679,10 @@ function wpBind(s){
     wpMiniSync();
     wpRetry('');
   });
-  s.on('errorMessage', m => wpErr(String(m||'')));
+  s.on('errorMessage', m => { wpLog('sock.error_message', {msg:String(m||'')}, 'warn'); wpErr(String(m||'')); });
   s.on('kicked', d => {
     // Stop the auto-reconnect: the disconnect that follows is deliberate.
+    wpLog('kicked', d, 'warn');
     WP.kicked = true;
     s.removeAllListeners('disconnect');
     s.on('disconnect', ()=>{
@@ -12468,10 +12704,15 @@ function wpBind(s){
   });
   // WebRTC handshake for the camera orbs, relayed by clientId.
   s.on('signal', d => wpOnSignal(d && d.from, d && d.msg));
-  s.on('REC:host', h => wpApplyHost(h||{}));
-  s.on('REC:play', url => { if(url && url!==WP.video) wpMount(url); wpRemote(()=>wpPlay()); });
-  s.on('REC:pause', () => wpRemote(()=>wpPause()));
-  s.on('REC:seek', ts => wpRemote(()=>wpSeek(Number(ts))));
+  s.on('REC:host', h => {
+    h = h || {};
+    wpLog('rec.host', {video:wpShort(h.video), prev:wpShort(WP.video), ts:Number(h.videoTS)||0,
+      paused:!!h.paused, first:!!WP.awaitHost}, (!h.video && WP.video) ? 'warn' : 'info');
+    wpApplyHost(h);
+  });
+  s.on('REC:play', url => { wpLog('rec.play', {t:wpTime()}); if(url && url!==WP.video) wpMount(url); wpRemote(()=>wpPlay()); });
+  s.on('REC:pause', () => { wpLog('rec.pause', {t:wpTime()}); wpRemote(()=>wpPause()); });
+  s.on('REC:seek', ts => { wpLog('rec.seek', {to:Number(ts), t:wpTime()}); wpRemote(()=>wpSeek(Number(ts))); });
   s.on('REC:playbackRate', r => { const v=$('wpVideo'); if(v && Number(r)) v.playbackRate=Number(r); });
   // Periodic tsMap: correct drift > 3s against the median of other viewers' timestamps.
   s.on('REC:tsMap', map => {
@@ -12484,7 +12725,10 @@ function wpBind(s){
     if(!others.length) return;
     others.sort((a,b) => a-b);
     const med = others[Math.floor(others.length / 2)];
-    if(Math.abs(cur - med) > 3) wpRemote(()=>wpSeek(med));
+    if(Math.abs(cur - med) > 3){
+      wpLog('sync.drift', {t:Math.round(cur*10)/10, median:Math.round(med*10)/10, n:others.length});
+      wpRemote(()=>wpSeek(med));
+    }
   });
   s.on('chatinit', arr => { WP.chat = Array.isArray(arr)?arr.slice(-60):[]; wpRenderChat(); });
   s.on('REC:chat', m => { WP.chat.push(m); WP.chat=WP.chat.slice(-60); wpRenderChat(); wpFscPush(m); });
@@ -12551,6 +12795,8 @@ const WP_ICO = Object.fromEntries(Object.entries({
   small:   '<path d="M20 10h-6V4M4 14h6v6M14 10l6.5-6.5M10 14l-6.5 6.5"/>',
   fs:      '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>',
   fsExit:  '<path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/>',
+  smile:   '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01" stroke-width="3"/>',
+  kick:    '<circle cx="9" cy="8.5" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M16.5 8l5 5M21.5 8l-5 5"/>',
 }).map(([k,p])=>[k,'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+p+'</svg>']));
 function wpIco(btn, name){
   if(btn && btn.dataset.ico !== name){ btn.dataset.ico = name; btn.innerHTML = WP_ICO[name]; }
@@ -12561,6 +12807,10 @@ const WP_CAN_VOL = (()=>{ try{ const a=document.createElement('audio'); a.volume
 // Why the bar is up: recent activity, the pointer resting on it, a drag, an
 // open per-person menu, or the video not playing.
 const WPB = { active:false, t:0, hover:false, drag:false, dragT:0, ptr:'mouse', clickT:0 };
+// Reaction tray / history state (declared here: the bar code reads them at load).
+const WPR = { tray:false, sent:[], seen:{}, burstAt:{} };
+const WPH = { view:'room', items:[], src:{}, url:'', lastPost:0, wasPlaying:false,
+              posted:false, resume:null, loadT:null };
 function wpIsPlaying(){
   if(WP.kind==='file'){ const v=$('wpVideo'); return !!(v && !v.paused && !v.ended); }
   if(WP.kind==='yt') return WP.ytState===1 || WP.ytState===3;
@@ -12568,7 +12818,7 @@ function wpIsPlaying(){
 }
 function wpBarShowSync(){
   const layout = wpFsLayout(); if(!layout) return;
-  const show = WPB.active || WPB.hover || WPB.drag || !!$('wpPop') || !wpIsPlaying();
+  const show = WPB.active || WPB.hover || WPB.drag || !!$('wpPop') || WPR.tray || !wpIsPlaying();
   layout.classList.toggle('wp-ctrls', show);
   layout.classList.toggle('wp-idle', !show);
 }
@@ -12621,6 +12871,7 @@ function wpBarTick(){
   }
   const pv = WP.playerMuted ? 0 : WP.playerVol;
   wpIco($('wpVolBtn'), pv===0 ? 'volMute' : pv < .5 ? 'volLow' : 'vol');
+  if(WPH.resume) wpHistApplyResume();
   wpBarShowSync();
 }
 setInterval(wpBarTick, 250);
@@ -12756,6 +13007,7 @@ addEventListener('keydown', e=>{
   if(k===' ' || k==='k'){ if(!WP.kind) return; e.preventDefault(); if(!e.repeat) wpUserTogglePlay(); wpBarPoke(); }
   else if(k==='f'){ if(!e.repeat) wpToggleStageFs(); }
   else if(k==='c'){ if(!e.repeat && WPC.on) wpToggleVideo(); }
+  else if(k==='e'){ if(!e.repeat) wpRxToggleTray(); }
   else if(k==='arrowleft' || k==='arrowright' || k==='j' || k==='l'){
     if(!WP.kind) return;
     e.preventDefault();
@@ -12861,6 +13113,9 @@ function wpPopOpen(el){
   }
   const big = el.classList.contains('big');
   h += row('big', big ? 'small' : 'big', big ? 'Shrink tile' : 'Enlarge tile');
+  // Only a Zitadel-role moderator sees this; the server enforces it anyway.
+  const target = !me && (WP.roster||[]).find(u => u && u.id === k);
+  if(WP.isMod && target && !target.isMod) h += row('kick', 'kick', 'Remove from party', 'danger');
 
   const pop = document.createElement('div');
   pop.id = 'wpPop'; pop.className = 'wp-pop'; pop.innerHTML = h;
@@ -12875,6 +13130,7 @@ function wpPopOpen(el){
     else if(act==='leave' || act==='join'){ wpPopClose(); wpToggleCam(); }
     else if(act==='pmute'){ wpSetPeerPref(k, {m: !wpPeerPref(k).m}); wpPopOpen(el); }
     else if(act==='big'){ el.classList.toggle('big'); wpPopClose(); }
+    else if(act==='kick'){ wpPopClose(); wpKick(k, name); }
   });
   const range = pop.querySelector('.wp-pop-vol input');
   if(range) range.addEventListener('input', ()=>{
@@ -12998,6 +13254,7 @@ async function wpToggleCam(){
       await wpEnumerateDevices();
     }catch(e){
       const n = (e && e.name) || '';
+      wpLog('cam.error', {name:n, msg:String(e && e.message || '').slice(0,160)}, 'warn');
       if(n==='NotFoundError' || n==='DevicesNotFoundError'){
         wpCamNote('No camera found — joining with mic only…');
         try{
@@ -13021,6 +13278,7 @@ async function wpToggleCam(){
     }
     WPC.muted = false; WPC.camOff = false;
     WPC.stream = stream; WPC.on = true;
+    wpLog('cam.on', {micOnly:WPC.micOnly, tracks:stream.getTracks().map(t=>t.kind+':'+t.readyState)});
 
     // A camera can be revoked from the OS/browser mid-call.
     stream.getVideoTracks().forEach(t=>{
@@ -13043,6 +13301,7 @@ async function wpToggleCam(){
 }
 
 function wpCamStop(){
+  wpLog('cam.off');
   WPC.on = false;
   WPC.muted = false;
   WPC.camOff = false;
@@ -13345,7 +13604,14 @@ function wpPeer(id, create){
   pc.onicecandidate = (ev)=>{
     if(ev.candidate) wpSignal(id, {t:'ice', ice:ev.candidate});
   };
+  const who = ()=> WP.names[id] || id.slice(0,6);
+  pc.oniceconnectionstatechange = ()=>{
+    const st = pc.iceConnectionState;
+    if(st==='failed' || st==='disconnected') wpLog('peer.ice', {peer:who(), st}, 'warn');
+  };
   pc.ontrack = (ev)=>{
+    wpLog('peer.track', {peer:who(), kind:ev.track.kind, muted:ev.track.muted});
+    ev.track.addEventListener('ended', ()=> wpLog('peer.track_ended', {peer:who(), kind:ev.track.kind}, 'warn'));
     p.stream = ev.streams[0] || p.stream;
     // A remote track arrives muted and unmutes once media actually flows, so
     // the orb has to re-render then or it would sit on the initials forever.
@@ -13355,6 +13621,8 @@ function wpPeer(id, create){
   };
   pc.onconnectionstatechange = ()=>{
     const st = pc.connectionState;
+    wpLog('peer.state', {peer:who(), st, ice:pc.iceConnectionState},
+          (st==='failed' || st==='disconnected') ? 'warn' : 'info');
     if(st === 'failed'){
       clearTimeout(pc._discTimer);
       wpDropPeer(id);
@@ -13362,6 +13630,7 @@ function wpPeer(id, create){
       // Give the connection 5s to recover; if still disconnected, attempt ICE restart.
       pc._discTimer = setTimeout(()=>{
         if(WPC.peers[id] && (pc.connectionState==='disconnected'||pc.connectionState==='failed')){
+          wpLog('peer.restart_ice', {peer:who()}, 'warn');
           try{ pc.restartIce(); }catch(e){ wpDropPeer(id); }
         }
       }, 5000);
@@ -13423,6 +13692,7 @@ function wpDropAllPeers(){
 
 async function wpOnSignal(from, msg){
   if(!from || from===WP.clientId || !msg) return;
+  if(msg.t==='rx'){ wpRxShow(msg.e, (WP.names||{})[from] || 'Viewer', from); return; }
 
   if(msg.t==='cam'){
     WPC.remoteCam[from] = !!msg.on;
@@ -13776,8 +14046,62 @@ function wpTime(){
   return null;
 }
 function wpPlay(){
-  if(WP.kind==='file'){ const v=$('wpVideo'); v && v.play().catch(()=>{}); }
-  else if(WP.kind==='yt' && WP.yt?.playVideo) WP.yt.playVideo();
+  if(WP.kind==='file'){
+    const v=$('wpVideo'); if(!v) return;
+    const p = v.play();
+    if(p && p.catch) p.catch(e => wpPlayBlocked(v, e));
+  }
+  else if(WP.kind==='yt' && WP.yt?.playVideo){
+    WP.yt.playVideo();
+    // A blocked YouTube embed just sits unstarted/cued; say so after a beat.
+    clearTimeout(WP.ytPlayT);
+    WP.ytPlayT = setTimeout(()=>{
+      if(WP.kind==='yt' && [-1,2,5].includes(WP.ytState)){
+        wpLog('play.yt_stuck', {state:WP.ytState}, 'warn');
+        wpUnblockShow('play');
+      }
+    }, 4000);
+  }
+}
+// The browser refused play() — usually autoplay policy on a tab nobody has
+// tapped yet, which leaves one person paused while the room plays. Play muted
+// if we can, and ask for the tap that lets sound (or playback) through.
+function wpPlayBlocked(v, e){
+  const name = (e && e.name) || '';
+  if(name === 'AbortError'){ wpLog('play.aborted', {msg:String(e.message||'').slice(0,120)}, 'debug'); return; }
+  wpLog('play.blocked', {name, msg:String(e && e.message || '').slice(0,160), muted:v.muted}, 'warn');
+  if(name !== 'NotAllowedError') return;
+  if(v.muted){ wpUnblockShow('play'); return; }
+  v.muted = true;
+  wpRemote(()=> v.play().then(()=>{
+    wpLog('play.muted_fallback', null, 'warn');
+    wpUnblockShow('unmute');
+  }).catch(e2=>{
+    v.muted = WP.playerMuted;
+    wpLog('play.blocked_muted', {name:(e2 && e2.name)||''}, 'warn');
+    wpUnblockShow('play');
+  }));
+}
+function wpUnblockShow(kind){
+  const b=$('wpUnblock'); if(!b) return;
+  b.dataset.k = kind;
+  b.innerHTML = kind==='play' ? WP_ICO.play+'<span>Tap to play with the room</span>'
+                              : WP_ICO.volMute+'<span>Tap for sound</span>';
+  b.classList.add('on');
+}
+function wpUnblockHide(){ $('wpUnblock')?.classList.remove('on'); }
+function wpUnblock(){
+  const b=$('wpUnblock'); if(!b) return;
+  const k = b.dataset.k; wpUnblockHide();
+  wpLog('play.unblocked', {k});
+  if(WP.kind==='file'){
+    const v=$('wpVideo');
+    if(k==='play' && v) wpRemote(()=> v.play().catch(e=> wpPlayBlocked(v, e)));
+    wpApplyPlayerVol();   // back to the viewer's own mute/volume
+  } else if(WP.kind==='yt' && WP.yt?.playVideo){
+    wpRemote(()=> WP.yt.playVideo());
+  }
+  wpForceSync();
 }
 function wpPause(){
   if(WP.kind==='file'){ const v=$('wpVideo'); v && v.pause(); }
@@ -13827,6 +14151,12 @@ function wpToggleCamsMute(){
 
 function wpApplyHost(h){
   const url = h.video || '';
+  const first = WP.awaitHost; WP.awaitHost = false;
+  WP.roomVideo = url;
+  // Right after a reconnect the room came back empty although we were
+  // watching: the realtime server restarted. Keep playing and put it back.
+  if(!url && first && wpRecoverHost()) return;
+  if(url) { clearTimeout(WP.recoverT); WP.recoverT = null; }
   if(url !== WP.video) wpMount(url);
   if(!url) return;
   const ts = Number(h.videoTS)||0;
@@ -13836,7 +14166,40 @@ function wpApplyHost(h){
   wpRemote(()=> h.paused ? wpPause() : wpPlay());
 }
 
+// Re-host what was playing when the realtime server lost the room. Every
+// viewer tries after a random delay; whoever goes first wins and the rest see
+// the video arrive and stand down.
+function wpRecoverHost(){
+  const L = WP.lastHost;
+  if(!L || !L.url || Date.now() - L.at > 180000) return false;
+  WP.lastHost = null;
+  const delay = 400 + Math.random()*1600;
+  wpLog('recover.pending', {video:wpShort(L.url), t:L.t, paused:L.paused, delay:Math.round(delay)}, 'warn');
+  clearTimeout(WP.recoverT);
+  WP.recoverT = setTimeout(()=>{
+    WP.recoverT = null;
+    if(WP.roomVideo){ wpLog('recover.skip', {room:wpShort(WP.roomVideo)}); return; }
+    if(!WP.sock || !WP.sock.connected){ wpLog('recover.skip', {sock:false}); return; }
+    wpLog('recover.rehost', {video:wpShort(L.url), t:L.t}, 'warn');
+    WP.sock.emit('CMD:host', L.url);
+    toast('↻ Watch Party reconnected — putting the video back'+(L.t ? ' at '+wpFmt(L.t) : ''));
+    // Seek once the room has it back and our own apply window has closed, and
+    // announce it explicitly so everyone lands on the same spot.
+    const t0 = Date.now();
+    const iv = setInterval(()=>{
+      if(Date.now() - t0 > 30000){ clearInterval(iv); wpLog('recover.seek_timeout', null, 'warn'); return; }
+      if(WP.video !== L.url || WP.applying || !(wpDur() > 0)) return;
+      clearInterval(iv);
+      if(L.t > 3){ wpUserSeek(L.t); WP.sock?.emit('CMD:seek', L.t); }
+      if(L.paused){ wpPause(); WP.sock?.emit('CMD:pause'); }
+    }, 500);
+  }, delay);
+  return true;
+}
+
 function wpMount(url){
+  wpLog('video.mount', {video:wpShort(url), prev:wpShort(WP.video)});
+  wpUnblockHide();
   WP.video = url || '';
   const vid=$('wpVideo'), ytBox=$('wpYt'), empty=$('wpEmpty');
   if(vid){ vid.volume = WP.playerVol; vid.muted = WP.playerMuted; }
@@ -13888,6 +14251,10 @@ function wpMountHls(url){
   wpLoadHlsJs().then(Hls=>{
     if(!Hls || !Hls.isSupported()){ vid.src=url; return; }
     const hls=new Hls(); WP.hls=hls;
+    hls.on(Hls.Events.ERROR, (ev, d)=>{
+      if(d && (d.fatal || d.details==='bufferStalledError'))
+        wpLog('hls.error', {type:d.type, details:d.details, fatal:!!d.fatal}, d.fatal ? 'error' : 'warn');
+    });
     hls.loadSource(url); hls.attachMedia(vid);
     if(WP.pendingTS){ const t=WP.pendingTS; WP.pendingTS=0;
       hls.once(Hls.Events.MANIFEST_PARSED,()=>{ vid.currentTime=t; }); }
@@ -13912,7 +14279,10 @@ function wpMountYt(id){
           if(WP.pendingTS){ WP.yt.seekTo(WP.pendingTS,true); WP.pendingTS=0; }
           wpApplyPlayerVol();
         },
+        onError:(e)=>{ wpLog('yt.error', {code:e && e.data}, 'error'); },
         onStateChange:(e)=>{
+          wpLog('yt.state', {state:e.data, t:wpTime()}, 'debug');
+          if(e.data===1) wpUnblockHide();
           WP.ytState = e.data; wpBarMediaSync(); wpBarTick();
           if(WP.applying) return;
           if(e.data===YT.PlayerState.PLAYING) WP.sock?.emit('CMD:play');
@@ -13942,7 +14312,7 @@ async function wpSetVideo(forced){
   // YouTube and bare video files: send straight to the room.
   const isYt = !!wpYtId(url);
   const isDirect = /\.(mp4|webm|ogg|mov|mkv|m3u8|mpd)(\?|#|$)/i.test(url);
-  if(isYt || isDirect){ wpErr(''); WP.sock.emit('CMD:host', url); return; }
+  if(isYt || isDirect){ wpErr(''); WPH.src[url] = url; WP.sock.emit('CMD:host', url); return; }
 
   // Everything else: ask the server to resolve via yt-dlp.
   const btn=$('wpSetBtn');
@@ -13961,6 +14331,7 @@ async function wpSetVideo(forced){
     }
     const d = await r.json();
     wpErr('');
+    WPH.src[d.url] = url;   // so history can re-extract when the stream URL expires
     WP.sock.emit('CMD:host', d.url);
   }catch(e){ wpErr('Could not extract a video from that link.'); }
   finally{ if(btn) btn.disabled=false; }
@@ -13994,21 +14365,7 @@ async function wpRally(){
     const names = viewers.length ? viewers.join(', ') : 'We';
 
     // Video title: manual title field first, then YT player, then URL parse
-    let videoLabel = ($('wpTitle')?.value.trim()) || '';
-    if(!videoLabel && WP.video){
-      const ytId = wpYtId(WP.video);
-      if(ytId && WP.yt?.getVideoData){
-        try{ videoLabel = WP.yt.getVideoData().title || ''; }catch(e){}
-      }
-      if(!videoLabel){
-        try{
-          const u = new URL(WP.video, location.origin);
-          const raw = u.searchParams.get('url') || u.pathname;
-          videoLabel = decodeURIComponent(raw.split('/').pop().split('?')[0])
-                         .replace(/\.[a-z0-9]+$/i,'') || '';
-        }catch(e){}
-      }
-    }
+    const videoLabel = wpVideoLabel();
     const watchingStr = videoLabel ? 'watching '+videoLabel : 'in the watch party';
     const link = location.origin+'/watch';
     const msg = '@all '+names+' are on CRCMZ app '+watchingStr+'. Join now fuckers! '+link;
@@ -14028,7 +14385,293 @@ async function wpRally(){
   v.addEventListener('play',   ()=>{ if(!WP.applying) WP.sock?.emit('CMD:play'); });
   v.addEventListener('pause',  ()=>{ if(!WP.applying) WP.sock?.emit('CMD:pause'); });
   v.addEventListener('seeked', ()=>{ if(!WP.applying) WP.sock?.emit('CMD:seek', v.currentTime); });
+  v.addEventListener('playing', ()=>{ if(!v.muted || WP.playerMuted) wpUnblockHide(); });
+  v.addEventListener('error', ()=>{
+    const e = v.error;
+    if(v.getAttribute('src') || WP.hls)
+      wpLog('video.error', {code:e && e.code, msg:e && e.message, video:wpShort(WP.video)}, 'error');
+  });
+  v.addEventListener('stalled', ()=> wpLog('video.stalled', {t:v.currentTime, rs:v.readyState}, 'warn'));
+  v.addEventListener('waiting', ()=>{
+    if(Date.now() - WPD.waitAt < 10000) return;   // buffering is chatty
+    WPD.waitAt = Date.now(); wpLog('video.waiting', {t:v.currentTime, rs:v.readyState});
+  });
 })();
+
+
+// ── reactions ────────────────────────────────────────────────────────────────
+// Emoji ride the same peer `signal` relay as the cams, so the fork needs no
+// change. Everyone counts every reaction locally: 3+ of the same emoji inside
+// the window (from anyone, you included) sets off a celebration of it.
+const WP_RX = ['😂','🔥','😍','😮','😭','💀','👏','❤️','🍿','👀'];
+const WP_RX_WINDOW = 5000, WP_RX_NEED = 3;
+const WP_CALM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+(function wpRxInit(){
+  const tray = $('wpRxTray'); if(!tray) return;
+  tray.innerHTML = WP_RX.map(e => '<button type="button" data-e="'+e+'" title="'+e+'">'+e+'</button>').join('');
+  tray.addEventListener('click', ev=>{
+    const b = ev.target.closest('[data-e]'); if(b) wpReact(b.dataset.e);
+  });
+  wpIco($('wpRxBtn'), 'smile');
+  document.addEventListener('pointerdown', ev=>{
+    if(!WPR.tray) return;
+    if(ev.target.closest && (ev.target.closest('#wpRxTray') || ev.target.closest('#wpRxBtn'))) return;
+    wpRxToggleTray(false);
+  }, true);
+  addEventListener('keydown', ev=>{
+    if(ev.key==='Escape' && WPR.tray){ ev.stopImmediatePropagation(); wpRxToggleTray(false); }
+  }, true);
+})();
+
+function wpRxToggleTray(on){
+  WPR.tray = on === undefined ? !WPR.tray : !!on;
+  $('wpRxTray')?.classList.toggle('on', WPR.tray);
+  $('wpRxBtn')?.classList.toggle('on', WPR.tray);
+  if(WPR.tray) wpBarPoke(); else wpBarShowSync();
+}
+
+function wpReact(e){
+  if(!WP_RX.includes(e)) return;
+  const now = Date.now();
+  WPR.sent = WPR.sent.filter(t => now - t < 3000);
+  if(WPR.sent.length >= 8) return;          // spam guard: 8 per 3s
+  WPR.sent.push(now);
+  wpLive().forEach(id => wpSignal(id, {t:'rx', e}));
+  wpRxShow(e, 'You', WP.clientId);
+  wpBarPoke();
+}
+
+function wpRxShow(e, name, from){
+  if(!WP_RX.includes(e)) return;
+  const layer = $('wpRx'); if(!layer) return;
+  const f = document.createElement('div');
+  f.className = 'wp-rx-f';
+  f.innerHTML = '<b>'+e+'</b><span>'+esc(name)+'</span>';
+  f.style.left = (68 + Math.random()*24) + '%';
+  layer.appendChild(f);
+  const h = layer.clientHeight || 400, sway = (Math.random()*2-1) * 36;
+  const anim = f.animate([
+    {transform:'translate(-50%,20px) scale(.3)', opacity:0},
+    {transform:'translate(calc(-50% + '+(sway*.4)+'px),-30px) scale(1.15)', opacity:1, offset:.12},
+    {transform:'translate(calc(-50% + '+(-sway*.5)+'px),'+(-h*.35)+'px) scale(1)', opacity:1, offset:.6},
+    {transform:'translate(calc(-50% + '+sway+'px),'+(-h*.62)+'px) scale(.9)', opacity:0},
+  ], {duration: WP_CALM ? 1400 : 2600 + Math.random()*600, easing:'cubic-bezier(.25,.8,.4,1)'});
+  anim.onfinish = () => f.remove();
+
+  // Counting for the celebration.
+  const now = Date.now();
+  const list = (WPR.seen[e] || []).filter(t => now - t < WP_RX_WINDOW);
+  list.push(now); WPR.seen[e] = list;
+  if(list.length >= WP_RX_NEED && now - (WPR.burstAt[e]||0) > 2500){
+    WPR.burstAt[e] = now;
+    WPR.seen[e] = [];                     // the next party needs 3 more
+    wpConfetti(e, list.length);
+  }
+}
+
+function wpConfetti(e, count){
+  const layer = $('wpRx'); if(!layer) return;
+  const W = layer.clientWidth || 600, H = layer.clientHeight || 340;
+  const big = document.createElement('div');
+  big.className = 'wp-rx-big';
+  big.innerHTML = e + '<small>×'+count+'</small>';
+  layer.appendChild(big);
+  big.animate([
+    {transform:'translate(-50%,-50%) scale(.2) rotate(-20deg)', opacity:0},
+    {transform:'translate(-50%,-50%) scale(1.25) rotate(6deg)', opacity:1, offset:.18},
+    {transform:'translate(-50%,-50%) scale(1) rotate(0deg)', opacity:1, offset:.32},
+    {transform:'translate(-50%,-50%) scale(1.05)', opacity:1, offset:.75},
+    {transform:'translate(-50%,-62%) scale(.8)', opacity:0},
+  ], {duration:1900, easing:'cubic-bezier(.2,.8,.3,1)'}).onfinish = () => big.remove();
+  if(WP_CALM) return;
+
+  const n = Math.min(64, Math.max(34, Math.round(W / 16)));
+  for(let i=0; i<n; i++){
+    const c = document.createElement('div');
+    c.className = 'wp-rx-c';
+    c.textContent = e;
+    const size = 18 + Math.random()*26;
+    c.style.fontSize = size + 'px';
+    layer.appendChild(c);
+    // Two cannons from the bottom corners plus a fountain from the middle.
+    const side = i % 3, x0 = side===0 ? W*.08 : side===1 ? W*.92 : W*.5, y0 = H + 20;
+    const dir = side===0 ? 1 : side===1 ? -1 : (Math.random()*2-1);
+    const dx = dir * (W*.15 + Math.random()*W*.45);
+    const peak = H*.45 + Math.random()*H*.5;
+    const spin = (Math.random()*2-1) * 540;
+    const dur = 1700 + Math.random()*1300;
+    c.animate([
+      {transform:'translate('+x0+'px,'+y0+'px) rotate(0deg) scale(.5)', opacity:1},
+      {transform:'translate('+(x0+dx*.55)+'px,'+(y0-peak)+'px) rotate('+(spin*.5)+'deg) scale(1)', opacity:1, offset:.4},
+      {transform:'translate('+(x0+dx)+'px,'+(y0-peak*.35)+'px) rotate('+spin+'deg) scale(.95)', opacity:.9, offset:.75},
+      {transform:'translate('+(x0+dx*1.15)+'px,'+(y0+10)+'px) rotate('+(spin*1.2)+'deg) scale(.9)', opacity:0},
+    ], {duration:dur, delay:Math.random()*220, easing:'cubic-bezier(.15,.7,.35,1)', fill:'backwards'})
+      .onfinish = () => c.remove();
+  }
+}
+
+// ── kick (moderators only) ───────────────────────────────────────────────────
+function wpKick(clientId, name){
+  if(!WP.isMod || !WP.sock || !WP.sock.connected) return;
+  if(!confirm('Remove '+name+' from the watch party? They can\'t rejoin for 10 minutes.')) return;
+  WP.sock.emit('CMD:kickUser', {userToBeKicked: clientId});
+  toast('Removed '+name);
+}
+
+// ── history + resume ─────────────────────────────────────────────────────────
+// Each viewer's page reports its own position every ~15s while playing (and
+// on pause / leaving), so "where we left off" survives a closed tab.
+
+// Best human name for what's playing. `typedOnly` skips file-name guessing,
+// which the server does better (and shouldn't override a typed title).
+function wpVideoLabel(typedOnly){
+  let label = ($('wpTitle')?.value.trim()) || '';
+  if(!label && WP.video && wpYtId(WP.video) && WP.yt?.getVideoData){
+    try{ label = WP.yt.getVideoData().title || ''; }catch(e){}
+  }
+  if(!label && WP.video && !typedOnly){
+    try{
+      const u = new URL(WP.video, location.origin);
+      const raw = u.searchParams.get('url') || u.pathname;
+      label = decodeURIComponent(raw.split('/').pop().split('?')[0]).replace(/\.[a-z0-9]+$/i,'') || '';
+    }catch(e){}
+  }
+  return label;
+}
+
+function wpHistPost(){
+  if(!WP.video || !WP.kind) return;
+  const t = wpTime(); if(t === null || !isFinite(t) || t < 5) return;
+  const d = wpDur();
+  WPH.lastPost = Date.now();
+  const first = !WPH.posted; WPH.posted = true;
+  fetch('/api/watch/history', {
+    method:'POST', keepalive:true, headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      url: WP.video, position: t, duration: isFinite(d) && d > 0 ? d : null,
+      room: WP.room, title: wpVideoLabel(true), source: WPH.src[WP.video] || '',
+    }),
+  }).then(r => {
+    // First ping for a video: metadata is being looked up, show it shortly.
+    if(r.ok && first){ clearTimeout(WPH.loadT); WPH.loadT = setTimeout(wpHistLoad, 6000); }
+  }).catch(()=>{});
+}
+
+setInterval(()=>{
+  if(WP.video !== WPH.url){ WPH.url = WP.video; WPH.posted = false; WPH.wasPlaying = false; }
+  if(!WP.video || !WP.kind) return;
+  const playing = wpIsPlaying();
+  if(playing && Date.now() - WPH.lastPost >= 15000) wpHistPost();
+  else if(!playing && WPH.wasPlaying) wpHistPost();      // just paused
+  WPH.wasPlaying = playing;
+}, 3000);
+addEventListener('pagehide', ()=>{ if(WPH.wasPlaying) wpHistPost(); });
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='hidden' && WPH.wasPlaying) wpHistPost();
+});
+
+function wpHistView(v){
+  WPH.view = v === 'mine' ? 'mine' : 'room';
+  document.querySelectorAll('#wpHistSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === WPH.view));
+  wpHistLoad();
+}
+
+async function wpHistLoad(){
+  const box = $('wpHist'); if(!box) return;
+  const q = WPH.view === 'mine' ? 'mine=1' : 'room='+encodeURIComponent(WP.room || '');
+  try{
+    const r = await fetch('/api/watch/history?limit=24&'+q, {headers:{'Accept':'application/json'}});
+    if(!r.ok) throw new Error(r.status);
+    WPH.items = (await r.json()).items || [];
+  }catch(e){
+    box.innerHTML = '<div class="wp-hist-empty">Couldn\'t load history.</div>'; return;
+  }
+  wpHistRender();
+}
+
+function wpAgo(ts){
+  const s = Math.max(0, Date.now()/1000 - (ts||0));
+  if(s < 60) return 'just now';
+  if(s < 3600) return Math.floor(s/60)+'m ago';
+  if(s < 86400) return Math.floor(s/3600)+'h ago';
+  if(s < 86400*30) return Math.floor(s/86400)+'d ago';
+  return new Date(ts*1000).toLocaleDateString();
+}
+
+function wpHistRender(){
+  const box = $('wpHist'); if(!box) return;
+  if(!WPH.items.length){
+    box.innerHTML = '<div class="wp-hist-empty">'+(WPH.view==='mine'
+      ? 'You haven\'t watched anything here yet.'
+      : 'Nothing watched in this room yet — play something and it shows up here.')+'</div>';
+    return;
+  }
+  box.innerHTML = WPH.items.map((it, i) => {
+    const mine = it.mine, pos = mine ? mine.position : it.position;
+    const done = mine ? mine.finished : it.finished;
+    const dur = it.duration, pct = dur ? Math.min(100, pos/dur*100) : 0;
+    const yt = it.kind === 'youtube';
+    const kind = {movie:'Movie', episode:'Episode', show:'Show', youtube:'YouTube'}[it.kind] || 'Video';
+    const who = (it.viewers||[]).map(v => v.name).filter(Boolean);
+    const whoTxt = who.length ? who.slice(0,3).join(', ') + (who.length > 3 ? ' +'+(who.length-3) : '') : '';
+    const left = done ? '✓ Finished' : 'Left off at <b>'+wpFmt(pos)+'</b>'+(dur ? ' of '+wpFmt(dur) : '');
+    const poster = it.poster
+      ? '<img loading="lazy" alt="" src="'+esc(it.poster)+'" onerror="this.remove()">' : '';
+    const playing = it.url === WP.video;
+    return '<div class="wp-hcard" style="animation-delay:'+Math.min(i,10)*35+'ms" title="'+esc(it.overview||'')+'">'+
+      '<div class="wp-hposter'+(yt?' yt':'')+'">'+esc((it.title||'?').trim().charAt(0).toUpperCase())+poster+
+        (pct ? '<div class="wp-hprog"><i style="width:'+pct.toFixed(1)+'%"></i></div>' : '')+'</div>'+
+      '<div class="wp-hbody">'+
+        '<div class="wp-htitle">'+esc(it.title||'Untitled')+(it.year && !yt ? ' <span>('+esc(it.year)+')</span>' : '')+'</div>'+
+        '<div class="wp-hmeta">'+kind+(it.description ? ' · '+esc(it.description) : '')+'</div>'+
+        '<div class="wp-hleft">'+left+(whoTxt ? ' · '+esc(whoTxt) : '')+' · '+wpAgo(it.last_watched_at)+'</div>'+
+        '<div class="wp-hact">'+
+          (playing ? '<button class="wp-btn ghost" disabled>● Playing</button>'
+            : '<button class="wp-btn" onclick="wpHistResume('+i+')">'+(done || pos < 10 ? '▶ Play' : '▶ Resume '+wpFmt(pos))+'</button>')+
+          (it.meta_url ? '<a href="'+esc(it.meta_url)+'" target="_blank" rel="noopener" title="About this title">ⓘ</a>' : '')+
+          (mine ? '<button class="x" onclick="wpHistForget('+i+')" title="Remove from my history">✕</button>' : '')+
+        '</div>'+
+      '</div></div>';
+  }).join('');
+}
+
+function wpHistResume(i){
+  const it = WPH.items[i]; if(!it) return;
+  if(!WP.sock || !WP.sock.connected){ wpErr('Not connected to the watch party yet.'); return; }
+  const mine = it.mine;
+  const done = mine ? mine.finished : it.finished;
+  const t = done ? 0 : Math.max(0, (mine ? mine.position : it.position) - 3);  // a little run-up
+  const title = $('wpTitle'); if(title && it.title) title.value = it.title;
+  $('wpStage')?.scrollIntoView({behavior:'smooth', block:'center'});
+  if(WP.video === it.url){ if(t > 0) wpUserSeek(t); return; }
+  // Extracted stream URLs expire; re-resolve from the page they came from.
+  const viaSrc = !!(it.source_url && it.source_url !== it.url && !/^\/api\/watch\/proxy\?/.test(it.url));
+  WPH.resume = t > 5 ? {t, url: viaSrc ? '' : it.url, prev: WP.video, at: Date.now()} : null;
+  if(viaSrc){ const u = $('wpUrl'); if(u) u.value = it.source_url; wpSetVideo(it.source_url); }
+  else WP.sock.emit('CMD:host', it.url);
+}
+
+// Polled from wpBarTick: seek once the new video knows its length.
+function wpHistApplyResume(){
+  const r = WPH.resume; if(!r) return;
+  if(Date.now() - r.at > 90000){ WPH.resume = null; return; }
+  if(!WP.kind || !WP.video || WP.applying) return;
+  if(r.url ? WP.video !== r.url : WP.video === r.prev) return;
+  const d = wpDur(); if(!(d > 0)) return;
+  WPH.resume = null;
+  wpUserSeek(r.t);
+  toast('▶ Resumed at '+wpFmt(r.t));
+}
+
+async function wpHistForget(i){
+  const it = WPH.items[i]; if(!it) return;
+  try{
+    await fetch('/api/watch/history', {method:'DELETE', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({url: it.url})});
+  }catch(e){}
+  wpHistLoad();
+}
 
 // ── Huddle (LiveKit video chat — revamped) ────────────────────────────────────
 const HUDDLE = {
