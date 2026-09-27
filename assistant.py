@@ -1642,11 +1642,17 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
                                  "description": "PSN online ID of the clip sender. "
                                                 "Falls back to clips.sender_online_id "
                                                 "when omitted."},
+         "reel_type":           {"type": "string",
+                                 "description": "fire | fail | daily. "
+                                                "'daily' sends a generic '@all Daily highlights have dropped! 🔥' "
+                                                "with no sender attribution — use this for the daily highlights reel. "
+                                                "'fire' and 'fail' keep the sender's name in the message. "
+                                                "Default: 'fire'."},
      },
      "required": ["clip_id", "instagram_url"]})
 def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
                    instagram_media_id: str = "", caption: str = "",
-                   sender: str = "") -> dict:
+                   sender: str = "", reel_type: str = "fire") -> dict:
     """Ingest an IG post result and fan out to WhatsApp. The platform composes the message."""
     import clips as clips_mod
     import ig_posts as ig_mod
@@ -1697,7 +1703,8 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     note = None
     if ig_mod.claim_notification(post_id):
         notified, note = _notify_ig_posted(psn_user, instagram_url, caller,
-                                           ig_mod.get(post_id))
+                                           ig_mod.get(post_id),
+                                           reel_type=(reel_type or "fire").strip().lower())
         if not notified:
             ig_mod.release_notification(post_id)
 
@@ -2035,12 +2042,17 @@ def _coach_report_text(review: dict, limit: int = 1400) -> str:
 
 
 def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
-                      post: dict | None = None) -> tuple[bool, str | None]:
+                      post: dict | None = None,
+                      reel_type: str = "fire") -> tuple[bool, str | None]:
     """Announce an Instagram post to the WhatsApp group.
 
     The IG URL comes from Muse's service call (validated https://), not from user
     text, so it is not passed through _wa_safe. Only psn_user is user-originated
     and gets sanitised.
+
+    reel_type="daily"  → generic "@all Daily highlights have dropped! 🔥", no sender.
+    reel_type="fire"|"fail" → "@all 🔥 *{sender}* just dropped on IG:\n{url}".
+    All share-backs use mentionAll=True (@all, not @everyone).
     """
     bridge = os.environ.get("WA_BRIDGE_URL", "")
     if not bridge:
@@ -2049,15 +2061,21 @@ def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
     if not jid:
         return False, "WA_GOOPERS_JID not configured"
 
-    label = (caller or {}).get("label", "")
-    tag = f"[{label[:32].strip().title()}] " if label else ""
-    safe_user = _wa_safe(psn_user, 40)
+    if reel_type == "daily":
+        text = "@all Daily highlights have dropped! \U0001f525\n" + ig_url
+    else:
+        label = (caller or {}).get("label", "")
+        tag = f"[{label[:32].strip().title()}] " if label else ""
+        safe_user = _wa_safe(psn_user, 40)
+        text = f"{tag}@all \U0001f525 *{safe_user}* just dropped on Instagram:\n{ig_url}"
 
-    text = f"{tag}\U0001f525 *{safe_user}* just dropped on Instagram:\n{ig_url}"
     try:
-        import wa_ai
-        ok = wa_ai.send_reply(bridge, jid, text)
-        return bool(ok), None if ok else "bridge refused the message"
+        import httpx as _hx
+        r = _hx.post(f"{bridge.rstrip('/')}/send",
+                     json={"message": text, "groupJid": jid, "mentionAll": True},
+                     timeout=30)
+        r.raise_for_status()
+        return True, None
     except Exception as e:  # noqa: BLE001
         return False, f"WhatsApp send failed: {e}"
 
