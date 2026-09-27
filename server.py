@@ -8233,6 +8233,25 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       overflow-x:hidden; overflow-y:auto; max-height:80vh;
       margin-bottom:0; padding:2px 2px 6px; }
   }
+  /* ── camera overlay mode ─────────────────────────────────────────────────── */
+  .wp-tv-layout.orbs-overlay { position:relative; flex-direction:column !important; }
+  .wp-tv-layout.orbs-overlay .wp-stage { flex:none !important; width:100% !important; }
+  .wp-tv-layout.orbs-overlay .wp-orbs {
+    position:absolute; top:10px; right:10px; z-index:10;
+    flex-direction:column !important; flex:none !important;
+    width:72px !important; max-height:82% !important;
+    overflow-y:auto; overflow-x:hidden;
+    background:rgba(0,0,0,.28); border-radius:12px;
+    padding:5px 3px !important; margin-bottom:0 !important;
+    opacity:.8; transition:opacity .2s;
+    scrollbar-width:none; }
+  .wp-tv-layout.orbs-overlay .wp-orbs:hover { opacity:1; }
+  .wp-tv-layout.orbs-overlay .wp-orbs::-webkit-scrollbar { display:none; }
+  .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb { width:62px !important; }
+  .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb-ring { width:56px !important; height:56px !important; }
+  .wp-tv-layout.orbs-overlay .wp-orbs .wp-orb-ini { font-size:18px !important; }
+  .wp-btn.ghost.active { background:rgba(255,47,214,.12) !important;
+    border-color:rgba(255,47,214,.45) !important; color:var(--neon) !important; }
   /* ── controls below the player ───────────────────────────────────────────── */
   .wp-controls { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
   .wp-ctrl-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -8645,6 +8664,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       <button class="wp-btn ghost" id="wpCamBtn" onclick="wpToggleCam()">📷 Turn on camera</button>
       <button class="wp-btn ghost wp-ptt" id="wpPttBtn" style="display:none">🎤 Mute</button>
       <button class="wp-btn ghost" id="wpFsBtn" onclick="wpFsOpen()" title="Camera grid fullscreen">⛶ Cams</button>
+      <button class="wp-btn ghost" id="wpOverlayBtn" onclick="wpToggleOverlay()" title="Camera overlay on video">📌 Overlay</button>
       <button class="wp-btn ghost" id="wpSyncBtn" onclick="wpForceSync()" title="Re-sync to room">📍 Sync</button>
       <span class="wp-cam-note" id="wpCamNote"></span>
     </div>
@@ -11923,6 +11943,7 @@ async function loadWatch(){
   }
   WP.booted = true;
   wpEnumerateDevices();
+  wpInitOverlay();
   wpStatus('connecting…', false);
   let cfg;
   try{
@@ -12315,6 +12336,26 @@ function wpCamSync(){
   wpRenderOrbs();
   wpMiniSync();
 }
+function wpToggleOverlay(){
+  const layout = document.querySelector('.wp-tv-layout');
+  if(!layout) return;
+  const on = layout.classList.toggle('orbs-overlay');
+  const btn = $('wpOverlayBtn');
+  if(btn) btn.classList.toggle('active', on);
+  try{ localStorage.setItem('wpOrbOverlay', on ? '1' : '0'); }catch(e){}
+}
+
+function wpInitOverlay(){
+  try{
+    if(localStorage.getItem('wpOrbOverlay') === '1'){
+      const layout = document.querySelector('.wp-tv-layout');
+      if(layout){ layout.classList.add('orbs-overlay'); }
+      const btn = $('wpOverlayBtn');
+      if(btn) btn.classList.add('active');
+    }
+  }catch(e){}
+}
+
 function wpCamNote(msg){
   const n=$('wpCamNote'); if(!n) return;
   n.textContent = msg !== '' ? msg
