@@ -67,6 +67,7 @@ _RL_LIMITS = {
     "custom_add": (6, 60.0),    # AI-flavored custom button creation
     "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
     "watch_extract": (5, 60.0),  # yt-dlp URL extraction (subprocess, keep tight)
+    "watch_history": (40, 60.0),  # playback progress pings (one per ~15s per tab)
     "assistant": (10, 60.0),    # platform assistant (each ask = several local LLM calls)
     "facts_add": (12, 60.0),    # squad facts (shared prompt context, keep it civil)
 }
@@ -4349,6 +4350,48 @@ WATCH_EXTRA_ORIGINS = [
 ]
 # Optional gate: only people who linked a PSN account may join.
 WATCH_REQUIRE_PSN_LINK = os.environ.get("WATCH_REQUIRE_PSN_LINK", "").lower() in ("1", "true", "yes")
+# Zitadel IAM role(s) that make someone a Watch Party moderator (may kick).
+# Comma-separated; matched the same way as WHATSAPP_IMPORT_ALLOWED_ROLE.
+WATCH_MOD_ROLE = os.environ.get("WATCH_MOD_ROLE", "IAM Owner,IAM Owner Viewer")
+
+_watch_mod_cache: dict[str, tuple[bool, float]] = {}
+
+
+async def _is_watch_mod(sub: str) -> bool:
+    """True iff `sub` holds a WATCH_MOD_ROLE in Zitadel. Cached 5 minutes."""
+    if not sub or not WATCH_MOD_ROLE.strip() or not ZITADEL_SERVICE_TOKEN:
+        return False
+    now = _time.time()
+    cached = _watch_mod_cache.get(sub)
+    if cached and cached[1] > now:
+        return cached[0]
+
+    def _norm(r: str) -> str:
+        return r.strip().upper().replace(" ", "_").replace("-", "_")
+
+    wanted = {_norm(r) for r in WATCH_MOD_ROLE.split(",") if r.strip()}
+    result = False
+    import httpx as _hx
+    try:
+        async with _hx.AsyncClient(timeout=8) as c:
+            r = await c.post(
+                f"{ZITADEL_ISSUER}/admin/v1/members/_search",
+                json={"queries": [{"userIdQuery": {"userId": sub}}]},
+                headers={"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"},
+            )
+        if r.status_code == 200:
+            result = any(_norm(role) in wanted
+                         for m in r.json().get("result", [])
+                         for role in m.get("roles", []))
+        else:
+            # Don't cache a Zitadel hiccup as "not a mod" for five minutes.
+            logger.warning("watch mod check: zitadel %s", r.status_code)
+            return False
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("watch mod check failed for %s: %s", sub, exc)
+        return False
+    _watch_mod_cache[sub] = (result, now + 300)
+    return result
 
 _ZITADEL_PROFILE_CACHE: dict[str, tuple[float, dict]] = {}
 _ZITADEL_PROFILE_TTL = 300.0
@@ -4474,6 +4517,7 @@ async def watch_config(request: Request):
         "name": viewer["displayName"],
         "nickname": viewer["nickname"],
         "psnOnlineId": viewer["psnOnlineId"],
+        "mod": await _is_watch_mod(viewer["zitadelSubject"]),
     }
     return JSONResponse(cfg, headers={"Cache-Control": "no-store"})
 
@@ -4513,10 +4557,12 @@ async def watch_join(request: Request):
     # Scope the limiter per viewer so one person can't starve the room.
     _rate_limit("watch_join", viewer["viewerId"])
 
+    is_mod = await _is_watch_mod(viewer["zitadelSubject"])
     try:
         minted = await asyncio.to_thread(
             watch_mod.mint_ticket,
             viewer=viewer["viewerId"], room=room, display_name=viewer["displayName"],
+            mod=is_mod,
         )
     except watch_mod.WatchConfigError as e:
         logger.error("watch: cannot mint ticket: %s", e)
@@ -4532,10 +4578,111 @@ async def watch_join(request: Request):
             "ticket": minted["ticket"],
             "expiresIn": minted["expires_in"],
             "room": room,
-            "viewer": {"name": viewer["displayName"]},
+            "viewer": {"name": viewer["displayName"], "mod": is_mod},
         },
         headers={"Cache-Control": "no-store"},
     )
+
+
+# ── Watch history ────────────────────────────────────────────────────────────
+# Each viewer's client pings its position while a video plays; metadata is
+# looked up once per video from free sources (see watch_history.py).
+
+_watch_enriching: set[str] = set()
+
+
+async def _watch_enrich(url: str) -> None:
+    if url in _watch_enriching:
+        return
+    _watch_enriching.add(url)
+    try:
+        await asyncio.to_thread(_watch_history.enrich, url)
+    except Exception as e:  # noqa: BLE001
+        logger.info("watch history enrich failed: %s", e)
+    finally:
+        _watch_enriching.discard(url)
+
+
+@app.post("/api/watch/history")
+async def watch_history_progress(request: Request):
+    """Record where the signed-in viewer is in the current video."""
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    _rate_limit("watch_history", viewer["zitadelSubject"])
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse({"detail": "JSON body required"}, status_code=400)
+    room = watch_mod.canonical_room(body.get("room")) or ""
+    if room and not watch_mod.is_allowed_room(room):
+        room = ""
+    url = str(body.get("url") or "")
+    ok = await asyncio.to_thread(
+        _watch_history.record_progress,
+        user_id=viewer["zitadelSubject"],
+        url=url,
+        position=body.get("position") or 0,
+        duration=body.get("duration"),
+        room=room,
+        display_name=viewer["displayName"],
+        title_hint=str(body.get("title") or ""),
+        source_url=str(body.get("source") or ""),
+    )
+    if not ok:
+        return JSONResponse({"detail": "invalid video"}, status_code=400)
+    if await asyncio.to_thread(_watch_history.needs_meta, url.strip()):
+        asyncio.create_task(_watch_enrich(url.strip()))
+    return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/watch/history")
+async def watch_history_list(request: Request, room: str = "", mine: int = 0, limit: int = 20):
+    """Recently watched videos (this room, or just mine) with resume points."""
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    sub = viewer["zitadelSubject"]
+    room_c = watch_mod.canonical_room(room) or None if room else None
+    items = await asyncio.to_thread(
+        _watch_history.list_history,
+        room=None if mine else room_c,
+        user_id=sub if mine else None,
+        limit=max(1, min(int(limit or 20), 50)),
+    )
+    out = []
+    for it in items:
+        me = next((v for v in it["viewers"] if v["user_id"] == sub), None)
+        # Zitadel subjects stay server-side: peers only see names.
+        it["viewers"] = [{"name": v["name"], "position": v["position"],
+                          "finished": v["finished"], "updated_at": v["updated_at"]}
+                         for v in it["viewers"]]
+        it["mine"] = ({"position": me["position"], "finished": me["finished"],
+                       "updated_at": me["updated_at"]} if me else None)
+        out.append(it)
+    return JSONResponse({"items": out}, headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/api/watch/history")
+async def watch_history_forget(request: Request):
+    """Remove one video from the signed-in viewer's own history."""
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    url = str((body or {}).get("url") or "").strip()
+    removed = await asyncio.to_thread(_watch_history.delete_for_user,
+                                      viewer["zitadelSubject"], url)
+    return JSONResponse({"ok": True, "removed": removed})
 
 
 # Internal browser-extract service (crcmz-browser-extract container, same coolify network).
@@ -5585,6 +5732,7 @@ import agent_tasks as _agent_tasks
 import wa_reactions as _wa_react
 import app_events as _app_events
 import watchparty_events as _watchparty_events
+import watch_history as _watch_history
 _wa.init()
 _facts.init()
 _chat.init()
@@ -5598,6 +5746,7 @@ _wa_react.init()
 _mcp_audit.init()
 _app_events.init()
 _watchparty_events.init()
+_watch_history.init()
 _mem.init()
 
 
@@ -12269,6 +12418,13 @@ function wpBind(s){
   s.on('connect_error', (err)=>{
     clearWatchdog();
     const code = String(err?.message||'');
+    if(code==='KICKED'){
+      // A moderator removed us; the server refuses us until the ban lapses.
+      wpStatus('removed', false);
+      wpErr('A moderator removed you from this watch party. Try again in a few minutes.');
+      WP.booted = false;
+      return;
+    }
     if(code==='AUTH_REQUIRED' || code==='INVALID_WATCH_TICKET' || code==='WRONG_ROOM'){
       // Ticket problem, not a network problem: a fresh one may work once.
       wpErr('Watch pass rejected — refreshing your sign-in.');
@@ -12289,6 +12445,19 @@ function wpBind(s){
     wpRetry('');
   });
   s.on('errorMessage', m => wpErr(String(m||'')));
+  s.on('kicked', d => {
+    // Stop the auto-reconnect: the disconnect that follows is deliberate.
+    WP.kicked = true;
+    s.removeAllListeners('disconnect');
+    s.on('disconnect', ()=>{
+      if(WP.tsTimer){ clearInterval(WP.tsTimer); WP.tsTimer=null; }
+      WP.roster = []; wpDropAllPeers(); wpMiniSync();
+    });
+    const by = d && d.by ? ' by '+d.by : '';
+    wpStatus('removed', false);
+    wpErr('You were removed from the watch party'+by+'. Try again in a few minutes.');
+    WP.booted = false;
+  });
   s.on('watch:presence', d => { WP.presence = d; wpRenderPresence(); });
   // nameMap only supplies display names — it is never pruned, so it must not
   // decide who is in the room. `roster` is the live list.

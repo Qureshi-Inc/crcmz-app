@@ -329,7 +329,7 @@ def key_source() -> str:
 # ── Ticket minting ───────────────────────────────────────────────────────────
 
 
-def mint_ticket(*, viewer: str, room: str, display_name: str) -> dict:
+def mint_ticket(*, viewer: str, room: str, display_name: str, mod: bool = False) -> dict:
     """Sign a Watch Ticket. Returns {"ticket", "expires_in", "jti", "kid"}.
 
     Only ever called after the caller has proven, via the existing Zitadel
@@ -350,6 +350,9 @@ def mint_ticket(*, viewer: str, room: str, display_name: str) -> dict:
         "exp": now + TICKET_TTL,
         "jti": jti,
     }
+    if mod:
+        # Room moderator (may kick). Only ever set from a Zitadel role check.
+        payload["mod"] = True
     token = _pyjwt.encode(
         payload,
         key["private"],

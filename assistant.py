@@ -1201,6 +1201,41 @@ def _watchparty_events_list(limit: int = 10, event_type: str | None = None,
     )}
 
 
+@tool("watch_history",
+      "Watch Party history: videos/movies the squad watched, newest first, with "
+      "metadata (title, year, poster, overview), who watched, and where each person "
+      "left off (position/duration in seconds, finished flag). Filter by room slug "
+      "or by person (name, PSN id or WhatsApp name).",
+      {"type": "object", "properties": {
+          "limit":            {"type": "integer", "description": "1-50, default 10"},
+          "room_id":          {"type": "string", "description": "room slug, e.g. 'crcmz'"},
+          "person":           {"type": "string", "description": "only this person's history"},
+          "include_finished": {"type": "boolean", "description": "default true"},
+      }})
+def _watch_history(limit: int = 10, room_id: str | None = None, person: str | None = None,
+                   include_finished: bool = True) -> dict:
+    import watch_history as _wh
+    user_id = None
+    if person:
+        who = _ident().resolve(person)
+        if not who or not who.get("zitadel_id"):
+            return {"items": [], "note": f"no known person matches {person!r}"}
+        user_id = who["zitadel_id"]
+    items = _wh.list_history(
+        room=room_id or None, user_id=user_id,
+        limit=max(1, min(int(limit or 10), 50)),
+        include_finished=include_finished is not False,
+    )
+    keep = ("title", "year", "kind", "description", "overview", "poster", "genres",
+            "meta_url", "room", "position", "duration", "finished", "last_watched_at")
+    return {"items": [
+        {**{k: it.get(k) for k in keep},
+         "viewers": [{"name": v["name"], "position": v["position"],
+                      "finished": v["finished"], "updated_at": v["updated_at"]}
+                     for v in it["viewers"]]}
+        for it in items]}
+
+
 _WP_INTERNAL_URL = __import__("os").environ.get(
     "WATCHPARTY_INTERNAL_URL", "http://watchparty-watchparty-1:8080"
 )
