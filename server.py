@@ -8086,13 +8086,12 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .rr { margin-bottom:22px; }
   .rr [hidden] { display:none !important; }
   .rr-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
-  .rr-head-actions, .rr-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .rr-row { margin-top:8px; }
+  .rr-head-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .rr-btn { background:rgba(255,255,255,.04); color:var(--txt); border:1px solid var(--line);
     border-radius:10px; padding:8px 14px; font:600 14px "Rajdhani",sans-serif; cursor:pointer;
-    text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+    text-decoration:none; display:inline-flex; align-items:center; justify-content:center; gap:6px; }
   .rr-btn:hover:not(:disabled) { border-color:var(--cyan); }
-  .rr-btn:disabled { opacity:.5; cursor:default; }
+  .rr-btn:disabled { opacity:.45; cursor:default; }
   .rr-small { padding:5px 10px; font-size:13px; }
   .rr-primary { background:linear-gradient(90deg,var(--violet),var(--neon)); border-color:transparent;
     color:#fff; font-weight:700; }
@@ -8103,13 +8102,15 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .rr-chip.on { background:var(--neon); border-color:var(--neon); color:#fff; }
   .rr-counts { font-size:12px; color:var(--dim); margin:0 2px 8px; }
   .rr-list { display:flex; flex-direction:column; gap:8px; }
-  .rr-clip { display:flex; flex-direction:column; align-items:flex-start; gap:3px; text-align:left;
-    width:100%; background:var(--card); border:1px solid var(--line); border-radius:13px;
-    padding:11px 14px; color:var(--txt); font-family:inherit; cursor:pointer; }
+  .rr-clip { display:flex; align-items:center; gap:12px; text-align:left; width:100%;
+    background:var(--card); border:1px solid var(--line); border-radius:13px;
+    padding:8px 12px 8px 8px; color:var(--txt); font-family:inherit; cursor:pointer; }
   .rr-clip:hover { border-color:var(--cyan); }
+  .rr-thumb { width:104px; height:58px; flex:none; border-radius:9px; object-fit:cover; background:#000; }
+  .rr-info { display:flex; flex-direction:column; gap:3px; min-width:0; }
   .rr-t { font-weight:700; font-size:15px; }
-  .rr-m { font-size:12.5px; color:var(--dim); }
-  .rr-badges { display:flex; gap:5px; flex-wrap:wrap; margin-top:3px; }
+  .rr-m { font-size:12.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rr-badges { display:flex; gap:5px; flex-wrap:wrap; margin-top:2px; }
   .rr-badge { font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--line); color:var(--dim); }
   .rr-badge.fire { color:#ffb020; border-color:#5a3a10; }
   .rr-badge.ok { color:var(--lime); border-color:rgba(140,255,43,.35); }
@@ -8118,52 +8119,143 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .rr-badge.veto { color:#ffb4b4; border-color:rgba(255,64,64,.6); }
   .rr-empty { color:var(--dim); text-align:center; padding:24px 12px; font-size:14px; line-height:1.5;
     background:var(--card); border:1px solid var(--line); border-radius:13px; }
-  .rr-back { background:none; border:none; color:var(--cyan); font:600 14px "Rajdhani",sans-serif;
-    cursor:pointer; padding:0; margin-bottom:10px; }
-  .rr-dhead { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
-  .rr-dtitle { font-family:"Orbitron",sans-serif; font-size:15px; font-weight:800; }
-  .rr-vetoed { color:#ffb4b4; font-size:13px; margin:8px 0 0; }
-  .rr-players { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:12px 0; }
-  @media(max-width:620px){ .rr-players { grid-template-columns:1fr; } }
-  .rr-pblock video { width:100%; max-height:420px; background:#000; border-radius:10px; display:block; }
-  .rr-h { font-weight:700; font-size:14px; margin:0 0 6px; }
-  .rr-hint { color:var(--dim); font-size:12px; font-weight:400; }
-  .rr-rstate { color:var(--cyan); font-size:12px; font-weight:400; }
-  .rr-norender { color:var(--dim); font-size:13px; padding:20px; border:1px dashed var(--line); border-radius:10px; }
-  .rr-boxed { background:var(--card); border:1px solid var(--line); border-radius:13px;
-    padding:12px 14px; margin-bottom:12px; }
-  .rr-traj { width:100%; max-width:640px; border-radius:8px; border:1px solid var(--line);
-    background:rgba(0,0,0,.25); display:block; }
-  .rr-cam { width:100%; max-width:320px; background:#000; border-radius:8px; border:1px solid var(--line); }
-  .rr-camrow .rr-hint { flex:1; min-width:160px; }
-  .rr-lbl { font-size:13px; color:var(--dim); display:inline-flex; align-items:center; gap:6px; }
-  .rr-in { background:rgba(0,0,0,.35); border:1px solid var(--line); color:var(--txt); border-radius:8px;
-    padding:6px 8px; font:14px "Rajdhani",sans-serif; width:90px; }
-  .rr-labelline { margin-top:10px; }
-  .rr-label { width:220px; max-width:100%; }
-  .rr-radio { font-size:14px; display:inline-flex; gap:5px; align-items:center; }
-  .rr-manual { margin-top:8px; }
-  .rr-mcanvas { width:100%; max-width:480px; background:#000; border-radius:8px; border:1px solid var(--line);
-    cursor:crosshair; touch-action:none; display:block; }
-  .rr-boxlabel { font:12px monospace; color:var(--dim); margin-top:4px; }
-  .rr-analysis { font-size:13px; color:var(--dim); margin-top:8px; line-height:1.5; }
-  .rr-analysis b { color:var(--txt); }
-  .rr-actionbar { margin-bottom:6px; }
-  .rr-status { font-size:13px; color:var(--dim); }
-  .rr-reelwrap { position:relative; }
-  .rr-pickov { position:absolute; inset:0; cursor:crosshair; border:2px dashed var(--neon);
-    border-radius:10px; background:rgba(255,47,214,.08); display:flex; align-items:flex-start;
-    justify-content:center; touch-action:none; }
-  .rr-pickov span { margin-top:10px; background:rgba(0,0,0,.7); color:#fff; font-size:13px;
-    padding:4px 10px; border-radius:999px; pointer-events:none; }
-  .rr-item { border-top:1px solid var(--line); padding:8px 0 4px; }
-  .rr-item:first-child { border-top:none; padding-top:0; }
-  .rr-on { border-color:var(--neon); color:var(--neon); }
-  .rr-stack { display:flex; flex-direction:column; align-items:stretch; gap:4px; margin-top:10px; }
-  .rr-caption { width:100%; resize:vertical; }
-  .rr-subrow { flex-wrap:nowrap; }
-  .rr-t2 { width:64px; flex:none; }
-  .rr-subtext { flex:1; min-width:0; width:auto; }
+
+  /* ── Reel studio (full-screen editor) ── */
+  .rrs { position:fixed; inset:0; z-index:9999; display:flex; flex-direction:column; height:100dvh;
+    background:radial-gradient(120% 60% at 50% 0%,rgba(157,92,255,.16),transparent 60%),#05030f;
+    color:var(--txt); font-family:"Rajdhani",-apple-system,sans-serif; font-size:15px; }
+  .rrs [hidden] { display:none !important; }
+  .rrs-loading { margin:auto; display:flex; flex-direction:column; align-items:center; gap:12px;
+    color:var(--dim); text-align:center; padding:20px; }
+  .rrs-top { display:flex; align-items:center; gap:8px; flex:none;
+    padding:calc(env(safe-area-inset-top) + 6px) 10px 6px; border-bottom:1px solid var(--line); }
+  .rrs-ic { min-width:40px; height:40px; padding:0 10px; border-radius:12px; border:1px solid var(--line);
+    background:rgba(255,255,255,.04); color:var(--txt); font:600 16px "Rajdhani",sans-serif; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center; gap:6px; text-decoration:none; flex:none; }
+  .rrs-ic.on { border-color:rgba(255,64,64,.75); background:rgba(255,64,64,.16); color:#ffb4b4; }
+  .rrs-title { flex:1; min-width:0; display:flex; flex-direction:column; line-height:1.15; }
+  .rrs-title b { font-family:"Orbitron",sans-serif; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rrs-title span { font-size:12px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rrs-body { flex:1; min-height:0; display:flex; flex-direction:column; }
+  .rrs-main { flex:1; min-height:0; overflow:hidden; display:flex; flex-direction:column; gap:6px; padding:8px 10px 0; }
+  .rrs-stagewrap { flex:1; min-height:110px; position:relative; display:flex; align-items:center; justify-content:center; }
+  .rrs-views, .rrs-side-tools { position:absolute; top:0; z-index:3; display:flex; flex-direction:column; gap:6px; }
+  .rrs-views { left:0; } .rrs-side-tools { right:0; }
+  .rrs-view { width:54px; min-height:46px; border:1px solid var(--line); background:rgba(14,8,30,.85); color:var(--dim);
+    border-radius:12px; padding:4px 2px; font:600 11px "Rajdhani",sans-serif; cursor:pointer; text-decoration:none;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1px; font-size:17px; }
+  .rrs-view span { font-size:11px; }
+  .rrs-view.on { background:var(--neon); border-color:var(--neon); color:#fff; }
+  .rrs-view:disabled { opacity:.35; cursor:default; }
+  .rrs-toast { position:absolute; left:50%; top:4px; transform:translateX(-50%); z-index:4; max-width:min(92%,420px);
+    background:rgba(14,8,30,.94); border:1px solid var(--neon); color:var(--txt); font-size:13px; line-height:1.35;
+    padding:7px 12px; border-radius:12px; text-align:center; box-shadow:0 6px 24px rgba(0,0,0,.5); }
+  .rrs-mob span { margin-left:4px; font-size:14px; }
+  .rrs-go { background:linear-gradient(90deg,var(--violet),var(--neon)); border-color:transparent; color:#fff; }
+  .rrs-vp { position:relative; overflow:hidden; background:#000; border-radius:14px; touch-action:manipulation;
+    box-shadow:0 0 0 1px var(--line),0 12px 40px rgba(157,92,255,.22); cursor:pointer; }
+  .rrs-vp.aim { cursor:crosshair; box-shadow:0 0 0 2px var(--neon),0 12px 40px rgba(255,47,214,.3); }
+  .rrs-srcv { position:absolute; left:0; top:0; width:1920px; height:1080px; max-width:none;
+    transform-origin:0 0; object-fit:fill; pointer-events:none; }
+  .rrs-frame { position:relative; overflow:hidden; background:#000; border-radius:12px; touch-action:none; }
+  .rrs-frame .rrs-srcv { width:100%; height:100%; transform:none !important; }
+  .rrs-cbox { position:absolute; border:2px solid var(--neon); border-radius:4px; pointer-events:none;
+    box-shadow:0 0 0 9999px rgba(0,0,0,.5); }
+  .rrs-cbox.manual { border-color:var(--lime); cursor:grab; }
+  .rrs-reelv { background:#000; border-radius:14px; cursor:pointer; }
+  .rrs-label { position:absolute; color:#fff; font-weight:700; font-family:"DejaVu Sans",Verdana,sans-serif;
+    white-space:nowrap; pointer-events:none; text-shadow:0 0 2px #000,0 0 3px #000,0 0 4px rgba(0,0,0,.8); }
+  .rrs-sub { position:absolute; left:5%; right:5%; text-align:center; color:#fff; pointer-events:none;
+    font-family:"DejaVu Sans",Verdana,sans-serif; line-height:1.15; text-shadow:0 0 2px #000,0 0 3px #000,0 0 5px rgba(0,0,0,.8); }
+  .rrs-spot { position:absolute; width:38px; height:38px; margin:-19px 0 0 -19px; border:2px solid var(--neon);
+    border-radius:50%; box-shadow:0 0 14px var(--neon); pointer-events:none; }
+  .rrs-spot::after { content:""; position:absolute; left:50%; top:50%; width:6px; height:6px; margin:-3px;
+    background:var(--neon); border-radius:50%; }
+  .rrs-note { position:absolute; left:50%; bottom:10px; transform:translateX(-50%); max-width:92%;
+    background:rgba(0,0,0,.75); color:#fff; font-size:12px; padding:4px 11px; border-radius:999px;
+    pointer-events:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rrs-busy { position:absolute; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:12px; background:rgba(5,3,15,.74); color:#fff; font-size:14px; }
+  .rrs-spin { width:36px; height:36px; border:3px solid rgba(255,255,255,.18); border-top-color:var(--neon);
+    border-radius:50%; animation:rrspin .9s linear infinite; }
+  @keyframes rrspin { to { transform:rotate(360deg); } }
+  .rrs-transport { display:flex; align-items:center; justify-content:center; gap:10px; flex:none; }
+  .rrs-transport .rrs-ic { height:36px; }
+  .rrs-play { width:44px; height:44px; border-radius:50%; border:none; cursor:pointer; color:#fff; font-size:18px;
+    background:linear-gradient(135deg,var(--violet),var(--neon)); box-shadow:0 4px 18px rgba(255,47,214,.35); }
+  .rrs-time { font:600 13px "Rajdhani",sans-serif; color:var(--dim); min-width:92px; text-align:center;
+    font-variant-numeric:tabular-nums; }
+  .rrs-tl { position:relative; flex:none; padding:4px 0 6px; touch-action:none; user-select:none;
+    -webkit-user-select:none; cursor:pointer; }
+  .rrs-lane { position:relative; height:20px; margin:3px 0; border-radius:6px; background:rgba(255,255,255,.045); }
+  .rrs-lane-win { height:30px; background:rgba(255,255,255,.035); }
+  .rrs-lanelbl { position:absolute; left:6px; top:0; line-height:20px; font-size:11px; opacity:.55; pointer-events:none; }
+  .rrs-path { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .rrs-shade { position:absolute; top:0; bottom:0; background:rgba(0,0,0,.55); border-radius:6px; pointer-events:none; }
+  .rrs-win { position:absolute; top:0; bottom:0; border:2px solid var(--cyan); border-radius:6px; pointer-events:none;
+    box-shadow:0 0 10px rgba(34,230,255,.25); }
+  .rrs-hdl { position:absolute; top:-5px; bottom:-5px; width:26px; margin-left:-13px; z-index:1;
+    display:flex; align-items:center; justify-content:center; cursor:ew-resize; }
+  .rrs-hdl::before { content:""; width:8px; height:72%; border-radius:4px; background:var(--cyan); box-shadow:0 0 8px var(--cyan); }
+  .rrs-blk { position:absolute; top:1px; bottom:1px; border-radius:5px; font-size:11px; line-height:17px; padding:0 6px;
+    white-space:nowrap; overflow:visible; color:#fff; min-width:6px; }
+  .rrs-blk span { display:block; overflow:hidden; text-overflow:ellipsis; }
+  .rrs-blk.z { background:rgba(255,47,214,.35); border:1px solid rgba(255,47,214,.75); }
+  .rrs-blk.s { background:rgba(34,230,255,.2); border:1px solid rgba(34,230,255,.55); }
+  .rrs-blk.sel { box-shadow:0 0 0 2px #fff; z-index:1; }
+  .rrs-blk .rrs-hdl::before { background:#fff; box-shadow:none; width:6px; height:62%; }
+  .rrs-ph { position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:#fff; pointer-events:none;
+    box-shadow:0 0 6px rgba(255,255,255,.8); z-index:2; }
+  .rrs-ph::before { content:""; position:absolute; top:-3px; left:-5px; width:12px; height:12px; border-radius:50%; background:#fff; }
+  .rrs-side { flex:none; display:flex; flex-direction:column; border-top:1px solid var(--line);
+    background:rgba(14,8,30,.94); padding-bottom:env(safe-area-inset-bottom); }
+  .rrs-panel { order:1; max-height:31dvh; overflow-y:auto; padding:10px 12px; }
+  .rrs-actions { display:none; }
+  .rrs-actions .rr-btn { flex:1; min-height:44px; font-size:15px; }
+  .rrs-tabs { order:4; display:flex; border-top:1px solid var(--line); }
+  .rrs-tab { flex:1; background:none; border:none; border-top:2px solid transparent; color:var(--dim); cursor:pointer;
+    padding:7px 2px 6px; font:600 12px "Rajdhani",sans-serif; display:flex; flex-direction:column; align-items:center; gap:1px; }
+  .rrs-tab i { font-style:normal; font-size:19px; line-height:1.1; }
+  .rrs-tab.on { color:var(--txt); border-top-color:var(--neon); }
+  .rrs-field { display:flex; flex-direction:column; gap:5px; margin-bottom:12px; font-size:13px; color:var(--dim); }
+  .rrs-field b { color:var(--txt); }
+  .rrs-field input[type=text], .rrs-field textarea { background:rgba(0,0,0,.4); border:1px solid var(--line);
+    color:var(--txt); border-radius:10px; padding:10px 12px; font:16px "Rajdhani",sans-serif; width:100%; }
+  .rrs-field textarea { resize:vertical; }
+  .rrs-range { width:100%; height:30px; accent-color:var(--neon); }
+  .rrs-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+  .rrs-row .rr-btn { min-height:42px; flex:1; }
+  .rrs-kv { font-size:13px; color:var(--dim); margin-bottom:10px; }
+  .rrs-kv b { color:var(--txt); font-variant-numeric:tabular-nums; }
+  .rrs-seg { display:flex; border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-bottom:10px; }
+  .rrs-seg button { flex:1; background:none; border:none; color:var(--dim); padding:11px 4px; cursor:pointer;
+    font:600 14px "Rajdhani",sans-serif; }
+  .rrs-seg button.on { background:var(--neon); color:#fff; }
+  .rrs-chipsx { display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; margin-bottom:10px; }
+  .rrs-chip { flex:none; border:1px solid var(--line); background:rgba(255,255,255,.03); color:var(--txt); cursor:pointer;
+    border-radius:999px; padding:8px 12px; font:600 13px "Rajdhani",sans-serif; }
+  .rrs-chip.on { border-color:var(--neon); background:rgba(255,47,214,.2); }
+  .rrs-chip.add { border-style:dashed; color:var(--neon); border-color:rgba(255,47,214,.6); }
+  .rrs-sublist { display:flex; flex-direction:column; gap:5px; }
+  .rrs-subitem { display:flex; gap:10px; text-align:left; background:rgba(255,255,255,.03); border:1px solid var(--line);
+    color:var(--txt); border-radius:10px; padding:9px 10px; font:14px "Rajdhani",sans-serif; cursor:pointer; }
+  .rrs-subitem.on { border-color:var(--cyan); background:rgba(34,230,255,.08); }
+  .rrs-subitem span { color:var(--dim); flex:none; font-variant-numeric:tabular-nums; }
+  .rrs-muted { color:var(--dim); font-size:12.5px; line-height:1.45; margin:0 0 10px; }
+  @media (min-width:960px) {
+    .rrs-body { flex-direction:row; }
+    .rrs-side { width:392px; border-top:none; border-left:1px solid var(--line); }
+    .rrs-tabs { order:0; border-top:none; border-bottom:1px solid var(--line); }
+    .rrs-tab { border-top:none; border-bottom:2px solid transparent; padding:10px 2px; }
+    .rrs-tab.on { border-bottom-color:var(--neon); }
+    .rrs-panel { order:1; flex:1; max-height:none; padding:16px; }
+    .rrs-actions { order:3; display:flex; gap:8px; padding:10px 16px 14px; border-top:1px solid var(--line); }
+    .rrs-mob { display:none; }
+    .rrs-main { gap:8px; padding:14px 20px 6px; }
+    .rrs-lane { height:28px; } .rrs-lane-win { height:42px; } .rrs-lanelbl { line-height:28px; }
+    .rrs-blk { top:2px; bottom:2px; line-height:24px; }
+    .rrs-transport .rrs-ic { height:40px; } .rrs-play { width:50px; height:50px; }
+  }
   .last-montage { background:var(--card); border:1px solid var(--line);
     border-radius:13px; padding:14px 16px; margin-bottom:14px; }
   .lm-row { display:flex; justify-content:space-between; align-items:center;
@@ -11025,18 +11117,24 @@ loadPipeline();
 setInterval(loadPipeline, 30000);
 
 // ── Reel review (My reels) ────────────────────────────────────────────────────
-// The reel-review QA station, per person. /api/reels/* resolves the Zitadel
-// session to a PSN id and only serves clips that person sent; admins can
-// switch to everyone's. Lives in its own container because loadPipeline
-// rewrites #pipeline-inner every 30s, which would kill a playing video.
+// Per-person reel QA. /api/reels/* resolves the Zitadel session to a PSN id and
+// only serves clips that person sent; admins can switch to everyone's. The list
+// lives in #reels-inner (loadPipeline rewrites #pipeline-inner every 30s); a clip
+// opens in the Studio, a full-screen editor whose Live view rebuilds the reel
+// from the source video with CSS transforms (crop, zoom, label, subtitles), so
+// every edit shows instantly. Render produces the exact file Muse would post.
 (function(){
   const API = '/api/reels';
   const enc = encodeURIComponent;
   const q = (s, r) => (r || document).querySelector(s);
+  const qa = (s, r) => Array.from((r || document).querySelectorAll(s));
   const root = () => document.getElementById('reels-inner');
+  // Same geometry as reel-review's render.py / smart_crop.py.
+  const NW = 1920, NH = 1080, CW = 608, CENTER_X = (NW - CW) / 2;
+  const BOX_ASPECT = (16 / 9) * (NW / NH);
   const S = { clips: [], me: null, source: null, pushedAt: 0, scope: 'mine', all: false,
-              needsLink: false, filter: 'all', loaded: false, bound: false, current: null,
-              detail: null, traj: null, frame: null, box: null, poll: null, frameTimer: null };
+              needsLink: false, filter: 'all', loaded: false, bound: false };
+  let E = null;
 
   async function api(path, opts) {
     opts = opts || {};
@@ -11050,7 +11148,12 @@ setInterval(loadPipeline, 30000);
     return data;
   }
 
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const f1 = v => (+v || 0).toFixed(1);
+  const r2 = v => Math.round(v * 100) / 100;
   const fmtDur = d => d == null ? '?' : (+d).toFixed(1) + 's';
+  const fmtScale = s => (+s).toFixed(2).replace(/0$/, '').replace(/\.0$/, '') + '×';
+  const isDesk = () => window.matchMedia('(min-width:960px)').matches;
   function whenTs(w) {
     if (!w) return 0;
     const t = Date.parse(String(w).replace(' ', 'T'));
@@ -11062,24 +11165,19 @@ setInterval(loadPipeline, 30000);
     if (/fail|😂|🤣/i.test(msg)) b.push('<span class="rr-badge">😂 fail</span>');
     if (c.has_analysis) b.push('<span class="rr-badge ok">AI analyzed</span>');
     if (c.has_render) b.push('<span class="rr-badge rend">rendered</span>');
-    if (c.override) b.push('<span class="rr-badge ov">override saved</span>');
+    if (c.override) b.push('<span class="rr-badge ov">approved</span>');
     if (c.vetoed) b.push('<span class="rr-badge veto">🛑 vetoed</span>');
     return b.join('');
   }
-  function stopPoll() { if (S.poll) { clearInterval(S.poll); S.poll = null; } }
   const title = () => S.scope === 'all' ? '🎞 All reels' : '🎞 My reels';
-
-  function errorHtml(msg) {
-    return `<div class="pip-section rr"><p class="pip-title">${title()}</p>
-      <div class="rr-empty">Could not load reels: ${esc(msg)}<br><br>
-      <button class="rr-btn rr-small" data-act="retry">Retry</button></div></div>`;
+  function patchClip(id, patch) {
+    const c = S.clips.find(x => x.clip_id === id);
+    if (c) Object.assign(c, patch);
   }
 
   /* ---------- list ---------- */
   function renderList() {
     const el = root(); if (!el) return;
-    stopPoll();
-    S.current = null; S.detail = null;
     const head = `<div class="rr-head"><p class="pip-title" style="margin:0">${title()}</p>
       <div class="rr-head-actions">
         ${S.me && S.me.admin ? `<button class="rr-btn rr-small" data-act="scope">${S.all ? 'Only mine' : 'Everyone’s'}</button>` : ''}
@@ -11093,7 +11191,7 @@ setInterval(loadPipeline, 30000);
     }
     const items = S.clips.filter(c => {
       if (S.filter === 'vetoed') return c.vetoed;
-      if (S.filter === 'noreview') return !c.vetoed && !c.has_render;
+      if (S.filter === 'noreview') return !c.vetoed && !c.override;
       if (S.filter === 'rendered') return c.has_render;
       return true;
     });
@@ -11106,10 +11204,13 @@ setInterval(loadPipeline, 30000);
     const rows = items.map(c => {
       const ts = whenTs(c.when);
       const who = S.scope === 'all' ? (c.sender || '?') : (c.game || c.sender || 'Clip');
+      const w = c.analysis_window, tt = w && w[0] != null ? (+w[0] + +w[1]) / 2 : 1;
       return `<button class="rr-clip" data-open="${esc(c.clip_id)}">
-        <span class="rr-t">${esc(who)} · ${fmtDur(c.duration)}</span>
-        <span class="rr-m">${ts ? fmtAgo(ts) : ''}${c.message ? ' · ' + esc(c.message.slice(0, 40)) : ''}</span>
-        <span class="rr-badges">${badges(c)}</span></button>`;
+        <img class="rr-thumb" loading="lazy" alt="" src="${API}/clips/${enc(c.clip_id)}/frame?t=${f1(tt)}">
+        <span class="rr-info">
+          <span class="rr-t">${esc(who)} · ${fmtDur(c.duration)}</span>
+          <span class="rr-m">${ts ? fmtAgo(ts) : ''}${c.message ? ' · ' + esc(c.message.slice(0, 40)) : ''}</span>
+          <span class="rr-badges">${badges(c)}</span></span></button>`;
     }).join('');
     const empty = S.clips.length ? 'No clips match this filter.'
       : 'No reels waiting. Clips you share in the PSN group (60s or shorter) show up here before they go into highlights.';
@@ -11120,439 +11221,30 @@ setInterval(loadPipeline, 30000);
   }
 
   async function loadReels(force) {
-    bind();
+    bindList();
     if (S.loaded && !force) return;
     S.loaded = true;
     const el = root(); if (!el) return;
-    if (!S.clips.length && !S.current) {
+    if (!S.clips.length) {
       el.innerHTML = `<div class="pip-section rr"><p class="pip-title">${title()}</p><div class="spin">Loading your reels…</div></div>`;
     }
     let d;
     try { d = await api(S.all ? '?all=true' : ''); }
-    catch (e) { S.loaded = false; if (!S.current) el.innerHTML = errorHtml(e.message); return; }
+    catch (e) {
+      S.loaded = false;
+      el.innerHTML = `<div class="pip-section rr"><p class="pip-title">${title()}</p>
+        <div class="rr-empty">Could not load reels: ${esc(e.message)}<br><br>
+        <button class="rr-btn rr-small" data-act="retry">Retry</button></div></div>`;
+      return;
+    }
     S.me = d.me || null; S.scope = d.scope || 'mine'; S.clips = d.clips || [];
     S.source = d.source; S.pushedAt = (d.roster && d.roster.pushed_at) || 0;
     S.needsLink = !!d.needs_psn_link;
-    if (!S.current) renderList();
+    renderList();
   }
   window.loadReels = loadReels;
 
-  /* ---------- detail ---------- */
-  function analysisHtml(a) {
-    if (!a) return `<i>No AI analysis imported for this clip.</i><br>
-      Renders will use the sender as label, your window, and no subtitles.`;
-    const cap = a.caption_draft || '';
-    return `<b>Featured:</b> ${esc(String(a.featured_label || a.featured_player || '?'))}
-      (confidence ${esc(String(a.identity_confidence || '?'))})<br>
-      <b>Caption:</b> ${esc(cap.slice(0, 140))}${cap.length > 140 ? '…' : ''}<br>
-      <b>Subtitles:</b> ${(a.subtitle_segments || []).length} segments`;
-  }
-
-  async function openClip(id) {
-    stopPoll();
-    S.current = id; S.traj = null; S.frame = null; S.box = null;
-    const el = root();
-    el.innerHTML = `<div class="pip-section rr"><div class="spin">Loading clip…</div></div>`;
-    el.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    let d;
-    try { d = await api('/clips/' + enc(id)); }
-    catch (e) { S.current = null; el.innerHTML = errorHtml(e.message); return; }
-    if (S.current !== id) return;
-    S.detail = d;
-    const clip = d.clip || {}, a = d.analysis, ov = d.override || {};
-    let ws = ov.window_start, we = ov.window_end;
-    if (ws == null && a) { ws = a.primary_start; we = a.primary_end; }
-    if (ws == null) { ws = 0; we = Math.min(clip.duration || 15, 15); }
-    const mode = ov.crop_mode || 'ai';
-    S.box = ov.crop_box || null;
-    const label = ov.label || (a && a.featured_label) || clip.sender || '';
-    const caption = ov.caption != null ? ov.caption : ((a && a.caption_draft) || '');
-    S.zooms = Array.isArray(ov.zooms) ? ov.zooms.map(z => ({ ...z })) : [];
-    S.subsEdited = Array.isArray(ov.subtitles);
-    S.subs = S.subsEdited ? ov.subtitles.map(s => ({ start: s.start, end: s.end, text: s.text || s.subtitle_text || '' }))
-                          : aiSubs(a);
-    S.pick = null;
-    const ts = whenTs(clip.when_ts);
-    const modes = [['ai', 'AI tracking'], ['center', 'Static center'], ['manual', 'Manual box']]
-      .map(([v, l]) => `<label class="rr-radio"><input type="radio" name="rr-crop" value="${v}"${mode === v ? ' checked' : ''}> ${l}</label>`).join('');
-    el.innerHTML = `<div class="pip-section rr rr-detail">
-  <button class="rr-back" data-act="back">← ${S.scope === 'all' ? 'All reels' : 'My reels'}</button>
-  <div class="rr-dhead">
-    <div><div class="rr-dtitle">${esc(clip.sender || '?')} — ${fmtDur(clip.duration)}</div>
-      <div class="rr-m">${ts ? fmtAgo(ts) + ' · ' : ''}${esc(clip.game || 'unknown game')}${clip.message ? ' · ' + esc(clip.message) : ''}</div></div>
-    <button class="rr-btn rr-vetobtn" data-act="veto"></button>
-  </div>
-  <p class="rr-vetoed" hidden>🛑 Vetoed — this clip stays out of the fire, fail and daily reels.</p>
-  <div class="rr-players">
-    <div class="rr-pblock"><p class="rr-h">Source clip</p>
-      <video class="rr-src" controls playsinline preload="metadata" src="${API}/clips/${enc(id)}/source"></video>
-      <div class="rr-row">
-        <button class="rr-btn rr-small" data-act="markin">⏺ Set start @ playhead</button>
-        <button class="rr-btn rr-small" data-act="markout">⏺ Set end @ playhead</button></div></div>
-    <div class="rr-pblock"><p class="rr-h">AI reel <span class="rr-rstate"></span></p>
-      <div class="rr-reelwrap">
-        <video class="rr-render" controls playsinline preload="metadata" hidden></video>
-        <div class="rr-pickov" data-act="pickspot" hidden><span>Tap the spot to zoom into</span></div>
-      </div>
-      <div class="rr-norender">No render yet — hit “Render preview”.</div></div>
-  </div>
-  <div class="rr-boxed">
-    <p class="rr-h">Crop path <span class="rr-hint">where the 9:16 window sits on the full frame over time</span></p>
-    <canvas class="rr-traj" width="640" height="90"></canvas>
-    <div class="rr-row rr-camrow"><canvas class="rr-cam" width="320" height="180"></canvas>
-      <div class="rr-hint">Live crop position synced to the AI reel playhead. If the box misses the action, switch crop mode below.</div></div>
-  </div>
-  <div class="rr-boxed">
-    <p class="rr-h">Window <span class="rr-hint">start / end markers (seconds)</span></p>
-    <div class="rr-row">
-      <label class="rr-lbl">Start <input class="rr-in rr-ws" type="number" step="0.1" min="0" value="${(+ws).toFixed(1)}"></label>
-      <label class="rr-lbl">End <input class="rr-in rr-we" type="number" step="0.1" min="0" value="${(+we).toFixed(1)}"></label>
-      <span class="rr-dur rr-hint"></span></div>
-    <div class="rr-row"><button class="rr-btn rr-small" data-act="aiwin"${a ? '' : ' disabled'}>Use AI window</button>
-      <span class="rr-hint">${a ? `AI: ${(+a.primary_start).toFixed(1)}–${(+a.primary_end).toFixed(1)}s` : 'no AI analysis imported'}</span></div>
-    <div class="rr-analysis">${analysisHtml(a)}</div>
-  </div>
-  <div class="rr-boxed">
-    <p class="rr-h">Crop <span class="rr-hint">how the 9:16 window is chosen</span></p>
-    <div class="rr-row">${modes}</div>
-    <div class="rr-manual"${mode === 'manual' ? '' : ' hidden'}>
-      <canvas class="rr-mcanvas" width="480" height="270"></canvas>
-      <div class="rr-hint">Drag on the frame to draw the 9:16 box.</div>
-      <div class="rr-boxlabel"></div></div>
-  </div>
-  <div class="rr-boxed">
-    <p class="rr-h">Zoom <span class="rr-hint">punch in on a spot for part of the reel</span></p>
-    <div class="rr-zooms"></div>
-    <div class="rr-row"><button class="rr-btn rr-small" data-act="zoom-add">＋ Add zoom at reel playhead</button></div>
-  </div>
-  <div class="rr-boxed">
-    <p class="rr-h">Text</p>
-    <label class="rr-lbl rr-labelline">Featured player <input class="rr-in rr-label" type="text" maxlength="40" value="${esc(label)}"></label>
-    <label class="rr-lbl rr-stack">Caption <span class="rr-hint">posted with the reel, not burned in</span>
-      <textarea class="rr-in rr-caption" rows="3" maxlength="2200">${esc(caption)}</textarea></label>
-    <p class="rr-h" style="margin-top:12px">Subtitles <span class="rr-hint rr-subsrc"></span></p>
-    <div class="rr-subs"></div>
-    <div class="rr-row">
-      <button class="rr-btn rr-small" data-act="sub-add">＋ Add line at source playhead</button>
-      <button class="rr-btn rr-small" data-act="sub-reset">Reset to AI subtitles</button></div>
-  </div>
-  <div class="rr-row rr-actionbar">
-    <button class="rr-btn rr-primary" data-act="render">⚙ Render preview</button>
-    <button class="rr-btn" data-act="save">💾 Save override</button>
-    <a class="rr-btn rr-dl" hidden download>⬇ Download mp4</a>
-    <span class="rr-status" role="status" aria-live="polite"></span>
-  </div>
-</div>`;
-    const sec = q('.rr-detail', el);
-    syncVeto(sec);
-    updDur(sec);
-    ['.rr-ws', '.rr-we'].forEach(s => q(s, sec).addEventListener('input', () => { updDur(sec); queueFrame(sec); }));
-    sec.querySelectorAll('input[name=rr-crop]').forEach(r => r.addEventListener('change', () => {
-      q('.rr-manual', sec).hidden = cropMode(sec) !== 'manual';
-      drawManual(sec);
-    }));
-    setupManualCanvas(sec, q('.rr-mcanvas', sec));
-    drawManual(sec);
-    renderZooms(sec);
-    renderSubs(sec);
-    if (d.latest_render) showRender(sec, d.latest_render.id, '(latest)');
-    else drawTraj(sec);
-    queueFrame(sec);
-  }
-
-  const cropMode = sec => (sec.querySelector('input[name=rr-crop]:checked') || {}).value || 'ai';
-  function syncVeto(sec) {
-    const v = !!(S.detail && S.detail.vetoed);
-    const b = q('.rr-vetobtn', sec);
-    b.textContent = v ? 'Undo veto' : '🛑 Veto';
-    b.classList.toggle('rr-danger', !v);
-    q('.rr-vetoed', sec).hidden = !v;
-  }
-  function updDur(sec) {
-    const d = (+q('.rr-we', sec).value) - (+q('.rr-ws', sec).value);
-    q('.rr-dur', sec).textContent = d > 0 ? d.toFixed(1) + 's' : 'invalid';
-  }
-  function formState(sec) {
-    return {
-      window_start: parseFloat(q('.rr-ws', sec).value),
-      window_end: parseFloat(q('.rr-we', sec).value),
-      crop_mode: cropMode(sec),
-      crop_box: S.box,
-      label: q('.rr-label', sec).value.trim(),
-      caption: q('.rr-caption', sec).value.trim(),
-      zooms: S.zooms.map(z => ({ start: +z.start, end: +z.end, scale: +z.scale, x: +z.x, y: +z.y })),
-      subtitles: S.subsEdited ? S.subs.filter(s => String(s.text || '').trim())
-        .map(s => ({ start: +s.start, end: +s.end, text: String(s.text).trim() })) : null,
-    };
-  }
-
-  /* ---------- zooms + subtitles ---------- */
-  function aiSubs(a) {
-    return ((a && a.subtitle_segments) || []).map(s => ({
-      start: +s.start, end: +s.end,
-      text: s.subtitle_text || (s.lines || []).join(' ') || '',
-    }));
-  }
-  const f1 = v => (v == null || v === '' || isNaN(+v)) ? '' : (+v).toFixed(1);
-  // Reel playhead in source-clip seconds: t0 is the window start the reel was cut from.
-  function reelSourceTime(sec) {
-    const rv = q('.rr-render', sec);
-    if (rv && !rv.hidden && S.traj && S.traj.t0 != null) return +S.traj.t0 + (rv.currentTime || 0);
-    return q('.rr-src', sec).currentTime || 0;
-  }
-  function validateEdits(body) {
-    for (const z of S.zooms) {
-      if (!(+z.end > +z.start)) return 'Each zoom needs an end after its start.';
-      if (z.x == null || z.y == null) return 'Pick a spot for every zoom.';
-    }
-    for (const s of body.subtitles || []) if (!(s.end > s.start)) return 'Each subtitle needs an end after its start.';
-    return null;
-  }
-  function renderZooms(sec) {
-    const box = q('.rr-zooms', sec);
-    const hasReel = !q('.rr-render', sec).hidden;
-    box.innerHTML = S.zooms.length ? S.zooms.map((z, i) => `
-      <div class="rr-item">
-        <div class="rr-row">
-          <label class="rr-lbl">From <input class="rr-in" type="number" step="0.1" min="0" data-zf="start" data-idx="${i}" value="${f1(z.start)}"></label>
-          <label class="rr-lbl">To <input class="rr-in" type="number" step="0.1" min="0" data-zf="end" data-idx="${i}" value="${f1(z.end)}"></label>
-          <label class="rr-lbl">Zoom <select class="rr-in" data-zf="scale" data-idx="${i}">
-            ${[1.25, 1.5, 1.75, 2, 2.5, 3].map(v => `<option value="${v}"${+z.scale === v ? ' selected' : ''}>${v}×</option>`).join('')}
-          </select></label>
-          <button class="rr-btn rr-small rr-danger" data-act="zoom-del" data-idx="${i}" aria-label="Remove zoom">✕</button>
-        </div>
-        <div class="rr-row">
-          <button class="rr-btn rr-small" data-act="zoom-in" data-idx="${i}">From @ reel playhead</button>
-          <button class="rr-btn rr-small" data-act="zoom-out" data-idx="${i}">To @ reel playhead</button>
-          <button class="rr-btn rr-small${S.pick === i ? ' rr-on' : ''}" data-act="zoom-pick" data-idx="${i}"${hasReel ? '' : ' disabled'}>📍 ${S.pick === i ? 'Tap the reel…' : 'Pick spot'}</button>
-          <span class="rr-hint">${z.x != null ? `spot ${Math.round(z.x * 100)}% across, ${Math.round(z.y * 100)}% down` : 'no spot yet'}</span>
-        </div>
-      </div>`).join('')
-      : `<p class="rr-hint">${hasReel ? 'Pause the AI reel where you want to punch in, then add a zoom.' : 'Render a preview first, then pause it where you want to punch in.'}</p>`;
-    q('.rr-pickov', sec).hidden = S.pick == null;
-  }
-  function renderSubs(sec) {
-    q('.rr-subsrc', sec).textContent = S.subsEdited ? 'your edits' : (S.subs.length ? 'from the AI' : 'none');
-    q('.rr-subs', sec).innerHTML = S.subs.length ? S.subs.map((s, i) => `
-      <div class="rr-item rr-row rr-subrow">
-        <input class="rr-in rr-t2" type="number" step="0.1" min="0" data-sf="start" data-idx="${i}" value="${f1(s.start)}" aria-label="Start seconds">
-        <input class="rr-in rr-t2" type="number" step="0.1" min="0" data-sf="end" data-idx="${i}" value="${f1(s.end)}" aria-label="End seconds">
-        <input class="rr-in rr-subtext" type="text" maxlength="200" data-sf="text" data-idx="${i}" value="${esc(String(s.text || ''))}" aria-label="Subtitle text">
-        <button class="rr-btn rr-small rr-danger" data-act="sub-del" data-idx="${i}" aria-label="Remove line">✕</button>
-      </div>`).join('') : '<p class="rr-hint">No subtitles. Add a line to burn one in.</p>';
-  }
-  function onEditInput(e) {
-    const t = e.target, sec = q('.rr-detail', root());
-    if (!sec || t.dataset.idx == null) return;
-    const i = +t.dataset.idx;
-    if (t.dataset.zf && S.zooms[i]) S.zooms[i][t.dataset.zf] = t.value === '' ? null : +t.value;
-    if (t.dataset.sf && S.subs[i]) {
-      S.subs[i][t.dataset.sf] = t.dataset.sf === 'text' ? t.value : (t.value === '' ? null : +t.value);
-      if (!S.subsEdited) { S.subsEdited = true; q('.rr-subsrc', sec).textContent = 'your edits'; }
-    }
-  }
-  function setStatus(sec, t) { q('.rr-status', sec).textContent = t; }
-  function patchClip(id, patch) {
-    const c = S.clips.find(x => x.clip_id === id);
-    if (c) Object.assign(c, patch);
-  }
-
-  function showRender(sec, rid, state) {
-    const rv = q('.rr-render', sec);
-    const url = API + '/renders/' + enc(rid) + '/video';
-    rv.src = url; rv.hidden = false;
-    q('.rr-norender', sec).hidden = true;
-    q('.rr-rstate', sec).textContent = state;
-    const dl = q('.rr-dl', sec);
-    dl.href = url; dl.hidden = false;
-    renderZooms(sec);
-    loadTrajectory(sec, rid, rv);
-  }
-
-  async function startRender(sec, id) {
-    const body = formState(sec);
-    if (!(body.window_end > body.window_start)) return setStatus(sec, 'Set a valid window first (end > start).');
-    if (body.crop_mode === 'manual' && !S.box) return setStatus(sec, 'Draw the manual crop box first.');
-    const bad = validateEdits(body); if (bad) return setStatus(sec, bad);
-    S.pick = null; renderZooms(sec);
-    const btn = q('[data-act=render]', sec);
-    btn.disabled = true;
-    setStatus(sec, 'Queued…');
-    let rid;
-    try { rid = (await api('/clips/' + enc(id) + '/render', { method: 'POST', body: JSON.stringify(body) })).render_id; }
-    catch (e) { btn.disabled = false; return setStatus(sec, 'Could not start render: ' + e.message); }
-    setStatus(sec, 'Rendering… action tracking takes 1–3 minutes.');
-    stopPoll();
-    S.poll = setInterval(async () => {
-      if (S.current !== id) return stopPoll();
-      let r;
-      try { r = await api('/renders/' + enc(rid)); } catch (e) { return; }
-      setStatus(sec, 'Render: ' + r.status);
-      if (r.status !== 'done' && r.status !== 'failed' && r.status !== 'error') return;
-      stopPoll();
-      btn.disabled = false;
-      if (r.status === 'done') {
-        showRender(sec, rid, '(just rendered)');
-        patchClip(id, { has_render: true, latest_render_id: rid });
-        setStatus(sec, 'Done.');
-      } else {
-        setStatus(sec, 'Failed: ' + (r.error || 'unknown'));
-      }
-    }, 2500);
-  }
-
-  async function saveOverride(sec, id) {
-    const body = formState(sec);
-    if (!(body.window_end > body.window_start)) return setStatus(sec, 'Set a valid window first (end > start).');
-    if (body.crop_mode === 'manual' && !S.box) return setStatus(sec, 'Draw the manual crop box first.');
-    const bad = validateEdits(body); if (bad) return setStatus(sec, bad);
-    try {
-      await api('/clips/' + enc(id) + '/override', { method: 'POST', body: JSON.stringify(body) });
-      patchClip(id, { override: body });
-      setStatus(sec, 'Override saved — the pipeline uses it on its next run.');
-    } catch (e) { setStatus(sec, 'Could not save: ' + e.message); }
-  }
-
-  async function toggleVeto(sec, id) {
-    const vetoed = !!(S.detail && S.detail.vetoed);
-    if (!vetoed && !confirm('Keep this clip out of highlights? It won’t be used in the fire, fail or daily reels.')) return;
-    try {
-      await api('/clips/' + enc(id) + '/veto', vetoed ? { method: 'DELETE' } : { method: 'POST', body: '{}' });
-      S.detail.vetoed = !vetoed;
-      patchClip(id, { vetoed: !vetoed });
-      syncVeto(sec);
-      setStatus(sec, vetoed ? 'Veto removed.' : 'Vetoed.');
-    } catch (e) { setStatus(sec, 'Could not update veto: ' + e.message); }
-  }
-
-  /* ---------- trajectory + crop-cam ---------- */
-  async function loadTrajectory(sec, rid, videoEl) {
-    try { S.traj = await api('/renders/' + enc(rid) + '/trajectory'); }
-    catch (e) { S.traj = null; drawTraj(sec); return; }
-    drawTraj(sec);
-    drawCropcam(sec, 0);
-    if (!videoEl.dataset.rrBound) {
-      videoEl.dataset.rrBound = '1';
-      videoEl.addEventListener('timeupdate', () => {
-        drawTraj(sec, videoEl.currentTime);
-        drawCropcam(sec, videoEl.currentTime);
-      });
-    }
-  }
-  function trajX(t) {
-    const pts = S.traj.traj;
-    if (!pts.length) return 656;
-    if (t <= pts[0][0]) return pts[0][1];
-    for (let i = 1; i < pts.length; i++) {
-      if (t <= pts[i][0]) {
-        const [t0, x0] = pts[i - 1], [t1, x1] = pts[i];
-        const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
-        return x0 + f * (x1 - x0);
-      }
-    }
-    return pts[pts.length - 1][1];
-  }
-  function drawTraj(sec, playhead) {
-    const cv = q('.rr-traj', sec); if (!cv) return;
-    const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
-    ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = '#9d8fc4';
-    if (!S.traj || !S.traj.traj || !S.traj.traj.length) {
-      ctx.font = '12px sans-serif';
-      ctx.fillText('No trajectory yet — render first.', 12, H / 2);
-      return;
-    }
-    const pts = S.traj.traj, dur = pts[pts.length - 1][0] || 1, maxX = 1920 - 608;
-    ctx.strokeStyle = '#9d5cff'; ctx.lineWidth = 2; ctx.beginPath();
-    pts.forEach(([t, x], i) => {
-      const px = (t / dur) * W, py = H - 8 - (x / maxX) * (H - 16);
-      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
-    });
-    ctx.stroke();
-    ctx.font = '10px sans-serif';
-    ctx.fillText('crop-x over time (bottom = left edge, top = right edge)', 8, 12);
-    if (playhead != null) {
-      const px = Math.min(W, (playhead / dur) * W);
-      ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
-    }
-  }
-  function drawCropcam(sec, renderT) {
-    const cv = q('.rr-cam', sec); if (!cv) return;
-    const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-    if (!S.frame) return;
-    ctx.drawImage(S.frame, 0, 0, W, H);
-    const x = (S.traj && S.traj.traj && S.traj.traj.length) ? trajX(renderT || 0) : 656;
-    ctx.strokeStyle = '#ff2fd6'; ctx.lineWidth = 3;
-    ctx.strokeRect(x * W / 1920, 0, 608 * W / 1920, H);
-  }
-  function queueFrame(sec) {
-    if (S.frameTimer) clearTimeout(S.frameTimer);
-    S.frameTimer = setTimeout(() => loadFrame(sec), 500);
-  }
-  function loadFrame(sec) {
-    const id = S.current; if (!id) return;
-    const ws = parseFloat(q('.rr-ws', sec).value) || 0;
-    const we = parseFloat(q('.rr-we', sec).value) || 0;
-    const t = ws + Math.max(0, (we - ws) / 2);
-    const img = new Image();
-    img.onload = () => {
-      if (S.current !== id) return;
-      S.frame = img;
-      drawManual(sec);
-      const rv = q('.rr-render', sec);
-      drawCropcam(sec, rv ? rv.currentTime || 0 : 0);
-    };
-    img.src = API + '/clips/' + enc(id) + '/frame?t=' + t.toFixed(1);
-  }
-
-  /* ---------- manual crop box ---------- */
-  function setupManualCanvas(sec, cv) {
-    let drag = null;
-    const pos = e => {
-      const r = cv.getBoundingClientRect();
-      return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
-    };
-    cv.addEventListener('pointerdown', e => { drag = pos(e); cv.setPointerCapture(e.pointerId); });
-    cv.addEventListener('pointermove', e => {
-      if (!drag) return;
-      const [x1, y1] = pos(e);
-      setManualBox(sec, drag[0], drag[1], x1, y1);
-    });
-    const end = () => { drag = null; };
-    cv.addEventListener('pointerup', end);
-    cv.addEventListener('pointercancel', end);
-  }
-  function setManualBox(sec, x0, y0, x1, y1) {
-    // Normalized coords aren't square (x is /1920, y is /1080), so a 9:16 box
-    // has h = w * (16/9) * (1920/1080).
-    const aspect = (16 / 9) * (1920 / 1080);
-    let w = Math.abs(x1 - x0), h = w * aspect;
-    let x = Math.min(x0, x1), y = y1 < y0 ? y0 - h : y0;
-    if (h > 1) { h = 1; w = h / aspect; }
-    x = Math.min(Math.max(x, 0), 1 - w);
-    y = Math.min(Math.max(y, 0), 1 - h);
-    S.box = { x, y, w, h };
-    drawManual(sec);
-  }
-  function drawManual(sec) {
-    const cv = q('.rr-mcanvas', sec); if (!cv) return;
-    const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-    if (S.frame) ctx.drawImage(S.frame, 0, 0, W, H);
-    const lab = q('.rr-boxlabel', sec);
-    if (S.box) {
-      const b = S.box;
-      ctx.strokeStyle = '#8cff2b'; ctx.lineWidth = 2;
-      ctx.strokeRect(b.x * W, b.y * H, b.w * W, b.h * H);
-      lab.textContent = `box x=${(+b.x).toFixed(3)} y=${(+b.y).toFixed(3)} w=${(+b.w).toFixed(3)} h=${(+b.h).toFixed(3)}`;
-    } else {
-      lab.textContent = 'no box drawn yet';
-    }
-  }
-
-  /* ---------- events ---------- */
-  function bind() {
+  function bindList() {
     if (S.bound) return;
     const el = root(); if (!el) return;
     S.bound = true;
@@ -11560,10 +11252,8 @@ setInterval(loadPipeline, 30000);
       const t = e.target.closest('[data-act],[data-filter],[data-open]');
       if (!t || !el.contains(t)) return;
       if (t.dataset.filter) { S.filter = t.dataset.filter; return renderList(); }
-      if (t.dataset.open) return openClip(t.dataset.open);
-      const sec = q('.rr-detail', el), id = S.current;
+      if (t.dataset.open) return openStudio(t.dataset.open);
       switch (t.dataset.act) {
-        case 'back': renderList(); return loadReels(true);
         case 'retry': return loadReels(true);
         case 'settings': if (window.openSettings) openSettings(); return;
         case 'scope': S.all = !S.all; S.clips = []; return loadReels(true);
@@ -11571,58 +11261,697 @@ setInterval(loadPipeline, 30000);
           t.disabled = true;
           try { await api('/sync', { method: 'POST' }); await loadReels(true); }
           catch (err) { alert('Sync failed: ' + err.message); t.disabled = false; }
-          return;
-        case 'markin': q('.rr-ws', sec).value = q('.rr-src', sec).currentTime.toFixed(1); updDur(sec); return queueFrame(sec);
-        case 'markout': q('.rr-we', sec).value = q('.rr-src', sec).currentTime.toFixed(1); updDur(sec); return queueFrame(sec);
-        case 'aiwin': {
-          const a = S.detail && S.detail.analysis; if (!a) return;
-          q('.rr-ws', sec).value = (+a.primary_start).toFixed(1);
-          q('.rr-we', sec).value = (+a.primary_end).toFixed(1);
-          updDur(sec); return queueFrame(sec);
-        }
-        case 'veto': return toggleVeto(sec, id);
-        case 'render': return startRender(sec, id);
-        case 'save': return saveOverride(sec, id);
-        case 'zoom-add': {
-          const s = reelSourceTime(sec);
-          S.zooms.push({ start: +s.toFixed(1), end: +(s + 1.5).toFixed(1), scale: 1.75, x: null, y: null });
-          S.pick = q('.rr-render', sec).hidden ? null : S.zooms.length - 1;
-          return renderZooms(sec);
-        }
-        case 'zoom-del': S.zooms.splice(+t.dataset.idx, 1); S.pick = null; return renderZooms(sec);
-        case 'zoom-in': case 'zoom-out': {
-          const z = S.zooms[+t.dataset.idx]; if (!z) return;
-          z[t.dataset.act === 'zoom-in' ? 'start' : 'end'] = +reelSourceTime(sec).toFixed(1);
-          return renderZooms(sec);
-        }
-        case 'zoom-pick': {
-          const i = +t.dataset.idx;
-          S.pick = S.pick === i ? null : i;
-          q('.rr-render', sec).pause();
-          return renderZooms(sec);
-        }
-        case 'pickspot': {
-          const z = S.zooms[S.pick]; if (!z) return;
-          const r = t.getBoundingClientRect();
-          z.x = +Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)).toFixed(3);
-          z.y = +Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)).toFixed(3);
-          S.pick = null;
-          setStatus(sec, 'Spot set. Render preview to see the zoom.');
-          return renderZooms(sec);
-        }
-        case 'sub-add': {
-          const s = q('.rr-src', sec).currentTime || 0;
-          S.subs.push({ start: +s.toFixed(1), end: +(s + 2).toFixed(1), text: '' });
-          S.subs.sort((a, b) => a.start - b.start);
-          S.subsEdited = true;
-          return renderSubs(sec);
-        }
-        case 'sub-del': S.subs.splice(+t.dataset.idx, 1); S.subsEdited = true; return renderSubs(sec);
-        case 'sub-reset': S.subs = aiSubs(S.detail && S.detail.analysis); S.subsEdited = false; return renderSubs(sec);
       }
     });
-    el.addEventListener('input', onEditInput);
-    el.addEventListener('change', onEditInput);
+  }
+
+  /* ---------- studio: model ---------- */
+  function aiSubs(a) {
+    return ((a && a.subtitle_segments) || []).map(s => ({
+      start: +s.start, end: +s.end, text: s.subtitle_text || (s.lines || []).join(' ') || '',
+    }));
+  }
+  function boxPx(b) {
+    let w = +b.w, h = w * BOX_ASPECT;
+    if (h > 1) { h = 1; w = h / BOX_ASPECT; }
+    const x = clamp(+b.x, 0, 1 - w), y = clamp(+b.y, 0, 1 - h);
+    return [x * NW, y * NH, w * NW, h * NH];
+  }
+  function trajX(t) {
+    const pts = E.traj.traj;
+    if (t <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (t <= pts[i][0]) {
+        const [t0, x0] = pts[i - 1], [t1, x1] = pts[i];
+        return x0 + (t1 > t0 ? (t - t0) / (t1 - t0) : 0) * (x1 - x0);
+      }
+    }
+    return pts[pts.length - 1][1];
+  }
+  const hasTraj = () => !!(E.traj && E.traj.traj && E.traj.traj.length);
+  function cropAt(ts) {
+    if (E.mode === 'manual') return boxPx(E.box);
+    return [E.mode === 'ai' && hasTraj() ? trajX(ts - E.t0) : CENTER_X, 0, CW, NH];
+  }
+  // Mirrors vendor/reel_zoom.py: smoothstep ramps of up to 0.35s at each end.
+  function zoomAt(ts) {
+    let z = 1, fx = 0.5, fy = 0.5;
+    for (const k of E.zooms) {
+      const a = +k.start, b = +k.end;
+      if (!(b > a)) continue;
+      const r = Math.min(0.35, (b - a) / 2);
+      const e = Math.min(clamp((ts - a) / r, 0, 1), clamp((b - ts) / r, 0, 1));
+      const s = e * e * (3 - 2 * e);
+      z += (k.scale - 1) * s; fx += (k.x - 0.5) * s; fy += (k.y - 0.5) * s;
+    }
+    return { z, fx, fy };
+  }
+  function zoomOffset(zs, W, H) {
+    return [clamp(zs.fx * W - W / zs.z / 2, 0, W - W / zs.z), clamp(zs.fy * H - H / zs.z / 2, 0, H - H / zs.z)];
+  }
+  const subAt = ts => E.subs.find(s => ts >= +s.start && ts < +s.end && String(s.text || '').trim());
+  const reelV = () => q('.rrs-reelv', E.el);
+  const activeVideo = () => E.view === 'reel' ? reelV() : E.v;
+  const reelT0 = () => E.t0 != null ? E.t0 : E.ws;
+  function nowTs() {
+    return E.view === 'reel' ? reelT0() + (reelV().currentTime || 0) : (E.v.currentTime || 0);
+  }
+  function seek(ts) {
+    ts = clamp(ts, 0, E.dur);
+    if (E.view === 'reel') reelV().currentTime = Math.max(0, ts - reelT0());
+    else E.v.currentTime = ts;
+  }
+  function editBody() {
+    return {
+      window_start: r2(E.ws), window_end: r2(E.we), crop_mode: E.mode,
+      crop_box: E.mode === 'manual' ? E.box : null,
+      label: E.label.trim(), caption: E.caption.trim(),
+      zooms: E.zooms.map(z => ({ start: r2(z.start), end: r2(z.end), scale: +z.scale, x: +z.x, y: +z.y })),
+      subtitles: E.subsEdited ? E.subs.filter(s => String(s.text || '').trim())
+        .map(s => ({ start: r2(s.start), end: r2(s.end), text: String(s.text).trim() })) : null,
+    };
+  }
+  function validate() {
+    if (!(E.we > E.ws)) return 'Trim: the end has to be after the start.';
+    if (E.zooms.some(z => !(+z.end > +z.start))) return 'Each zoom needs an end after its start.';
+    if (E.subs.some(s => !(+s.end > +s.start))) return 'Each subtitle needs an end after its start.';
+    return null;
+  }
+
+  /* ---------- studio: open / close ---------- */
+  async function openStudio(id) {
+    if (E) closeStudio(true, true);
+    const el = document.createElement('div');
+    el.className = 'rrs';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    el.setAttribute('aria-label', 'Reel editor');
+    el.innerHTML = '<div class="rrs-loading"><div class="rrs-spin"></div>Loading clip…</div>';
+    document.body.appendChild(el);
+    document.documentElement.style.overflow = 'hidden';
+    history.pushState({ rrs: 1 }, '', location.pathname + location.search + '#edit');
+    E = { id, el, poll: null, raf: 0, ro: null, drag: null, noteUntil: 0, noteMsg: '' };
+    el.addEventListener('click', onClick);
+    el.addEventListener('input', onInput);
+    el.addEventListener('pointerdown', onPointerDown);
+    el.addEventListener('pointermove', onPointerMove);
+    el.addEventListener('pointerup', onPointerUp);
+    el.addEventListener('pointercancel', onPointerUp);
+    document.addEventListener('keydown', onKey);
+    let d;
+    try { d = await api('/clips/' + enc(id)); }
+    catch (err) {
+      if (E && E.id === id) el.innerHTML = `<div class="rrs-loading">Could not load this clip: ${esc(err.message)}
+        <button class="rr-btn" data-a="close">Close</button></div>`;
+      return;
+    }
+    if (!E || E.id !== id) return;
+    initState(d);
+    buildStudio();
+  }
+
+  function initState(d) {
+    const clip = d.clip || {}, a = d.analysis, ov = d.override || {};
+    let ws = ov.window_start, we = ov.window_end;
+    if (ws == null && a) { ws = a.primary_start; we = a.primary_end; }
+    if (ws == null) { ws = 0; we = Math.min(clip.duration || 15, 15); }
+    const subsEdited = Array.isArray(ov.subtitles);
+    Object.assign(E, {
+      d, clip, a, ws: +ws, we: +we, dur: +clip.duration || Math.max(+we, 1),
+      mode: ov.crop_mode || 'ai',
+      box: ov.crop_box || { x: CENTER_X / NW, y: 0, w: CW / NW, h: 1 },
+      label: ov.label || (a && a.featured_label) || clip.sender || '',
+      caption: ov.caption != null ? ov.caption : ((a && a.caption_draft) || ''),
+      zooms: Array.isArray(ov.zooms) ? ov.zooms.map(z => ({ ...z })) : [],
+      subsEdited,
+      subs: subsEdited ? ov.subtitles.map(s => ({ start: +s.start, end: +s.end, text: s.text || s.subtitle_text || '' })) : aiSubs(a),
+      vetoed: !!d.vetoed, approved: !!d.override,
+      rid: d.latest_render ? d.latest_render.id : null, traj: null, t0: null,
+      view: 'live', tool: isDesk() ? 'trim' : null, selZoom: -1, selSub: -1, dirty: false,
+    });
+  }
+
+  function buildStudio() {
+    const clip = E.clip, ts = whenTs(clip.when_ts);
+    const tabs = [['trim', '✂️', 'Trim'], ['crop', '🔲', 'Crop'], ['zoom', '🔍', 'Zoom'], ['text', '🔤', 'Text'], ['subs', '💬', 'Subs']]
+      .map(([k, i, l]) => `<button class="rrs-tab" data-tool="${k}"><i>${i}</i>${l}</button>`).join('');
+    E.el.innerHTML = `
+<header class="rrs-top">
+  <button class="rrs-ic" data-a="close" aria-label="Close editor">✕</button>
+  <div class="rrs-title"><b>${esc(clip.sender || '?')} · ${fmtDur(clip.duration)}</b>
+    <span>${ts ? fmtAgo(ts) + ' · ' : ''}${esc(clip.game || 'unknown game')}${clip.message ? ' · ' + esc(clip.message) : ''}</span></div>
+  <button class="rrs-ic" data-a="veto"></button>
+  <button class="rrs-ic rrs-mob" data-a="render" aria-label="Render">⚙<span>Render</span></button>
+  <button class="rrs-ic rrs-mob rrs-go" data-a="save" aria-label="Save and approve">✅<span>Save</span></button>
+</header>
+<div class="rrs-body">
+  <div class="rrs-main">
+    <div class="rrs-stagewrap">
+      <div class="rrs-views">
+        <button class="rrs-view" data-view="live">✨<span>Live</span></button>
+        <button class="rrs-view" data-view="reel">🎬<span>Render</span></button>
+        <button class="rrs-view" data-view="frame">🖼<span>Frame</span></button>
+      </div>
+      <div class="rrs-side-tools">
+        <button class="rrs-view" data-a="mute" aria-label="Mute">🔊</button>
+        <a class="rrs-view" data-dl hidden download aria-label="Download reel" title="Download reel">⬇</a>
+      </div>
+      <div class="rrs-toast" role="status" aria-live="polite" hidden></div>
+      <div class="rrs-vp" data-a="stage">
+        <video class="rrs-srcv" playsinline preload="auto"></video>
+        <div class="rrs-label"></div><div class="rrs-sub"></div>
+        <div class="rrs-spot" hidden></div><div class="rrs-note" hidden></div>
+      </div>
+      <video class="rrs-reelv" data-a="stage" playsinline preload="auto" hidden></video>
+      <div class="rrs-frame" data-a="frame" hidden><div class="rrs-cbox"></div></div>
+      <div class="rrs-busy" hidden><div class="rrs-spin"></div><span></span></div>
+    </div>
+    <div class="rrs-transport">
+      <button class="rrs-ic" data-a="back" aria-label="Back 0.1 seconds">−0.1</button>
+      <button class="rrs-play" data-a="play" aria-label="Play or pause">▶</button>
+      <button class="rrs-ic" data-a="fwd" aria-label="Forward 0.1 seconds">+0.1</button>
+      <span class="rrs-time"></span>
+    </div>
+    <div class="rrs-tl" aria-label="Timeline">
+      <div class="rrs-lane rrs-lane-win"></div>
+      <div class="rrs-lane rrs-lane-zoom"></div>
+      <div class="rrs-lane rrs-lane-sub"></div>
+      <div class="rrs-ph"></div>
+    </div>
+  </div>
+  <aside class="rrs-side">
+    <nav class="rrs-tabs">${tabs}</nav>
+    <div class="rrs-panel"></div>
+    <div class="rrs-actions">
+      <button class="rr-btn" data-a="render">⚙ Render</button>
+      <button class="rr-btn rr-primary" data-a="save">✅ Save &amp; approve</button>
+    </div>
+  </aside>
+</div>`;
+    E.v = q('.rrs-srcv', E.el);
+    E.v.addEventListener('loadedmetadata', () => {
+      if (!E) return;
+      if (isFinite(E.v.duration) && E.v.duration > 0) E.dur = E.v.duration;
+      E.v.currentTime = E.ws;
+      renderTimeline();
+    });
+    E.v.src = API + '/clips/' + enc(E.id) + '/source';
+    E.ro = new ResizeObserver(layout);
+    E.ro.observe(q('.rrs-stagewrap', E.el));
+    if (E.rid) setReel(E.rid);
+    syncTop();
+    setView('live');
+    renderPanel();
+    renderTimeline();
+    layout();
+    E.raf = requestAnimationFrame(paint);
+  }
+
+  function closeStudio(fromPop, force) {
+    if (!E) return;
+    if (!force && E.dirty && !confirm('Leave without saving your edits?')) {
+      if (fromPop) history.pushState({ rrs: 1 }, '', location.pathname + location.search + '#edit');
+      return;
+    }
+    cancelAnimationFrame(E.raf);
+    clearInterval(E.poll);
+    if (E.ro) E.ro.disconnect();
+    qa('video', E.el).forEach(v => { v.pause(); v.removeAttribute('src'); v.load(); });
+    E.el.remove();
+    E = null;
+    document.documentElement.style.overflow = '';
+    document.removeEventListener('keydown', onKey);
+    if (!fromPop && history.state && history.state.rrs) history.back();
+    loadReels(true);
+  }
+  window.addEventListener('popstate', () => { if (E) closeStudio(true); });
+
+  /* ---------- studio: layout + paint ---------- */
+  function layout() {
+    if (!E || !E.v) return;
+    const wrap = q('.rrs-stagewrap', E.el);
+    const W = wrap.clientWidth, H = wrap.clientHeight;
+    const vh = Math.max(120, Math.min(H, W * 16 / 9)), vw = vh * 9 / 16;
+    E.vpW = vw; E.vpH = vh;
+    [q('.rrs-vp', E.el), reelV()].forEach(n => { n.style.width = vw + 'px'; n.style.height = vh + 'px'; });
+    // Leave room for the view buttons docked on either side of the stage.
+    const fw = Math.max(120, Math.min(W - 124, H * 16 / 9)), fr = q('.rrs-frame', E.el);
+    fr.style.width = fw + 'px'; fr.style.height = (fw * 9 / 16) + 'px';
+    const lab = q('.rrs-label', E.el);
+    lab.style.fontSize = (vw * 54 / 1080) + 'px';
+    lab.style.left = (vw * 40 / 1080) + 'px';
+    lab.style.top = (vw * 30 / 1080) + 'px';
+    const sub = q('.rrs-sub', E.el);
+    sub.style.fontSize = (vh * 0.058) + 'px';
+    sub.style.bottom = (vh * 0.31) + 'px';
+    drawPath();
+  }
+
+  function note(msg, ms) { E.noteMsg = msg; E.noteUntil = Date.now() + (ms || 2600); }
+
+  function paint() {
+    if (!E || !E.el.isConnected) return;
+    E.raf = requestAnimationFrame(paint);
+    if (!E.v) return;
+    const ts = nowTs();
+    if (E.view !== 'reel' && !E.v.paused && (ts >= E.we || ts < E.ws - 0.3)) E.v.currentTime = E.ws;
+    if (E.view === 'live') {
+      const [cx, cy, , ch] = cropAt(ts);
+      const s = E.vpH / ch, zs = zoomAt(ts), [ox, oy] = zoomOffset(zs, E.vpW, E.vpH);
+      E.v.style.transform = `translate(${-(cx * s + ox) * zs.z}px,${-(cy * s + oy) * zs.z}px) scale(${s * zs.z})`;
+      q('.rrs-label', E.el).textContent = E.label.slice(0, 40);
+      const sub = subAt(ts), subEl = q('.rrs-sub', E.el);
+      const txt = sub ? String(sub.text) : '';
+      if (subEl.textContent !== txt) subEl.textContent = txt;
+      const spot = q('.rrs-spot', E.el), z = E.tool === 'zoom' ? E.zooms[E.selZoom] : null;
+      if (z) {
+        const px = (z.x * E.vpW - ox) * zs.z, py = (z.y * E.vpH - oy) * zs.z;
+        spot.hidden = px < 0 || py < 0 || px > E.vpW || py > E.vpH;
+        spot.style.left = px + 'px'; spot.style.top = py + 'px';
+      } else spot.hidden = true;
+      q('.rrs-vp', E.el).classList.toggle('aim', !!z);
+      const n = q('.rrs-note', E.el);
+      const msg = Date.now() < E.noteUntil ? E.noteMsg
+        : (z ? '🎯 Tap to aim the zoom' : (E.mode === 'ai' && !hasTraj() ? 'AI tracking shows after your first render' : ''));
+      n.hidden = !msg;
+      if (n.textContent !== msg) n.textContent = msg;
+    } else if (E.view === 'frame') {
+      const [cx, cy, cw, ch] = cropAt(ts), b = q('.rrs-cbox', E.el);
+      b.style.left = (cx / NW * 100) + '%'; b.style.top = (cy / NH * 100) + '%';
+      b.style.width = (cw / NW * 100) + '%'; b.style.height = (ch / NH * 100) + '%';
+      b.classList.toggle('manual', E.mode === 'manual');
+    }
+    q('.rrs-ph', E.el).style.left = (clamp(ts / E.dur, 0, 1) * 100) + '%';
+    const tEl = q('.rrs-time', E.el), tt = `${f1(ts)}s / ${f1(E.dur)}s`;
+    if (tEl.textContent !== tt) tEl.textContent = tt;
+    const pb = q('.rrs-play', E.el), icon = activeVideo().paused ? '▶' : '❚❚';
+    if (pb.textContent !== icon) pb.textContent = icon;
+  }
+
+  function setView(v) {
+    if (v === 'reel' && !E.rid) return;
+    const ts = E.view ? nowTs() : E.ws;
+    E.v.pause(); reelV().pause();
+    E.view = v;
+    const vp = q('.rrs-vp', E.el), fr = q('.rrs-frame', E.el);
+    vp.hidden = v !== 'live'; reelV().hidden = v !== 'reel'; fr.hidden = v !== 'frame';
+    if (v === 'frame' && E.v.parentElement !== fr) { E.v.style.transform = ''; fr.insertBefore(E.v, fr.firstChild); }
+    if (v === 'live' && E.v.parentElement !== vp) vp.insertBefore(E.v, vp.firstChild);
+    seek(ts);
+    qa('.rrs-view', E.el).forEach(b => {
+      b.classList.toggle('on', b.dataset.view === v);
+      if (b.dataset.view === 'reel') b.disabled = !E.rid;
+    });
+  }
+
+  function setReel(rid) {
+    E.rid = rid;
+    const url = API + '/renders/' + enc(rid) + '/video';
+    reelV().src = url;
+    const dl = q('[data-dl]', E.el); dl.href = url; dl.hidden = false;
+    qa('.rrs-view', E.el).forEach(b => { if (b.dataset.view === 'reel') b.disabled = false; });
+    api('/renders/' + enc(rid) + '/trajectory').then(t => {
+      if (!E || E.rid !== rid) return;
+      E.traj = t; E.t0 = +t.t0; drawPath();
+      if (E.tool === 'crop') renderPanel();
+    }).catch(() => {});
+  }
+
+  function syncTop() {
+    const b = q('[data-a=veto]', E.el);
+    b.classList.toggle('on', E.vetoed);
+    b.textContent = E.vetoed ? '🛑 Vetoed' : '🛑';
+    b.title = E.vetoed ? 'Undo veto' : 'Veto — keep out of highlights';
+    b.setAttribute('aria-label', b.title);
+  }
+  function status(msg) {
+    const s = E && q('.rrs-toast', E.el); if (!s) return;
+    clearTimeout(E.toastT);
+    s.textContent = msg; s.hidden = !msg;
+    if (msg) E.toastT = setTimeout(() => { if (E) s.hidden = true; }, 6000);
+  }
+
+  /* ---------- studio: timeline ---------- */
+  const pct = t => (clamp(t, 0, E.dur) / E.dur * 100) + '%';
+  function blk(k, i, a, b, txt, sel) {
+    const L = pct(a), R = pct(b);
+    return `<div class="rrs-blk ${k}${sel ? ' sel' : ''}" data-${k}i="${i}" style="left:${L};width:calc(${R} - ${L})"><span>${txt}</span>${
+      sel ? `<div class="rrs-hdl" data-drag="${k}s" style="left:0"></div><div class="rrs-hdl" data-drag="${k}e" style="left:100%"></div>` : ''}</div>`;
+  }
+  function renderTimeline() {
+    if (!E || !E.v) return;
+    const tl = q('.rrs-tl', E.el);
+    q('.rrs-lane-win', tl).innerHTML = `<canvas class="rrs-path"></canvas>
+      <div class="rrs-shade" style="left:0;width:${pct(E.ws)}"></div>
+      <div class="rrs-shade" style="left:${pct(E.we)};right:0"></div>
+      <div class="rrs-win" style="left:${pct(E.ws)};width:calc(${pct(E.we)} - ${pct(E.ws)})"></div>
+      <div class="rrs-hdl" data-drag="ws" style="left:${pct(E.ws)}" aria-label="Trim start"></div>
+      <div class="rrs-hdl" data-drag="we" style="left:${pct(E.we)}" aria-label="Trim end"></div>`;
+    q('.rrs-lane-zoom', tl).innerHTML = '<span class="rrs-lanelbl">🔍 zoom</span>' +
+      E.zooms.map((z, i) => blk('z', i, +z.start, +z.end, fmtScale(z.scale), i === E.selZoom)).join('');
+    q('.rrs-lane-sub', tl).innerHTML = '<span class="rrs-lanelbl">💬 subs</span>' +
+      E.subs.map((s, i) => blk('s', i, +s.start, +s.end, esc(String(s.text || '')), i === E.selSub)).join('');
+    drawPath();
+  }
+  function drawPath() {
+    const cv = E && q('.rrs-path', E.el);
+    if (!cv) return;
+    const rc = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    cv.width = Math.max(1, rc.width * dpr); cv.height = Math.max(1, rc.height * dpr);
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!hasTraj()) return;
+    ctx.strokeStyle = 'rgba(157,92,255,.9)'; ctx.lineWidth = 1.5 * dpr; ctx.beginPath();
+    E.traj.traj.forEach(([t, x], i) => {
+      const px = ((E.t0 + t) / E.dur) * cv.width;
+      const py = cv.height - 5 * dpr - (x / (NW - CW)) * (cv.height - 10 * dpr);
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    });
+    ctx.stroke();
+  }
+  function tlTime(e) {
+    const r = q('.rrs-tl', E.el).getBoundingClientRect();
+    return clamp((e.clientX - r.left) / r.width, 0, 1) * E.dur;
+  }
+  function applyDrag(kind, t) {
+    const z = E.zooms[E.selZoom], s = E.subs[E.selSub];
+    switch (kind) {
+      case 'play': return seek(t);
+      case 'ws': E.ws = r2(clamp(t, 0, E.we - 0.5)); seek(E.ws); break;
+      case 'we': E.we = r2(clamp(t, E.ws + 0.5, E.dur)); seek(E.we - 0.04); break;
+      case 'zs': if (z) { z.start = r2(clamp(t, 0, z.end - 0.2)); seek(z.start); } break;
+      case 'ze': if (z) { z.end = r2(clamp(t, z.start + 0.2, E.dur)); seek(z.end - 0.04); } break;
+      case 'ss': if (s) { s.start = r2(clamp(t, 0, s.end - 0.2)); seek(s.start + 0.02); markSubs(); } break;
+      case 'se': if (s) { s.end = r2(clamp(t, s.start + 0.2, E.dur)); seek(s.end - 0.04); markSubs(); } break;
+      default: return;
+    }
+    E.dirty = true;
+    renderTimeline();
+  }
+
+  /* ---------- studio: input ---------- */
+  function onPointerDown(e) {
+    if (!E || !E.v) return;
+    const tl = e.target.closest('.rrs-tl');
+    if (tl) {
+      e.preventDefault();
+      const h = e.target.closest('[data-drag]'), zb = e.target.closest('[data-zi]'), sb = e.target.closest('[data-si]');
+      let kind = 'play';
+      if (h) kind = h.dataset.drag;
+      else if (zb) { E.selZoom = +zb.dataset.zi; E.selSub = -1; setTool('zoom'); renderTimeline(); }
+      else if (sb) { E.selSub = +sb.dataset.si; E.selZoom = -1; setTool('subs'); renderTimeline(); }
+      if (kind !== 'play' && E.view === 'reel') setView('live');
+      E.drag = { kind, el: tl };
+      tl.setPointerCapture(e.pointerId);
+      activeVideo().pause();
+      applyDrag(kind, zb || sb ? (zb ? +E.zooms[E.selZoom].start : +E.subs[E.selSub].start + 0.02) : tlTime(e));
+      return;
+    }
+    const fr = e.target.closest('.rrs-frame');
+    if (fr && E.mode === 'manual') {
+      e.preventDefault();
+      E.drag = { kind: 'box', el: fr };
+      fr.setPointerCapture(e.pointerId);
+      moveBox(e);
+    }
+  }
+  function onPointerMove(e) {
+    if (!E || !E.drag) return;
+    if (E.drag.kind === 'box') return moveBox(e);
+    if (E.drag.kind !== 'play' || e.buttons || e.pointerType !== 'mouse') applyDrag(E.drag.kind, tlTime(e));
+  }
+  function onPointerUp() {
+    if (!E || !E.drag) return;
+    const k = E.drag.kind;
+    E.drag = null;
+    if (k !== 'play') renderPanel();
+  }
+  function moveBox(e) {
+    const r = q('.rrs-frame', E.el).getBoundingClientRect();
+    const [, , cw, ch] = boxPx(E.box), w = cw / NW, h = ch / NH;
+    E.box = { x: clamp((e.clientX - r.left) / r.width - w / 2, 0, 1 - w),
+              y: clamp((e.clientY - r.top) / r.height - h / 2, 0, 1 - h), w, h };
+    E.dirty = true;
+  }
+  function setBoxSize(hf) {
+    const [cx, cy, cw, ch] = boxPx(E.box);
+    const mx = (cx + cw / 2) / NW, my = (cy + ch / 2) / NH, h = clamp(hf, 0.3, 1), w = h / BOX_ASPECT;
+    E.box = { x: clamp(mx - w / 2, 0, 1 - w), y: clamp(my - h / 2, 0, 1 - h), w, h };
+    E.dirty = true;
+  }
+  function aimAt(e) {
+    const z = E.zooms[E.selZoom];
+    if (!z) return false;
+    const r = q('.rrs-vp', E.el).getBoundingClientRect();
+    const zs = zoomAt(nowTs()), [ox, oy] = zoomOffset(zs, E.vpW, E.vpH);
+    z.x = Math.round(clamp((ox + (e.clientX - r.left) / zs.z) / E.vpW, 0, 1) * 1000) / 1000;
+    z.y = Math.round(clamp((oy + (e.clientY - r.top) / zs.z) / E.vpH, 0, 1) * 1000) / 1000;
+    E.dirty = true;
+    note('🎯 Zoom aimed');
+    renderPanel();
+    return true;
+  }
+  function markSubs() {
+    if (E.subsEdited) return;
+    E.subsEdited = true;
+    const k = q('.rrs-subsrc', E.el); if (k) k.textContent = 'Your subtitles';
+  }
+  function togglePlay() {
+    const v = activeVideo();
+    if (v.paused) {
+      if (E.view !== 'reel') { const ts = nowTs(); if (ts < E.ws || ts >= E.we - 0.05) seek(E.ws); }
+      v.play().catch(() => {});
+    } else v.pause();
+  }
+  function onKey(e) {
+    if (!E || !E.v || e.target.closest('input,textarea,select')) return;
+    if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      activeVideo().pause();
+      seek(nowTs() + (e.shiftKey ? 1 : 0.1) * (e.key === 'ArrowLeft' ? -1 : 1));
+    } else if (e.key === 'Escape') closeStudio(false);
+  }
+  function onInput(e) {
+    const t = e.target, k = t.dataset.in;
+    if (!E || !k) return;
+    E.dirty = true;
+    if (k === 'label') E.label = t.value;
+    else if (k === 'caption') E.caption = t.value;
+    else if (k === 'boxsize') setBoxSize(+t.value / 100);
+    else if (k === 'zscale') {
+      const z = E.zooms[E.selZoom]; if (!z) return;
+      z.scale = +t.value;
+      const b = q('[data-zval]', E.el); if (b) b.textContent = fmtScale(z.scale);
+      const c = q(`[data-zsel="${E.selZoom}"]`, E.el); if (c) c.textContent = zoomChip(z);
+      renderTimeline();
+    } else if (k === 'subtext') {
+      const s = E.subs[E.selSub]; if (!s) return;
+      s.text = t.value; markSubs();
+      const it = q(`[data-ssel="${E.selSub}"]`, E.el);
+      if (it) it.innerHTML = `<span>${f1(s.start)}s</span>${esc(t.value)}`;
+      renderTimeline();
+    }
+  }
+
+  function onClick(e) {
+    if (!E) return;
+    const t = e.target.closest('[data-a],[data-view],[data-tool],[data-crop],[data-zsel],[data-ssel]');
+    if (!t) return;
+    if (t.dataset.a === 'close') return closeStudio(false);
+    if (!E.v) return;
+    if (t.dataset.view) return setView(t.dataset.view);
+    if (t.dataset.tool) return setTool(E.tool === t.dataset.tool && !isDesk() ? null : t.dataset.tool);
+    if (t.dataset.crop) {
+      E.mode = t.dataset.crop; E.dirty = true;
+      if (E.mode === 'manual') setView('frame');
+      return renderPanel();
+    }
+    if (t.dataset.zsel != null) {
+      E.selZoom = +t.dataset.zsel; if (E.view === 'reel') setView('live');
+      seek(+E.zooms[E.selZoom].start); renderPanel(); return renderTimeline();
+    }
+    if (t.dataset.ssel != null) {
+      E.selSub = +t.dataset.ssel; if (E.view === 'reel') setView('live');
+      seek(+E.subs[E.selSub].start + 0.02); renderPanel(); return renderTimeline();
+    }
+    const ts = nowTs(), z = E.zooms[E.selZoom], s = E.subs[E.selSub];
+    switch (t.dataset.a) {
+      case 'stage': if (E.tool === 'zoom' && E.view === 'live' && aimAt(e)) return; return togglePlay();
+      case 'frame': if (E.mode !== 'manual') togglePlay(); return;
+      case 'play': return togglePlay();
+      case 'back': activeVideo().pause(); return seek(ts - 0.1);
+      case 'fwd': activeVideo().pause(); return seek(ts + 0.1);
+      case 'mute': {
+        const m = !E.v.muted; E.v.muted = m; reelV().muted = m;
+        t.textContent = m ? '🔇' : '🔊'; return;
+      }
+      case 'veto': return toggleVeto();
+      case 'render': return startRender();
+      case 'save': return save();
+      case 'set-ws': E.ws = r2(clamp(ts, 0, E.we - 0.5)); break;
+      case 'set-we': E.we = r2(clamp(ts, E.ws + 0.5, E.dur)); break;
+      case 'aiwin': if (!E.a) return; E.ws = +E.a.primary_start; E.we = +E.a.primary_end; seek(E.ws); break;
+      case 'zoom-add': {
+        if (E.view !== 'live') setView('live');
+        const st = r2(clamp(ts, 0, Math.max(0, E.dur - 0.5)));
+        const nz = { start: st, end: r2(Math.min(E.dur, st + 1.5)), scale: 1.75, x: 0.5, y: 0.5 };
+        E.zooms.push(nz); E.zooms.sort((a, b) => a.start - b.start);
+        E.selZoom = E.zooms.indexOf(nz);
+        note('🎯 Now tap the preview where you want to zoom', 4000);
+        break;
+      }
+      case 'z-start': if (!z) return; z.start = r2(clamp(ts, 0, z.end - 0.2)); break;
+      case 'z-end': if (!z) return; z.end = r2(clamp(ts, z.start + 0.2, E.dur)); break;
+      case 'z-del': if (!z) return; E.zooms.splice(E.selZoom, 1); E.selZoom = -1; break;
+      case 'z-preview': {
+        if (!z) return;
+        if (E.view !== 'live') setView('live');
+        seek(Math.max(E.ws, +z.start - 0.7)); E.v.play().catch(() => {}); return;
+      }
+      case 'sub-add': {
+        if (E.view === 'reel') setView('live');
+        const st = r2(clamp(ts, 0, Math.max(0, E.dur - 0.3)));
+        const ns = { start: st, end: r2(Math.min(E.dur, st + 2)), text: '' };
+        E.subs.push(ns); E.subs.sort((a, b) => a.start - b.start);
+        E.selSub = E.subs.indexOf(ns); markSubs();
+        break;
+      }
+      case 's-start': if (!s) return; s.start = r2(clamp(ts, 0, s.end - 0.2)); markSubs(); break;
+      case 's-end': if (!s) return; s.end = r2(clamp(ts, s.start + 0.2, E.dur)); markSubs(); break;
+      case 's-del': if (!s) return; E.subs.splice(E.selSub, 1); E.selSub = -1; markSubs(); break;
+      case 'sub-reset': E.subs = aiSubs(E.a); E.subsEdited = false; E.selSub = -1; break;
+      default: return;
+    }
+    E.dirty = true;
+    renderPanel();
+    renderTimeline();
+    if (t.dataset.a === 'sub-add') { const i = q('[data-in=subtext]', E.el); if (i) i.focus(); }
+  }
+
+  /* ---------- studio: tools ---------- */
+  function setTool(tool) {
+    E.tool = tool;
+    if (tool && tool !== 'crop' && E.view === 'reel') setView('live');
+    renderPanel();
+  }
+  const zoomChip = z => `🔍 ${f1(z.start)}–${f1(z.end)}s · ${fmtScale(z.scale)}`;
+  const PANELS = {
+    trim() {
+      const a = E.a;
+      return `<div class="rrs-kv">Reel <b>${f1(E.ws)}s → ${f1(E.we)}s</b> · <b>${f1(E.we - E.ws)}s</b> long</div>
+        <div class="rrs-row"><button class="rr-btn" data-a="set-ws">⇤ Start here</button>
+          <button class="rr-btn" data-a="set-we">End here ⇥</button></div>
+        <div class="rrs-row"><button class="rr-btn rr-small" data-a="aiwin"${a ? '' : ' disabled'}>✨ Use AI pick${a ? ` (${f1(a.primary_start)}–${f1(a.primary_end)}s)` : ''}</button></div>
+        <p class="rrs-muted">Drag the cyan handles on the timeline, or play to a moment and tap Start / End here.</p>
+        ${a ? `<p class="rrs-muted"><b>AI:</b> featured ${esc(String(a.featured_label || a.featured_player || '?'))}
+          (confidence ${esc(String(a.identity_confidence || '?'))}) · ${(a.subtitle_segments || []).length} subtitle lines</p>`
+            : '<p class="rrs-muted">No AI analysis for this clip yet — renders use your trim, the sender as label, and no subtitles unless you add some.</p>'}`;
+    },
+    crop() {
+      const seg = [['ai', 'AI tracking'], ['center', 'Center'], ['manual', 'Manual']]
+        .map(([v, l]) => `<button data-crop="${v}" class="${E.mode === v ? 'on' : ''}">${l}</button>`).join('');
+      const size = Math.round(boxPx(E.box)[3] / NH * 100);
+      return `<div class="rrs-seg">${seg}</div>
+        ${E.mode === 'ai' ? `<p class="rrs-muted">${hasTraj() ? 'Following the action from your last render. Open Full frame to watch the crop window move.'
+          : 'AI tracking is worked out when you render. Until then the Live preview shows it centered.'}</p>` : ''}
+        ${E.mode === 'center' ? '<p class="rrs-muted">A fixed crop from the middle of the frame.</p>' : ''}
+        ${E.mode === 'manual' ? `<label class="rrs-field">Crop size <b>${size}%</b>
+            <input class="rrs-range" type="range" min="30" max="100" step="1" value="${size}" data-in="boxsize"></label>
+          <p class="rrs-muted">In Full frame, drag to place the green box. Smaller boxes crop in tighter.</p>` : ''}
+        <div class="rrs-row"><button class="rr-btn rr-small" data-view="frame">🖼 Full frame</button>
+          <button class="rr-btn rr-small" data-view="live">✨ Live preview</button></div>`;
+    },
+    zoom() {
+      const z = E.zooms[E.selZoom];
+      const chips = E.zooms.map((x, i) => `<button class="rrs-chip${i === E.selZoom ? ' on' : ''}" data-zsel="${i}">${zoomChip(x)}</button>`).join('');
+      return `<div class="rrs-chipsx">${chips}<button class="rrs-chip add" data-a="zoom-add">＋ Add zoom here</button></div>
+        ${z ? `<label class="rrs-field">Strength <b data-zval>${fmtScale(z.scale)}</b>
+            <input class="rrs-range" type="range" min="1.1" max="3" step="0.05" value="${z.scale}" data-in="zscale"></label>
+          <div class="rrs-row"><button class="rr-btn" data-a="z-start">⇤ Start here</button>
+            <button class="rr-btn" data-a="z-end">End here ⇥</button></div>
+          <p class="rrs-muted">🎯 Tap the preview to aim · now ${Math.round(z.x * 100)}% across, ${Math.round(z.y * 100)}% down.
+            Drag the pink block's edges on the timeline to adjust timing.</p>
+          <div class="rrs-row"><button class="rr-btn rr-small" data-a="z-preview">▶ Preview zoom</button>
+            <button class="rr-btn rr-small rr-danger" data-a="z-del">Delete</button></div>`
+          : '<p class="rrs-muted">Play or scrub to the moment, tap <b>＋ Add zoom here</b>, then tap the preview where you want to punch in.</p>'}`;
+    },
+    text() {
+      return `<label class="rrs-field">Featured player <span>shown top-left on the reel</span>
+          <input type="text" maxlength="40" data-in="label" value="${esc(E.label)}"></label>
+        <label class="rrs-field">Caption <span>posted with the reel on Instagram</span>
+          <textarea rows="4" maxlength="2200" data-in="caption">${esc(E.caption)}</textarea></label>`;
+    },
+    subs() {
+      const s = E.subs[E.selSub];
+      const list = E.subs.map((x, i) => `<button class="rrs-subitem${i === E.selSub ? ' on' : ''}" data-ssel="${i}"><span>${f1(x.start)}s</span>${esc(String(x.text || '')) || '<i>empty</i>'}</button>`).join('');
+      return `<div class="rrs-kv rrs-subsrc">${E.subsEdited ? 'Your subtitles' : (E.subs.length ? 'AI subtitles' : 'No subtitles')}</div>
+        ${s ? `<label class="rrs-field">Line text <input type="text" maxlength="200" data-in="subtext" value="${esc(String(s.text || ''))}"></label>
+          <div class="rrs-row"><button class="rr-btn" data-a="s-start">⇤ Start here</button>
+            <button class="rr-btn" data-a="s-end">End here ⇥</button>
+            <button class="rr-btn rr-danger" data-a="s-del">Delete</button></div>` : ''}
+        <div class="rrs-row"><button class="rr-btn rr-small" data-a="sub-add">＋ Add line here</button>
+          <button class="rr-btn rr-small" data-a="sub-reset"${E.subsEdited ? '' : ' disabled'}>↺ Reset to AI</button></div>
+        <div class="rrs-sublist">${list || '<p class="rrs-muted">No lines yet. Play to a moment and tap Add line here.</p>'}</div>`;
+    },
+  };
+  function renderPanel() {
+    const p = q('.rrs-panel', E.el);
+    qa('.rrs-tab', E.el).forEach(b => b.classList.toggle('on', b.dataset.tool === E.tool));
+    p.hidden = !E.tool;
+    if (E.tool) p.innerHTML = PANELS[E.tool]();
+  }
+
+  /* ---------- studio: actions ---------- */
+  async function startRender() {
+    const bad = validate(); if (bad) return status(bad);
+    const btns = qa('[data-a=render]', E.el), busy = q('.rrs-busy', E.el), id = E.id, t0 = Date.now();
+    btns.forEach(b => { b.disabled = true; }); busy.hidden = false;
+    q('span', busy).textContent = 'Queued…';
+    let rid;
+    try { rid = (await api('/clips/' + enc(id) + '/render', { method: 'POST', body: JSON.stringify(editBody()) })).render_id; }
+    catch (err) { busy.hidden = true; btns.forEach(b => { b.disabled = false; }); return status('Could not start render: ' + err.message); }
+    status('');
+    clearInterval(E.poll);
+    E.poll = setInterval(async () => {
+      if (!E || E.id !== id) return;
+      q('span', busy).textContent = `Rendering your reel… ${Math.round((Date.now() - t0) / 1000)}s`;
+      let r;
+      try { r = await api('/renders/' + enc(rid)); } catch (err) { return; }
+      if (!E || E.id !== id || !['done', 'failed', 'error'].includes(r.status)) return;
+      clearInterval(E.poll); E.poll = null;
+      busy.hidden = true; btns.forEach(b => { b.disabled = false; });
+      if (r.status === 'done') {
+        setReel(rid);
+        setView('reel');
+        patchClip(id, { has_render: true, latest_render_id: rid });
+        status('✓ Rendered — this is the exact reel. Save & approve when it looks right.');
+      } else status('Render failed: ' + (r.error || 'unknown'));
+    }, 2000);
+  }
+
+  async function save() {
+    const bad = validate(); if (bad) return status(bad);
+    if (!confirm('Save these edits and approve this clip for Instagram? Muse will post it with exactly these settings.')) return;
+    const body = editBody();
+    try {
+      await api('/clips/' + enc(E.id) + '/override', { method: 'POST', body: JSON.stringify(body) });
+      E.dirty = false; E.approved = true;
+      patchClip(E.id, { override: body });
+      status('✓ Saved & approved — Muse posts it on its next run.');
+    } catch (err) { status('Could not save: ' + err.message); }
+  }
+
+  async function toggleVeto() {
+    const was = E.vetoed;
+    if (!was && !confirm('Keep this clip out of highlights? It won’t be used in the fire, fail or daily reels.')) return;
+    try {
+      await api('/clips/' + enc(E.id) + '/veto', was ? { method: 'DELETE' } : { method: 'POST', body: '{}' });
+      E.vetoed = !was;
+      patchClip(E.id, { vetoed: !was });
+      syncTop();
+      status(was ? 'Veto removed.' : '🛑 Vetoed — this clip stays out of highlights.');
+    } catch (err) { status('Could not update veto: ' + err.message); }
   }
 })();
 
