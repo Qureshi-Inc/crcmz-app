@@ -54,6 +54,7 @@ def init() -> None:
         for col, defn in (
             ("instagram_media_id", "TEXT"),
             ("ig_caption",         "TEXT"),
+            ("reshared_at",        "REAL"),
         ):
             try:
                 db.execute(f"ALTER TABLE ig_posts ADD COLUMN {col} {defn}")
@@ -99,11 +100,16 @@ def get(post_id: str) -> dict | None:
 
 def submit_post(post_id: str, ig_url: str,
                 instagram_media_id: str = "", caption: str = "") -> None:
-    """Record the Instagram URL (and optional media ID / caption) once the post is live."""
+    """Record the Instagram URL (and optional media ID / caption) once the post is live.
+
+    An omitted media ID or caption keeps the stored one, so a caller that only knows
+    the permalink cannot erase what an earlier call recorded.
+    """
     now = time.time()
     with _lock, _conn() as db:
         db.execute(
-            "UPDATE ig_posts SET ig_url=?, instagram_media_id=?, ig_caption=?, posted_at=?"
+            "UPDATE ig_posts SET ig_url=?, instagram_media_id=COALESCE(?, instagram_media_id),"
+            " ig_caption=COALESCE(?, ig_caption), posted_at=COALESCE(posted_at, ?)"
             " WHERE post_id=?",
             (ig_url, instagram_media_id or None, caption or None, now, post_id))
         db.commit()
@@ -123,6 +129,22 @@ def release_notification(post_id: str) -> None:
     with _lock, _conn() as db:
         db.execute("UPDATE ig_posts SET notified_at=NULL WHERE post_id=?",
                    (post_id,))
+        db.commit()
+
+
+def claim_reshare(post_id: str) -> bool:
+    """One corrected re-share per clip, ever, and only after a first share went out."""
+    with _lock, _conn() as db:
+        cur = db.execute(
+            "UPDATE ig_posts SET reshared_at=? WHERE post_id=? AND reshared_at IS NULL"
+            " AND notified_at IS NOT NULL", (time.time(), post_id))
+        db.commit()
+        return cur.rowcount == 1
+
+
+def release_reshare(post_id: str) -> None:
+    with _lock, _conn() as db:
+        db.execute("UPDATE ig_posts SET reshared_at=NULL WHERE post_id=?", (post_id,))
         db.commit()
 
 

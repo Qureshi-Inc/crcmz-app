@@ -432,6 +432,29 @@ def list_clips(
     return [dict(r) for r in rows]
 
 
+# Highlight eligibility shared with the reel pipeline: delivered, archived, short,
+# and not a coaching ("rev") clip. Deduping and the posted/reviewed exclusions stay
+# with the watcher, which owns those logs.
+_ELIGIBLE_WHERE = """status = 'delivered' AND archive_status = 'archived'
+    AND duration_seconds IS NOT NULL AND duration_seconds <= ?
+    AND (? = 0 OR LOWER(COALESCE(body, '')) NOT LIKE '%rev%')"""
+
+
+def list_eligible(limit: int = 20, offset: int = 0, max_duration: float = 60.0,
+                  exclude_rev: bool = True) -> tuple[list[dict], int]:
+    """Newest-first page of highlight-eligible clips, plus the total count."""
+    base = [float(max_duration), 1 if exclude_rev else 0]
+    with _conn() as db:
+        total = db.execute(f"SELECT COUNT(*) FROM clips WHERE {_ELIGIBLE_WHERE}", base).fetchone()[0]
+        rows = db.execute(
+            f"""SELECT * FROM clips WHERE {_ELIGIBLE_WHERE}
+                ORDER BY COALESCE(psn_created_at, created_at) DESC
+                LIMIT ? OFFSET ?""",
+            [*base, int(limit), int(offset)],
+        ).fetchall()
+    return [dict(r) for r in rows], int(total)
+
+
 def update_cursor(group_id: str, message_uid: str, seen_at: float | None = None) -> None:
     now = time.time()
     with _lock, _conn() as db:

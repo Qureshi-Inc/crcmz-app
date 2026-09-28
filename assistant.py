@@ -694,6 +694,48 @@ def _clips(limit: int = 10, sender: str = "", month: str = "") -> Any:
     return out
 
 
+@tool("eligible_clips",
+      "Every highlight-eligible clip, paginated so nothing is cut off: delivered, "
+      "archived, duration <= max_duration seconds (default 60), and — unless "
+      "exclude_rev is false — no 'rev' coaching trigger in the message. Newest first. "
+      "Rows are compact: clip_id, sender (exact PSN online ID), when (ISO 8601, UTC), "
+      "duration_seconds, message, game. Page with offset until has_more is false; "
+      "`total` is the full eligible count. Deduping and skipping already-posted or "
+      "coach-reviewed clips is the caller's job.",
+      {"type": "object",
+       "properties": {
+           "limit": {"type": "integer", "description": "1-20, default 20."},
+           "offset": {"type": "integer", "description": "Rows to skip, default 0. Use next_offset."},
+           "max_duration": {"type": "number", "description": "Seconds, 1-600, default 60."},
+           "exclude_rev": {"type": "boolean", "description": "Drop 'rev' coaching clips. Default true."},
+       },
+       "required": []})
+def _eligible_clips(limit: int = 20, offset: int = 0, max_duration: float = 60,
+                    exclude_rev: bool = True) -> dict:
+    from datetime import datetime, timezone
+    import clips as clips_mod
+    limit = max(1, min(int(limit or 20), 20))
+    offset = max(0, int(offset or 0))
+    max_duration = max(1.0, min(float(max_duration or 60), 600.0))
+    rows, total = clips_mod.list_eligible(limit=limit, offset=offset,
+                                          max_duration=max_duration,
+                                          exclude_rev=exclude_rev is not False)
+    out = []
+    for r in rows:
+        when = r.get("psn_created_at") or r.get("discovered_at")
+        out.append({
+            "clip_id": r.get("message_uid"),
+            "sender": r.get("sender_online_id"),
+            "when": datetime.fromtimestamp(when, tz=timezone.utc).isoformat(timespec="seconds") if when else None,
+            "duration_seconds": round(r["duration_seconds"], 2) if r.get("duration_seconds") is not None else None,
+            "message": ((r.get("body") or "")[:120]) or None,
+            "game": r.get("game_name"),
+        })
+    nxt = offset + len(out)
+    return {"clips": out, "total": total, "offset": offset,
+            "has_more": nxt < total, "next_offset": nxt if nxt < total else None}
+
+
 @tool("clip_media_url",
       "Given a clip_id from recent_clips, return the HTTP URL that serves that "
       "clip's MP4 bytes, plus its size and duration. The URL needs the same bearer "
@@ -1638,6 +1680,27 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
             **({"notify_note": note} if note else {})}
 
 
+_IG_PERMALINK = re.compile(
+    r"^https://(?:www\.)?instagram\.com/(reel|reels|p)/([A-Za-z0-9_-]{5,40})/?(?:\?.*)?$")
+_REEL_TYPES = ("fire", "fail", "daily", "goop", "review")
+
+
+def _ig_permalink(url: str) -> tuple[str | None, str | None]:
+    """Canonical shortcode permalink for `url`, or (None, reason).
+
+    A numeric media ID in the path (…/reel/17894952330419326/) looks like a link
+    but does not resolve to the post, so it is refused rather than stored.
+    """
+    m = _IG_PERMALINK.match((url or "").strip())
+    if not m:
+        return None, "must be an Instagram permalink like https://www.instagram.com/reel/<shortcode>/"
+    kind, code = m.groups()
+    if code.isdigit():
+        return None, ("that is a numeric media ID, not a shortcode; resolve the real permalink "
+                      "(https://www.instagram.com/reel/<shortcode>/) and pass the ID as instagram_media_id")
+    return f"https://www.instagram.com/{'p' if kind == 'p' else 'reel'}/{code}/", None
+
+
 @write_tool(
     "ig_post_record",
     "Submit an Instagram post result for a fire-emoji clip. Call this after you have "
@@ -1648,26 +1711,31 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
      "properties": {
          "clip_id": {"type": "string", "description": "Clip message_uid from recent_clips."},
          "ig_url":  {"type": "string",
-                     "description": "Full Instagram post URL (https://www.instagram.com/...)."},
+                     "description": "Shortcode permalink, https://www.instagram.com/reel/<shortcode>/. "
+                                    "A URL built from the numeric media ID is rejected."},
+         "instagram_media_id": {"type": "string",
+                                "description": "Numeric Instagram media ID (optional, recommended); "
+                                               "stored alongside the permalink."},
          "caption": {"type": "string",
                      "description": "Caption used on Instagram, for reference (optional)."},
      },
      "required": ["clip_id", "ig_url"]})
 def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
-                    caption: str = "") -> dict:
+                    caption: str = "", instagram_media_id: str = "") -> dict:
     """Record an IG post and notify the group. Muse reports; the platform composes and sends."""
     import clips as clips_mod
     import ig_posts as ig_mod
     import mcp_oauth
 
     clip_id = (clip_id or "").strip()
-    ig_url  = (ig_url or "").strip()
     if not clip_id:
         return {"ok": False, "error": "clip_id is required"}
-    if not ig_url:
-        return {"ok": False, "error": "ig_url is required"}
-    if not ig_url.startswith("https://"):
-        return {"ok": False, "error": "ig_url must be an https:// URL"}
+    ig_url, bad = _ig_permalink(ig_url)
+    if bad:
+        return {"ok": False, "error": f"ig_url {bad}"}
+    instagram_media_id = (instagram_media_id or "").strip()
+    if instagram_media_id and not instagram_media_id.isdigit():
+        return {"ok": False, "error": "instagram_media_id must be the numeric media ID"}
 
     zid = caller.get("zitadel_id", "")
     if not mcp_oauth.within_rate_limit(zid, "ig_post_record", 30, 3600):
@@ -1686,7 +1754,8 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
         post_id = ig_mod.claim_for_post(clip_id, psn_user,
                                         _zid_for_psn(psn_user) if psn_user else "")
 
-    ig_mod.submit_post(post_id, ig_url)
+    ig_mod.submit_post(post_id, ig_url, instagram_media_id=instagram_media_id,
+                       caption=(caption or "").strip()[:2200])
     mcp_oauth.audit_write(zid, "ig_post_record",
                           f'{{"clip_id": "{clip_id}"}}', "ok")
 
@@ -1698,6 +1767,7 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
             ig_mod.release_notification(post_id)
 
     return {"ok": True, "post_id": post_id, "ig_url": ig_url,
+            **({"instagram_media_id": instagram_media_id} if instagram_media_id else {}),
             "group_notified": notified,
             **({"notify_note": note} if note else {})}
 
@@ -1708,14 +1778,18 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
     "Stores the post URL and media ID, then fans out the IG link to the WhatsApp "
     "group. Clips queued before this tool existed flush automatically — just call "
     "it with their clip_id. `sender` overrides the PSN user on the clip record "
-    "when the watcher knows it more precisely. Rate limit: 30 per hour.",
+    "when the watcher knows it more precisely. A clip is shared to the group once; "
+    "a retry returns already_shared. If that share went out with a wrong link, call "
+    "again with resend_correction=true and the correct permalink: the group gets the "
+    "same fixed message once more, and only once per clip, ever. Rate limit: 30 per hour.",
     {"type": "object",
      "properties": {
          "clip_id":             {"type": "string",
                                  "description": "Clip message_uid from recent_clips."},
          "instagram_url":       {"type": "string",
-                                 "description": "Full Instagram post URL "
-                                                "(https://www.instagram.com/p/...)."},
+                                 "description": "Shortcode permalink, "
+                                                "https://www.instagram.com/reel/<shortcode>/. "
+                                                "A URL built from the numeric media ID is rejected."},
          "instagram_media_id":  {"type": "string",
                                  "description": "Instagram media ID returned by the "
                                                 "Graph API (optional but recommended "
@@ -1726,8 +1800,14 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
                                  "description": "PSN online ID of the clip sender. "
                                                 "Falls back to clips.sender_online_id "
                                                 "when omitted."},
+         "resend_correction":   {"type": "boolean",
+                                 "description": "Re-share a clip whose first share-back carried a "
+                                                "wrong link. One time per clip; needs a prior share."},
          "reel_type":           {"type": "string",
-                                 "description": "fire | fail | daily. "
+                                 "enum": list(_REEL_TYPES),
+                                 "description": "fire | fail | daily | goop | review. "
+                                                "'goop' (loot showcase) and 'review' (Reel Review "
+                                                "override renders) use the same sender template as 'fire'. "
                                                 "'daily' sends a generic '@all Daily highlights have dropped! 🔥' "
                                                 "with no sender attribution — use this for the daily highlights reel. "
                                                 "'fire' and 'fail' keep the sender's name in the message. "
@@ -1736,20 +1816,25 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
      "required": ["clip_id", "instagram_url"]})
 def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
                    instagram_media_id: str = "", caption: str = "",
-                   sender: str = "", reel_type: str = "fire") -> dict:
+                   sender: str = "", reel_type: str = "fire",
+                   resend_correction: bool = False) -> dict:
     """Ingest an IG post result and fan out to WhatsApp. The platform composes the message."""
     import clips as clips_mod
     import ig_posts as ig_mod
     import mcp_oauth
 
-    clip_id       = (clip_id or "").strip()
-    instagram_url = (instagram_url or "").strip()
+    clip_id = (clip_id or "").strip()
     if not clip_id:
         return {"ok": False, "error": "clip_id is required"}
-    if not instagram_url:
-        return {"ok": False, "error": "instagram_url is required"}
-    if not instagram_url.startswith("https://"):
-        return {"ok": False, "error": "instagram_url must be an https:// URL"}
+    instagram_url, bad = _ig_permalink(instagram_url)
+    if bad:
+        return {"ok": False, "error": f"instagram_url {bad}"}
+    instagram_media_id = (instagram_media_id or "").strip()
+    if instagram_media_id and not instagram_media_id.isdigit():
+        return {"ok": False, "error": "instagram_media_id must be the numeric media ID"}
+    reel_type = (reel_type or "fire").strip().lower()
+    if reel_type not in _REEL_TYPES:
+        return {"ok": False, "error": f"reel_type must be one of {', '.join(_REEL_TYPES)}"}
 
     zid = caller.get("zitadel_id", "")
     if not mcp_oauth.within_rate_limit(zid, "ig_reel_share", 30, 3600):
@@ -1778,6 +1863,20 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     # retries can't both slip through, but we need to distinguish "already done"
     # from "send failed" in the response so the watcher doesn't keep retrying.
     post = ig_mod.get(post_id)
+    if resend_correction is True:
+        if not (post and post.get("notified_at")):
+            return {"ok": False, "error": "resend_correction needs a clip that was already shared"}
+        if not ig_mod.claim_reshare(post_id):
+            return {"ok": False, "error": "this clip's corrected re-share was already used"}
+        sent, note = _notify_ig_posted(psn_user, instagram_url, caller, post, reel_type=reel_type)
+        if not sent:
+            ig_mod.release_reshare(post_id)
+        mcp_oauth.audit_write(zid, "ig_reel_share",
+                              f'{{"clip_id": "{clip_id}", "resend_correction": true}}',
+                              "ok" if sent else "error")
+        return {"ok": sent, "post_id": post_id, "instagram_url": instagram_url,
+                "group_notified": sent, "resent_correction": sent,
+                **({"notify_note": note} if note else {})}
     if post and post.get("notified_at"):
         return {"ok": True, "post_id": post_id, "instagram_url": instagram_url,
                 **({"instagram_media_id": instagram_media_id} if instagram_media_id else {}),
@@ -1787,8 +1886,7 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     note = None
     if ig_mod.claim_notification(post_id):
         notified, note = _notify_ig_posted(psn_user, instagram_url, caller,
-                                           ig_mod.get(post_id),
-                                           reel_type=(reel_type or "fire").strip().lower())
+                                           ig_mod.get(post_id), reel_type=reel_type)
         if not notified:
             ig_mod.release_notification(post_id)
 
