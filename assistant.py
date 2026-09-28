@@ -1681,7 +1681,7 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
 
 
 _IG_PERMALINK = re.compile(
-    r"^https://(?:www\.)?instagram\.com/(reel|reels|p)/([A-Za-z0-9_-]{5,40})/?(?:\?.*)?$")
+    r"^https://(?:www\.)?instagram\.com/(reel|reels|p)/([A-Za-z0-9_-]{5,64})/?(?:\?.*)?$")
 _REEL_TYPES = ("fire", "fail", "daily", "goop", "review")
 
 
