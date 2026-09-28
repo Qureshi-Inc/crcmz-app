@@ -74,6 +74,9 @@ STORES: dict[str, list[str] | None] = {
                                        # else's business.
     "/data/psn_tokens.json": None,     # live PSN access/refresh tokens. Must never
                                        # be readable through a tool.
+    "/data/feedback_digests": None,    # weekly aggregate markdown, by game with no
+                                       # player identities; Muse pulls the files over
+                                       # SSH, so there is nothing for a tool to add.
     "/data/psn_ai_seen.json": None,    # dedupe cursor, not content.
     "/data/mcp_calls.db": None,        # the MCP call log itself. Operational
                                        # telemetry, not squad data, and exposing

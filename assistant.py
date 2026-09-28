@@ -1683,6 +1683,7 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
 _IG_PERMALINK = re.compile(
     r"^https://(?:www\.)?instagram\.com/(reel|reels|p)/([A-Za-z0-9_-]{5,64})/?(?:\?.*)?$")
 _REEL_TYPES = ("fire", "fail", "daily", "goop", "review")
+_DAILY_CAPTION = "Daily highlights have dropped! \U0001f525"
 
 
 def _clear_reel_force_post(clip_id: str) -> None:
@@ -1843,6 +1844,10 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     if instagram_media_id and not instagram_media_id.isdigit():
         return {"ok": False, "error": "instagram_media_id must be the numeric media ID"}
     reel_type = (reel_type or "fire").strip().lower()
+    # The daily scheduler's contract is this exact caption; a multi-sender montage
+    # must never be announced as one player's reel.
+    if (caption or "").strip() == _DAILY_CAPTION:
+        reel_type = "daily"
     if reel_type not in _REEL_TYPES:
         return {"ok": False, "error": f"reel_type must be one of {', '.join(_REEL_TYPES)}"}
 

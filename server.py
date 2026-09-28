@@ -5935,6 +5935,30 @@ def _heal_stale_archive_flags() -> None:
 _threading.Thread(target=_heal_stale_archive_flags, name="archive-flag-heal",
                   daemon=True).start()
 
+
+def _feedback_digest_loop() -> None:
+    """Write the weekly coaching feedback digest Muse pulls on Mondays ~09:11 PT.
+
+    Due from Monday 13:00 UTC, which is before 09:00 PT in both summer and winter
+    time, and caught up later in the week if the app was down then. The digest is
+    named for its ISO week, so the file existing is the "already ran" marker and
+    survives restarts and redeploys.
+    """
+    import datetime as _dt
+    import coach_digest
+    while True:
+        try:
+            now = _dt.datetime.now(_dt.timezone.utc)
+            due = now.weekday() > 0 or now.hour >= 13
+            if due and not (coach_digest._OUTPUT_DIR / f"{now.strftime('%G-W%V')}.md").exists():
+                logger.info("feedback digest: wrote %s", coach_digest.run())
+        except Exception as exc:  # noqa: BLE001 - the loop must outlive one bad run
+            logger.error("feedback digest failed: %s", exc)
+        _time.sleep(1800)
+
+
+_threading.Thread(target=_feedback_digest_loop, name="feedback-digest", daemon=True).start()
+
 _video_seen: set[str] = set()
 _video_initialized: bool = False
 # Pending console-style triggers: sender -> {text, ts, expires_at}.

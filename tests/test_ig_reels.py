@@ -119,6 +119,20 @@ def test_reshare_needs_a_prior_share_and_is_per_clip():
     assert r["ok"], "another clip's correction must be unaffected by c-daily's"
 
 
+def test_daily_caption_is_a_generic_announcement():
+    r = call("ig_reel_share", clip_id="c-dailycap", instagram_url="https://www.instagram.com/reel/DailyCap01/",
+             caption="Daily highlights have dropped! \U0001f525")
+    assert r["ok"] and r["group_notified"], r
+    msg = SENT[-1]["message"]
+    assert "@all" in msg and "Daily highlights have dropped! \U0001f525" in msg, msg
+    assert "ASamad89" not in msg and "dropped on Instagram" not in msg, msg
+    assert SENT[-1]["mentionAll"] is True
+    r = call("ig_reel_share", clip_id="c-firecap", instagram_url="https://www.instagram.com/reel/FireCap001/",
+             caption="clean shot", reel_type="fire")
+    msg = SENT[-1]["message"]
+    assert "@all" in msg and "*ASamad89*" in msg and "@everyone" not in msg, msg
+
+
 def test_recording_a_post_clears_that_clips_force_post():
     CLEARED.clear()
     r = call("ig_post_record", clip_id="15#force1", ig_url="https://www.instagram.com/reel/Forced1234/")
