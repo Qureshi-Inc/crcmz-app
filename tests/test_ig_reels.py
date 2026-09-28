@@ -18,11 +18,16 @@ os.environ["IG_POSTS_DB"] = os.path.join(_tmp, "ig_posts.db")
 os.environ.setdefault("SESSION_SECRET", "test-secret")
 
 SENT = []
+CLEARED = []
 
 
 class _Bridge(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
-        SENT.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path.startswith("/api/clips/"):
+            CLEARED.append((self.path, body, self.headers.get("X-App-Token")))
+        else:
+            SENT.append(body)
         self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
 
     def log_message(self, *a):
@@ -32,6 +37,9 @@ class _Bridge(BaseHTTPRequestHandler):
 _srv = HTTPServer(("127.0.0.1", 0), _Bridge)
 threading.Thread(target=_srv.serve_forever, daemon=True).start()
 os.environ["WA_BRIDGE_URL"] = f"http://127.0.0.1:{_srv.server_port}"
+# The stub also plays reel-review, so force-post clearing hits a real HTTP path.
+os.environ["REEL_REVIEW_URL"] = f"http://127.0.0.1:{_srv.server_port}"
+os.environ["REEL_REVIEW_TOKEN"] = "rr-test-token"
 os.environ["WA_GOOPERS_JID"] = "group@g.us"
 
 import assistant  # noqa: E402
@@ -109,6 +117,15 @@ def test_reshare_needs_a_prior_share_and_is_per_clip():
     r = call("ig_reel_share", clip_id="c-goop", instagram_url="https://www.instagram.com/reel/AbCdE12345/",
              reel_type="goop", resend_correction=True)
     assert r["ok"], "another clip's correction must be unaffected by c-daily's"
+
+
+def test_recording_a_post_clears_that_clips_force_post():
+    CLEARED.clear()
+    r = call("ig_post_record", clip_id="15#force1", ig_url="https://www.instagram.com/reel/Forced1234/")
+    assert r["ok"], r
+    assert CLEARED == [("/api/clips/15%23force1/override/force-post", {"force": False}, "rr-test-token")], CLEARED
+    call("ig_reel_share", clip_id="15#force2", instagram_url="https://www.instagram.com/reel/Forced5678/")
+    assert CLEARED[-1][0] == "/api/clips/15%23force2/override/force-post", CLEARED
 
 
 def test_eligible_clips_pages_through_everything():

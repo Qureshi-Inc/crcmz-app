@@ -8133,6 +8133,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     background:rgba(255,255,255,.04); color:var(--txt); font:600 16px "Rajdhani",sans-serif; cursor:pointer;
     display:inline-flex; align-items:center; justify-content:center; gap:6px; text-decoration:none; flex:none; }
   .rrs-ic.on { border-color:rgba(255,64,64,.75); background:rgba(255,64,64,.16); color:#ffb4b4; }
+  [data-a=force].on { border-color:var(--gold); background:rgba(255,210,74,.14); color:var(--gold); }
   .rrs-title { flex:1; min-width:0; display:flex; flex-direction:column; line-height:1.15; }
   .rrs-title b { font-family:"Orbitron",sans-serif; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .rrs-title span { font-size:12px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -11385,7 +11386,7 @@ setInterval(loadPipeline, 30000);
       zooms: Array.isArray(ov.zooms) ? ov.zooms.map(z => ({ ...z })) : [],
       subsEdited,
       subs: subsEdited ? ov.subtitles.map(s => ({ start: +s.start, end: +s.end, text: s.text || s.subtitle_text || '' })) : aiSubs(a),
-      vetoed: !!d.vetoed, approved: !!d.override,
+      vetoed: !!d.vetoed, approved: !!d.override, forced: !!ov.force_post,
       rid: d.latest_render ? d.latest_render.id : null, traj: null, t0: null,
       view: 'live', tool: isDesk() ? 'trim' : null, selZoom: -1, selSub: -1, dirty: false,
     });
@@ -11402,6 +11403,7 @@ setInterval(loadPipeline, 30000);
     <span>${ts ? fmtAgo(ts) + ' · ' : ''}${esc(clip.game || 'unknown game')}${clip.message ? ' · ' + esc(clip.message) : ''}</span></div>
   <button class="rrs-ic" data-a="veto"></button>
   <button class="rrs-ic rrs-mob" data-a="render" aria-label="Render">⚙<span>Render</span></button>
+  <button class="rrs-ic rrs-mob" data-a="force" hidden>🚀</button>
   <button class="rrs-ic rrs-mob rrs-go" data-a="save" aria-label="Save and approve">✅<span>Save</span></button>
 </header>
 <div class="rrs-body">
@@ -11445,6 +11447,7 @@ setInterval(loadPipeline, 30000);
     <div class="rrs-actions">
       <button class="rr-btn" data-a="render">⚙ Render</button>
       <button class="rr-btn rr-primary" data-a="save">✅ Save &amp; approve</button>
+      <button class="rr-btn" data-a="force" hidden></button>
     </div>
   </aside>
 </div>`;
@@ -11578,6 +11581,13 @@ setInterval(loadPipeline, 30000);
   }
 
   function syncTop() {
+    qa('[data-a=force]', E.el).forEach(f => {
+      f.hidden = !E.approved;
+      f.classList.toggle('on', E.forced);
+      f.title = E.forced ? 'Force post is on — tap to cancel' : 'Force post — post again past the once-per-clip rule';
+      f.setAttribute('aria-label', f.title);
+      if (!f.classList.contains('rrs-mob')) f.textContent = E.forced ? '🚀 Forced · undo' : '🚀 Force post';
+    });
     const b = q('[data-a=veto]', E.el);
     b.classList.toggle('on', E.vetoed);
     b.textContent = E.vetoed ? '🛑 Vetoed' : '🛑';
@@ -11787,6 +11797,7 @@ setInterval(loadPipeline, 30000);
         t.textContent = m ? '🔇' : '🔊'; return;
       }
       case 'veto': return toggleVeto();
+      case 'force': return toggleForce();
       case 'render': return startRender();
       case 'save': return save();
       case 'set-ws': E.ws = r2(clamp(ts, 0, E.we - 0.5)); break;
@@ -11936,10 +11947,24 @@ setInterval(loadPipeline, 30000);
     const body = editBody();
     try {
       await api('/clips/' + enc(E.id) + '/override', { method: 'POST', body: JSON.stringify(body) });
-      E.dirty = false; E.approved = true;
+      E.dirty = false; E.approved = true; E.forced = false;
       patchClip(E.id, { override: body });
+      syncTop();
       status('✓ Saved & approved — Muse posts it on its next run.');
     } catch (err) { status('Could not save: ' + err.message); }
+  }
+
+  async function toggleForce() {
+    if (!E.forced) {
+      if (E.dirty) return status('Save your edits first — Force post uses the saved version.');
+      if (!confirm('Force-post this clip? Muse will post the saved edit even if this clip was already posted. A veto still stops it.')) return;
+    }
+    try {
+      await api('/clips/' + enc(E.id) + '/force-post', { method: 'POST', body: JSON.stringify({ force: !E.forced }) });
+      E.forced = !E.forced;
+      syncTop();
+      status(E.forced ? '🚀 Force post on — Muse posts it on its next run.' : 'Force post cancelled.');
+    } catch (err) { status('Could not update force post: ' + err.message); }
   }
 
   async function toggleVeto() {

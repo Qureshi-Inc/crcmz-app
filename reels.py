@@ -195,6 +195,17 @@ def build_router(
         payload = {**_edit(await request.json()), "by": actor(me)}
         return _json_or_raise(await _rr("POST", f"/api/clips/{_q(clip_id)}/override", json=payload))
 
+    @router.post("/clips/{clip_id:path}/force-post")
+    async def clip_force_post(clip_id: str, request: Request):
+        me = await caller(request)
+        await owned_clip(me, clip_id)
+        try:
+            force = (await request.json() or {}).get("force", True) is not False
+        except ValueError:
+            force = True
+        return _json_or_raise(await _rr("POST", f"/api/clips/{_q(clip_id)}/override/force-post",
+                                        json={"force": force}))
+
     @router.get("/clips/{clip_id:path}")
     async def clip_detail(clip_id: str, request: Request):
         me = await caller(request)
@@ -218,6 +229,23 @@ def build_router(
         return _json_or_raise(await _rr("GET", f"/api/renders/{rid}/trajectory"))
 
     return router
+
+
+def clear_force_post(clip_id: str) -> bool:
+    """Drop a clip's force-post flag once its post is recorded, so it fires once.
+
+    Called from the IG record tools (sync context). Best effort: a clip with no
+    saved override, or reel-review being down, must not fail the post record.
+    """
+    if not REEL_REVIEW_TOKEN or not clip_id:
+        return False
+    try:
+        r = httpx.post(f"{REEL_REVIEW_URL}/api/clips/{_q(clip_id)}/override/force-post",
+                       json={"force": False}, headers={"X-App-Token": REEL_REVIEW_TOKEN}, timeout=5)
+        return r.status_code == 200
+    except httpx.HTTPError as e:
+        logger.warning("reels: clearing force_post for %s failed: %s", clip_id, e)
+        return False
 
 
 def _edit(body: dict) -> dict:

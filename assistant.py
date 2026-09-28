@@ -1685,6 +1685,15 @@ _IG_PERMALINK = re.compile(
 _REEL_TYPES = ("fire", "fail", "daily", "goop", "review")
 
 
+def _clear_reel_force_post(clip_id: str) -> None:
+    """A recorded post consumes Reel Review's force-post flag for that clip."""
+    try:
+        import reels
+        reels.clear_force_post(clip_id)
+    except Exception as e:  # noqa: BLE001 - never fail the post record over this
+        logger.warning("ig: could not clear force_post for %s: %s", clip_id, e)
+
+
 def _ig_permalink(url: str) -> tuple[str | None, str | None]:
     """Canonical shortcode permalink for `url`, or (None, reason).
 
@@ -1756,6 +1765,7 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
 
     ig_mod.submit_post(post_id, ig_url, instagram_media_id=instagram_media_id,
                        caption=(caption or "").strip()[:2200])
+    _clear_reel_force_post(clip_id)
     mcp_oauth.audit_write(zid, "ig_post_record",
                           f'{{"clip_id": "{clip_id}"}}', "ok")
 
@@ -1856,6 +1866,7 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     ig_mod.submit_post(post_id, instagram_url,
                        instagram_media_id=instagram_media_id,
                        caption=caption)
+    _clear_reel_force_post(clip_id)
     mcp_oauth.audit_write(zid, "ig_reel_share", f'{{"clip_id": "{clip_id}"}}', "ok")
 
     # Dedupe: if notified_at is already set this is a watcher retry — return ok
