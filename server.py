@@ -5827,6 +5827,7 @@ import memory_store as _mem
 import coach as _coach
 import ig_posts as _ig
 import agent_tasks as _agent_tasks
+import month_montage as _month_montage
 import wa_reactions as _wa_react
 import app_events as _app_events
 import watchparty_events as _watchparty_events
@@ -5841,6 +5842,7 @@ _mm_tokens.init()
 _coach.init()
 _ig.init()
 _agent_tasks.init()
+_month_montage.init()
 _wa_react.init()
 _mcp_audit.init()
 _app_events.init()

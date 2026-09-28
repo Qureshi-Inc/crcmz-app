@@ -699,7 +699,8 @@ def _clips(limit: int = 10, sender: str = "", month: str = "") -> Any:
       "archived, duration <= max_duration seconds (default 60), and — unless "
       "exclude_rev is false — no 'rev' coaching trigger in the message. Newest first. "
       "Rows are compact: clip_id, sender (exact PSN online ID), when (ISO 8601, UTC), "
-      "duration_seconds, message, game. Page with offset until has_more is false; "
+      "duration_seconds, message, game, sha256, file_size_bytes (an identical "
+      "sha256 means a byte-identical twin). Page with offset until has_more is false; "
       "`total` is the full eligible count. Deduping and skipping already-posted or "
       "coach-reviewed clips is the caller's job.",
       {"type": "object",
@@ -730,7 +731,13 @@ def _eligible_clips(limit: int = 20, offset: int = 0, max_duration: float = 60,
             "duration_seconds": round(r["duration_seconds"], 2) if r.get("duration_seconds") is not None else None,
             "message": ((r.get("body") or "")[:120]) or None,
             "game": r.get("game_name"),
+            "sha256": r.get("sha256"),
+            "file_size_bytes": r.get("file_size"),
         })
+    # Whole rows only: a 20-row page with hashes sits near the tool budget, so drop
+    # rows off the end until it fits and let next_offset pick them up.
+    while len(out) > 1 and len(json.dumps({"clips": out}, default=str)) > MAX_TOOL_CHARS - 200:
+        out.pop()
     nxt = offset + len(out)
     return {"clips": out, "total": total, "offset": offset,
             "has_more": nxt < total, "next_offset": nxt if nxt < total else None}
@@ -747,16 +754,20 @@ def _eligible_clips(limit: int = 20, offset: int = 0, max_duration: float = 60,
                                   "description": "message_uid from recent_clips."}},
        "required": ["clip_id"]})
 def _clip_media_url(clip_id: str = "") -> dict:
-    import urllib.parse
     import clips as clips_mod
     clip_id = (clip_id or "").strip()
     if not clip_id:
         return {"error": "clip_id is required — take it from recent_clips."}
-    row = clips_mod.get(clip_id)
+    return _clip_media(clip_id, clips_mod.get(clip_id))
+
+
+def _clip_media(clip_id: str, row: dict | None) -> dict:
+    import urllib.parse
     if not row:
-        return {"error": "no clip with that clip_id"}
+        return {"clip_id": clip_id, "error": "no clip with that clip_id"}
     if row.get("archive_status") != "archived" or not row.get("storage_key_original"):
-        return {"error": "clip is not archived, so no media is stored for it",
+        return {"clip_id": clip_id,
+                "error": "clip is not archived, so no media is stored for it",
                 "status": row.get("status"),
                 "archive_status": row.get("archive_status")}
     host = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
@@ -767,6 +778,8 @@ def _clip_media_url(clip_id: str = "") -> dict:
         "auth": "send the same Authorization: Bearer token used for MCP",
         "content_type": "video/mp4",
         "file_size": row.get("file_size"),
+        "file_size_bytes": row.get("file_size"),
+        "sha256": row.get("sha256"),
         "duration_seconds": row.get("duration_seconds"),
         "sender": row.get("sender_online_id"),
         "message": (row.get("body") or "") or None,
@@ -774,6 +787,153 @@ def _clip_media_url(clip_id: str = "") -> dict:
         # route, so a client must not plan on resuming a partial fetch.
         "supports_range": False,
     }
+
+
+@tool("clip_media_urls",
+      "Batch clip_media_url: MP4 URLs for up to 20 clip_ids in one call, in the "
+      "order given. Each entry has clip_id, url, sha256, file_size_bytes (an "
+      "identical sha256 means a byte-identical twin), duration_seconds and sender; "
+      "a clip with no media gets an `error` entry instead of a url, so check each "
+      "one. URLs need the same bearer token as this MCP connection and are "
+      "whole-body downloads (no Range).",
+      {"type": "object",
+       "properties": {"clip_ids": {"type": "array", "items": {"type": "string"},
+                                   "description": "1-20 clip ids (message_uid)."}},
+       "required": ["clip_ids"]})
+def _clip_media_urls(clip_ids: list | None = None) -> dict:
+    import clips as clips_mod
+    ids = [str(c).strip() for c in (clip_ids or []) if str(c).strip()]
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return {"error": "clip_ids is required — take them from month_clips or eligible_clips."}
+    if len(ids) > 20:
+        return {"error": "at most 20 clip_ids per call; split the rest", "given": len(ids)}
+    keep = ("clip_id", "url", "sha256", "file_size_bytes", "duration_seconds", "sender",
+            "error", "archive_status")
+    items = [{k: v for k, v in _clip_media(cid, clips_mod.get(cid)).items() if k in keep}
+             for cid in ids]
+    return {"clips": items, "count": len(items),
+            "with_media": sum(1 for i in items if "url" in i),
+            "auth": "send the same Authorization: Bearer token used for MCP",
+            "content_type": "video/mp4", "supports_range": False}
+
+
+# ── Month-end montage ─────────────────────────────────────────────────────────
+# month_montage.py owns the exclusion rules; these are thin views onto it.
+
+_MONTH_TZ_PROPS = {
+    "month": {"type": "string", "description": "YYYY-MM, e.g. 2026-09."},
+    "timezone": {"type": "string",
+                 "description": "IANA zone whose local midnights bound the month. "
+                                "Default America/Los_Angeles (MONTAGE_TIMEZONE)."},
+}
+
+
+@tool("month_clips",
+      "EVERY clip captured in a month — not just highlight-eligible ones — oldest "
+      "first, paginated (page with offset until has_more is false). Each row has "
+      "`eligible` for a month-end montage and, when false, `excluded_reasons` "
+      "[{code, detail}]: vetoed (Reel Review veto, 🛑 WhatsApp reaction, or twin of "
+      "a vetoed clip), rev_coaching, twin (byte-identical to an earlier clip this "
+      "month; `twin_of` names the copy that is kept), used_in_montage (already in "
+      "another month's montage_records), not_archived, veto_list_unavailable (the "
+      "Reel Review veto list could not be read, so nothing is eligible). Rows also "
+      "carry sha256, file_size_bytes, category (win = 🔥, fail = 'fail'/😂/🤣, "
+      "untagged; goop has no trigger and is never inferred) and pipeline_state "
+      "(posted, fire, daily_eligible…). Posted clips stay eligible: a posted "
+      "highlight belongs in the montage. `eligible_count` counts the whole month.",
+      {"type": "object",
+       "properties": {
+           **_MONTH_TZ_PROPS,
+           "limit": {"type": "integer", "description": "1-50, default 50."},
+           "offset": {"type": "integer", "description": "Rows to skip. Use next_offset."},
+           "eligible_only": {"type": "boolean", "description": "Only eligible rows. Default false."},
+       },
+       "required": ["month"]})
+def _month_clips(month: str = "", timezone: str = "", limit: int = 50,  # noqa: A002
+                 offset: int = 0, eligible_only: bool = False) -> dict:
+    import month_montage
+    offset = max(0, int(offset or 0))
+    try:
+        page = month_montage.month_clips(
+            month, timezone, limit=max(1, min(int(limit or 50), 50)),
+            offset=offset, eligible_only=eligible_only is True)
+    except ValueError as e:
+        return {"error": str(e)}
+    # Whole rows only: drop rows off the end until the page fits the tool budget,
+    # and point next_offset at the first row not returned.
+    while len(page["clips"]) > 1 and len(json.dumps(page, default=str)) > MAX_TOOL_CHARS - 100:
+        page["clips"].pop()
+    nxt = offset + len(page["clips"])
+    page["has_more"] = nxt < page["total"]
+    page["next_offset"] = nxt if page["has_more"] else None
+    return page
+
+
+@tool("montage_proposal",
+      "Propose a balanced month-end montage selection from the month's eligible "
+      "clips (same rules as month_clips). Quotas split target_count across "
+      "win/fail/goop by `mix` weights (default equal; a category with no clips "
+      "gets no quota), untagged clips fill the rest, and no sender gets more than "
+      "max_sender_share of target_count. Pass `labels` {clip_id: win|fail|goop|"
+      "untagged} to override the trigger-based category — goop can only come from "
+      "here. `shortfalls` reports quotas that could not be met; the cap is never "
+      "broken to meet them. Returns the pick in chronological order with per-sender "
+      "and per-category counts; `selected` rows are arrays in `selected_columns` "
+      "order. A proposal only — record the final cut with montage_record.",
+      {"type": "object",
+       "properties": {
+           **_MONTH_TZ_PROPS,
+           "target_count": {"type": "integer", "description": "1-60 clips, default 30."},
+           "max_sender_share": {"type": "number",
+                                "description": "0.05-1, default 0.35 (35% of target_count)."},
+           "mix": {"type": "object",
+                   "description": "Relative weights, e.g. {\"win\": 2, \"fail\": 1, \"goop\": 1}."},
+           "labels": {"type": "object",
+                      "description": "clip_id -> win | fail | goop | untagged."},
+       },
+       "required": ["month"]})
+def _montage_proposal(month: str = "", timezone: str = "", target_count: int = 30,  # noqa: A002
+                      max_sender_share: float = 0.35, mix: dict | None = None,
+                      labels: dict | None = None) -> dict:
+    import month_montage
+    try:
+        out = month_montage.propose(
+            month, timezone, target_count=max(1, min(int(target_count or 30), 60)),
+            max_sender_share=max(0.05, min(float(max_sender_share or 0.35), 1.0)),
+            mix=mix if isinstance(mix, dict) else None,
+            labels=labels if isinstance(labels, dict) else None)
+    except ValueError as e:
+        return {"error": str(e)}
+    # Columnar so a full 60-clip pick fits the tool budget; month_clips has the rest.
+    cols = ("clip_id", "sender", "when", "duration_seconds", "category")
+    out["selected_columns"] = list(cols)
+    out["selected"] = [[c[k] for k in cols] for c in out["selected"]]
+    return out
+
+
+@tool("montage_records",
+      "Published month-end montages: for each month, the selected clip_ids and "
+      "the final Instagram and TikTok URLs (null until recorded), plus notes and "
+      "who recorded it. Pass month (YYYY-MM) for one record with its clip_ids; "
+      "omit it for the latest records, newest month first, with clip_count "
+      "instead of the ids. Clips listed here count as used: "
+      "month_clips excludes them (and their byte-identical twins) from other "
+      "months.",
+      {"type": "object",
+       "properties": {"month": {"type": "string", "description": "YYYY-MM. Omit for all."},
+                      "limit": {"type": "integer", "description": "1-24, default 12."}},
+       "required": []})
+def _montage_records(month: str = "", limit: int = 12) -> Any:
+    import month_montage
+    month_montage.init()
+    if (month or "").strip():
+        rec = month_montage.get_record(month.strip())
+        return rec or {"month": month.strip(), "record": None}
+    recs = month_montage.list_records(max(1, min(int(limit or 12), 24)))
+    for r in recs:
+        r["clip_count"] = len(r.pop("clip_ids"))
+    return recs
 
 
 @tool("clip_storage_status",
@@ -2087,6 +2247,84 @@ def _task_release(caller: dict, task_id: str = "", note: str = "") -> dict:
                               f'{{"task_id": "{task_id}"}}', "ok")
     return {"ok": ok,
             **({"error": "task not found or not in_progress"} if not ok else {})}
+
+
+@write_tool(
+    "montage_record",
+    "Save or update the record of a month's published montage: the selected "
+    "clip_ids and the final Instagram and TikTok URLs. One record per month; "
+    "fields you omit keep their saved value, so you can record the selection "
+    "first and add each URL once it is live. A selection is refused whole, with "
+    "`problems` per clip, if any clip is vetoed (Reel Review or 🛑), a rev "
+    "coaching clip, not archived, not captured in that month, already used in "
+    "another month's montage, or byte-identical to another selected clip — and "
+    "refused outright if the Reel Review veto list cannot be read. Saves a "
+    "record only; nothing is posted. Rate limit: 30 per hour.",
+    {"type": "object",
+     "properties": {
+         "month":      {"type": "string", "description": "YYYY-MM."},
+         "clip_ids":   {"type": "array", "items": {"type": "string"},
+                        "description": "Clips in the final cut, 1-150. Omit to keep the saved list."},
+         "ig_url":     {"type": "string", "description": "https://www.instagram.com/... of the IG cut."},
+         "tiktok_url": {"type": "string", "description": "https://www.tiktok.com/... of the TikTok cut."},
+         "notes":      {"type": "string", "description": "Free text, e.g. music used. Max 2000 chars."},
+         "timezone":   {"type": "string",
+                        "description": "Zone bounding the month. Default America/Los_Angeles."},
+     },
+     "required": ["month"]})
+def _montage_record(caller: dict, month: str = "", clip_ids: list | None = None,
+                    ig_url: str | None = None, tiktok_url: str | None = None,
+                    notes: str | None = None, timezone: str = "") -> dict:  # noqa: A002
+    import mcp_oauth
+    import month_montage
+
+    zid = caller.get("zitadel_id", "")
+    month = (month or "").strip()
+    if not mcp_oauth.within_rate_limit(zid, "montage_record", 30, 3600):
+        mcp_oauth.audit_write(zid, "montage_record", json.dumps({"month": month}), "rate_limited")
+        return {"ok": False, "error": "rate limit: 30 per hour"}
+    try:
+        _, _, tz_name = month_montage.month_window(month, timezone)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+    errors = {}
+    if ig_url is not None:
+        ig_url = ig_url.strip()
+        if ig_url and (err := month_montage.check_url(ig_url, ("instagram.com",))):
+            errors["ig_url"] = err
+    if tiktok_url is not None:
+        tiktok_url = tiktok_url.strip()
+        if tiktok_url and (err := month_montage.check_url(tiktok_url, ("tiktok.com",))):
+            errors["tiktok_url"] = err
+    if notes is not None:
+        notes = str(notes)[:2000]
+    ids = None
+    if clip_ids is not None:
+        ids = list(dict.fromkeys(str(c).strip() for c in clip_ids if str(c).strip()))
+        if not ids or len(ids) > 150:
+            errors["clip_ids"] = "give 1-150 clip ids"
+    if errors:
+        return {"ok": False, "error": "invalid fields", "fields": errors}
+
+    month_montage.init()
+    if ids is None and not month_montage.get_record(month):
+        return {"ok": False, "error": f"no record for {month} yet — include clip_ids"}
+    if ids is not None:
+        problems = month_montage.validate_selection(month, ids, tz_name)
+        if problems:
+            mcp_oauth.audit_write(zid, "montage_record",
+                                  json.dumps({"month": month, "clips": len(ids)}),
+                                  f"refused:{len(problems)}")
+            return {"ok": False, "error": "selection refused", "problems": problems}
+
+    rec = month_montage.save_record(month, tz_name, ids, ig_url, tiktok_url, notes,
+                                    recorded_by=caller.get("label") or zid or "unknown")
+    mcp_oauth.audit_write(zid, "montage_record",
+                          json.dumps({"month": month, "clips": len(rec["clip_ids"]),
+                                      "ig": bool(rec["ig_url"]), "tiktok": bool(rec["tiktok_url"])}),
+                          "ok")
+    return {"ok": True, "record": rec}
 
 
 # ── WhatsApp reaction tracking ───────────────────────────────────────────────

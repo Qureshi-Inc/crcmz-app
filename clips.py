@@ -432,6 +432,23 @@ def list_clips(
     return [dict(r) for r in rows]
 
 
+def list_between(start_ts: float, end_ts: float) -> list[dict]:
+    """Every clip captured in [start_ts, end_ts), oldest first, no limit.
+
+    Capture time is psn_created_at, falling back to discovered_at for clips the
+    PSN API gave no timestamp for — the same ordering key list_clips uses.
+    """
+    with _conn() as db:
+        rows = db.execute(
+            """SELECT * FROM clips
+               WHERE COALESCE(psn_created_at, discovered_at) >= ?
+                 AND COALESCE(psn_created_at, discovered_at) < ?
+               ORDER BY COALESCE(psn_created_at, discovered_at) ASC, message_uid ASC""",
+            [float(start_ts), float(end_ts)],
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # Highlight eligibility shared with the reel pipeline: delivered, archived, short,
 # and not a coaching ("rev") clip. Deduping and the posted/reviewed exclusions stay
 # with the watcher, which owns those logs.
