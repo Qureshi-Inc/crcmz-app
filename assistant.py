@@ -1727,10 +1727,10 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
                                                 "Falls back to clips.sender_online_id "
                                                 "when omitted."},
          "reel_type":           {"type": "string",
-                                 "description": "fire | fail | daily. "
+                                 "description": "fire | fail | daily | goop. "
                                                 "'daily' sends a generic '@all Daily highlights have dropped! 🔥' "
                                                 "with no sender attribution — use this for the daily highlights reel. "
-                                                "'fire' and 'fail' keep the sender's name in the message. "
+                                                "'fire', 'fail', and 'goop' keep the sender's name in the message. "
                                                 "Default: 'fire'."},
      },
      "required": ["clip_id", "instagram_url"]})
@@ -2135,7 +2135,7 @@ def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
     and gets sanitised.
 
     reel_type="daily"  → generic "@all Daily highlights have dropped! 🔥", no sender.
-    reel_type="fire"|"fail" → "@all 🔥 *{sender}* just dropped on IG:\n{url}".
+    reel_type="fire"|"fail"|"goop" → "@all 🔥 *{sender}* just dropped on IG:\n{url}".
     All share-backs use mentionAll=True (@all, not @everyone).
     """
     bridge = os.environ.get("WA_BRIDGE_URL", "")
