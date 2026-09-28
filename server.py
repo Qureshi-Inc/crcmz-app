@@ -8150,6 +8150,20 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .rr-analysis b { color:var(--txt); }
   .rr-actionbar { margin-bottom:6px; }
   .rr-status { font-size:13px; color:var(--dim); }
+  .rr-reelwrap { position:relative; }
+  .rr-pickov { position:absolute; inset:0; cursor:crosshair; border:2px dashed var(--neon);
+    border-radius:10px; background:rgba(255,47,214,.08); display:flex; align-items:flex-start;
+    justify-content:center; touch-action:none; }
+  .rr-pickov span { margin-top:10px; background:rgba(0,0,0,.7); color:#fff; font-size:13px;
+    padding:4px 10px; border-radius:999px; pointer-events:none; }
+  .rr-item { border-top:1px solid var(--line); padding:8px 0 4px; }
+  .rr-item:first-child { border-top:none; padding-top:0; }
+  .rr-on { border-color:var(--neon); color:var(--neon); }
+  .rr-stack { display:flex; flex-direction:column; align-items:stretch; gap:4px; margin-top:10px; }
+  .rr-caption { width:100%; resize:vertical; }
+  .rr-subrow { flex-wrap:nowrap; }
+  .rr-t2 { width:64px; flex:none; }
+  .rr-subtext { flex:1; min-width:0; width:auto; }
   .last-montage { background:var(--card); border:1px solid var(--line);
     border-radius:13px; padding:14px 16px; margin-bottom:14px; }
   .lm-row { display:flex; justify-content:space-between; align-items:center;
@@ -11152,6 +11166,12 @@ setInterval(loadPipeline, 30000);
     const mode = ov.crop_mode || 'ai';
     S.box = ov.crop_box || null;
     const label = ov.label || (a && a.featured_label) || clip.sender || '';
+    const caption = ov.caption != null ? ov.caption : ((a && a.caption_draft) || '');
+    S.zooms = Array.isArray(ov.zooms) ? ov.zooms.map(z => ({ ...z })) : [];
+    S.subsEdited = Array.isArray(ov.subtitles);
+    S.subs = S.subsEdited ? ov.subtitles.map(s => ({ start: s.start, end: s.end, text: s.text || s.subtitle_text || '' }))
+                          : aiSubs(a);
+    S.pick = null;
     const ts = whenTs(clip.when_ts);
     const modes = [['ai', 'AI tracking'], ['center', 'Static center'], ['manual', 'Manual box']]
       .map(([v, l]) => `<label class="rr-radio"><input type="radio" name="rr-crop" value="${v}"${mode === v ? ' checked' : ''}> ${l}</label>`).join('');
@@ -11170,7 +11190,10 @@ setInterval(loadPipeline, 30000);
         <button class="rr-btn rr-small" data-act="markin">⏺ Set start @ playhead</button>
         <button class="rr-btn rr-small" data-act="markout">⏺ Set end @ playhead</button></div></div>
     <div class="rr-pblock"><p class="rr-h">AI reel <span class="rr-rstate"></span></p>
-      <video class="rr-render" controls playsinline preload="metadata" hidden></video>
+      <div class="rr-reelwrap">
+        <video class="rr-render" controls playsinline preload="metadata" hidden></video>
+        <div class="rr-pickov" data-act="pickspot" hidden><span>Tap the spot to zoom into</span></div>
+      </div>
       <div class="rr-norender">No render yet — hit “Render preview”.</div></div>
   </div>
   <div class="rr-boxed">
@@ -11196,7 +11219,22 @@ setInterval(loadPipeline, 30000);
       <canvas class="rr-mcanvas" width="480" height="270"></canvas>
       <div class="rr-hint">Drag on the frame to draw the 9:16 box.</div>
       <div class="rr-boxlabel"></div></div>
-    <label class="rr-lbl rr-labelline">Label <input class="rr-in rr-label" type="text" maxlength="40" value="${esc(label)}"></label>
+  </div>
+  <div class="rr-boxed">
+    <p class="rr-h">Zoom <span class="rr-hint">punch in on a spot for part of the reel</span></p>
+    <div class="rr-zooms"></div>
+    <div class="rr-row"><button class="rr-btn rr-small" data-act="zoom-add">＋ Add zoom at reel playhead</button></div>
+  </div>
+  <div class="rr-boxed">
+    <p class="rr-h">Text</p>
+    <label class="rr-lbl rr-labelline">Featured player <input class="rr-in rr-label" type="text" maxlength="40" value="${esc(label)}"></label>
+    <label class="rr-lbl rr-stack">Caption <span class="rr-hint">posted with the reel, not burned in</span>
+      <textarea class="rr-in rr-caption" rows="3" maxlength="2200">${esc(caption)}</textarea></label>
+    <p class="rr-h" style="margin-top:12px">Subtitles <span class="rr-hint rr-subsrc"></span></p>
+    <div class="rr-subs"></div>
+    <div class="rr-row">
+      <button class="rr-btn rr-small" data-act="sub-add">＋ Add line at source playhead</button>
+      <button class="rr-btn rr-small" data-act="sub-reset">Reset to AI subtitles</button></div>
   </div>
   <div class="rr-row rr-actionbar">
     <button class="rr-btn rr-primary" data-act="render">⚙ Render preview</button>
@@ -11215,6 +11253,8 @@ setInterval(loadPipeline, 30000);
     }));
     setupManualCanvas(sec, q('.rr-mcanvas', sec));
     drawManual(sec);
+    renderZooms(sec);
+    renderSubs(sec);
     if (d.latest_render) showRender(sec, d.latest_render.id, '(latest)');
     else drawTraj(sec);
     queueFrame(sec);
@@ -11239,7 +11279,77 @@ setInterval(loadPipeline, 30000);
       crop_mode: cropMode(sec),
       crop_box: S.box,
       label: q('.rr-label', sec).value.trim(),
+      caption: q('.rr-caption', sec).value.trim(),
+      zooms: S.zooms.map(z => ({ start: +z.start, end: +z.end, scale: +z.scale, x: +z.x, y: +z.y })),
+      subtitles: S.subsEdited ? S.subs.filter(s => String(s.text || '').trim())
+        .map(s => ({ start: +s.start, end: +s.end, text: String(s.text).trim() })) : null,
     };
+  }
+
+  /* ---------- zooms + subtitles ---------- */
+  function aiSubs(a) {
+    return ((a && a.subtitle_segments) || []).map(s => ({
+      start: +s.start, end: +s.end,
+      text: s.subtitle_text || (s.lines || []).join(' ') || '',
+    }));
+  }
+  const f1 = v => (v == null || v === '' || isNaN(+v)) ? '' : (+v).toFixed(1);
+  // Reel playhead in source-clip seconds: t0 is the window start the reel was cut from.
+  function reelSourceTime(sec) {
+    const rv = q('.rr-render', sec);
+    if (rv && !rv.hidden && S.traj && S.traj.t0 != null) return +S.traj.t0 + (rv.currentTime || 0);
+    return q('.rr-src', sec).currentTime || 0;
+  }
+  function validateEdits(body) {
+    for (const z of S.zooms) {
+      if (!(+z.end > +z.start)) return 'Each zoom needs an end after its start.';
+      if (z.x == null || z.y == null) return 'Pick a spot for every zoom.';
+    }
+    for (const s of body.subtitles || []) if (!(s.end > s.start)) return 'Each subtitle needs an end after its start.';
+    return null;
+  }
+  function renderZooms(sec) {
+    const box = q('.rr-zooms', sec);
+    const hasReel = !q('.rr-render', sec).hidden;
+    box.innerHTML = S.zooms.length ? S.zooms.map((z, i) => `
+      <div class="rr-item">
+        <div class="rr-row">
+          <label class="rr-lbl">From <input class="rr-in" type="number" step="0.1" min="0" data-zf="start" data-idx="${i}" value="${f1(z.start)}"></label>
+          <label class="rr-lbl">To <input class="rr-in" type="number" step="0.1" min="0" data-zf="end" data-idx="${i}" value="${f1(z.end)}"></label>
+          <label class="rr-lbl">Zoom <select class="rr-in" data-zf="scale" data-idx="${i}">
+            ${[1.25, 1.5, 1.75, 2, 2.5, 3].map(v => `<option value="${v}"${+z.scale === v ? ' selected' : ''}>${v}×</option>`).join('')}
+          </select></label>
+          <button class="rr-btn rr-small rr-danger" data-act="zoom-del" data-idx="${i}" aria-label="Remove zoom">✕</button>
+        </div>
+        <div class="rr-row">
+          <button class="rr-btn rr-small" data-act="zoom-in" data-idx="${i}">From @ reel playhead</button>
+          <button class="rr-btn rr-small" data-act="zoom-out" data-idx="${i}">To @ reel playhead</button>
+          <button class="rr-btn rr-small${S.pick === i ? ' rr-on' : ''}" data-act="zoom-pick" data-idx="${i}"${hasReel ? '' : ' disabled'}>📍 ${S.pick === i ? 'Tap the reel…' : 'Pick spot'}</button>
+          <span class="rr-hint">${z.x != null ? `spot ${Math.round(z.x * 100)}% across, ${Math.round(z.y * 100)}% down` : 'no spot yet'}</span>
+        </div>
+      </div>`).join('')
+      : `<p class="rr-hint">${hasReel ? 'Pause the AI reel where you want to punch in, then add a zoom.' : 'Render a preview first, then pause it where you want to punch in.'}</p>`;
+    q('.rr-pickov', sec).hidden = S.pick == null;
+  }
+  function renderSubs(sec) {
+    q('.rr-subsrc', sec).textContent = S.subsEdited ? 'your edits' : (S.subs.length ? 'from the AI' : 'none');
+    q('.rr-subs', sec).innerHTML = S.subs.length ? S.subs.map((s, i) => `
+      <div class="rr-item rr-row rr-subrow">
+        <input class="rr-in rr-t2" type="number" step="0.1" min="0" data-sf="start" data-idx="${i}" value="${f1(s.start)}" aria-label="Start seconds">
+        <input class="rr-in rr-t2" type="number" step="0.1" min="0" data-sf="end" data-idx="${i}" value="${f1(s.end)}" aria-label="End seconds">
+        <input class="rr-in rr-subtext" type="text" maxlength="200" data-sf="text" data-idx="${i}" value="${esc(String(s.text || ''))}" aria-label="Subtitle text">
+        <button class="rr-btn rr-small rr-danger" data-act="sub-del" data-idx="${i}" aria-label="Remove line">✕</button>
+      </div>`).join('') : '<p class="rr-hint">No subtitles. Add a line to burn one in.</p>';
+  }
+  function onEditInput(e) {
+    const t = e.target, sec = q('.rr-detail', root());
+    if (!sec || t.dataset.idx == null) return;
+    const i = +t.dataset.idx;
+    if (t.dataset.zf && S.zooms[i]) S.zooms[i][t.dataset.zf] = t.value === '' ? null : +t.value;
+    if (t.dataset.sf && S.subs[i]) {
+      S.subs[i][t.dataset.sf] = t.dataset.sf === 'text' ? t.value : (t.value === '' ? null : +t.value);
+      if (!S.subsEdited) { S.subsEdited = true; q('.rr-subsrc', sec).textContent = 'your edits'; }
+    }
   }
   function setStatus(sec, t) { q('.rr-status', sec).textContent = t; }
   function patchClip(id, patch) {
@@ -11255,6 +11365,7 @@ setInterval(loadPipeline, 30000);
     q('.rr-rstate', sec).textContent = state;
     const dl = q('.rr-dl', sec);
     dl.href = url; dl.hidden = false;
+    renderZooms(sec);
     loadTrajectory(sec, rid, rv);
   }
 
@@ -11262,6 +11373,8 @@ setInterval(loadPipeline, 30000);
     const body = formState(sec);
     if (!(body.window_end > body.window_start)) return setStatus(sec, 'Set a valid window first (end > start).');
     if (body.crop_mode === 'manual' && !S.box) return setStatus(sec, 'Draw the manual crop box first.');
+    const bad = validateEdits(body); if (bad) return setStatus(sec, bad);
+    S.pick = null; renderZooms(sec);
     const btn = q('[data-act=render]', sec);
     btn.disabled = true;
     setStatus(sec, 'Queued…');
@@ -11292,6 +11405,7 @@ setInterval(loadPipeline, 30000);
     const body = formState(sec);
     if (!(body.window_end > body.window_start)) return setStatus(sec, 'Set a valid window first (end > start).');
     if (body.crop_mode === 'manual' && !S.box) return setStatus(sec, 'Draw the manual crop box first.');
+    const bad = validateEdits(body); if (bad) return setStatus(sec, bad);
     try {
       await api('/clips/' + enc(id) + '/override', { method: 'POST', body: JSON.stringify(body) });
       patchClip(id, { override: body });
@@ -11469,8 +11583,46 @@ setInterval(loadPipeline, 30000);
         case 'veto': return toggleVeto(sec, id);
         case 'render': return startRender(sec, id);
         case 'save': return saveOverride(sec, id);
+        case 'zoom-add': {
+          const s = reelSourceTime(sec);
+          S.zooms.push({ start: +s.toFixed(1), end: +(s + 1.5).toFixed(1), scale: 1.75, x: null, y: null });
+          S.pick = q('.rr-render', sec).hidden ? null : S.zooms.length - 1;
+          return renderZooms(sec);
+        }
+        case 'zoom-del': S.zooms.splice(+t.dataset.idx, 1); S.pick = null; return renderZooms(sec);
+        case 'zoom-in': case 'zoom-out': {
+          const z = S.zooms[+t.dataset.idx]; if (!z) return;
+          z[t.dataset.act === 'zoom-in' ? 'start' : 'end'] = +reelSourceTime(sec).toFixed(1);
+          return renderZooms(sec);
+        }
+        case 'zoom-pick': {
+          const i = +t.dataset.idx;
+          S.pick = S.pick === i ? null : i;
+          q('.rr-render', sec).pause();
+          return renderZooms(sec);
+        }
+        case 'pickspot': {
+          const z = S.zooms[S.pick]; if (!z) return;
+          const r = t.getBoundingClientRect();
+          z.x = +Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)).toFixed(3);
+          z.y = +Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)).toFixed(3);
+          S.pick = null;
+          setStatus(sec, 'Spot set. Render preview to see the zoom.');
+          return renderZooms(sec);
+        }
+        case 'sub-add': {
+          const s = q('.rr-src', sec).currentTime || 0;
+          S.subs.push({ start: +s.toFixed(1), end: +(s + 2).toFixed(1), text: '' });
+          S.subs.sort((a, b) => a.start - b.start);
+          S.subsEdited = true;
+          return renderSubs(sec);
+        }
+        case 'sub-del': S.subs.splice(+t.dataset.idx, 1); S.subsEdited = true; return renderSubs(sec);
+        case 'sub-reset': S.subs = aiSubs(S.detail && S.detail.analysis); S.subsEdited = false; return renderSubs(sec);
       }
     });
+    el.addEventListener('input', onEditInput);
+    el.addEventListener('change', onEditInput);
   }
 })();
 

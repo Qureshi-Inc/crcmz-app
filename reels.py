@@ -237,7 +237,45 @@ def _edit(body: dict) -> dict:
         "crop_mode": crop_mode,
         "crop_box": crop_box,
         "label": _label(body.get("label")),
+        "zooms": _zooms(body.get("zooms")),
+        # None = use the AI subtitles; a list (even empty) replaces them.
+        "subtitles": _subtitles(body.get("subtitles")),
+        "caption": _text(body.get("caption"), 2200),
     }
+
+
+def _items(v, limit: int) -> list[dict]:
+    if not isinstance(v, list) or len(v) > limit:
+        raise HTTPException(400, f"expected a list of at most {limit} items")
+    return [x for x in v if isinstance(x, dict)]
+
+
+def _zooms(v) -> list[dict]:
+    out = []
+    for z in _items(v or [], 20):
+        s, e, scale = _num(z.get("start")), _num(z.get("end")), _num(z.get("scale"))
+        x, y = _num(z.get("x")), _num(z.get("y"))
+        if None in (s, e, scale, x, y) or e <= s or not 1 <= scale <= 4 or x > 1 or y > 1:
+            raise HTTPException(400, "each zoom needs start < end, scale 1-4, and x, y between 0 and 1")
+        out.append({"start": s, "end": e, "scale": scale, "x": x, "y": y})
+    return out
+
+
+def _subtitles(v) -> list[dict] | None:
+    if v is None:
+        return None
+    out = []
+    for s in _items(v, 200):
+        start, end, text = _num(s.get("start")), _num(s.get("end")), _text(s.get("text"), 200)
+        if start is None or end is None or end <= start:
+            raise HTTPException(400, "each subtitle needs start < end")
+        if text:
+            out.append({"start": start, "end": end, "text": text})
+    return out
+
+
+def _text(v, limit: int) -> str | None:
+    return str(v).strip()[:limit] or None if v else None
 
 
 def _num(v) -> float | None:
