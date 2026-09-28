@@ -34,7 +34,7 @@ REEL_REVIEW_URL = os.environ.get("REEL_REVIEW_URL", "http://reel-review:8080").r
 REEL_REVIEW_TOKEN = os.environ.get("REEL_REVIEW_TOKEN", "")
 
 _RENDER_ID = re.compile(r"^[0-9a-f]{6,32}$")
-_CROP_MODES = {"ai", "center"}
+_CROP_MODES = {"ai", "center", "manual"}
 _STREAM_HEADERS = ("content-type", "content-length", "content-range",
                    "accept-ranges", "last-modified", "etag")
 
@@ -153,20 +153,22 @@ def build_router(
         await owned_clip(me, clip_id)
         return await stream(f"/api/clips/{_q(clip_id)}/source", request)
 
+    @router.get("/clips/{clip_id:path}/frame")
+    async def clip_frame(clip_id: str, request: Request, t: float = 0.0):
+        me = await caller(request)
+        await owned_clip(me, clip_id)
+        return await stream(f"/api/clips/{_q(clip_id)}/frame?t={max(0.0, t):.2f}", request)
+
+    @router.post("/sync")
+    async def sync(request: Request):
+        await caller(request)
+        return _json_or_raise(await _rr("POST", "/api/sync", params={"limit": 25}))
+
     @router.post("/clips/{clip_id:path}/render")
     async def clip_render(clip_id: str, request: Request):
         me = await caller(request)
         await owned_clip(me, clip_id)
-        body = await request.json()
-        crop_mode = body.get("crop_mode") or "ai"
-        if crop_mode not in _CROP_MODES:
-            raise HTTPException(400, "crop_mode must be ai or center")
-        payload = {
-            "window_start": _num(body.get("window_start")),
-            "window_end": _num(body.get("window_end")),
-            "crop_mode": crop_mode,
-            "label": _label(body.get("label")),
-        }
+        payload = _edit(await request.json())
         return _json_or_raise(await _rr("POST", f"/api/clips/{_q(clip_id)}/render", json=payload))
 
     @router.post("/clips/{clip_id:path}/veto")
@@ -190,17 +192,7 @@ def build_router(
     async def clip_override(clip_id: str, request: Request):
         me = await caller(request)
         await owned_clip(me, clip_id)
-        body = await request.json()
-        crop_mode = body.get("crop_mode") or "ai"
-        if crop_mode not in _CROP_MODES:
-            raise HTTPException(400, "crop_mode must be ai or center")
-        payload = {
-            "window_start": _num(body.get("window_start")),
-            "window_end": _num(body.get("window_end")),
-            "crop_mode": crop_mode,
-            "label": _label(body.get("label")),
-            "by": actor(me),
-        }
+        payload = {**_edit(await request.json()), "by": actor(me)}
         return _json_or_raise(await _rr("POST", f"/api/clips/{_q(clip_id)}/override", json=payload))
 
     @router.get("/clips/{clip_id:path}")
@@ -219,7 +211,33 @@ def build_router(
         await owned_render(me, rid)
         return await stream(f"/api/renders/{rid}/video", request)
 
+    @router.get("/renders/{rid}/trajectory")
+    async def render_trajectory(rid: str, request: Request):
+        me = await caller(request)
+        await owned_render(me, rid)
+        return _json_or_raise(await _rr("GET", f"/api/renders/{rid}/trajectory"))
+
     return router
+
+
+def _edit(body: dict) -> dict:
+    crop_mode = body.get("crop_mode") or "ai"
+    if crop_mode not in _CROP_MODES:
+        raise HTTPException(400, "crop_mode must be ai, center or manual")
+    crop_box = None
+    if crop_mode == "manual":
+        box = body.get("crop_box") if isinstance(body.get("crop_box"), dict) else {}
+        vals = {k: _num(box.get(k)) for k in ("x", "y", "w", "h")}
+        if any(v is None or v > 1 for v in vals.values()) or not vals["w"] or not vals["h"]:
+            raise HTTPException(400, "manual crop needs a crop_box of x, y, w, h between 0 and 1")
+        crop_box = vals
+    return {
+        "window_start": _num(body.get("window_start")),
+        "window_end": _num(body.get("window_end")),
+        "crop_mode": crop_mode,
+        "crop_box": crop_box,
+        "label": _label(body.get("label")),
+    }
 
 
 def _num(v) -> float | None:

@@ -6877,6 +6877,7 @@ def status():
 
 @app.get("/clips")
 def api_clips(
+    request: Request,
     month: str | None = None,
     sender: str | None = None,
     group_id: str | None = None,
@@ -6885,7 +6886,14 @@ def api_clips(
     limit: int = 50,
     offset: int = 0,
 ):
-    """Clip catalog with optional filters. month='2026-08'."""
+    """Clip catalog with optional filters. month='2026-08'.
+
+    A browser navigating to app.crcmz.me/clips gets the dashboard's Clips tab;
+    API callers (Accept: application/json or */*) still get JSON.
+    """
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept and "application/json" not in accept:
+        return RedirectResponse(url="/?p=pipeline", status_code=302)
     rows = _clips.list_clips(
         month=month, sender=sender, group_id=group_id,
         status=status, montage_eligible=montage_eligible,
@@ -8073,6 +8081,75 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .pip-build .pb-date { font-family:"Orbitron",sans-serif; font-size:14px;
     color:var(--gold); text-shadow:0 0 10px rgba(255,210,74,.5); }
   .pip-build .pb-countdown { font-size:12px; color:var(--cyan); margin-top:4px; }
+
+  /* ── Reel review (My reels) ── */
+  .rr { margin-bottom:22px; }
+  .rr [hidden] { display:none !important; }
+  .rr-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+  .rr-head-actions, .rr-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .rr-row { margin-top:8px; }
+  .rr-btn { background:rgba(255,255,255,.04); color:var(--txt); border:1px solid var(--line);
+    border-radius:10px; padding:8px 14px; font:600 14px "Rajdhani",sans-serif; cursor:pointer;
+    text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+  .rr-btn:hover:not(:disabled) { border-color:var(--cyan); }
+  .rr-btn:disabled { opacity:.5; cursor:default; }
+  .rr-small { padding:5px 10px; font-size:13px; }
+  .rr-primary { background:linear-gradient(90deg,var(--violet),var(--neon)); border-color:transparent;
+    color:#fff; font-weight:700; }
+  .rr-danger { border-color:rgba(255,64,64,.6); color:#ffb4b4; }
+  .rr-chips { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .rr-chip { background:transparent; color:var(--dim); border:1px solid var(--line); border-radius:999px;
+    padding:5px 12px; font:600 13px "Rajdhani",sans-serif; cursor:pointer; }
+  .rr-chip.on { background:var(--neon); border-color:var(--neon); color:#fff; }
+  .rr-counts { font-size:12px; color:var(--dim); margin:0 2px 8px; }
+  .rr-list { display:flex; flex-direction:column; gap:8px; }
+  .rr-clip { display:flex; flex-direction:column; align-items:flex-start; gap:3px; text-align:left;
+    width:100%; background:var(--card); border:1px solid var(--line); border-radius:13px;
+    padding:11px 14px; color:var(--txt); font-family:inherit; cursor:pointer; }
+  .rr-clip:hover { border-color:var(--cyan); }
+  .rr-t { font-weight:700; font-size:15px; }
+  .rr-m { font-size:12.5px; color:var(--dim); }
+  .rr-badges { display:flex; gap:5px; flex-wrap:wrap; margin-top:3px; }
+  .rr-badge { font-size:11px; padding:1px 8px; border-radius:999px; border:1px solid var(--line); color:var(--dim); }
+  .rr-badge.fire { color:#ffb020; border-color:#5a3a10; }
+  .rr-badge.ok { color:var(--lime); border-color:rgba(140,255,43,.35); }
+  .rr-badge.rend { color:var(--cyan); border-color:rgba(34,230,255,.35); }
+  .rr-badge.ov { color:var(--violet); border-color:rgba(157,92,255,.45); }
+  .rr-badge.veto { color:#ffb4b4; border-color:rgba(255,64,64,.6); }
+  .rr-empty { color:var(--dim); text-align:center; padding:24px 12px; font-size:14px; line-height:1.5;
+    background:var(--card); border:1px solid var(--line); border-radius:13px; }
+  .rr-back { background:none; border:none; color:var(--cyan); font:600 14px "Rajdhani",sans-serif;
+    cursor:pointer; padding:0; margin-bottom:10px; }
+  .rr-dhead { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+  .rr-dtitle { font-family:"Orbitron",sans-serif; font-size:15px; font-weight:800; }
+  .rr-vetoed { color:#ffb4b4; font-size:13px; margin:8px 0 0; }
+  .rr-players { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:12px 0; }
+  @media(max-width:620px){ .rr-players { grid-template-columns:1fr; } }
+  .rr-pblock video { width:100%; max-height:420px; background:#000; border-radius:10px; display:block; }
+  .rr-h { font-weight:700; font-size:14px; margin:0 0 6px; }
+  .rr-hint { color:var(--dim); font-size:12px; font-weight:400; }
+  .rr-rstate { color:var(--cyan); font-size:12px; font-weight:400; }
+  .rr-norender { color:var(--dim); font-size:13px; padding:20px; border:1px dashed var(--line); border-radius:10px; }
+  .rr-boxed { background:var(--card); border:1px solid var(--line); border-radius:13px;
+    padding:12px 14px; margin-bottom:12px; }
+  .rr-traj { width:100%; max-width:640px; border-radius:8px; border:1px solid var(--line);
+    background:rgba(0,0,0,.25); display:block; }
+  .rr-cam { width:100%; max-width:320px; background:#000; border-radius:8px; border:1px solid var(--line); }
+  .rr-camrow .rr-hint { flex:1; min-width:160px; }
+  .rr-lbl { font-size:13px; color:var(--dim); display:inline-flex; align-items:center; gap:6px; }
+  .rr-in { background:rgba(0,0,0,.35); border:1px solid var(--line); color:var(--txt); border-radius:8px;
+    padding:6px 8px; font:14px "Rajdhani",sans-serif; width:90px; }
+  .rr-labelline { margin-top:10px; }
+  .rr-label { width:220px; max-width:100%; }
+  .rr-radio { font-size:14px; display:inline-flex; gap:5px; align-items:center; }
+  .rr-manual { margin-top:8px; }
+  .rr-mcanvas { width:100%; max-width:480px; background:#000; border-radius:8px; border:1px solid var(--line);
+    cursor:crosshair; touch-action:none; display:block; }
+  .rr-boxlabel { font:12px monospace; color:var(--dim); margin-top:4px; }
+  .rr-analysis { font-size:13px; color:var(--dim); margin-top:8px; line-height:1.5; }
+  .rr-analysis b { color:var(--txt); }
+  .rr-actionbar { margin-bottom:6px; }
+  .rr-status { font-size:13px; color:var(--dim); }
   .last-montage { background:var(--card); border:1px solid var(--line);
     border-radius:13px; padding:14px 16px; margin-bottom:14px; }
   .lm-row { display:flex; justify-content:space-between; align-items:center;
@@ -9096,7 +9173,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div class="card" id="lb"><div class="spin">Loading ranks…</div></div>
   </div>
   <div class="panel" id="p-lb" style="display:none"></div>
-  <div class="panel" id="p-pipeline"><div id="pipeline-inner"><div class="spin">Loading pipeline…</div></div></div>
+  <div class="panel" id="p-pipeline"><div id="reels-inner"></div><div id="pipeline-inner"><div class="spin">Loading pipeline…</div></div></div>
   <div class="panel" id="p-slap">
     <div id="slap-stats" class="statgrid" style="margin-bottom:10px"></div>
     <div id="slap-vibe" class="card" style="display:none;margin-bottom:10px;padding:12px 16px;font-size:13px;color:var(--dim);font-style:italic;text-align:center"></div>
@@ -10644,6 +10721,7 @@ async function loadCoach(){
 }
 
 const PANEL_LOADERS = {
+  pipeline: function(){ if(window.loadReels) window.loadReels(); },
   slap:     function(){ loadSlap(); },
   wa:       function(){ loadWa(); },
   giveaway: function(){ loadGiveaway(); },
@@ -10931,6 +11009,470 @@ ${(d.clips||[]).length ? `<div class="pip-section">
 }
 loadPipeline();
 setInterval(loadPipeline, 30000);
+
+// ── Reel review (My reels) ────────────────────────────────────────────────────
+// The reel-review QA station, per person. /api/reels/* resolves the Zitadel
+// session to a PSN id and only serves clips that person sent; admins can
+// switch to everyone's. Lives in its own container because loadPipeline
+// rewrites #pipeline-inner every 30s, which would kill a playing video.
+(function(){
+  const API = '/api/reels';
+  const enc = encodeURIComponent;
+  const q = (s, r) => (r || document).querySelector(s);
+  const root = () => document.getElementById('reels-inner');
+  const S = { clips: [], me: null, source: null, pushedAt: 0, scope: 'mine', all: false,
+              needsLink: false, filter: 'all', loaded: false, bound: false, current: null,
+              detail: null, traj: null, frame: null, box: null, poll: null, frameTimer: null };
+
+  async function api(path, opts) {
+    opts = opts || {};
+    const headers = { Accept: 'application/json' };
+    if (opts.body) headers['Content-Type'] = 'application/json';
+    const res = await fetch(API + path, { credentials: 'same-origin', cache: 'no-store',
+                                          method: opts.method || 'GET', body: opts.body, headers });
+    let data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error((data && data.detail) || ('request failed (' + res.status + ')'));
+    return data;
+  }
+
+  const fmtDur = d => d == null ? '?' : (+d).toFixed(1) + 's';
+  function whenTs(w) {
+    if (!w) return 0;
+    const t = Date.parse(String(w).replace(' ', 'T'));
+    return isNaN(t) ? 0 : t / 1000;
+  }
+  function badges(c) {
+    const b = [], msg = c.message || '';
+    if (msg.includes('🔥')) b.push('<span class="rr-badge fire">🔥 fire</span>');
+    if (/fail|😂|🤣/i.test(msg)) b.push('<span class="rr-badge">😂 fail</span>');
+    if (c.has_analysis) b.push('<span class="rr-badge ok">AI analyzed</span>');
+    if (c.has_render) b.push('<span class="rr-badge rend">rendered</span>');
+    if (c.override) b.push('<span class="rr-badge ov">override saved</span>');
+    if (c.vetoed) b.push('<span class="rr-badge veto">🛑 vetoed</span>');
+    return b.join('');
+  }
+  function stopPoll() { if (S.poll) { clearInterval(S.poll); S.poll = null; } }
+  const title = () => S.scope === 'all' ? '🎞 All reels' : '🎞 My reels';
+
+  function errorHtml(msg) {
+    return `<div class="pip-section rr"><p class="pip-title">${title()}</p>
+      <div class="rr-empty">Could not load reels: ${esc(msg)}<br><br>
+      <button class="rr-btn rr-small" data-act="retry">Retry</button></div></div>`;
+  }
+
+  /* ---------- list ---------- */
+  function renderList() {
+    const el = root(); if (!el) return;
+    stopPoll();
+    S.current = null; S.detail = null;
+    const head = `<div class="rr-head"><p class="pip-title" style="margin:0">${title()}</p>
+      <div class="rr-head-actions">
+        ${S.me && S.me.admin ? `<button class="rr-btn rr-small" data-act="scope">${S.all ? 'Only mine' : 'Everyone’s'}</button>` : ''}
+        ${S.needsLink ? '' : '<button class="rr-btn rr-small" data-act="sync">↻ Sync clips</button>'}
+      </div></div>`;
+    if (S.needsLink) {
+      el.innerHTML = `<div class="pip-section rr">${head}<div class="rr-empty">
+        <b>Link your PlayStation account</b><br>Reels are matched to you by PSN ID.<br><br>
+        <button class="rr-btn rr-small" data-act="settings">⚙️ Open Settings</button></div></div>`;
+      return;
+    }
+    const items = S.clips.filter(c => {
+      if (S.filter === 'vetoed') return c.vetoed;
+      if (S.filter === 'noreview') return !c.vetoed && !c.has_render;
+      if (S.filter === 'rendered') return c.has_render;
+      return true;
+    });
+    const vetoedN = S.clips.filter(c => c.vetoed).length;
+    const src = S.source === 'roster'
+      ? 'pipeline roster · updated ' + (S.pushedAt ? fmtAgo(S.pushedAt) : '?')
+      : S.source === 'mirror' ? 'best-effort list — pipeline roster not pushed yet' : '';
+    const chips = [['all', 'All'], ['noreview', 'Needs review'], ['rendered', 'Rendered'], ['vetoed', '🛑 Vetoed']]
+      .map(([k, l]) => `<button class="rr-chip${S.filter === k ? ' on' : ''}" data-filter="${k}">${l}</button>`).join('');
+    const rows = items.map(c => {
+      const ts = whenTs(c.when);
+      const who = S.scope === 'all' ? (c.sender || '?') : (c.game || c.sender || 'Clip');
+      return `<button class="rr-clip" data-open="${esc(c.clip_id)}">
+        <span class="rr-t">${esc(who)} · ${fmtDur(c.duration)}</span>
+        <span class="rr-m">${ts ? fmtAgo(ts) : ''}${c.message ? ' · ' + esc(c.message.slice(0, 40)) : ''}</span>
+        <span class="rr-badges">${badges(c)}</span></button>`;
+    }).join('');
+    const empty = S.clips.length ? 'No clips match this filter.'
+      : 'No reels waiting. Clips you share in the PSN group (60s or shorter) show up here before they go into highlights.';
+    el.innerHTML = `<div class="pip-section rr">${head}
+      <div class="rr-chips">${chips}</div>
+      <p class="rr-counts">${S.clips.length - vetoedN} eligible · ${S.clips.length} total · ${vetoedN} vetoed${src ? ' · ' + esc(src) : ''}</p>
+      <div class="rr-list">${rows || `<div class="rr-empty">${empty}</div>`}</div></div>`;
+  }
+
+  async function loadReels(force) {
+    bind();
+    if (S.loaded && !force) return;
+    S.loaded = true;
+    const el = root(); if (!el) return;
+    if (!S.clips.length && !S.current) {
+      el.innerHTML = `<div class="pip-section rr"><p class="pip-title">${title()}</p><div class="spin">Loading your reels…</div></div>`;
+    }
+    let d;
+    try { d = await api(S.all ? '?all=true' : ''); }
+    catch (e) { S.loaded = false; if (!S.current) el.innerHTML = errorHtml(e.message); return; }
+    S.me = d.me || null; S.scope = d.scope || 'mine'; S.clips = d.clips || [];
+    S.source = d.source; S.pushedAt = (d.roster && d.roster.pushed_at) || 0;
+    S.needsLink = !!d.needs_psn_link;
+    if (!S.current) renderList();
+  }
+  window.loadReels = loadReels;
+
+  /* ---------- detail ---------- */
+  function analysisHtml(a) {
+    if (!a) return `<i>No AI analysis imported for this clip.</i><br>
+      Renders will use the sender as label, your window, and no subtitles.`;
+    const cap = a.caption_draft || '';
+    return `<b>Featured:</b> ${esc(String(a.featured_label || a.featured_player || '?'))}
+      (confidence ${esc(String(a.identity_confidence || '?'))})<br>
+      <b>Caption:</b> ${esc(cap.slice(0, 140))}${cap.length > 140 ? '…' : ''}<br>
+      <b>Subtitles:</b> ${(a.subtitle_segments || []).length} segments`;
+  }
+
+  async function openClip(id) {
+    stopPoll();
+    S.current = id; S.traj = null; S.frame = null; S.box = null;
+    const el = root();
+    el.innerHTML = `<div class="pip-section rr"><div class="spin">Loading clip…</div></div>`;
+    el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    let d;
+    try { d = await api('/clips/' + enc(id)); }
+    catch (e) { S.current = null; el.innerHTML = errorHtml(e.message); return; }
+    if (S.current !== id) return;
+    S.detail = d;
+    const clip = d.clip || {}, a = d.analysis, ov = d.override || {};
+    let ws = ov.window_start, we = ov.window_end;
+    if (ws == null && a) { ws = a.primary_start; we = a.primary_end; }
+    if (ws == null) { ws = 0; we = Math.min(clip.duration || 15, 15); }
+    const mode = ov.crop_mode || 'ai';
+    S.box = ov.crop_box || null;
+    const label = ov.label || (a && a.featured_label) || clip.sender || '';
+    const ts = whenTs(clip.when_ts);
+    const modes = [['ai', 'AI tracking'], ['center', 'Static center'], ['manual', 'Manual box']]
+      .map(([v, l]) => `<label class="rr-radio"><input type="radio" name="rr-crop" value="${v}"${mode === v ? ' checked' : ''}> ${l}</label>`).join('');
+    el.innerHTML = `<div class="pip-section rr rr-detail">
+  <button class="rr-back" data-act="back">← ${S.scope === 'all' ? 'All reels' : 'My reels'}</button>
+  <div class="rr-dhead">
+    <div><div class="rr-dtitle">${esc(clip.sender || '?')} — ${fmtDur(clip.duration)}</div>
+      <div class="rr-m">${ts ? fmtAgo(ts) + ' · ' : ''}${esc(clip.game || 'unknown game')}${clip.message ? ' · ' + esc(clip.message) : ''}</div></div>
+    <button class="rr-btn rr-vetobtn" data-act="veto"></button>
+  </div>
+  <p class="rr-vetoed" hidden>🛑 Vetoed — this clip stays out of the fire, fail and daily reels.</p>
+  <div class="rr-players">
+    <div class="rr-pblock"><p class="rr-h">Source clip</p>
+      <video class="rr-src" controls playsinline preload="metadata" src="${API}/clips/${enc(id)}/source"></video>
+      <div class="rr-row">
+        <button class="rr-btn rr-small" data-act="markin">⏺ Set start @ playhead</button>
+        <button class="rr-btn rr-small" data-act="markout">⏺ Set end @ playhead</button></div></div>
+    <div class="rr-pblock"><p class="rr-h">AI reel <span class="rr-rstate"></span></p>
+      <video class="rr-render" controls playsinline preload="metadata" hidden></video>
+      <div class="rr-norender">No render yet — hit “Render preview”.</div></div>
+  </div>
+  <div class="rr-boxed">
+    <p class="rr-h">Crop path <span class="rr-hint">where the 9:16 window sits on the full frame over time</span></p>
+    <canvas class="rr-traj" width="640" height="90"></canvas>
+    <div class="rr-row rr-camrow"><canvas class="rr-cam" width="320" height="180"></canvas>
+      <div class="rr-hint">Live crop position synced to the AI reel playhead. If the box misses the action, switch crop mode below.</div></div>
+  </div>
+  <div class="rr-boxed">
+    <p class="rr-h">Window <span class="rr-hint">start / end markers (seconds)</span></p>
+    <div class="rr-row">
+      <label class="rr-lbl">Start <input class="rr-in rr-ws" type="number" step="0.1" min="0" value="${(+ws).toFixed(1)}"></label>
+      <label class="rr-lbl">End <input class="rr-in rr-we" type="number" step="0.1" min="0" value="${(+we).toFixed(1)}"></label>
+      <span class="rr-dur rr-hint"></span></div>
+    <div class="rr-row"><button class="rr-btn rr-small" data-act="aiwin"${a ? '' : ' disabled'}>Use AI window</button>
+      <span class="rr-hint">${a ? `AI: ${(+a.primary_start).toFixed(1)}–${(+a.primary_end).toFixed(1)}s` : 'no AI analysis imported'}</span></div>
+    <div class="rr-analysis">${analysisHtml(a)}</div>
+  </div>
+  <div class="rr-boxed">
+    <p class="rr-h">Crop <span class="rr-hint">how the 9:16 window is chosen</span></p>
+    <div class="rr-row">${modes}</div>
+    <div class="rr-manual"${mode === 'manual' ? '' : ' hidden'}>
+      <canvas class="rr-mcanvas" width="480" height="270"></canvas>
+      <div class="rr-hint">Drag on the frame to draw the 9:16 box.</div>
+      <div class="rr-boxlabel"></div></div>
+    <label class="rr-lbl rr-labelline">Label <input class="rr-in rr-label" type="text" maxlength="40" value="${esc(label)}"></label>
+  </div>
+  <div class="rr-row rr-actionbar">
+    <button class="rr-btn rr-primary" data-act="render">⚙ Render preview</button>
+    <button class="rr-btn" data-act="save">💾 Save override</button>
+    <a class="rr-btn rr-dl" hidden download>⬇ Download mp4</a>
+    <span class="rr-status" role="status" aria-live="polite"></span>
+  </div>
+</div>`;
+    const sec = q('.rr-detail', el);
+    syncVeto(sec);
+    updDur(sec);
+    ['.rr-ws', '.rr-we'].forEach(s => q(s, sec).addEventListener('input', () => { updDur(sec); queueFrame(sec); }));
+    sec.querySelectorAll('input[name=rr-crop]').forEach(r => r.addEventListener('change', () => {
+      q('.rr-manual', sec).hidden = cropMode(sec) !== 'manual';
+      drawManual(sec);
+    }));
+    setupManualCanvas(sec, q('.rr-mcanvas', sec));
+    drawManual(sec);
+    if (d.latest_render) showRender(sec, d.latest_render.id, '(latest)');
+    else drawTraj(sec);
+    queueFrame(sec);
+  }
+
+  const cropMode = sec => (sec.querySelector('input[name=rr-crop]:checked') || {}).value || 'ai';
+  function syncVeto(sec) {
+    const v = !!(S.detail && S.detail.vetoed);
+    const b = q('.rr-vetobtn', sec);
+    b.textContent = v ? 'Undo veto' : '🛑 Veto';
+    b.classList.toggle('rr-danger', !v);
+    q('.rr-vetoed', sec).hidden = !v;
+  }
+  function updDur(sec) {
+    const d = (+q('.rr-we', sec).value) - (+q('.rr-ws', sec).value);
+    q('.rr-dur', sec).textContent = d > 0 ? d.toFixed(1) + 's' : 'invalid';
+  }
+  function formState(sec) {
+    return {
+      window_start: parseFloat(q('.rr-ws', sec).value),
+      window_end: parseFloat(q('.rr-we', sec).value),
+      crop_mode: cropMode(sec),
+      crop_box: S.box,
+      label: q('.rr-label', sec).value.trim(),
+    };
+  }
+  function setStatus(sec, t) { q('.rr-status', sec).textContent = t; }
+  function patchClip(id, patch) {
+    const c = S.clips.find(x => x.clip_id === id);
+    if (c) Object.assign(c, patch);
+  }
+
+  function showRender(sec, rid, state) {
+    const rv = q('.rr-render', sec);
+    const url = API + '/renders/' + enc(rid) + '/video';
+    rv.src = url; rv.hidden = false;
+    q('.rr-norender', sec).hidden = true;
+    q('.rr-rstate', sec).textContent = state;
+    const dl = q('.rr-dl', sec);
+    dl.href = url; dl.hidden = false;
+    loadTrajectory(sec, rid, rv);
+  }
+
+  async function startRender(sec, id) {
+    const body = formState(sec);
+    if (!(body.window_end > body.window_start)) return setStatus(sec, 'Set a valid window first (end > start).');
+    if (body.crop_mode === 'manual' && !S.box) return setStatus(sec, 'Draw the manual crop box first.');
+    const btn = q('[data-act=render]', sec);
+    btn.disabled = true;
+    setStatus(sec, 'Queued…');
+    let rid;
+    try { rid = (await api('/clips/' + enc(id) + '/render', { method: 'POST', body: JSON.stringify(body) })).render_id; }
+    catch (e) { btn.disabled = false; return setStatus(sec, 'Could not start render: ' + e.message); }
+    setStatus(sec, 'Rendering… action tracking takes 1–3 minutes.');
+    stopPoll();
+    S.poll = setInterval(async () => {
+      if (S.current !== id) return stopPoll();
+      let r;
+      try { r = await api('/renders/' + enc(rid)); } catch (e) { return; }
+      setStatus(sec, 'Render: ' + r.status);
+      if (r.status !== 'done' && r.status !== 'failed' && r.status !== 'error') return;
+      stopPoll();
+      btn.disabled = false;
+      if (r.status === 'done') {
+        showRender(sec, rid, '(just rendered)');
+        patchClip(id, { has_render: true, latest_render_id: rid });
+        setStatus(sec, 'Done.');
+      } else {
+        setStatus(sec, 'Failed: ' + (r.error || 'unknown'));
+      }
+    }, 2500);
+  }
+
+  async function saveOverride(sec, id) {
+    const body = formState(sec);
+    if (!(body.window_end > body.window_start)) return setStatus(sec, 'Set a valid window first (end > start).');
+    if (body.crop_mode === 'manual' && !S.box) return setStatus(sec, 'Draw the manual crop box first.');
+    try {
+      await api('/clips/' + enc(id) + '/override', { method: 'POST', body: JSON.stringify(body) });
+      patchClip(id, { override: body });
+      setStatus(sec, 'Override saved — the pipeline uses it on its next run.');
+    } catch (e) { setStatus(sec, 'Could not save: ' + e.message); }
+  }
+
+  async function toggleVeto(sec, id) {
+    const vetoed = !!(S.detail && S.detail.vetoed);
+    if (!vetoed && !confirm('Keep this clip out of highlights? It won’t be used in the fire, fail or daily reels.')) return;
+    try {
+      await api('/clips/' + enc(id) + '/veto', vetoed ? { method: 'DELETE' } : { method: 'POST', body: '{}' });
+      S.detail.vetoed = !vetoed;
+      patchClip(id, { vetoed: !vetoed });
+      syncVeto(sec);
+      setStatus(sec, vetoed ? 'Veto removed.' : 'Vetoed.');
+    } catch (e) { setStatus(sec, 'Could not update veto: ' + e.message); }
+  }
+
+  /* ---------- trajectory + crop-cam ---------- */
+  async function loadTrajectory(sec, rid, videoEl) {
+    try { S.traj = await api('/renders/' + enc(rid) + '/trajectory'); }
+    catch (e) { S.traj = null; drawTraj(sec); return; }
+    drawTraj(sec);
+    drawCropcam(sec, 0);
+    if (!videoEl.dataset.rrBound) {
+      videoEl.dataset.rrBound = '1';
+      videoEl.addEventListener('timeupdate', () => {
+        drawTraj(sec, videoEl.currentTime);
+        drawCropcam(sec, videoEl.currentTime);
+      });
+    }
+  }
+  function trajX(t) {
+    const pts = S.traj.traj;
+    if (!pts.length) return 656;
+    if (t <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      if (t <= pts[i][0]) {
+        const [t0, x0] = pts[i - 1], [t1, x1] = pts[i];
+        const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+        return x0 + f * (x1 - x0);
+      }
+    }
+    return pts[pts.length - 1][1];
+  }
+  function drawTraj(sec, playhead) {
+    const cv = q('.rr-traj', sec); if (!cv) return;
+    const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#9d8fc4';
+    if (!S.traj || !S.traj.traj || !S.traj.traj.length) {
+      ctx.font = '12px sans-serif';
+      ctx.fillText('No trajectory yet — render first.', 12, H / 2);
+      return;
+    }
+    const pts = S.traj.traj, dur = pts[pts.length - 1][0] || 1, maxX = 1920 - 608;
+    ctx.strokeStyle = '#9d5cff'; ctx.lineWidth = 2; ctx.beginPath();
+    pts.forEach(([t, x], i) => {
+      const px = (t / dur) * W, py = H - 8 - (x / maxX) * (H - 16);
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    });
+    ctx.stroke();
+    ctx.font = '10px sans-serif';
+    ctx.fillText('crop-x over time (bottom = left edge, top = right edge)', 8, 12);
+    if (playhead != null) {
+      const px = Math.min(W, (playhead / dur) * W);
+      ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
+    }
+  }
+  function drawCropcam(sec, renderT) {
+    const cv = q('.rr-cam', sec); if (!cv) return;
+    const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    if (!S.frame) return;
+    ctx.drawImage(S.frame, 0, 0, W, H);
+    const x = (S.traj && S.traj.traj && S.traj.traj.length) ? trajX(renderT || 0) : 656;
+    ctx.strokeStyle = '#ff2fd6'; ctx.lineWidth = 3;
+    ctx.strokeRect(x * W / 1920, 0, 608 * W / 1920, H);
+  }
+  function queueFrame(sec) {
+    if (S.frameTimer) clearTimeout(S.frameTimer);
+    S.frameTimer = setTimeout(() => loadFrame(sec), 500);
+  }
+  function loadFrame(sec) {
+    const id = S.current; if (!id) return;
+    const ws = parseFloat(q('.rr-ws', sec).value) || 0;
+    const we = parseFloat(q('.rr-we', sec).value) || 0;
+    const t = ws + Math.max(0, (we - ws) / 2);
+    const img = new Image();
+    img.onload = () => {
+      if (S.current !== id) return;
+      S.frame = img;
+      drawManual(sec);
+      const rv = q('.rr-render', sec);
+      drawCropcam(sec, rv ? rv.currentTime || 0 : 0);
+    };
+    img.src = API + '/clips/' + enc(id) + '/frame?t=' + t.toFixed(1);
+  }
+
+  /* ---------- manual crop box ---------- */
+  function setupManualCanvas(sec, cv) {
+    let drag = null;
+    const pos = e => {
+      const r = cv.getBoundingClientRect();
+      return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+    };
+    cv.addEventListener('pointerdown', e => { drag = pos(e); cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const [x1, y1] = pos(e);
+      setManualBox(sec, drag[0], drag[1], x1, y1);
+    });
+    const end = () => { drag = null; };
+    cv.addEventListener('pointerup', end);
+    cv.addEventListener('pointercancel', end);
+  }
+  function setManualBox(sec, x0, y0, x1, y1) {
+    // Normalized coords aren't square (x is /1920, y is /1080), so a 9:16 box
+    // has h = w * (16/9) * (1920/1080).
+    const aspect = (16 / 9) * (1920 / 1080);
+    let w = Math.abs(x1 - x0), h = w * aspect;
+    let x = Math.min(x0, x1), y = y1 < y0 ? y0 - h : y0;
+    if (h > 1) { h = 1; w = h / aspect; }
+    x = Math.min(Math.max(x, 0), 1 - w);
+    y = Math.min(Math.max(y, 0), 1 - h);
+    S.box = { x, y, w, h };
+    drawManual(sec);
+  }
+  function drawManual(sec) {
+    const cv = q('.rr-mcanvas', sec); if (!cv) return;
+    const ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    if (S.frame) ctx.drawImage(S.frame, 0, 0, W, H);
+    const lab = q('.rr-boxlabel', sec);
+    if (S.box) {
+      const b = S.box;
+      ctx.strokeStyle = '#8cff2b'; ctx.lineWidth = 2;
+      ctx.strokeRect(b.x * W, b.y * H, b.w * W, b.h * H);
+      lab.textContent = `box x=${(+b.x).toFixed(3)} y=${(+b.y).toFixed(3)} w=${(+b.w).toFixed(3)} h=${(+b.h).toFixed(3)}`;
+    } else {
+      lab.textContent = 'no box drawn yet';
+    }
+  }
+
+  /* ---------- events ---------- */
+  function bind() {
+    if (S.bound) return;
+    const el = root(); if (!el) return;
+    S.bound = true;
+    el.addEventListener('click', async e => {
+      const t = e.target.closest('[data-act],[data-filter],[data-open]');
+      if (!t || !el.contains(t)) return;
+      if (t.dataset.filter) { S.filter = t.dataset.filter; return renderList(); }
+      if (t.dataset.open) return openClip(t.dataset.open);
+      const sec = q('.rr-detail', el), id = S.current;
+      switch (t.dataset.act) {
+        case 'back': renderList(); return loadReels(true);
+        case 'retry': return loadReels(true);
+        case 'settings': if (window.openSettings) openSettings(); return;
+        case 'scope': S.all = !S.all; S.clips = []; return loadReels(true);
+        case 'sync':
+          t.disabled = true;
+          try { await api('/sync', { method: 'POST' }); await loadReels(true); }
+          catch (err) { alert('Sync failed: ' + err.message); t.disabled = false; }
+          return;
+        case 'markin': q('.rr-ws', sec).value = q('.rr-src', sec).currentTime.toFixed(1); updDur(sec); return queueFrame(sec);
+        case 'markout': q('.rr-we', sec).value = q('.rr-src', sec).currentTime.toFixed(1); updDur(sec); return queueFrame(sec);
+        case 'aiwin': {
+          const a = S.detail && S.detail.analysis; if (!a) return;
+          q('.rr-ws', sec).value = (+a.primary_start).toFixed(1);
+          q('.rr-we', sec).value = (+a.primary_end).toFixed(1);
+          updDur(sec); return queueFrame(sec);
+        }
+        case 'veto': return toggleVeto(sec, id);
+        case 'render': return startRender(sec, id);
+        case 'save': return saveOverride(sec, id);
+      }
+    });
+  }
+})();
 
 // ── Slapshare full dashboard ──────────────────────────────────────────────────
 const SLAP_BASE = 'https://slap.qureshi.io/api/v1/dashboard';
