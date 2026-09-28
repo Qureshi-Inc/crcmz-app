@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
+import * as Tabs from '@radix-ui/react-tabs'
+import { ReelsPanel } from './ReelsPanel'
 import { CACHE } from '@/app/queryClient'
 import { getClips, getPipelineStatus, resendClip } from '@/lib/api/clips'
 import type { Clip, PipelineStatus } from '@/lib/api/clips'
@@ -32,6 +34,52 @@ import { PageTitle } from '@/components/PageTitle'
  * Back returns to the previous filter rather than the previous page.
  */
 export function ClipsPage() {
+  const [params, setParams] = useSearchParams()
+  const view = params.get('view') === 'all' ? 'all' : 'reels'
+  const everyone = params.get('everyone') === '1'
+
+  function setParam(key: string, value: string) {
+    const next = new URLSearchParams(params)
+    if (value) next.set(key, value)
+    else next.delete(key)
+    setParams(next, { replace: true })
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-[var(--content-width-wide)]">
+      <PageTitle title="Clips" />
+      <Tabs.Root value={view} onValueChange={v => setParam('view', v === 'all' ? 'all' : '')}>
+        <Tabs.List aria-label="Which clips" className="mb-5 flex gap-1 border-b border-[var(--color-border)] pb-2">
+          <ViewTab value="reels">My reels</ViewTab>
+          <ViewTab value="all">Every clip</ViewTab>
+        </Tabs.List>
+        <Tabs.Content value="reels" className="outline-none">
+          <ReelsPanel showAll={everyone} onShowAll={v => setParam('everyone', v ? '1' : '')} />
+        </Tabs.Content>
+        <Tabs.Content value="all" className="outline-none">
+          <EveryClipPanel />
+        </Tabs.Content>
+      </Tabs.Root>
+    </div>
+  )
+}
+
+function ViewTab({ value, children }: { value: string; children: React.ReactNode }) {
+  return (
+    <Tabs.Trigger
+      value={value}
+      className={cx(
+        'min-h-9 rounded-[var(--radius-md)] px-4 text-sm font-semibold',
+        'text-[var(--color-fg-subtle)] hover:text-[var(--color-fg)]',
+        'data-[state=active]:bg-[var(--color-accent-subtle)] data-[state=active]:text-[var(--color-accent-text)]',
+      )}
+    >
+      {children}
+    </Tabs.Trigger>
+  )
+}
+
+function EveryClipPanel() {
   const [params, setParams] = useSearchParams()
   const month = params.get('month') ?? ''
   const sender = params.get('sender') ?? ''
@@ -69,6 +117,12 @@ export function ClipsPage() {
     setParams(next, { replace: true })
   }
 
+  function clearFilters() {
+    const next = new URLSearchParams(params)
+    for (const k of ['month', 'sender', 'status']) next.delete(k)
+    setParams(next, { replace: true })
+  }
+
   const rows = clips.data?.clips ?? []
   const stale = clips.isError && Boolean(clips.data)
 
@@ -81,12 +135,11 @@ export function ClipsPage() {
   )
 
   return (
-    <div className="mx-auto w-full max-w-[var(--content-width-wide)]">
-      <PageTitle
-        title="Clips"
-        subtitle={clips.data ? `${clips.data.count} clip${clips.data.count === 1 ? '' : 's'}` : undefined}
-        meta={<Freshness at={clips.dataUpdatedAt || null} stale={stale} />}
-      />
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-[var(--color-fg-muted)]">
+        {clips.data && <span>{clips.data.count} clip{clips.data.count === 1 ? '' : 's'}</span>}
+        <Freshness at={clips.dataUpdatedAt || null} stale={stale} />
+      </div>
 
       {stale && <div className="mb-4"><StaleNotice onRetry={() => void clips.refetch()} /></div>}
 
@@ -142,7 +195,7 @@ export function ClipsPage() {
             ]}
           />
           {(month || sender || status) && (
-            <Button variant="ghost" size="sm" onClick={() => setParams(new URLSearchParams(), { replace: true })}>
+            <Button variant="ghost" size="sm" onClick={() => clearFilters()}>
               Clear filters
             </Button>
           )}
@@ -165,7 +218,7 @@ export function ClipsPage() {
               }
               action={
                 (month || sender || status) && (
-                  <Button variant="secondary" onClick={() => setParams(new URLSearchParams(), { replace: true })}>
+                  <Button variant="secondary" onClick={() => clearFilters()}>
                     Clear filters
                   </Button>
                 )

@@ -5813,6 +5813,8 @@ import clips as _clips
 import clip_store as _cstore
 from psn_messaging import ClipNotReady, ClipUnauthorized, ClipRateLimited, ClipError, ClipDownload
 _clips.init()
+import reels as _reels
+app.include_router(_reels.build_router(_get_session, _is_iam_admin))
 
 import whatsapp_analytics as _wa
 import giveaway as _giveaway
