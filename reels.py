@@ -27,6 +27,7 @@ from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 
 import crcmz_identity
+import reel_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,15 @@ def build_router(
             raise HTTPException(404, "not found")
         return detail
 
+    async def pipeline_of(clip_id: str, vetoed: bool) -> dict:
+        states = await asyncio.to_thread(reel_pipeline.classify, [clip_id], {clip_id} if vetoed else set())
+        return states.get(clip_id) or {}
+
+    async def refuse_twin(detail: dict, clip_id: str) -> None:
+        # A twin of a posted clip is deduped by the pipeline, so an edit could never publish.
+        if (await pipeline_of(clip_id, bool(detail.get("vetoed")))).get("state") == "twin_of_posted":
+            raise HTTPException(409, "this clip is a duplicate of one already posted, so it can't be posted")
+
     async def owned_render(me: dict, rid: str) -> dict:
         if not _RENDER_ID.match(rid):
             raise HTTPException(404, "not found")
@@ -144,7 +154,13 @@ def build_router(
             return {**body, "clips": [], "source": None, "roster": None, "needs_psn_link": True}
         params = {} if scope == "all" else {"sender": me["psn_id"]}
         data = _json_or_raise(await _rr("GET", "/api/eligible", params=params))
-        return {**body, "clips": data.get("clips", []), "source": data.get("source"),
+        clips = data.get("clips", [])
+        states = await asyncio.to_thread(
+            reel_pipeline.classify, [c["clip_id"] for c in clips if c.get("clip_id")],
+            {c["clip_id"] for c in clips if c.get("vetoed")})
+        for c in clips:
+            c["pipeline"] = states.get(c.get("clip_id"))
+        return {**body, "clips": clips, "source": data.get("source"),
                 "roster": data.get("roster"), "needs_psn_link": False}
 
     @router.get("/clips/{clip_id:path}/source")
@@ -191,14 +207,14 @@ def build_router(
     @router.post("/clips/{clip_id:path}/override")
     async def clip_override(clip_id: str, request: Request):
         me = await caller(request)
-        await owned_clip(me, clip_id)
+        await refuse_twin(await owned_clip(me, clip_id), clip_id)
         payload = {**_edit(await request.json()), "by": actor(me)}
         return _json_or_raise(await _rr("POST", f"/api/clips/{_q(clip_id)}/override", json=payload))
 
     @router.post("/clips/{clip_id:path}/force-post")
     async def clip_force_post(clip_id: str, request: Request):
         me = await caller(request)
-        await owned_clip(me, clip_id)
+        await refuse_twin(await owned_clip(me, clip_id), clip_id)
         try:
             force = (await request.json() or {}).get("force", True) is not False
         except ValueError:
@@ -209,7 +225,8 @@ def build_router(
     @router.get("/clips/{clip_id:path}")
     async def clip_detail(clip_id: str, request: Request):
         me = await caller(request)
-        return await owned_clip(me, clip_id)
+        detail = await owned_clip(me, clip_id)
+        return {**detail, "pipeline": await pipeline_of(clip_id, bool(detail.get("vetoed")))}
 
     @router.get("/renders/{rid}")
     async def render_status(rid: str, request: Request):

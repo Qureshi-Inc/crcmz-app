@@ -3067,8 +3067,8 @@ async def mcp_endpoint(request: Request):
     return JSONResponse(body, status_code=status)
 
 
-_REV_RE   = _re.compile(r"\brev\b",  _re.IGNORECASE)
-_FAIL_RE  = _re.compile(r"\bfail\b", _re.IGNORECASE)
+import reel_pipeline as _rp  # the trigger rules; Reel Review's badges read the same ones
+_REV_RE, _FAIL_RE = _rp._REV_RE, _rp._FAIL_RE
 
 # Backward window: how far back to look for an untagged clip when a trigger
 # text arrives AFTER the clip (PS-app style: post clip, type emoji).
@@ -3080,15 +3080,8 @@ REV_FOLLOWUP_WINDOW = 5 * 60  # seconds
 TRIGGER_FORWARD_WINDOW = 2 * 60  # seconds
 
 
-def _wants_ig_post(caption: str) -> bool:
-    return bool(caption) and "🔥" in caption
-
-
-def _wants_fail_tag(caption: str) -> bool:
-    """True for follow-up texts that tag a clip as a funny fail.
-    The downstream watcher handles IG posting; this side only backfills the message.
-    """
-    return bool(caption) and (bool(_FAIL_RE.search(caption)) or "😂" in caption)
+_wants_ig_post = _rp.wants_ig_post
+_wants_fail_tag = _rp.wants_fail_tag
 
 
 def _zid_for_psn(psn_user: str) -> str:
@@ -3180,13 +3173,7 @@ def _resolve_clip_game(sender: str, account_id: str,
     return _game_from_live_titles(account_id, clip_ts)
 
 
-def _wants_coaching(caption: str) -> bool:
-    """True when the clip's caption asks for a coaching review.
-
-    Word-boundary match on purpose: "rev this one" opts in, "revenge" does not.
-    A substring test would have made every revenge clip a coaching request.
-    """
-    return bool(caption) and bool(_REV_RE.search(caption))
+_wants_coaching = _rp.wants_coaching
 
 
 @app.get("/api/coaching")
@@ -8157,6 +8144,14 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     background:rgba(255,255,255,.04); color:var(--txt); font:600 16px "Rajdhani",sans-serif; cursor:pointer;
     display:inline-flex; align-items:center; justify-content:center; gap:6px; text-decoration:none; flex:none; }
   .rrs-ic.on { border-color:rgba(255,64,64,.75); background:rgba(255,64,64,.16); color:#ffb4b4; }
+  .rrs-pipe { flex:none; padding:7px 14px; font-size:13px; line-height:1.35; border-bottom:1px solid var(--line);
+    background:rgba(255,255,255,.03); color:var(--txt); }
+  .rrs-pipe a { color:var(--cyan); }
+  .rrs-pipe.posted { background:rgba(34,230,255,.08); }
+  .rrs-pipe.twin_of_posted, .rrs-pipe.vetoed { background:rgba(255,64,64,.1); color:#ffc9c9; }
+  .rrs-pipe.fire, .rrs-pipe.fail { background:rgba(255,176,32,.08); }
+  .rrs-pipe.daily_eligible { background:rgba(140,255,43,.07); }
+  .rr-badge.pipe { font-weight:700; }
   [data-a=force].on { border-color:var(--gold); background:rgba(255,210,74,.14); color:var(--gold); }
   .rrs-title { flex:1; min-width:0; display:flex; flex-direction:column; line-height:1.15; }
   .rrs-title b { font-family:"Orbitron",sans-serif; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -11184,14 +11179,24 @@ setInterval(loadPipeline, 30000);
     const t = Date.parse(String(w).replace(' ', 'T'));
     return isNaN(t) ? 0 : t / 1000;
   }
+  const PIPE_TONE = { fire: 'fire', fail: 'fire', daily_eligible: 'ok', posted: 'rend',
+                      twin_of_posted: 'veto', vetoed: 'veto', not_eligible: '' };
+  function pipeText(p) {
+    if (!p || !p.state) return '';
+    if (p.state === 'fail') return `😂 Fail reel · ${p.reactions || 0}/${p.gate || 2} reactions`;
+    return { posted: '✅ Posted', twin_of_posted: '👯 Duplicate of posted', vetoed: '🛑 Vetoed',
+             fire: '🔥 Fire reel', daily_eligible: '📅 Daily highlights',
+             not_eligible: '⏸ Not eligible' + (p.detail ? ' · ' + p.detail : '') }[p.state] || p.label || '';
+  }
   function badges(c) {
-    const b = [], msg = c.message || '';
+    const b = [], msg = c.message || '', p = c.pipeline;
+    if (p && p.state) b.push(`<span class="rr-badge pipe ${PIPE_TONE[p.state] || ''}">${esc(pipeText(p))}</span>`);
     if (msg.includes('🔥')) b.push('<span class="rr-badge fire">🔥 fire</span>');
     if (/fail|😂|🤣/i.test(msg)) b.push('<span class="rr-badge">😂 fail</span>');
     if (c.has_analysis) b.push('<span class="rr-badge ok">AI analyzed</span>');
     if (c.has_render) b.push('<span class="rr-badge rend">rendered</span>');
     if (c.override) b.push('<span class="rr-badge ov">approved</span>');
-    if (c.vetoed) b.push('<span class="rr-badge veto">🛑 vetoed</span>');
+    if (c.vetoed && !(p && p.state === 'vetoed')) b.push('<span class="rr-badge veto">🛑 vetoed</span>');
     return b.join('');
   }
   const title = () => S.scope === 'all' ? '🎞 All reels' : '🎞 My reels';
@@ -11410,7 +11415,7 @@ setInterval(loadPipeline, 30000);
       zooms: Array.isArray(ov.zooms) ? ov.zooms.map(z => ({ ...z })) : [],
       subsEdited,
       subs: subsEdited ? ov.subtitles.map(s => ({ start: +s.start, end: +s.end, text: s.text || s.subtitle_text || '' })) : aiSubs(a),
-      vetoed: !!d.vetoed, approved: !!d.override, forced: !!ov.force_post,
+      vetoed: !!d.vetoed, approved: !!d.override, forced: !!ov.force_post, pipe: d.pipeline || {},
       rid: d.latest_render ? d.latest_render.id : null, traj: null, t0: null,
       view: 'live', tool: isDesk() ? 'trim' : null, selZoom: -1, selSub: -1, dirty: false,
     });
@@ -11430,6 +11435,7 @@ setInterval(loadPipeline, 30000);
   <button class="rrs-ic rrs-mob" data-a="force" hidden>🚀</button>
   <button class="rrs-ic rrs-mob rrs-go" data-a="save" aria-label="Save and approve">✅<span>Save</span></button>
 </header>
+<div class="rrs-pipe" hidden></div>
 <div class="rrs-body">
   <div class="rrs-main">
     <div class="rrs-stagewrap">
@@ -11604,9 +11610,32 @@ setInterval(loadPipeline, 30000);
     }).catch(() => {});
   }
 
+  function syncPipe() {
+    const p = E.pipe || {}, el = q('.rrs-pipe', E.el);
+    const link = p.ig_url && /^https:\/\/www\.instagram\.com\//.test(p.ig_url)
+      ? ` <a href="${esc(p.ig_url)}" target="_blank" rel="noopener">View on Instagram ↗</a>` : '';
+    const msg = {
+      posted: `✅ Already posted on @crcmzclan.${link} Saving an edit won’t repost it — Force post does.`,
+      twin_of_posted: `👯 This is a duplicate of a clip that’s already posted, so it can’t be posted.${link}`,
+      vetoed: `🛑 Vetoed — kept out of highlights${p.detail ? ' (' + esc(p.detail) + ')' : ''}.`,
+      fire: '🔥 Headed for the Fire reel.',
+      fail: `😂 Headed for the Fail reel · ${p.reactions || 0}/${p.gate || 2} WhatsApp reactions${(p.reactions || 0) >= (p.gate || 2) ? ' — ready' : ''}.`,
+      daily_eligible: '📅 Headed for the daily highlights reel.',
+      not_eligible: `⏸ Not eligible for a reel${p.detail ? ' — ' + esc(p.detail) : ''}.`,
+    }[p.state];
+    el.hidden = !msg;
+    el.className = 'rrs-pipe ' + (p.state || '');
+    el.innerHTML = msg || '';
+    const twin = p.state === 'twin_of_posted';
+    qa('[data-a=save]', E.el).forEach(b => {
+      b.disabled = twin;
+      if (!b.classList.contains('rrs-mob')) b.textContent = p.state === 'posted' ? '💾 Save edit (won’t repost)' : '✅ Save & approve';
+    });
+  }
   function syncTop() {
+    syncPipe();
     qa('[data-a=force]', E.el).forEach(f => {
-      f.hidden = !E.approved;
+      f.hidden = !E.approved || (E.pipe && E.pipe.state === 'twin_of_posted');
       f.classList.toggle('on', E.forced);
       f.title = E.forced ? 'Force post is on — tap to cancel' : 'Force post — post again past the once-per-clip rule';
       f.setAttribute('aria-label', f.title);
@@ -11966,8 +11995,11 @@ setInterval(loadPipeline, 30000);
   }
 
   async function save() {
+    if (E.pipe && E.pipe.state === 'twin_of_posted') return status('This clip is a duplicate of one already posted, so it can’t be posted.');
     const bad = validate(); if (bad) return status(bad);
-    if (!confirm('Save these edits and approve this clip for Instagram? Muse will post it with exactly these settings.')) return;
+    const posted = E.pipe && E.pipe.state === 'posted';
+    if (!confirm(posted ? 'Save this edit? This clip is already posted, so saving won’t repost it — use Force post for that.'
+                        : 'Save these edits and approve this clip for Instagram? Muse will post it with exactly these settings.')) return;
     const body = editBody();
     try {
       await api('/clips/' + enc(E.id) + '/override', { method: 'POST', body: JSON.stringify(body) });
