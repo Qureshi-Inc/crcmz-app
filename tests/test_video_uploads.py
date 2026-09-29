@@ -172,6 +172,73 @@ def t_chunk_offsets_enforced():
                                                      clip_store.archive_file))
 
 
+def t_resume_continues_from_what_arrived():
+    data = V2.read_bytes()
+    s = vu.start_session("zid-r", "Resumer", "two.mov", len(data), None, file_key="k-two")
+    vu.append_chunk(s["upload_id"], "zid-r", 0, data[:700])
+    # Page reloaded; iOS hands the same file back under another name.
+    r = vu.start_session("zid-r", "Resumer", "IMG_9999.MOV", len(data), "late caption",
+                         file_key="k-two")
+    assert r["resumed"] and r["upload_id"] == s["upload_id"] and r["received"] == 700, r
+    assert vu.open_session("zid-r")["received"] == 700
+    # A crash after the write but before the counter update leaves extra bytes.
+    with open(vu._staged(s["upload_id"]), "ab") as fh:
+        fh.write(b"garbage-from-a-half-written-chunk")
+    r = vu.start_session("zid-r", "Resumer", "two.mov", len(data), None, file_key="k-two")
+    assert r["received"] == 700 and vu._staged(s["upload_id"]).stat().st_size == 700
+    try:
+        vu.append_chunk(s["upload_id"], "zid-r", 0, data[:700])
+    except vu.Rejected as e:
+        assert e.code == "offset" and e.extra == {"received": 700}, (e.code, e.extra)
+    else:
+        raise AssertionError("replayed chunk accepted")
+    vu.append_chunk(s["upload_id"], "zid-r", 700, data[700:])
+    row = vu.finish_session(s["upload_id"], "zid-r", clip_store.archive_file)
+    assert (clip_store.CLIP_LOCAL_DIR / row["storage_key"]).read_bytes() == data, "bytes differ"
+    assert row["storage_key"].endswith(".mov"), row["storage_key"]
+    assert vu.open_session("zid-r") is None
+    STATE["resumed"] = row["video_post_id"]
+    vu.skip(row["video_post_id"], "test")          # free the member and the bytes' twin slot
+    with vu._conn() as db:                         # so later tests can reuse V2
+        db.execute("DELETE FROM video_posts WHERE video_post_id=?", (row["video_post_id"],))
+
+
+def t_different_file_replaces_the_open_session():
+    s = vu.start_session("zid-r", "Resumer", "a.mp4", 5000, None, file_key="k-a")
+    vu.append_chunk(s["upload_id"], "zid-r", 0, b"x" * 100)
+    r = vu.start_session("zid-r", "Resumer", "b.mp4", 5000, None, file_key="k-b")
+    assert not r["resumed"] and r["upload_id"] != s["upload_id"], r
+    assert not vu._staged(s["upload_id"]).exists(), "old staging file left behind"
+    r2 = vu.start_session("zid-r", "Resumer", "b.mp4", 5000, None)  # no key: never resumes
+    assert not r2["resumed"], r2
+
+
+def t_abandoned_uploads_expire_after_24h():
+    s = vu.open_session("zid-r")
+    with vu._conn() as db:
+        db.execute("UPDATE upload_sessions SET created_at=created_at-? WHERE zitadel_id=?",
+                   (23 * 3600, "zid-r"))
+    vu.sweep_stale()
+    assert vu.open_session("zid-r"), "swept before 24h"
+    with vu._conn() as db:
+        db.execute("UPDATE upload_sessions SET created_at=created_at-? WHERE zitadel_id=?",
+                   (2 * 3600, "zid-r"))
+    assert vu.open_session("zid-r") is None, "expired session still offered"
+    vu.sweep_stale()
+    assert not vu._staged(s["upload_id"]).exists()
+    with vu._conn() as db:
+        assert db.execute("SELECT COUNT(*) FROM upload_sessions").fetchone()[0] <= 1
+
+
+def t_read_tool_does_not_sweep():
+    s = vu.start_session("zid-sw", "Sweeper", "a.mp4", 5000, None)
+    with vu._conn() as db:
+        db.execute("UPDATE upload_sessions SET created_at=0 WHERE upload_id=?", (s["upload_id"],))
+    read("pending_video_uploads")
+    assert vu._staged(s["upload_id"]).exists(), "the read tool deleted a file"
+    vu.sweep_stale()
+
+
 # ── Muse-facing tools ─────────────────────────────────────────────────────────
 def t_pending_lists_roster_psn_and_media_url():
     page = read("pending_video_uploads")
@@ -345,6 +412,28 @@ def http_tests():
         r = client.post("/api/video-uploads/start", headers=ORIGIN,
                         json={"filename": "b.mp4", "size": 10})
         assert r.status_code == 409 and "hasn't been posted yet" in r.json()["detail"], r.text
+
+    def t_resume_over_http():
+        people["zid-res"] = {"zitadel_id": "zid-res", "psn_id": "Res"}
+        login("zid-res")
+        data = make_video(7, "four.mp4", "purple").read_bytes()
+        body = {"filename": "four.mp4", "size": len(data), "file_key": "k-four"}
+        s = client.post("/api/video-uploads/start", headers=ORIGIN, json=body).json()
+        assert s["received"] == 0 and not s["resumed"], s
+        assert client.put(f"/api/video-uploads/chunk?id={s['upload_id']}&offset=0",
+                          headers=ORIGIN, content=data[:1000]).status_code == 200
+        r = client.put(f"/api/video-uploads/chunk?id={s['upload_id']}&offset=0",
+                       headers=ORIGIN, content=data[:1000])
+        assert r.status_code == 409 and r.json()["received"] == 1000, r.text
+        mine = client.get("/api/video-uploads/mine").json()
+        assert mine["open_session"]["received"] == 1000, mine["open_session"]
+        s2 = client.post("/api/video-uploads/start", headers=ORIGIN, json=body).json()
+        assert s2["resumed"] and s2["received"] == 1000 and s2["upload_id"] == s["upload_id"], s2
+        assert client.put(f"/api/video-uploads/chunk?id={s['upload_id']}&offset=1000",
+                          headers=ORIGIN, content=data[1000:]).status_code == 200
+        r = client.post("/api/video-uploads/finish", headers=ORIGIN,
+                        json={"upload_id": s["upload_id"]})
+        assert r.status_code == 200, r.text
 
     def t_over_200mb_refused_over_http():
         people["zid-big"] = {"zitadel_id": "zid-big", "psn_id": "Big"}

@@ -11,7 +11,9 @@ This platform never posts anything itself. The flow ends when Muse records.
 
 Uploads arrive in chunks (see `start_session` / `append_chunk`) because the public
 host sits behind Cloudflare, which refuses a request body over 100 MB — a single
-200 MB POST would never reach the app.
+200 MB POST would never reach the app. They are resumable: starting again with the
+same file (same `file_key`) continues the member's open session from the last
+byte the server has, so a dropped connection or a reloaded page loses nothing.
 
 Two invariants are enforced by the schema rather than by a check-then-insert, so
 two racing requests cannot both win:
@@ -50,7 +52,7 @@ MAX_SECONDS = 90.0
 MIN_SECONDS = 3.0
 MAX_CAPTION = 150
 CHUNK_BYTES = 8 * 1024 * 1024        # well under Cloudflare's 100 MB body limit
-STAGING_TTL = 6 * 3600               # abandoned half-uploads are swept after this
+STAGING_TTL = 24 * 3600              # abandoned half-uploads are swept after this
 
 PLATFORMS = ("instagram", "tiktok", "youtube")
 _EXT_TYPES = {".mp4": "video/mp4", ".mov": "video/quicktime"}
@@ -59,9 +61,10 @@ _EXT_TYPES = {".mp4": "video/mp4", ".mov": "video/quicktime"}
 class Rejected(Exception):
     """A user-facing refusal. `str(e)` is shown in the app as-is."""
 
-    def __init__(self, message: str, code: str = "rejected"):
+    def __init__(self, message: str, code: str = "rejected", **extra):
         super().__init__(message)
         self.code = code
+        self.extra = extra
 
 
 def _conn() -> sqlite3.Connection:
@@ -118,6 +121,10 @@ def init() -> None:
                 created_at  REAL NOT NULL
             );
         """)
+        try:
+            db.execute("ALTER TABLE upload_sessions ADD COLUMN file_key TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
         db.commit()
     logger.info("video_uploads: DB ready at %s", _DB_PATH)
 
@@ -132,7 +139,9 @@ def _staged(upload_id: str) -> Path:
     return _STAGING_DIR / f"{upload_id}.part"
 
 
-def _sweep_stale() -> None:
+def sweep_stale() -> None:
+    """Delete half-finished uploads older than STAGING_TTL. Called at startup and
+    on every new upload; never from init(), which the read tool calls."""
     cutoff = time.time() - STAGING_TTL
     with _lock, _conn() as db:
         rows = db.execute("SELECT upload_id FROM upload_sessions WHERE created_at < ?",
@@ -161,12 +170,60 @@ _QUEUED_MSG = ("your previous video hasn't been posted yet — you can upload an
                "once it is posted or skipped")
 
 
-def start_session(zitadel_id: str, psn_id: str, filename: str, size: int,
-                  caption: str | None) -> dict:
-    """Validate what can be checked before any bytes move, then open a staging file.
+def _file_key(raw: str | None) -> str:
+    # Client-built identity of the file (name, size, mtime, hash of its first MB).
+    # Only ever compared for equality, so just bound it.
+    return re.sub(r"[^A-Za-z0-9_.:|-]", "", str(raw or ""))[:200]
 
-    A member has at most one open session: starting again discards the old one, so
-    a reloaded page cannot leave orphans that count against anything.
+
+def open_session(zitadel_id: str) -> dict | None:
+    """The member's unfinished upload, for the page to offer a resume."""
+    with _lock, _conn() as db:
+        row = db.execute("SELECT upload_id, filename, size, received, created_at"
+                         " FROM upload_sessions WHERE zitadel_id=? AND created_at >= ?",
+                         (zitadel_id, time.time() - STAGING_TTL)).fetchone()
+    if not row:
+        return None
+    return {**dict(row), "expires_at": row["created_at"] + STAGING_TTL}
+
+
+def _resume(zitadel_id: str, filename: str, size: int, file_key: str,
+            caption: str | None) -> dict | None:
+    """Continue the member's open session if it is for this same file.
+
+    The staged file is the truth for how much arrived: a crash between the write
+    and the counter update can leave it longer than `received`, so it is cut back
+    to `received` rather than trusted, and a shorter file pulls `received` down.
+    """
+    if not file_key:
+        return None
+    with _lock, _conn() as db:
+        # Not matched on filename: iOS hands the same video over under a new name.
+        row = db.execute("SELECT * FROM upload_sessions WHERE zitadel_id=? AND file_key=?"
+                         " AND size=? AND created_at >= ?",
+                         (zitadel_id, file_key, size, time.time() - STAGING_TTL)).fetchone()
+        if not row:
+            return None
+        path = _staged(row["upload_id"])
+        on_disk = path.stat().st_size if path.is_file() else 0
+        received = min(row["received"], on_disk)
+        if on_disk != received or not path.is_file():
+            with path.open("ab") as fh:
+                fh.truncate(received)
+        db.execute("UPDATE upload_sessions SET received=?, caption=? WHERE upload_id=?",
+                   (received, caption, row["upload_id"]))
+        db.commit()
+    return {"upload_id": row["upload_id"], "chunk_bytes": CHUNK_BYTES, "size": size,
+            "received": received, "resumed": True}
+
+
+def start_session(zitadel_id: str, psn_id: str, filename: str, size: int,
+                  caption: str | None, file_key: str | None = None) -> dict:
+    """Validate what can be checked before any bytes move, then open a staging file
+    — or resume the member's open one when `file_key` says it is the same file.
+
+    A member has at most one open session: starting a different file discards the
+    old one, so a reloaded page cannot leave orphans that count against anything.
     """
     ext = Path(filename or "").suffix.lower()
     if ext not in _EXT_TYPES:
@@ -180,7 +237,11 @@ def start_session(zitadel_id: str, psn_id: str, filename: str, size: int,
     if queued_for(zitadel_id):
         raise Rejected(_QUEUED_MSG, "already_queued")
 
-    _sweep_stale()
+    sweep_stale()
+    file_key = _file_key(file_key)
+    resumed = _resume(zitadel_id, filename, size, file_key, caption)
+    if resumed:
+        return resumed
     upload_id = uuid.uuid4().hex
     with _lock, _conn() as db:
         old = db.execute("SELECT upload_id FROM upload_sessions WHERE zitadel_id=?",
@@ -188,14 +249,15 @@ def start_session(zitadel_id: str, psn_id: str, filename: str, size: int,
         db.execute("DELETE FROM upload_sessions WHERE zitadel_id=?", (zitadel_id,))
         db.execute(
             "INSERT INTO upload_sessions (upload_id, zitadel_id, psn_id, filename,"
-            " caption, size, received, created_at) VALUES (?,?,?,?,?,?,0,?)",
+            " caption, size, received, created_at, file_key) VALUES (?,?,?,?,?,?,0,?,?)",
             (upload_id, zitadel_id, psn_id, Path(filename).name[:120], caption,
-             size, time.time()))
+             size, time.time(), file_key))
         db.commit()
     for r in old:
         _staged(r["upload_id"]).unlink(missing_ok=True)
     _staged(upload_id).write_bytes(b"")
-    return {"upload_id": upload_id, "chunk_bytes": CHUNK_BYTES, "size": size}
+    return {"upload_id": upload_id, "chunk_bytes": CHUNK_BYTES, "size": size,
+            "received": 0, "resumed": False}
 
 
 def _session(upload_id: str, zitadel_id: str) -> dict:
@@ -215,7 +277,10 @@ def append_chunk(upload_id: str, zitadel_id: str, offset: int, data: bytes) -> d
     if len(data) > CHUNK_BYTES:
         raise Rejected("chunk too large", "chunk")
     if int(offset) != s["received"]:
-        raise Rejected("chunk out of order — expected offset %d" % s["received"], "offset")
+        # A retried chunk whose first attempt did land arrives here; the client
+        # reads `received` and carries on from there.
+        raise Rejected("chunk out of order — expected offset %d" % s["received"], "offset",
+                       received=s["received"])
     if s["received"] + len(data) > s["size"]:
         raise Rejected("more data than the declared file size", "too_large")
     with _lock:

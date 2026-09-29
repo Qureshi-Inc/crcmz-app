@@ -3528,7 +3528,7 @@ def _upload_rejected(e: "_vu.Rejected") -> JSONResponse:
         status = 503
     elif e.code == "no_session":
         status = 404
-    return JSONResponse({"detail": str(e), "code": e.code}, status_code=status)
+    return JSONResponse({"detail": str(e), "code": e.code, **e.extra}, status_code=status)
 
 
 def _member_upload_view(row: dict) -> dict:
@@ -3555,6 +3555,8 @@ def api_video_uploads_mine(request: Request):
     return {"psn_id": psn_id,
             "uploads": [_member_upload_view(r) for r in rows],
             "can_upload": not any(r["status"] == "queued" for r in rows),
+            # An unfinished upload the page can offer to resume.
+            "open_session": _vu.open_session(sub),
             "limits": {"max_bytes": _vu.MAX_BYTES, "max_seconds": _vu.MAX_SECONDS,
                        "min_seconds": _vu.MIN_SECONDS, "max_caption": _vu.MAX_CAPTION,
                        "formats": ["mp4", "mov"]}}
@@ -3570,8 +3572,9 @@ async def api_video_uploads_start(request: Request):
     except Exception:  # noqa: BLE001
         raise HTTPException(status_code=400, detail="expected JSON")
     try:
-        return _vu.start_session(sub, psn_id, str(body.get("filename") or ""),
-                                 int(body.get("size") or 0), body.get("caption"))
+        return await asyncio.to_thread(
+            _vu.start_session, sub, psn_id, str(body.get("filename") or ""),
+            int(body.get("size") or 0), body.get("caption"), body.get("file_key"))
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="bad size")
     except _vu.Rejected as e:
@@ -6035,6 +6038,7 @@ _ig.init()
 _agent_tasks.init()
 _month_montage.init()
 _vu.init()
+_vu.sweep_stale()
 _wa_react.init()
 _mcp_audit.init()
 _app_events.init()
@@ -11105,6 +11109,10 @@ function upRender(){
   const form = d.can_upload
     ? '<input type="file" id="upFile" class="up-file" accept="video/mp4,video/quicktime,.mp4,.mov">'+
       '<input type="text" id="upCap" class="up-in" maxlength="'+L.max_caption+'" placeholder="Caption (optional)">'+
+      (d.open_session && d.open_session.received
+        ? '<div class="up-msg">Unfinished upload: <b>'+esc(d.open_session.filename)+'</b> ('+
+          Math.round(100*d.open_session.received/d.open_session.size)+'%). Pick the same file '+
+          'and tap Upload to continue where it stopped.</div>' : '')+
       '<button class="up-btn" id="upGo" onclick="upSend()">Upload</button>'+
       '<div class="up-bar" id="upBar"><i id="upFill"></i></div>'
     : '<div class="up-msg">Your previous video hasn’t been posted yet. You can upload another once it’s posted or skipped.</div>';
@@ -11147,6 +11155,28 @@ async function loadUpload(force){
       '<button class="up-wd" onclick="loadUpload(true)">Retry</button></div>';
   }
 }
+// Identity of a file for resuming: the same pick after a reload or a dropped
+// connection must match, a different file must not. Size plus hashes of the first
+// and last MB — not the name or modified time, which iOS rewrites on every pick.
+async function upFileKey(f){
+  const hex = async function(blob){
+    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()));
+    return Array.from(h.slice(0, 12), function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+  };
+  try{
+    if(window.crypto && crypto.subtle){
+      const M = 1048576;
+      return [f.size, await hex(f.slice(0, M)), await hex(f.slice(Math.max(0, f.size - M)))].join('|');
+    }
+  }catch(e){}
+  return [f.size, f.name, f.lastModified||0].join('|');
+}
+function upSleep(ms){ return new Promise(function(res){ setTimeout(res, ms); }); }
+function upOnline(){
+  if(navigator.onLine !== false) return Promise.resolve();
+  upSay('Connection lost — waiting to reconnect…');
+  return new Promise(function(res){ window.addEventListener('online', function(){ res(); }, {once:true}); });
+}
 async function upSend(){
   if(upBusy) return;
   const f = ($('upFile')||{}).files && $('upFile').files[0];
@@ -11155,26 +11185,38 @@ async function upSend(){
   if(f.size > L.max_bytes){ upSay('That video is over '+Math.round(L.max_bytes/1048576)+' MB — trim or compress it first.', 'err'); return; }
   upBusy = true; $('upGo').disabled = true; $('upBar').style.display = 'block';
   const H = {'Content-Type':'application/json'};
+  const pct = function(n){ return Math.round(100*n/f.size); };
+  const show = function(n){ $('upFill').style.width = pct(n)+'%'; };
+  let off = 0;
   try{
     upSay('Starting…');
-    const s = await upJson(await fetch('/api/video-uploads/start', {method:'POST', headers:H,
-      body: JSON.stringify({filename:f.name, size:f.size, caption:$('upCap').value})}));
-    let off = 0;
+    const key = await upFileKey(f);
+    const begin = async function(){
+      return upJson(await fetch('/api/video-uploads/start', {method:'POST', headers:H,
+        body: JSON.stringify({filename:f.name, size:f.size, caption:$('upCap').value, file_key:key})}));
+    };
+    let s = await begin();
+    off = s.received || 0;
+    show(off);
+    if(s.resumed && off) upSay('Resuming from '+pct(off)+'%…');
+    // A failure is a pause, not the end: wait, ask the server what it has, carry on.
+    let fails = 0;
     while(off < f.size){
-      const part = f.slice(off, off + s.chunk_bytes);
-      let tries = 0, r;
-      for(;;){
-        try{
-          r = await fetch('/api/video-uploads/chunk?id='+encodeURIComponent(s.upload_id)+'&offset='+off,
-                          {method:'PUT', headers:{'Content-Type':'application/octet-stream'}, body:part});
-          if(r.ok || r.status < 500 || ++tries >= 3) break;
-        }catch(e){ if(++tries >= 3) throw e; }
-        await new Promise(function(res){ setTimeout(res, 1500*tries); });
-      }
-      const j = await upJson(r);
-      off = j.received;
-      $('upFill').style.width = Math.round(100*off/f.size)+'%';
-      upSay('Uploading… '+Math.round(100*off/f.size)+'%');
+      let r = null, j = {};
+      try{
+        r = await fetch('/api/video-uploads/chunk?id='+encodeURIComponent(s.upload_id)+'&offset='+off,
+                        {method:'PUT', headers:{'Content-Type':'application/octet-stream'},
+                         body:f.slice(off, off + s.chunk_bytes)});
+        try{ j = await r.json(); }catch(e){}
+      }catch(e){ r = null; }
+      if(r && r.ok){ off = j.received; fails = 0; show(off); upSay('Uploading… '+pct(off)+'%'); continue; }
+      if(r && r.status === 409 && j.code === 'offset'){ off = j.received; show(off); continue; }
+      if(r && r.status < 500 && r.status !== 404) throw new Error(j.detail || ('HTTP '+r.status));
+      if(++fails > 8) throw Object.assign(new Error('paused'), {paused:true});
+      upSay('Connection trouble at '+pct(off)+'% — retrying…');
+      await upOnline();
+      await upSleep(Math.min(30000, 1000 * Math.pow(2, fails)));
+      try{ s = await begin(); off = s.received || 0; show(off); }catch(e){}
     }
     upSay('Checking the video…');
     await upJson(await fetch('/api/video-uploads/finish', {method:'POST', headers:H,
@@ -11184,8 +11226,14 @@ async function upSend(){
     upSay('Queued ✓ — Muse will post it soon.', 'ok');
   }catch(e){
     upBusy = false;
-    const go = $('upGo'); if(go) go.disabled = false;
+    const go = $('upGo'); if(go){ go.disabled = false; go.textContent = 'Resume upload'; }
+    if(e.paused){
+      upSay('Upload paused at '+pct(off)+'% — the connection keeps dropping. Tap Resume upload '+
+            'when you are back online (if you reload, pick the same file). Kept for 24 hours.', 'err');
+      return;
+    }
     const bar = $('upBar'); if(bar) bar.style.display = 'none';
+    if(go) go.textContent = 'Upload';
     upSay(e.message || String(e), 'err');
   }
 }
