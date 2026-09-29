@@ -74,6 +74,40 @@ def archive(key: str, data: bytes) -> bool:
         return False
 
 
+def archive_file(key: str, src: Path, content_type: str = "video/mp4") -> bool:
+    """Store a file already on disk at key, without reading it into memory.
+
+    Same backends and size limit as archive(); used for member uploads, which are
+    staged to disk chunk by chunk and can be 200 MB.
+    """
+    import shutil
+    size = src.stat().st_size
+    if size > _MAX_CLIP_BYTES:
+        logger.error("clip_store: refusing to archive %d bytes (limit %d) key=%s",
+                     size, _MAX_CLIP_BYTES, key)
+        return False
+
+    if CLIP_BUCKET:
+        try:
+            _s3_client().upload_file(str(src), CLIP_BUCKET, key,
+                                     ExtraArgs={"ContentType": content_type})
+            logger.info("clip_store: archived s3://%s/%s (%d bytes)", CLIP_BUCKET, key, size)
+            return True
+        except Exception as exc:
+            logger.error("clip_store: S3 archive failed key=%s: %s", key, exc)
+            return False
+
+    path = CLIP_LOCAL_DIR / key
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, path)
+        logger.info("clip_store: archived local %s (%d bytes)", path, size)
+        return True
+    except Exception as exc:
+        logger.error("clip_store: local archive failed key=%s: %s", key, exc)
+        return False
+
+
 def load(key: str) -> bytes | None:
     """Load MP4 bytes by key. Returns None on failure."""
     if CLIP_BUCKET:

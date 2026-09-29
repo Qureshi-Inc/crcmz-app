@@ -716,6 +716,8 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # handler re-checks it; the clip id is a query param so this stays an
                # exact path rather than an open prefix.
                "/api/clips/media",
+               # Same contract for member-uploaded videos (video_uploads.py).
+               "/api/video-uploads/media",
                # OAuth Authorization Server for per-user MCP tokens.  All of
                # these are browser-facing or machine-facing endpoints that must
                # be reachable before authentication.
@@ -3490,6 +3492,194 @@ def api_clip_media(uid: str, request: Request):
                              headers=headers)
 
 
+# ── Friend video uploads ─────────────────────────────────────────────────────
+# A member uploads from their phone; Muse posts it (see video_uploads.py). Every
+# handler resolves the member from the session itself rather than trusting the
+# auth gate, because the gate lets LAN and machine-token callers through with no
+# session — and those have no member to upload as.
+
+def _upload_member(request: Request) -> tuple[str, str]:
+    """(zitadel_id, roster psn_id) for the signed-in member, or an HTTPException."""
+    sub = ((_get_session(request) or {}).get("sub") or "").strip()
+    if not sub:
+        raise HTTPException(status_code=401, detail="sign in to upload videos")
+    psn_id = ""
+    try:
+        import crcmz_identity
+        person = crcmz_identity.by_zitadel_id().get(sub) or {}
+        psn_id = person.get("psn_id") or ""
+    except Exception as e:  # noqa: BLE001 - fall back to the portal link below
+        logger.warning("video upload: identity lookup failed: %s", e)
+    if not psn_id:
+        # The identity graph already falls back to this link; repeat it here so a
+        # Zitadel blip does not lock a linked member out.
+        psn_id = ((portal_mod.find_by_zitadel_id(sub) or {}).get("online_id") or "")
+    if not psn_id:
+        raise HTTPException(status_code=403,
+                            detail="link your PSN account first — uploads are credited "
+                                   "to your PSN ID")
+    return sub, psn_id
+
+
+def _upload_rejected(e: "_vu.Rejected") -> JSONResponse:
+    status = 409 if e.code in ("already_queued", "duplicate", "offset", "posting",
+                               "posted") else 400
+    if e.code == "storage":
+        status = 503
+    elif e.code == "no_session":
+        status = 404
+    return JSONResponse({"detail": str(e), "code": e.code}, status_code=status)
+
+
+def _member_upload_view(row: dict) -> dict:
+    """What a member sees about their own upload: allowlisted, no storage keys."""
+    return {
+        "video_post_id": row["video_post_id"],
+        "status": row["status"],
+        "caption": row.get("caption"),
+        "filename": row.get("filename"),
+        "uploaded_at": row["uploaded_at"],
+        "posted_at": row.get("posted_at"),
+        "skip_reason": row.get("skip_reason"),
+        "duration_seconds": row.get("duration_seconds"),
+        "file_size_bytes": row.get("file_size_bytes"),
+        "platforms": {p: ({"url": v["url"]} if v else None)
+                      for p, v in (row.get("platforms") or {}).items()},
+    }
+
+
+@app.get("/api/video-uploads/mine")
+def api_video_uploads_mine(request: Request):
+    sub, psn_id = _upload_member(request)
+    rows = _vu.for_member(sub, limit=30)
+    return {"psn_id": psn_id,
+            "uploads": [_member_upload_view(r) for r in rows],
+            "can_upload": not any(r["status"] == "queued" for r in rows),
+            "limits": {"max_bytes": _vu.MAX_BYTES, "max_seconds": _vu.MAX_SECONDS,
+                       "min_seconds": _vu.MIN_SECONDS, "max_caption": _vu.MAX_CAPTION,
+                       "formats": ["mp4", "mov"]}}
+
+
+@app.post("/api/video-uploads/start")
+async def api_video_uploads_start(request: Request):
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    sub, psn_id = await asyncio.to_thread(_upload_member, request)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="expected JSON")
+    try:
+        return _vu.start_session(sub, psn_id, str(body.get("filename") or ""),
+                                 int(body.get("size") or 0), body.get("caption"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="bad size")
+    except _vu.Rejected as e:
+        return _upload_rejected(e)
+
+
+@app.put("/api/video-uploads/chunk")
+async def api_video_uploads_chunk(request: Request, id: str, offset: int):  # noqa: A002
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    sub = ((_get_session(request) or {}).get("sub") or "").strip()
+    if not sub:
+        raise HTTPException(status_code=401, detail="sign in to upload videos")
+    declared = int(request.headers.get("content-length") or 0)
+    if declared > _vu.CHUNK_BYTES:
+        return JSONResponse({"detail": "chunk too large", "code": "chunk"}, status_code=413)
+    data = await request.body()
+    try:
+        return await asyncio.to_thread(_vu.append_chunk, id, sub, offset, data)
+    except _vu.Rejected as e:
+        return _upload_rejected(e)
+
+
+@app.post("/api/video-uploads/finish")
+async def api_video_uploads_finish(request: Request):
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    sub = ((_get_session(request) or {}).get("sub") or "").strip()
+    if not sub:
+        raise HTTPException(status_code=401, detail="sign in to upload videos")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="expected JSON")
+    try:
+        row = await asyncio.to_thread(_vu.finish_session, str(body.get("upload_id") or ""),
+                                      sub, _cstore.archive_file)
+    except _vu.Rejected as e:
+        return _upload_rejected(e)
+    logger.info("video upload queued id=%s psn=%s bytes=%s dur=%s", row["video_post_id"],
+                row["psn_id"], row["file_size_bytes"], row["duration_seconds"])
+    return {"ok": True, "upload": _member_upload_view(row)}
+
+
+@app.post("/api/video-uploads/withdraw")
+async def api_video_uploads_withdraw(request: Request):
+    """The uploader cancels their own queued video before any platform has it."""
+    if not _watch_same_origin(request):
+        return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
+    sub = ((_get_session(request) or {}).get("sub") or "").strip()
+    if not sub:
+        raise HTTPException(status_code=401, detail="sign in first")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="expected JSON")
+    row = _vu.get(str(body.get("video_post_id") or ""))
+    if not row or row["zitadel_id"] != sub:
+        raise HTTPException(status_code=404, detail="upload not found")
+    try:
+        _vu.skip(row["video_post_id"], "withdrawn by you", only_if_unposted=True)
+    except _vu.Rejected as e:
+        return _upload_rejected(e)
+    return {"ok": True, "upload": _member_upload_view(_vu.get(row["video_post_id"]))}
+
+
+@app.get("/api/video-uploads/media")
+def api_video_upload_media(id: str, request: Request):  # noqa: A002
+    """An uploaded video's original bytes for a bearer-authenticated machine client.
+
+    Same auth and shape as /api/clips/media: in `_OPEN_PATHS`, checked here, the
+    storage key read only from the database row.
+    """
+    from fastapi.responses import FileResponse, StreamingResponse
+
+    auth_header = request.headers.get("authorization", "")
+    caller = None
+    if not _mcp.authorised(auth_header):
+        caller = (_mcp.resolve_caller(auth_header)
+                  or _mcp.resolve_service(auth_header))
+        if caller is None:
+            return JSONResponse(
+                {"error": "invalid or missing bearer token — use the shared "
+                          "MCP_TOKEN or authenticate via OAuth at "
+                          f"https://{_PUBLIC_HOST}/oauth/authorize"},
+                status_code=401,
+                headers={"WWW-Authenticate": 'Bearer realm="crcmz-mcp"'})
+
+    row = _vu.get(id)
+    if not row:
+        raise HTTPException(status_code=404, detail="video not found")
+    key = row["storage_key"]
+    who = (caller or {}).get("zitadel_id", "shared-token")
+    logger.info("video upload media served id=%s key=%s caller=%s", id, key, who)
+
+    ext = ".mov" if row["content_type"] == "video/quicktime" else ".mp4"
+    filename = row["video_post_id"] + ext
+    path = _cstore.local_file(key)
+    if path:
+        return FileResponse(path, media_type=row["content_type"], filename=filename)
+    if not _cstore.available():
+        raise HTTPException(status_code=503, detail="clip storage unavailable")
+    return StreamingResponse(
+        _cstore.stream(key), media_type=row["content_type"],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                 "Content-Length": str(int(row["file_size_bytes"]))})
+
+
 @app.get("/mcp")
 def mcp_probe():
     """Liveness only. MCP itself is POST-only here (no SSE stream), and this
@@ -5828,6 +6018,7 @@ import coach as _coach
 import ig_posts as _ig
 import agent_tasks as _agent_tasks
 import month_montage as _month_montage
+import video_uploads as _vu
 import wa_reactions as _wa_react
 import app_events as _app_events
 import watchparty_events as _watchparty_events
@@ -5843,6 +6034,7 @@ _coach.init()
 _ig.init()
 _agent_tasks.init()
 _month_montage.init()
+_vu.init()
 _wa_react.init()
 _mcp_audit.init()
 _app_events.init()
@@ -9301,7 +9493,38 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div class="card" id="lb"><div class="spin">Loading ranks…</div></div>
   </div>
   <div class="panel" id="p-lb" style="display:none"></div>
-  <div class="panel" id="p-pipeline"><div id="reels-inner"></div><div id="pipeline-inner"><div class="spin">Loading pipeline…</div></div></div>
+  <div class="panel" id="p-pipeline">
+<div id="clips-upload">
+    <style>
+      .up-card{background:rgba(18,10,38,.6);border:1px solid rgba(255,60,200,.22);border-radius:16px;padding:16px;margin:10px 0}
+      .up-card h3{margin:0 0 4px;font-size:16px}
+      .up-sub{font-size:12px;color:var(--dim);line-height:1.55;margin:0 0 12px}
+      .up-file{display:block;width:100%;padding:14px;border:1px dashed rgba(34,230,255,.45);border-radius:12px;background:rgba(34,230,255,.05);color:inherit;font-size:14px;cursor:pointer}
+      .up-in{width:100%;box-sizing:border-box;margin-top:10px;padding:12px;border-radius:12px;border:1px solid rgba(140,160,255,.22);background:rgba(6,4,18,.7);color:inherit;font-size:14px}
+      .up-btn{margin-top:12px;width:100%;padding:13px;border:none;border-radius:12px;font-weight:800;font-size:15px;color:#fff;cursor:pointer;background:linear-gradient(135deg,#ff2fd6,#9d5cff)}
+      .up-btn:disabled{opacity:.5;cursor:default}
+      .up-bar{height:8px;border-radius:6px;background:rgba(255,255,255,.08);margin-top:12px;overflow:hidden;display:none}
+      .up-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#22e6ff,#ff2fd6);transition:width .2s}
+      .up-msg{font-size:13px;margin-top:10px;line-height:1.45}
+      .up-msg.err{color:#ffc0cd}.up-msg.ok{color:#9dffcf}
+      .up-row{border-top:1px solid rgba(255,255,255,.07);padding:12px 0}
+      .up-row:first-child{border-top:none}
+      .up-top{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+      .up-st{font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;padding:3px 8px;border-radius:8px}
+      .up-st.queued{background:rgba(255,200,60,.14);color:#ffd36b}
+      .up-st.posted{background:rgba(60,255,160,.14);color:#9dffcf}
+      .up-st.skipped{background:rgba(255,107,139,.14);color:#ffc0cd}
+      .up-when{font-size:12px;color:var(--dim);margin-left:auto}
+      .up-cap{font-size:13px;margin-top:6px;word-break:break-word}
+      .up-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:12px}
+      .up-links a,.up-links span{padding:4px 9px;border-radius:8px;background:rgba(255,255,255,.06);color:inherit;text-decoration:none}
+      .up-links a{color:#22e6ff}
+      .up-links span{color:var(--dim)}
+      .up-wd{margin-top:8px;background:none;border:1px solid rgba(255,107,139,.4);color:#ffc0cd;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer}
+    </style>
+    <div id="upload-inner"><div class="spin">Loading uploads…</div></div>
+  </div>
+<div id="reels-inner"></div><div id="pipeline-inner"><div class="spin">Loading pipeline…</div></div></div>
   <div class="panel" id="p-slap">
     <div id="slap-stats" class="statgrid" style="margin-bottom:10px"></div>
     <div id="slap-vibe" class="card" style="display:none;margin-bottom:10px;padding:12px 16px;font-size:13px;color:var(--dim);font-style:italic;text-align:center"></div>
@@ -10848,8 +11071,135 @@ async function loadCoach(){
   }
 }
 
+// ── Upload: members send a video, Muse posts it to IG / TikTok / YouTube ──────
+// Sent in 8 MB chunks because Cloudflare refuses a request body over 100 MB.
+let upLoaded = false, upBusy = false, upData = null;
+const UP_PLATFORMS = [['instagram','Instagram'],['tiktok','TikTok'],['youtube','YouTube']];
+function upWhen(ts){
+  if(!ts) return '';
+  const d = new Date(ts*1000);
+  return d.toLocaleDateString(undefined,{month:'short',day:'numeric'})+' '+
+         d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+}
+function upRow(u){
+  const st = u.status;
+  const label = st==='queued' ? 'Queued' : st==='posted' ? 'Posted' : 'Skipped';
+  const links = UP_PLATFORMS.map(function(p){
+    const v = (u.platforms||{})[p[0]];
+    if(v && v.url) return '<a href="'+esc(v.url)+'" target="_blank" rel="noopener">'+p[1]+' ↗</a>';
+    return '<span>'+p[1]+': '+(st==='skipped' ? '—' : 'pending')+'</span>';
+  }).join('');
+  const anyLink = UP_PLATFORMS.some(function(p){ return (u.platforms||{})[p[0]]; });
+  return '<div class="up-row"><div class="up-top"><span class="up-st '+esc(st)+'">'+label+'</span>'+
+    '<span style="font-size:13px">'+esc(u.filename||'video')+'</span>'+
+    '<span class="up-when">'+upWhen(u.uploaded_at)+'</span></div>'+
+    (u.caption ? '<div class="up-cap">“'+esc(u.caption)+'”</div>' : '')+
+    (st==='skipped' && u.skip_reason ? '<div class="up-cap" style="color:#ffc0cd">Skipped: '+esc(u.skip_reason)+'</div>' : '')+
+    '<div class="up-links">'+links+'</div>'+
+    (st==='queued' && !anyLink ? '<button class="up-wd" onclick="upWithdraw(\''+esc(u.video_post_id)+'\')">Withdraw</button>' : '')+
+    '</div>';
+}
+function upRender(){
+  const d = upData, el = $('upload-inner');
+  const L = d.limits;
+  const form = d.can_upload
+    ? '<input type="file" id="upFile" class="up-file" accept="video/mp4,video/quicktime,.mp4,.mov">'+
+      '<input type="text" id="upCap" class="up-in" maxlength="'+L.max_caption+'" placeholder="Caption (optional)">'+
+      '<button class="up-btn" id="upGo" onclick="upSend()">Upload</button>'+
+      '<div class="up-bar" id="upBar"><i id="upFill"></i></div>'
+    : '<div class="up-msg">Your previous video hasn’t been posted yet. You can upload another once it’s posted or skipped.</div>';
+  el.innerHTML =
+    '<div class="up-card"><h3>📤 Send a video to @crcmzclan</h3>'+
+    '<p class="up-sub">Muse posts it to Instagram, TikTok and YouTube, credited to <b>'+esc(d.psn_id)+'</b>. '+
+    'MP4 or MOV, up to '+Math.round(L.max_bytes/1048576)+' MB and '+L.max_seconds+' seconds. '+
+    'One video in the queue at a time.</p>'+ form +
+    '<div class="up-msg" id="upMsg"></div></div>'+
+    '<div class="up-card"><h3>Your uploads</h3>'+
+    ((d.uploads||[]).length ? d.uploads.map(upRow).join('') : '<p class="up-sub" style="margin:0">Nothing yet.</p>')+
+    '</div>';
+}
+function upSay(text, cls){
+  const m = $('upMsg'); if(!m) return;
+  m.className = 'up-msg' + (cls ? ' '+cls : ''); m.textContent = text;
+}
+async function upJson(r){
+  let j = {}; try{ j = await r.json(); }catch(e){}
+  if(!r.ok) throw new Error(j.detail || ('HTTP '+r.status));
+  return j;
+}
+async function loadUpload(force){
+  if(upLoaded && !force) return;
+  upLoaded = true;
+  const el = $('upload-inner');
+  try{
+    const r = await fetch('/api/video-uploads/mine');
+    if(r.status === 401){ el.innerHTML = '<div class="empty">Sign in to upload videos.</div>'; return; }
+    if(r.status === 403){
+      el.innerHTML = '<div class="empty">'+esc((await r.json()).detail||'')+
+        '<br><a class="link-cta" href="/portal">Link your account</a></div>';
+      return;
+    }
+    upData = await upJson(r);
+    upRender();
+  }catch(e){
+    upLoaded = false;
+    el.innerHTML = '<div class="empty">Could not load uploads ('+esc(e.message||e)+'). '+
+      '<button class="up-wd" onclick="loadUpload(true)">Retry</button></div>';
+  }
+}
+async function upSend(){
+  if(upBusy) return;
+  const f = ($('upFile')||{}).files && $('upFile').files[0];
+  if(!f){ upSay('Pick a video first.', 'err'); return; }
+  const L = upData.limits;
+  if(f.size > L.max_bytes){ upSay('That video is over '+Math.round(L.max_bytes/1048576)+' MB — trim or compress it first.', 'err'); return; }
+  upBusy = true; $('upGo').disabled = true; $('upBar').style.display = 'block';
+  const H = {'Content-Type':'application/json'};
+  try{
+    upSay('Starting…');
+    const s = await upJson(await fetch('/api/video-uploads/start', {method:'POST', headers:H,
+      body: JSON.stringify({filename:f.name, size:f.size, caption:$('upCap').value})}));
+    let off = 0;
+    while(off < f.size){
+      const part = f.slice(off, off + s.chunk_bytes);
+      let tries = 0, r;
+      for(;;){
+        try{
+          r = await fetch('/api/video-uploads/chunk?id='+encodeURIComponent(s.upload_id)+'&offset='+off,
+                          {method:'PUT', headers:{'Content-Type':'application/octet-stream'}, body:part});
+          if(r.ok || r.status < 500 || ++tries >= 3) break;
+        }catch(e){ if(++tries >= 3) throw e; }
+        await new Promise(function(res){ setTimeout(res, 1500*tries); });
+      }
+      const j = await upJson(r);
+      off = j.received;
+      $('upFill').style.width = Math.round(100*off/f.size)+'%';
+      upSay('Uploading… '+Math.round(100*off/f.size)+'%');
+    }
+    upSay('Checking the video…');
+    await upJson(await fetch('/api/video-uploads/finish', {method:'POST', headers:H,
+      body: JSON.stringify({upload_id:s.upload_id})}));
+    upBusy = false;
+    await loadUpload(true);
+    upSay('Queued ✓ — Muse will post it soon.', 'ok');
+  }catch(e){
+    upBusy = false;
+    const go = $('upGo'); if(go) go.disabled = false;
+    const bar = $('upBar'); if(bar) bar.style.display = 'none';
+    upSay(e.message || String(e), 'err');
+  }
+}
+async function upWithdraw(id){
+  if(!confirm('Withdraw this video? It won’t be posted.')) return;
+  try{
+    await upJson(await fetch('/api/video-uploads/withdraw', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({video_post_id:id})}));
+    await loadUpload(true);
+  }catch(e){ alert(e.message || e); }
+}
+
 const PANEL_LOADERS = {
-  pipeline: function(){ if(window.loadReels) window.loadReels(); },
+  pipeline: function(){ if(window.loadReels) window.loadReels(); loadUpload(); },
   slap:     function(){ loadSlap(); },
   wa:       function(){ loadWa(); },
   giveaway: function(){ loadGiveaway(); },
@@ -10906,7 +11256,10 @@ window.addEventListener('popstate', function(){
 // the legacy form, and an unknown value falls back to Squad rather than showing
 // nothing.
 (function(){
-  const p = new URLSearchParams(location.search).get('p') || location.hash.replace('#','') || 'squad';
+  let p = new URLSearchParams(location.search).get('p') || location.hash.replace('#','') || 'squad';
+  // ?p=upload is the link members get for sending a video; the section lives in Clips.
+  const toUpload = p === 'upload';
+  if(toUpload) p = 'pipeline';
   const btn = navBtn(p) || navBtn('squad');
   if(!btn) return;
   // Paint now, while the browser is still parsing, so the right panel is up on
@@ -10923,6 +11276,7 @@ window.addEventListener('popstate', function(){
   setTimeout(function(){
     const load = PANEL_LOADERS[btn.dataset.p];
     if(load) load();
+    if(toUpload){ const u = $('clips-upload'); if(u) u.scrollIntoView(); }
   }, 0);
 })();
 function fmtLast(iso){ if(!iso) return 'offline';

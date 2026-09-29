@@ -2088,6 +2088,177 @@ def _ig_clips_recent(limit: int = 20) -> list:
     return ig_mod.recent(limit=max(1, min(int(limit or 20), 100)))
 
 
+# ── Friend video uploads ─────────────────────────────────────────────────────
+# video_uploads.py owns the queue; members upload in the app, Muse posts.
+
+def _video_upload_row(row: dict) -> dict:
+    """Allowlisted projection of a video_posts row for Muse."""
+    host = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
+    platforms = row.get("platforms") or {}
+    return {
+        "video_post_id": row["video_post_id"],
+        "uploader_psn_id": row["psn_id"],
+        "uploaded_at": row["uploaded_at"],
+        "uploaded_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                         time.gmtime(row["uploaded_at"])),
+        "caption": row.get("caption"),
+        "media_url": "https://%s/api/video-uploads/media?id=%s" % (host, row["video_post_id"]),
+        "content_type": row["content_type"],
+        "duration_seconds": row["duration_seconds"],
+        "file_size_bytes": row["file_size_bytes"],
+        "sha256": row["sha256"],
+        "platforms": {p: ({"url": v["url"], "media_id": v.get("media_id")} if v else None)
+                      for p, v in platforms.items()},
+        "missing_platforms": [p for p, v in platforms.items() if not v],
+    }
+
+
+@tool(
+    "pending_video_uploads",
+    "Videos clan members uploaded in the app that are waiting to be posted to "
+    "Instagram @crcmzclan, TikTok @crcmzclan and YouTube, oldest first, paginated "
+    "(page with offset until has_more is false). Each row: video_post_id, "
+    "uploader_psn_id (roster PSN id), uploaded_at, caption (the member's optional "
+    "text, may be null), media_url (the original upload's bytes; send the same "
+    "Authorization: Bearer token as this MCP connection; whole-body download, no "
+    "Range; content_type is video/mp4 or video/quicktime), duration_seconds, "
+    "file_size_bytes, sha256, platforms {instagram, tiktok, youtube} each null or "
+    "{url, media_id}, and missing_platforms. A video stays in this list until all "
+    "three platforms have a link, so a partly posted one shows which posts remain. "
+    "Report each live post with video_post_record (one call per platform); mark one "
+    "you will not post with video_post_skip. Limit 1-50.",
+    {"type": "object",
+     "properties": {
+         "offset": {"type": "integer", "description": "Rows to skip. Default 0."},
+         "limit":  {"type": "integer", "description": "1-50. Default 20."},
+     }})
+def _pending_video_uploads(offset: int = 0, limit: int = 20) -> dict:
+    import video_uploads as vu
+    vu.init()
+    page = vu.pending(offset=max(0, int(offset or 0)),
+                      limit=max(1, min(int(limit or 20), 50)))
+    page["items"] = [_video_upload_row(r) for r in page["items"]]
+    return page
+
+
+@write_tool(
+    "video_post_record",
+    "Record one platform's live post of a member-uploaded video from "
+    "pending_video_uploads. Use this, NOT ig_post_record, for these videos. Call "
+    "once per platform as each post goes live — instagram, then tiktok, then youtube "
+    "— each call stores only that platform's permalink and media id and never touches "
+    "the others. Idempotent per (video_post_id, platform): the same url again is a "
+    "no-op; a different url replaces the stored one (a correction). The video becomes "
+    "`posted` (and leaves pending_video_uploads) when all three links are present. "
+    "The first instagram record announces the post to the WhatsApp group once — do "
+    "not share it back separately. Links must be real permalinks: instagram "
+    "https://www.instagram.com/reel/<shortcode>/ (never built from the numeric media "
+    "id), tiktok https://www.tiktok.com/@<user>/video/<id>, youtube "
+    "https://www.youtube.com/shorts/<id> or https://www.youtube.com/watch?v=<id>. "
+    "Refused for a skipped video. Rate limit: 90 per hour.",
+    {"type": "object",
+     "properties": {
+         "video_post_id": {"type": "string", "description": "From pending_video_uploads."},
+         "platform": {"type": "string", "enum": ["instagram", "tiktok", "youtube"]},
+         "url": {"type": "string", "description": "The live post's permalink."},
+         "media_id": {"type": "string",
+                      "description": "The platform's id for the post (optional, "
+                                     "recommended): IG numeric media id, TikTok video "
+                                     "id, YouTube video id."},
+     },
+     "required": ["video_post_id", "platform", "url"]})
+def _video_post_record(caller: dict, video_post_id: str = "", platform: str = "",
+                       url: str = "", media_id: str = "") -> dict:
+    import mcp_oauth
+    import video_uploads as vu
+
+    vid = (video_post_id or "").strip()
+    platform = (platform or "").strip().lower()
+    if not vid:
+        return {"ok": False, "error": "video_post_id is required"}
+    if platform not in vu.PLATFORMS:
+        return {"ok": False, "error": "platform must be instagram, tiktok or youtube"}
+    if platform == "instagram":
+        clean, bad = _ig_permalink(url)
+    elif platform == "tiktok":
+        clean, bad = vu.normalise_tiktok(url)
+    else:
+        clean, bad = vu.normalise_youtube(url)
+    if bad:
+        return {"ok": False, "error": f"url {bad}"}
+    media_id = (media_id or "").strip()
+    if media_id and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", media_id):
+        return {"ok": False, "error": "media_id must be the platform's plain id"}
+    if platform == "instagram" and media_id and not media_id.isdigit():
+        return {"ok": False, "error": "instagram media_id must be the numeric media ID"}
+
+    zid = caller.get("zitadel_id", "")
+    if not mcp_oauth.within_rate_limit(zid, "video_post_record", 90, 3600):
+        return {"ok": False, "error": "rate limit: 90 records per hour"}
+
+    vu.init()
+    try:
+        res = vu.record_link(vid, platform, clean, media_id or None)
+    except vu.Rejected as e:
+        return {"ok": False, "error": str(e)}
+    mcp_oauth.audit_write(zid, "video_post_record",
+                          json.dumps({"video_post_id": vid, "platform": platform}), "ok")
+
+    row = vu.get(vid) or {}
+    notified, note = False, None
+    if platform == "instagram" and vu.claim_notification(vid):
+        notified, note = _notify_ig_posted(row.get("psn_id", ""), clean, caller)
+        if not notified:
+            vu.release_notification(vid)
+
+    return {"ok": True, "video_post_id": vid, "platform": platform, "url": clean,
+            "changed": res["changed"],
+            **({"replaced_url": res["replaced_url"]} if "replaced_url" in res else {}),
+            "status": row.get("status"),
+            "missing_platforms": [p for p, v in (row.get("platforms") or {}).items() if not v],
+            **({"group_notified": notified} if platform == "instagram" else {}),
+            **({"notify_note": note} if note else {})}
+
+
+@write_tool(
+    "video_post_skip",
+    "Mark a member-uploaded video from pending_video_uploads as skipped — it will "
+    "not be posted — with a short reason the uploader sees on their uploads page "
+    "(e.g. 'audio is copyrighted', 'not gameplay'). Keep the reason polite and under "
+    "200 characters. Idempotent: skipping again returns already_skipped with the "
+    "first reason. Refused once the video is fully posted. Skipping frees the "
+    "member to upload another video. Rate limit: 30 per hour.",
+    {"type": "object",
+     "properties": {
+         "video_post_id": {"type": "string", "description": "From pending_video_uploads."},
+         "reason": {"type": "string", "description": "Shown to the uploader. Required."},
+     },
+     "required": ["video_post_id", "reason"]})
+def _video_post_skip(caller: dict, video_post_id: str = "", reason: str = "") -> dict:
+    import mcp_oauth
+    import video_uploads as vu
+
+    vid = (video_post_id or "").strip()
+    reason = " ".join(str(reason or "").split())[:200]
+    if not vid:
+        return {"ok": False, "error": "video_post_id is required"}
+    if not reason:
+        return {"ok": False, "error": "reason is required — the uploader sees it"}
+
+    zid = caller.get("zitadel_id", "")
+    if not mcp_oauth.within_rate_limit(zid, "video_post_skip", 30, 3600):
+        return {"ok": False, "error": "rate limit: 30 skips per hour"}
+
+    vu.init()
+    try:
+        res = vu.skip(vid, reason)
+    except vu.Rejected as e:
+        return {"ok": False, "error": str(e)}
+    mcp_oauth.audit_write(zid, "video_post_skip",
+                          json.dumps({"video_post_id": vid}), "ok")
+    return {"ok": True, "video_post_id": vid, "status": "skipped", **res}
+
+
 # ── Agent task queue ────────────────────────────────────────────────────────
 
 @write_tool(

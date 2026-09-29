@@ -56,6 +56,10 @@ STORES: dict[str, list[str] | None] = {
     "/data/agent_tasks.db":    ["task_list"],
     "/data/montage_records.db": ["montage_records", "month_clips"],
     "/data/wa_reactions.db":   ["whatsapp_clip_reactions"],
+    "/data/video_uploads.db":  ["pending_video_uploads"],
+    "/data/video_uploads_staging": None,  # half-finished chunked uploads, swept
+                                          # after 6h; the finished video lives in
+                                          # video_uploads.db + the clip store.
     "/data/app_events.db":    ["app_events_list"],
     "/data/watchparty_events.db": ["watchparty_events_list"],
     "/data/watch_history.db": ["watch_history"],
