@@ -7740,6 +7740,8 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-minibar.speaking .wp-minibar-back { border-color:rgba(140,255,43,.5);
     color:var(--lime); animation:wpMiniPulse 1.15s ease-in-out infinite; }
   .board-wrap > * { max-width:760px; margin:0 auto; }
+  /* The Chat Board belongs to Squad; on every other page it covered the content. */
+  body.board-off .board-wrap { display:none; }
   /* fullscreen: covers the whole viewport */
   .board-wrap.fullscreen { top:0; border-radius:0; overflow-y:auto;
     background:rgba(7,11,24,.99); border-top:none; padding-top:calc(10px + env(safe-area-inset-top)); }
@@ -11276,6 +11278,11 @@ function paintTab(btn){
   const icon=$('navActiveIcon'), lbl=$('navActiveLabel');
   if(icon) icon.textContent = btn.dataset.icon||'';
   if(lbl)  lbl.textContent  = btn.dataset.label||'';
+  // Chat Board only on Squad. Leaving fullscreen first, or body scroll stays locked.
+  const onSquad = p === 'squad';
+  if(!onSquad && typeof _isFullscreen !== 'undefined' && _isFullscreen) toggleBoardFs();
+  document.body.classList.toggle('board-off', !onSquad);
+  if(typeof syncBoardHeight === 'function') syncBoardHeight();
 }
 // Paint a panel, record it in history, and run its loader. `skipHash` leaves the
 // URL alone — used by popstate, where the URL is already correct.
