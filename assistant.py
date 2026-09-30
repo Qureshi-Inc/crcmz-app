@@ -1842,7 +1842,7 @@ def _coach_review_record(caller: dict, clip_id: str = "", summary: str = "",
 
 _IG_PERMALINK = re.compile(
     r"^https://(?:www\.)?instagram\.com/(reel|reels|p)/([A-Za-z0-9_-]{5,64})/?(?:\?.*)?$")
-_REEL_TYPES = ("fire", "fail", "daily", "goop", "review")
+_REEL_TYPES = ("fire", "fail", "daily", "goop", "review", "member")
 _DAILY_CAPTION = "Daily highlights have dropped! \U0001f525"
 
 
@@ -1976,33 +1976,33 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
                                                 "wrong link. One time per clip; needs a prior share."},
          "reel_type":           {"type": "string",
                                  "enum": list(_REEL_TYPES),
-                                 "description": "fire | fail | daily | goop | review. "
+                                 "description": "fire | fail | daily | goop | review | member. "
                                                 "'goop' (loot showcase) and 'review' (Reel Review "
                                                 "override renders) use the same sender template as 'fire'. "
                                                 "'daily' sends a generic '@all Daily highlights have dropped! 🔥' "
                                                 "with no sender attribution — use this for the daily highlights reel. "
                                                 "'fire' and 'fail' keep the sender's name in the message. "
+                                                "'member' is for friend video uploads: resolves the sender from "
+                                                "pending_video_uploads (pass video_post_id) and sends '@all 🎮 "
+                                                "*<name>*\\'s video just dropped on Instagram'. "
                                                 "Default: 'fire'."},
+         "video_post_id":       {"type": "string",
+                                 "description": "Required when reel_type is 'member': the video_post_id "
+                                                "from pending_video_uploads. Used instead of clip_id to "
+                                                "resolve the uploader's name. Pass clip_id as empty string "
+                                                "when using this."},
      },
      "required": ["clip_id", "instagram_url"]})
 def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
                    instagram_media_id: str = "", caption: str = "",
                    sender: str = "", reel_type: str = "fire",
-                   resend_correction: bool = False) -> dict:
+                   resend_correction: bool = False,
+                   video_post_id: str = "") -> dict:
     """Ingest an IG post result and fan out to WhatsApp. The platform composes the message."""
     import clips as clips_mod
     import ig_posts as ig_mod
     import mcp_oauth
 
-    clip_id = (clip_id or "").strip()
-    if not clip_id:
-        return {"ok": False, "error": "clip_id is required"}
-    instagram_url, bad = _ig_permalink(instagram_url)
-    if bad:
-        return {"ok": False, "error": f"instagram_url {bad}"}
-    instagram_media_id = (instagram_media_id or "").strip()
-    if instagram_media_id and not instagram_media_id.isdigit():
-        return {"ok": False, "error": "instagram_media_id must be the numeric media ID"}
     reel_type = (reel_type or "fire").strip().lower()
     # The daily scheduler's contract is this exact caption; a multi-sender montage
     # must never be announced as one player's reel.
@@ -2011,16 +2011,40 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     if reel_type not in _REEL_TYPES:
         return {"ok": False, "error": f"reel_type must be one of {', '.join(_REEL_TYPES)}"}
 
+    # member type resolves sender from video_uploads, not clips
+    if reel_type == "member":
+        import video_uploads as vu
+        vid = (video_post_id or "").strip()
+        if not vid:
+            return {"ok": False, "error": "video_post_id is required for reel_type 'member'"}
+        vu.init()
+        vrow = vu.get(vid)
+        if not vrow:
+            return {"ok": False, "error": "no video_post with that video_post_id"}
+        clip_id = vid       # use video_post_id as the ig_posts key
+        psn_user = (sender or "").strip() or vrow.get("psn_id") or ""
+    else:
+        clip_id = (clip_id or "").strip()
+        if not clip_id:
+            return {"ok": False, "error": "clip_id is required"}
+
+    instagram_url, bad = _ig_permalink(instagram_url)
+    if bad:
+        return {"ok": False, "error": f"instagram_url {bad}"}
+    instagram_media_id = (instagram_media_id or "").strip()
+    if instagram_media_id and not instagram_media_id.isdigit():
+        return {"ok": False, "error": "instagram_media_id must be the numeric media ID"}
+
     zid = caller.get("zitadel_id", "")
     if not mcp_oauth.within_rate_limit(zid, "ig_reel_share", 30, 3600):
         return {"ok": False, "error": "rate limit: 30 posts per hour"}
 
     ig_mod.init()
-    clip = clips_mod.get(clip_id)
-    if not clip:
-        return {"ok": False, "error": "no clip with that clip_id"}
-
-    psn_user = (sender or "").strip() or clip.get("sender_online_id") or ""
+    if reel_type != "member":
+        clip = clips_mod.get(clip_id)
+        if not clip:
+            return {"ok": False, "error": "no clip with that clip_id"}
+        psn_user = (sender or "").strip() or clip.get("sender_online_id") or ""
     existing = ig_mod.get_by_clip(clip_id)
     if existing:
         post_id = existing["post_id"]
@@ -2031,7 +2055,8 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     ig_mod.submit_post(post_id, instagram_url,
                        instagram_media_id=instagram_media_id,
                        caption=caption)
-    _clear_reel_force_post(clip_id)
+    if reel_type != "member":
+        _clear_reel_force_post(clip_id)
     mcp_oauth.audit_write(zid, "ig_reel_share", f'{{"clip_id": "{clip_id}"}}', "ok")
 
     # Dedupe: if notified_at is already set this is a watcher retry — return ok
@@ -2141,6 +2166,41 @@ def _pending_video_uploads(offset: int = 0, limit: int = 20) -> dict:
     return page
 
 
+def _notify_upload_live(psn_id: str, links: dict,
+                        caller: dict | None = None) -> tuple[bool, str | None]:
+    """DM the uploader when all three platform links are in.
+
+    Fixed template — no free text, no caller influence on the message body.
+    One DM per video (enforced by claim_dm_notification in the caller).
+    """
+    bridge = os.environ.get("WA_BRIDGE_URL", "")
+    if not bridge:
+        return False, "WA bridge not configured"
+    try:
+        import crcmz_identity
+        person = crcmz_identity.resolve(psn_id) or {}
+    except Exception as e:  # noqa: BLE001
+        return False, f"identity lookup failed: {e}"
+    wa_jid = person.get("wa_jid", "")
+    if not wa_jid:
+        return False, f"no WhatsApp JID known for {psn_id}"
+    ig_url  = (links.get("instagram") or {}).get("url", "")
+    tt_url  = (links.get("tiktok")    or {}).get("url", "")
+    yt_url  = (links.get("youtube")   or {}).get("url", "")
+    text = (
+        "\U0001f389 Your video is live on all platforms!\n"
+        f"\U0001f4f8 Instagram: {ig_url}\n"
+        f"\U0001f3b5 TikTok: {tt_url}\n"
+        f"▶️ YouTube: {yt_url}"
+    )
+    try:
+        import wa_ai
+        ok = wa_ai.send_reply(bridge, wa_jid, text)
+        return bool(ok), None
+    except Exception as e:  # noqa: BLE001
+        return False, f"WA DM failed: {e}"
+
+
 @write_tool(
     "video_post_record",
     "Record one platform's live post of a member-uploaded video from "
@@ -2211,13 +2271,21 @@ def _video_post_record(caller: dict, video_post_id: str = "", platform: str = ""
         if not notified:
             vu.release_notification(vid)
 
+    dm_sent, dm_note = False, None
+    if res.get("became_posted") and vu.claim_dm_notification(vid):
+        dm_sent, dm_note = _notify_upload_live(
+            row.get("psn_id", ""), row.get("platforms") or {}, caller)
+        if not dm_sent:
+            vu.release_dm_notification(vid)
+
     return {"ok": True, "video_post_id": vid, "platform": platform, "url": clean,
             "changed": res["changed"],
             **({"replaced_url": res["replaced_url"]} if "replaced_url" in res else {}),
             "status": row.get("status"),
             "missing_platforms": [p for p, v in (row.get("platforms") or {}).items() if not v],
             **({"group_notified": notified} if platform == "instagram" else {}),
-            **({"notify_note": note} if note else {})}
+            **({"uploader_dm_sent": dm_sent} if res.get("became_posted") else {}),
+            **({"notify_note": note or dm_note} if (note or dm_note) else {})}
 
 
 @write_tool(
@@ -2670,6 +2738,11 @@ def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
 
     if reel_type == "daily":
         text = "@all Daily highlights have dropped! \U0001f525\n" + ig_url
+    elif reel_type == "member":
+        label = (caller or {}).get("label", "")
+        tag = f"[{label[:32].strip().title()}] " if label else ""
+        safe_user = _wa_safe(psn_user, 40)
+        text = f"{tag}@all \U0001f3ae *{safe_user}*'s video just dropped on Instagram:\n{ig_url}"
     else:
         label = (caller or {}).get("label", "")
         tag = f"[{label[:32].strip().title()}] " if label else ""

@@ -45,8 +45,8 @@ _DB_PATH = Path(os.environ.get("VIDEO_UPLOADS_DB", "/data/video_uploads.db"))
 _STAGING_DIR = Path(os.environ.get("VIDEO_UPLOADS_STAGING", "/data/video_uploads_staging"))
 _lock = threading.Lock()
 
-MAX_BYTES = 200 * 1024 * 1024
-MAX_SECONDS = 90.0
+MAX_BYTES = 0            # no size cap — chunked upload handles any size
+MAX_SECONDS = 600.0      # 10 minutes; Instagram skips >90s (Muse decides per platform)
 # Instagram refuses a reel under 3 s, so a shorter file would only sit in the
 # queue — holding the member's one slot — until Muse skipped it.
 MIN_SECONDS = 3.0
@@ -121,10 +121,14 @@ def init() -> None:
                 created_at  REAL NOT NULL
             );
         """)
-        try:
-            db.execute("ALTER TABLE upload_sessions ADD COLUMN file_key TEXT NOT NULL DEFAULT ''")
-        except sqlite3.OperationalError:
-            pass
+        for col_sql in [
+            "ALTER TABLE upload_sessions ADD COLUMN file_key TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE video_posts ADD COLUMN dm_notified_at REAL",
+        ]:
+            try:
+                db.execute(col_sql)
+            except sqlite3.OperationalError:
+                pass
         db.commit()
     logger.info("video_uploads: DB ready at %s", _DB_PATH)
 
@@ -231,8 +235,6 @@ def start_session(zitadel_id: str, psn_id: str, filename: str, size: int,
     size = int(size or 0)
     if size <= 0:
         raise Rejected("that file is empty", "empty")
-    if size > MAX_BYTES:
-        raise Rejected("that video is over 200 MB — trim or compress it first", "too_large")
     caption = clean_caption(caption)
     if queued_for(zitadel_id):
         raise Rejected(_QUEUED_MSG, "already_queued")
@@ -535,6 +537,22 @@ def claim_notification(video_post_id: str) -> bool:
 def release_notification(video_post_id: str) -> None:
     with _lock, _conn() as db:
         db.execute("UPDATE video_posts SET notified_at=NULL WHERE video_post_id=?",
+                   (video_post_id,))
+        db.commit()
+
+
+def claim_dm_notification(video_post_id: str) -> bool:
+    """Atomic claim for the 'all platforms live' DM to the uploader. rowcount==1 means you won."""
+    with _lock, _conn() as db:
+        cur = db.execute("UPDATE video_posts SET dm_notified_at=? WHERE video_post_id=?"
+                         " AND dm_notified_at IS NULL", (time.time(), video_post_id))
+        db.commit()
+        return cur.rowcount == 1
+
+
+def release_dm_notification(video_post_id: str) -> None:
+    with _lock, _conn() as db:
+        db.execute("UPDATE video_posts SET dm_notified_at=NULL WHERE video_post_id=?",
                    (video_post_id,))
         db.commit()
 
