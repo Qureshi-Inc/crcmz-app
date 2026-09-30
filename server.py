@@ -676,6 +676,13 @@ from itsdangerous import URLSafeTimedSerializer as _USTS, BadSignature, Signatur
 ZITADEL_ISSUER        = os.environ.get("ZITADEL_ISSUER", "https://auth.crcmz.me")
 ZITADEL_CLIENT_ID     = os.environ.get("ZITADEL_CLIENT_ID", "")
 ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
+# WebAuthn RP ID for passkeys. The registrable parent domain, so app.crcmz.me is a
+# plain subdomain of it and every browser and password manager accepts it under the
+# classic rule. The old RP ID, the issuer host, only worked from app.crcmz.me via
+# Related Origin Requests, which Firefox lacks and Bitwarden gates behind a flag.
+WEBAUTHN_RP_ID        = os.environ.get("WEBAUTHN_RP_ID", "crcmz.me")
+# Passkeys registered before the switch are bound to this RP ID; login still offers them.
+WEBAUTHN_LEGACY_RP_ID = ZITADEL_ISSUER.replace("https://", "").replace("http://", "").rstrip("/")
 SESSION_SECRET        = os.environ.get("SESSION_SECRET", "")
 MM_OAUTH_CLIENT_ID    = os.environ.get("MM_OAUTH_CLIENT_ID", "")
 MM_OAUTH_CLIENT_SECRET= os.environ.get("MM_OAUTH_CLIENT_SECRET", "")
@@ -994,14 +1001,7 @@ def _login_page(error: str = "", next: str = "/") -> str:
     transition:background .15s, transform .07s; letter-spacing:.3px; }}
   .btn-passkey:hover {{ background:rgba(34,230,255,.14); }}
   .btn-passkey:active {{ transform:scale(.975); }}
-  .btn-passkey:disabled {{ opacity:.5; cursor:default; }}
-  /* Passkeys are registered to auth.crcmz.me but used here, which needs WebAuthn
-     Related Origin Requests. Firefox and most in-app browsers do not implement it,
-     so offer the ceremony on the RP's own origin, where no such hop is needed. */
-  .hosted {{ display:block; margin-top:14px; text-align:center; color:#9d8fc4;
-    font-size:13px; text-decoration:underline; text-underline-offset:3px; }}
-  .hosted:hover {{ color:#22e6ff; }}
-  .msg {{ padding:13px 15px; border-radius:13px; font-size:13.5px;
+  .btn-passkey:disabled {{ opacity:.5; cursor:default; }}  .msg {{ padding:13px 15px; border-radius:13px; font-size:13.5px;
     margin-bottom:6px; display:flex; gap:10px; align-items:center; line-height:1.45; }}
   .err {{ background:rgba(255,107,139,.12); border:1px solid rgba(255,107,139,.4);
     color:#ffc0cd; }}
@@ -1022,9 +1022,7 @@ def _login_page(error: str = "", next: str = "/") -> str:
     <button type="submit" class="btn" id="btn">Sign in →</button>
   </form>
   <div class="divider">or</div>
-  <button class="btn-passkey" id="pkBtn" onclick="passkeyLogin()">🔑 Sign in with Passkey</button>
-  <a class="hosted" href="/auth/login?hosted=1&amp;next={safe_next}">Passkey not working? Sign in at auth.crcmz.me</a>
-  <div id="errmsg"></div>
+  <button class="btn-passkey" id="pkBtn" onclick="passkeyLogin()">🔑 Sign in with Passkey</button>  <div id="errmsg"></div>
 </div>
 <script>
   const params = new URLSearchParams(location.search);
@@ -1130,13 +1128,12 @@ def _login_page(error: str = "", next: str = "/") -> str:
       const cred = await navigator.credentials.get({{publicKey: began.options}});
       await _completePasskey(began.sessionId, cred);
     }} catch(e) {{
-      // SecurityError here means the browser refused the rpId for this origin, i.e.
-      // it does not do Related Origin Requests. Retrying is pointless; send them to
-      // the issuer's own login, where rpId == origin.
+      // SecurityError: the only passkey on file is bound to the old RP ID
+      // (auth.crcmz.me), which this browser or password manager refuses here.
+      // New passkeys use crcmz.me and are accepted everywhere; retrying won't help.
       if (e.name === 'SecurityError') {{
-        showErr('This browser will not use a passkey registered on auth.crcmz.me from this page. '
-          + '<a href="/auth/login?hosted=1&next='+encodeURIComponent(nextUrl)
-          + '" style="color:#22e6ff">Sign in at auth.crcmz.me</a> instead, or use Chrome, Edge or Safari.');
+        showErr('That passkey was saved under the old setup and your browser won\\'t use it here. '
+          + 'Sign in with your password once, then add a new passkey in Settings. It works from then on.');
       }} else if (e.name !== 'NotAllowedError') {{
         showErr('Passkey error: '+e.message);
       }}
@@ -1339,11 +1336,9 @@ async def passkey_begin(request: Request):
 
     import httpx as _hx
 
-    domain = ZITADEL_ISSUER.replace("https://", "").replace("http://", "").rstrip("/")
-    webauthn_challenge = {
-        "domain": domain,
-        "userVerificationRequirement": "USER_VERIFICATION_REQUIREMENT_REQUIRED",
-    }
+    def _challenge(domain):
+        return {"domain": domain,
+                "userVerificationRequirement": "USER_VERIFICATION_REQUIREMENT_REQUIRED"}
 
     if identifier:
         # Resolve email → loginName if needed.
@@ -1363,21 +1358,26 @@ async def passkey_begin(request: Request):
                         login_name = results[0].get("preferredLoginName", identifier)
             except Exception:
                 pass
-        session_body = {
-            "checks": {"user": {"loginName": login_name}},
-            "challenges": {"webAuthN": webauthn_challenge},
-        }
+        bodies = [{"checks": {"user": {"loginName": login_name}},
+                   "challenges": {"webAuthN": _challenge(d)}}
+                  for d in dict.fromkeys((WEBAUTHN_RP_ID, WEBAUTHN_LEGACY_RP_ID))]
     else:
         # Usernameless: no user check → empty allowCredentials → OS passkey picker.
-        session_body = {"challenges": {"webAuthN": webauthn_challenge}}
+        bodies = [{"challenges": {"webAuthN": _challenge(WEBAUTHN_RP_ID)}}]
 
     try:
         async with _hx.AsyncClient(timeout=15) as c:
-            r = await c.post(
-                f"{ZITADEL_ISSUER}/v2/sessions",
-                json=session_body,
-                headers={"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"},
-            )
+            for session_body in bodies:
+                r = await c.post(
+                    f"{ZITADEL_ISSUER}/v2/sessions",
+                    json=session_body,
+                    headers={"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"},
+                )
+                # Zitadel only offers credentials bound to the requested RP ID. A user
+                # whose passkeys all predate the RP ID switch gets "Found no
+                # credentials" here, so retry under the legacy RP ID.
+                if not (r.status_code >= 500 and "WEBAU-4G8sw" in r.text):
+                    break
         if r.status_code not in (200, 201):
             logger.warning("passkey/begin: %s body=%s", r.status_code, r.text[:200])
             return JSONResponse({"error": "could not start passkey flow"}, status_code=404)
@@ -1454,7 +1454,7 @@ async def passkey_register_begin(request: Request):
         async with _hx.AsyncClient(timeout=15) as c:
             r = await c.post(
                 f"{ZITADEL_ISSUER}/v2/users/{user_id}/passkeys",
-                json={"returnCode": {}},
+                json={"domain": WEBAUTHN_RP_ID},
                 headers={"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"},
             )
         if r.status_code not in (200, 201):
