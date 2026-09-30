@@ -1,0 +1,106 @@
+{
+  "detector": "detect.mjs",
+  "version": 1,
+  "attribution": "Rule subset ported from Impeccable (pbakaus/impeccable), Apache-2.0, with modifications — see file header. Catalog: references/visual/ai-tells.md.",
+  "status": "ran",
+  "sources": [
+    "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html"
+  ],
+  "rules": 16,
+  "findings": [
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"logo\"> is a card inside a card ancestor",
+      "line": 171
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"icon-btn\"> is a card inside a card ancestor",
+      "line": 174
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"meter\"> is a card inside a card ancestor",
+      "line": 190
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
+      "line": 204
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
+      "line": 210
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
+      "line": 216
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
+      "line": 222
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
+      "line": 228
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
+      "line": 234
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
+      "line": 240
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tabs\"> is a card inside a card ancestor",
+      "line": 256
+    }
+  ],
+  "counts": {
+    "total": 11,
+    "byRule": {
+      "nested-cards": 11
+    }
+  }
+}
