@@ -810,7 +810,7 @@ Every page spec below has a row for each of the nine states. Where a row says "d
 | `GET /auth/logout` | Account menu → Sign out | 302 → `/auth/login` | none |
 
 **Mobile 375 (primary):** below 1024 px, designed at 375 × 800. This is the product (brief §Device priority).
-- A 48 px top bar: logo and wordmark (G-01) and the account avatar (G-04: name, Settings, Sign out).
+- A 72 px top bar **at rest**, condensing to ~48 px on scroll: the 64 px mascot (`footer-avatar.png`, `--brand-mark`) shrinks to 40 px (`--brand-mark-condensed`) and stays visible; the wordmark stays; the tagline hides. Account avatar on the right. Trigger: scroll past ~8 px (`--topbar-condense-threshold`), CSS scroll-driven animation or IntersectionObserver sentinel. Under `prefers-reduced-motion`, states switch instantly. Content reserves `padding-top: var(--topbar-h)` = 72 px always — no CLS. (Phase 4 decision.)
 - The bottom tab bar is 56 px, `aria-label="Tab bar"`. It holds Squad · Watch · Clips · More.
 - The More sheet has a scrim.
 - The call mini-bar docks directly above the tab bar, 48 px per call row. **On Squad it merges into the Chat handle row** (see PS-1) to hold the 12 % budget.
@@ -865,7 +865,7 @@ It is an `aria-label`ed region, `role="region"`. Status changes are announced po
 | `POST /api/soundboard/personal/order` `{labels}` | Organize → Done (Mine) | `buttons` | 401 |
 
 **Mobile 375 (primary):** at 375 × 800, in order:
-1. Top bar (PS-0), 48 px.
+1. Top bar (PS-0), 72 px at rest → 48 px condensed on scroll (see PS-0 for full spec).
 2. `h1` "Squad" + live count "3 in a game right now" (G-05).
 3. **A compact strip ≤ 64 px:**
    - The hype mini-meter: label, "137 / 150", a bar with ticks at 15/40/80/120, and an end label "150 = max" (carry-over: scale visible).

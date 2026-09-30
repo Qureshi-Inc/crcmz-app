@@ -202,8 +202,11 @@ Everything else holds the calm structure register.
   /* --- sizing (mobile first) --- */
   --tap-min: 44px;
   --tile-min: 64px;
-  --brand-mark: 64px;         /* footer-avatar.png mascot, top bar + sidebar */
-  --topbar-h: 72px;           /* holds the 64px mascot (owner 2026-09-30; was 48) */
+  --brand-mark: 64px;             /* footer-avatar.png mascot, top bar rest + sidebar */
+  --topbar-h: 72px;               /* rest height — holds the 64px mascot */
+  --topbar-h-condensed: 48px;     /* condensed height on scroll (Phase 4 decision) */
+  --brand-mark-condensed: 40px;   /* mascot in condensed state */
+  --topbar-condense-threshold: 8px; /* scroll distance to trigger condense */
   --tabbar-h: 56px;
   --handle-h: 40px;           /* Squad bottom chrome = 96px = 12% of 800 */
   --sidebar-w: 240px;
@@ -553,6 +556,589 @@ The INFO rows are not gated. They document why a role is banned from a placement
 - Pure `#000`/`#fff` surfaces. `#fff` is allowed only as the label on `--violet-fill-deep`.
 
 ## Open questions
-- **JOURNEY.md sync (for the plan):** PS-0 and PS-1 say "48 px top bar". The owner's 64 px mascot needs `--topbar-h: 72px`. That costs the Squad first screen 24 px (3 % of 800), and the 12 % bottom-chrome budget is unaffected. JOURNEY.md should be updated to 72 px so the two files agree.
-- Error/warning hue: the brand has no red. The palette.mjs `--gen-error-*` (hue 25) is the default. Phase 4 decides whether "warning" borrows gold, which would collide with achievement.
+- **JOURNEY.md sync:** RESOLVED (Phase 4 2026-09-30). PS-0 and PS-1 updated to 72 px; top bar is fixed, non-condensing.
+- Error/warning hue: RESOLVED (Phase 4 2026-09-30). Warning aliases `--gen-warning-11`; it does not borrow gold. See §Tokens §Functional aliases.
 - Light theme: none. The dark theme is a content decision (late-night play, the identity), not a default. Revisit only if the owner asks.
+
+---
+
+## §Tokens (Phase 4 — extends the locked block above; no locked value is changed)
+
+### Tier model
+Three tiers, per W3C DTCG token format (stable Oct 2025) and design-systems doctrine (Frost atomic, 2013):
+
+| Tier | What it encodes | Where it lives |
+|---|---|---|
+| **1. Global / primitive** | What values exist: hex colours, px sizes, durations. | The `--neon-*`, `--bg`, `--glass`, `--text-*`, `--space-*`, `--radius-*`, `--dur-*` tokens in the locked block above. `--gen-*` from palette.mjs. |
+| **2. Alias / semantic** | What role a value plays: `--background`, `--surface`, `--text`, `--accent-solid`, `--error`. Intent-mapped. | The `--background/surface/surface-raised/accent-*/interactive/live/achievement/ambient/border-control/focus-ring` block in the locked section + the functional aliases below. |
+| **3. Component** | What value a component uses: `--c-btn-bg`, `--c-tile-edge`. Scope-specific. | The `--c-*` block below. |
+
+### Semantic / alias tier (complete reference)
+
+These are the names Phase 5–6 and the code plan consume. All resolve to locked global values.
+
+```css
+/* Semantic aliases — Phase 4 (alias tier, not changing the global values) */
+:root {
+  /* Surfaces */
+  --background:       var(--bg);
+  --surface:          var(--glass);
+  --surface-raised:   var(--sheet);
+  --chrome-surface:   var(--chrome);
+
+  /* Text */
+  --text-primary:     var(--text);          /* body, headings, labels */
+  --text-secondary:   var(--text-dim);      /* timestamps, meta, placeholders */
+  --text-on-fill:     var(--ink);           /* label on magenta/cyan/lime/gold fill */
+
+  /* Accent (magenta = brand + primary action) */
+  --accent-solid:     var(--magenta-fill);
+  --accent-on-solid:  var(--on-magenta-fill);
+  --accent-text:      var(--magenta-text);
+
+  /* Role text — maps each neon hue to its semantic job */
+  --interactive-text: var(--cyan-text);     /* links, focus, selected */
+  --live-text:        var(--lime-text);     /* online, Sent */
+  --achievement-text: var(--gold-text);     /* ranks, trophies */
+  --ambient-text:     var(--violet-text);   /* AI surfaces, ambient tags */
+
+  /* Functional / status (alias tier → generated primitive tier) */
+  --error:            var(--gen-error-11);  /* #ff958d — text on dark surfaces */
+  --error-surface:    var(--gen-error-3);   /* #391614 — tinted bg for error strip */
+  --success:          var(--gen-success-11);/* #71d176 */
+  --success-surface:  var(--gen-success-3); /* #0e2910 */
+  --warning:          var(--gen-warning-11);/* #d6b267 — distinct from --neon-gold */
+  --warning-surface:  var(--gen-warning-3); /* #2a210b */
+  --info:             var(--gen-info-11);   /* #7bc0f0 */
+  --info-surface:     var(--gen-info-3);    /* #112432 */
+
+  /* Borders */
+  --border-decorative: var(--glass-border); /* non-interactive container edges */
+  --border-interactive: var(--border-control); /* inputs, outline buttons, tappable cards */
+
+  /* Interaction */
+  --focus:            var(--focus-ring);
+  --scrim:            rgba(3, 1, 10, .62);  /* sheet/dialog backdrop */
+
+  /* Layering (z-index scale) */
+  --z-content: 0;
+  --z-chrome: 10;
+  --z-minibar: 20;
+  --z-scrim: 30;
+  --z-sheet: 40;
+  --z-toast: 50;
+}
+```
+
+### Component / scope tier
+
+```css
+/* Component tokens — Phase 4 */
+:root {
+  /* ── Navigation ── */
+  --c-nav-bg:           var(--chrome-surface);
+  --c-nav-text:         var(--text-secondary);
+  --c-nav-active-text:  var(--accent-text);           /* magenta */
+  --c-nav-active-mark:  var(--accent-solid);           /* 2px left edge or dot */
+  --c-nav-row-h:        var(--tap-min);                /* 44px floor */
+  --c-topbar-h:         var(--topbar-h);               /* 72px */
+  --c-tabbar-h:         var(--tabbar-h);               /* 56px */
+  --c-sidebar-w:        var(--sidebar-w);              /* 240px */
+
+  /* ── Bottom sheet / side-sheet / centred dialog ── */
+  --c-sheet-bg:         var(--surface-raised);
+  --c-sheet-radius:     var(--radius-xl);              /* top corners 22px */
+  --c-sheet-handle-bg:  var(--border-interactive);
+  --c-sheet-shadow:     var(--shadow-sheet);
+  --c-scrim:            var(--scrim);
+
+  /* ── Chat Board (desktop panel + mobile sheet) ── */
+  --c-chat-bg:          var(--surface-raised);         /* panel and sheet share the same fill */
+  --c-chat-handle-h:    var(--handle-h);               /* 40px */
+  --c-chat-panel-w:     var(--panel-w);                /* 360px desktop */
+
+  /* ── Soundboard tile ── */
+  --c-tile-size:        var(--tile-min);               /* 64px min */
+  --c-tile-radius:      var(--radius-md);              /* 12px */
+  --c-tile-fill-hi:     var(--tile-fill-hi);           /* .20 gradient hi stop */
+  --c-tile-fill-lo:     var(--tile-fill-lo);           /* .05 gradient lo stop */
+  /* c1–c5 edge, label and rgb are defined in the global tile block */
+
+  /* ── Presence row ── */
+  --c-presence-h:       56px;                          /* tap-min + 12px vertical pad */
+  --c-avatar-size:      36px;
+  --c-dot-size:         10px;
+  --c-dot-live:         var(--lime-fill);
+  --c-dot-offline:      var(--border-interactive);
+
+  /* ── Stat tile / chip ── */
+  --c-stat-label-sz:    var(--text-xs);
+  --c-stat-numeral-sz:  var(--text-3xl);               /* 35→45px */
+  --c-stat-chip-pad:    var(--space-2) var(--space-3);
+
+  /* ── Clip card ── */
+  --c-clip-radius:      var(--radius-lg);              /* 16px */
+  --c-clip-thumb-ratio: 16/9;
+
+  /* ── Buttons ── */
+  --c-btn-radius:       var(--radius-md);              /* 12px */
+  --c-btn-h:            var(--tap-min);                /* 44px */
+  --c-btn-pad:          0 var(--space-4);
+  --c-btn-font:         var(--text-base);
+  --c-btn-weight:       700;                           /* Rajdhani 700 per Type spec */
+  --c-btn-primary-bg:   var(--accent-solid);
+  --c-btn-primary-text: var(--accent-on-solid);
+  --c-btn-secondary-bd: var(--border-interactive);
+  --c-btn-secondary-text: var(--interactive-text);
+  --c-btn-disabled-opacity: 0.38;
+
+  /* ── Input ── */
+  --c-input-bg:         var(--input-fill);
+  --c-input-border:     var(--border-interactive);
+  --c-input-radius:     var(--radius-md);
+  --c-input-h:          var(--tap-min);
+  --c-input-font:       var(--text-base);
+
+  /* ── Toast ── */
+  --c-toast-bg:         var(--surface-raised);
+  --c-toast-radius:     var(--radius-md);
+  --c-toast-shadow:     var(--shadow-card);
+  --c-toast-min-show:   2000ms;                        /* ≥2s; 4s for errors */
+
+  /* ── Dialog ── */
+  --c-dialog-bg:        var(--surface-raised);
+  --c-dialog-radius:    var(--radius-xl);
+  --c-dialog-shadow:    var(--shadow-sheet);
+  --c-dialog-max-w:     480px;                         /* desktop centred */
+
+  /* ── Call mini-bar ── */
+  --c-minibar-bg:       var(--chrome-surface);
+  --c-minibar-row-h:    48px;
+  --c-minibar-font:     var(--text-sm);
+
+  /* ── Send-state button ── */
+  --c-send-sending-text: var(--text-secondary);
+  --c-send-sent-text:    var(--live-text);
+  --c-send-notsent-text: var(--error);
+  --c-send-unknown-text: var(--text-secondary);
+  --c-send-countdown-text: var(--achievement-text);
+
+  /* ── Stale marker ── */
+  --c-stale-color:      var(--warning);
+  --c-stale-surface:    var(--warning-surface);
+
+  /* ── Stepper ── */
+  --c-step-active-text: var(--accent-text);
+  --c-step-done-text:   var(--live-text);
+  --c-step-idle-text:   var(--text-secondary);
+  --c-step-line:        var(--border-decorative);
+
+  /* ── Per-panel error strip ── */
+  --c-panel-error-bg:   var(--error-surface);
+  --c-panel-error-text: var(--error);
+  --c-panel-error-radius: var(--radius-sm);
+
+  /* ── Sortable table ── */
+  --c-table-header-text: var(--text-secondary);
+  --c-table-sort-active: var(--interactive-text);
+  --c-table-row-border:  var(--border-decorative);
+
+  /* ── Lifecycle strip (Giveaway) ── */
+  --c-lifecycle-active-bg:   var(--accent-solid);
+  --c-lifecycle-active-text: var(--accent-on-solid);
+  --c-lifecycle-done-bg:     var(--live-text);         /* lime for completed */
+  --c-lifecycle-done-text:   var(--ink);
+  --c-lifecycle-idle-bg:     var(--surface-raised);
+  --c-lifecycle-idle-text:   var(--text-secondary);
+  --c-lifecycle-step-h:      32px;
+}
+```
+
+---
+
+## §Components (Phase 4 — component specifications)
+
+### Nav icon pattern (applies to: tab bar, More sheet, sidebar, mini-bar)
+All navigation icons are **monochrome inline SVG**, inheriting colour via `currentColor`. No emoji in nav chrome — emoji carry their own colour, vary by OS, and render as empty boxes in some headless environments.
+
+```css
+/* Nav icon container — 20 px SVG in a 44 px flex touch target */
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: inherit;           /* inherits --c-nav-text or --c-nav-active-text */
+}
+.nav-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+```
+
+SVG defaults: `fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"`. Fill-only icons (e.g. the three-dots More icon) use `fill="currentColor"` directly on the SVG shapes.
+
+Emoji remain fine inside **user content** — soundboard labels the squad wrote, game names in presence rows, etc. Only chrome (nav bars, mini-bar, handle row, call chips) must be emoji-free.
+
+### Wordmark
+String: **"CRCMZ APP"** (top bar and sidebar). One token, one string, no variation.
+
+```
+Element:  <span class="wordmark-wrap"><span class="wordmark-text">CRCMZ APP</span></span>
+CSS:
+  .wordmark-wrap {
+    display: inline-block;
+    filter: drop-shadow(0 0 14px rgba(255,47,214,.35));  /* glow on wrapper — text-shadow
+                                                            is suppressed by background-clip:text */
+  }
+  .wordmark-text {
+    font: 700 var(--text-lg)/1 var(--font-display);      /* 20px in top bar */
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    white-space: nowrap;                                  /* never wrap; fits ~150px at 20px */
+    background: var(--wordmark-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+```
+Note: `--wordmark-glow` in the token block documents the colour/radius intent. The implementation uses `filter: drop-shadow()`, not `text-shadow`. The two values are kept in sync: if the glow colour or radius changes, update both.
+
+Tagline **"YES. WE HAVE ONE."** (all caps) sits below the wordmark in Rajdhani 500 `--text-xs` `--text-dim`. Use `text-transform: uppercase; letter-spacing: .04em` — never mixed case.
+
+### Navigation: mobile top bar
+**Two states:** rest (72 px) and condensed (~48 px). Desktop is unaffected — the sidebar holds the brand at all times.
+
+**Rest state** (at scroll-top):
+- Height: `--topbar-h` (72 px). `position: fixed; top: 0; left: 0; right: 0; z-index: var(--z-chrome)`.
+- `padding-top: env(safe-area-inset-top)`.
+- Left: mascot 64 px (`--brand-mark`) + wordmark wrap + tagline "YES. WE HAVE ONE." (all caps, `text-transform: uppercase`)
+- Right: avatar button ≥ 44 × 44.
+
+**Condensed state** (after scroll threshold):
+- Height: `--topbar-h-condensed` (48 px).
+- Mascot shrinks to `--brand-mark-condensed` (40 px); stays visible.
+- Wordmark stays at `--text-lg`; tagline hides (`opacity: 0`, then `display: none` after transition).
+- Avatar button stays ≥ 44 × 44.
+
+**Trigger:** CSS scroll-driven animation (`animation-timeline: scroll(root); animation-range: 0px var(--topbar-condense-threshold)`) — no scroll listener, no reflow. Fallback for unsupporting browsers: a 1 px sentinel `<div>` at `top: var(--topbar-condense-threshold)` watched by `IntersectionObserver`; on exit-viewport add `.condensed` class to the topbar, on enter remove it. Both approaches use `transition: height var(--dur-std) var(--ease-out), width var(--dur-std) var(--ease-out)` on the mascot.
+
+**`prefers-reduced-motion`:** `transition: none; animation: none` — states switch instantly. The condensed state is still functional; only the animation is suppressed.
+
+**CLS:** Content always reserves `padding-top: var(--topbar-h)` = 72 px. The 24 px surplus when condensed is above the scroll position and never visible; the user never sees a layout shift. No spacer hack needed — the fixed bar overlaps its own allocated space, which is the browser's standard pattern.
+
+**Background:** `var(--c-nav-bg)` (`--chrome`), `backdrop-filter: blur(18px)`.
+**Bottom border:** 1 px `--border-decorative`.
+**No glow on the bar itself.**
+
+```css
+/* Condensed top bar tokens (reference) */
+.topbar {
+  height: var(--topbar-h);
+  transition: height var(--dur-std) var(--ease-out);
+  /* scroll-driven (Chrome 115+) */
+  animation: topbar-condense linear both;
+  animation-timeline: scroll(root);
+  animation-range: 0px var(--topbar-condense-threshold);
+}
+@keyframes topbar-condense {
+  from { height: var(--topbar-h); }
+  to   { height: var(--topbar-h-condensed); }
+}
+.topbar .mascot {
+  width: var(--brand-mark); height: var(--brand-mark);
+  transition: width var(--dur-std) var(--ease-out), height var(--dur-std) var(--ease-out);
+}
+.topbar.condensed .mascot,
+@supports (animation-timeline: scroll()) { /* via scroll-driven, value interpolated */ } {
+  /* In scroll-driven mode the height/width are driven by the keyframe above */
+}
+/* IntersectionObserver fallback class */
+.topbar.condensed { height: var(--topbar-h-condensed); }
+.topbar.condensed .mascot { width: var(--brand-mark-condensed); height: var(--brand-mark-condensed); }
+.topbar.condensed .topbar-tagline { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .topbar, .topbar .mascot { transition: none; animation: none; }
+  .topbar.condensed { height: var(--topbar-h-condensed); }
+  .topbar.condensed .mascot { width: var(--brand-mark-condensed); height: var(--brand-mark-condensed); }
+}
+```
+
+### Navigation: mobile bottom tab bar
+- Height: `--c-tabbar-h` (56 px). `position: fixed; bottom: 0; z-index: var(--z-chrome)`.
+- `padding-bottom: env(safe-area-inset-bottom)`.
+- Four tabs: Squad · Watch · Clips · More. Each is ≥ 44 × 44.
+- Active tab: icon + label in `--c-nav-active-text` with a 2 px `--accent-solid` top edge.
+- Inactive: icon + label in `--c-nav-text`.
+- Focus ring: `var(--focus)`.
+- `role="tablist"`, `aria-label="Tab bar"`, each tab `role="tab"`, `aria-current="page"` on active.
+- **Icons:** monochrome inline SVG, `currentColor`, 20 × 20 px in a 44 × 44 flex container. Stroke-based (`stroke-width: 1.5`, `stroke-linecap: round`, `stroke-linejoin: round`). No emoji. Class: `.nav-icon`. The icon inherits the tab's active/inactive colour automatically.
+
+### Navigation: More sheet
+- Opens from the More tab. Full-width bottom sheet to ~80 % height. Scrim `--c-scrim`.
+- Destinations: Huddle · Music · WhatsApp · Giveaway · Coach · Ask AI · Settings (+ Admin for admins).
+- Each row ≥ 44 px. Row active state: `--c-nav-active-text` + `--c-nav-active-mark` left dot.
+- `role="menu"`, `aria-label="More"`, focus trapped, `inert` on background. Escape + swipe-down close.
+- Desktop: these destinations appear directly in the sidebar (no More sheet needed at ≥ 1024 px).
+- **Icons:** same `.nav-icon` spec as the tab bar — monochrome inline SVG, `currentColor`, 20 × 20 in 44 px row. No emoji.
+
+### Navigation: desktop sidebar
+- Width: `--c-sidebar-w` (240 px). `position: fixed; top: 0; bottom: 0; left: 0; z-index: var(--z-chrome)`.
+- `aria-label="Primary"`.
+- Header row: mascot (64 px) + wordmark `--text-xl`.
+- Main rows: Squad · Watch · Clips · Huddle · Music · WhatsApp · Giveaway · Coach · Ask AI. Active: `--c-nav-active-mark` 2 px left edge + `--c-nav-active-text`.
+- Footer rows: Link PSN · Settings · Admin (if admin) · account row.
+- Mini-bar sits above the account row (see Call mini-bar).
+- Row hover inside `@media (hover: hover)` only: background tint `rgba(255,60,200,.07)`. Never the only affordance.
+- **Icons:** same `.nav-icon` spec — monochrome inline SVG, `currentColor`, 20 × 20 in 44 px row height. No emoji.
+
+### Chat Board: mobile handle row
+- Fixed at `bottom: calc(var(--c-tabbar-h) + env(safe-area-inset-bottom))`. Height: `--c-chat-handle-h` (40 px).
+- Background: `--c-chat-bg` (`--sheet`). Top border: 1 px `--border-decorative`. Corner radius: `--radius-xl` on top corners.
+- Left: chat icon (`.nav-icon` SVG, `currentColor`) + "Chat" label + unread count badge.
+- Right: if a call is active, a call chip replaces the right slot (icon + label, `min-height: 44px`).
+- This row is the ONLY thing visible when the sheet is closed. Tapping anywhere on it opens the sheet.
+- `aria-expanded`, `aria-controls`. Focus ring on `:focus-visible`.
+- **Height: `min-height: var(--tap-min)` = 44 px.** The locked token `--handle-h: 40px` represents the design intent for the condensed chrome stack; production may use `max(var(--handle-h), var(--tap-min))` to guarantee the 44 px floor regardless of token value. The call chip (`min-height: 44px`) is a separate interactive element that does not rely on the full-width exception.
+
+### Chat Board: mobile sheet
+- Slides up to ~60 % height (`bottom: var(--c-tabbar-h)`). Can expand to full height minus the top bar.
+- Background: `--c-chat-bg`. Top corners `--c-sheet-radius`. Shadow: `--c-sheet-shadow`. Scrim `--c-scrim` over page content (`--z-scrim`). Background `inert`. Focus trapped.
+- Handle knob at top: 32 × 4 px pill, `--c-sheet-handle-bg`.
+- Sheet content: soundboard grid → soundboard tabs (All/Mine) → hype → composer at bottom.
+- Escape or swipe-down closes the sheet, restores focus to the handle row.
+- `role="dialog"`, `aria-label="Chat Board"`.
+- **Desktop (Chat Board panel):** `position: fixed; right: 0; top: var(--c-topbar-h); bottom: 0; width: var(--c-chat-panel-w)`. Same background, no scrim. Always visible. Focus not trapped (it is a persistent side panel, not a modal). `role="complementary"`, `aria-label="Chat Board"`.
+
+### Chat Board: desktop side-sheet / centred dialog note
+When any sheet content also appears as a desktop overlay (e.g. "Add tile" dialog), the same content renders in a centred `role="dialog"` (`--c-dialog-max-w: 480px`), centred viewport, scrim, focus trapped, `inert` background. This is the "same content, different layout" rule from the Phase 4 carry-over.
+
+### Soundboard button (tile)
+```
+.tile {
+  min-width: var(--c-tile-size);   /* 64px */
+  min-height: var(--c-tile-size);
+  border-radius: var(--c-tile-radius);
+  border: 1.5px solid var(--tile-edge);          /* neon edge per c1–c5 */
+  background: linear-gradient(135deg,
+    rgb(var(--rgb) / var(--tile-fill-hi)),
+    rgb(var(--rgb) / var(--tile-fill-lo)));
+  box-shadow: var(--glow-tile-rest);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: var(--space-1);
+  cursor: pointer;
+  -webkit-user-select: none; user-select: none;
+}
+```
+
+State table (all required; hover only inside `@media (hover: hover)`):
+
+| State | CSS trigger | Visual change |
+|---|---|---|
+| Default (resting) | `.tile` | Tile fill + neon edge + `--glow-tile-rest` |
+| Hover (pointer enhancement) | `@media (hover:hover) .tile:hover` | Very subtle fill alpha bump (.25/.07); no extra glow |
+| Focus-visible | `.tile:focus-visible` | `box-shadow: var(--focus-ring)` replaces the tile glow temporarily |
+| Active / pressed | `.tile:active` | `transform: scale(.96)`, `transition: 100ms` |
+| Fire / sent | `.tile.fired` | `box-shadow: var(--glow-tile-fire)`; scanline sweep (::after `translateY`); shows "Sent" label for 1.2 s |
+| Reduced-motion fire | `.tile.fired` + prefers-reduced-motion | Static lime edge inset + "Sent" label; no sweep |
+| Custom slot | `.tile.add` | `box-shadow: none`; dashed `--border-interactive` edge; no fill gradient |
+| Disabled | `.tile[disabled]` | Opacity `.38`; `cursor: not-allowed`; keep the neon edge visible |
+| Loading | `.tile.loading` | Spinner replaces label; tile `pointer-events: none` |
+
+The `--rgb` and `--tile-edge` are set per `.c1`–`.c5` class from the global token block. The label colour is `--tile-label` per tile.
+
+### Presence row
+```
+.presence-row {
+  height: var(--c-presence-h);     /* 56px */
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: 0 var(--gutter);
+  border-bottom: 1px solid var(--border-decorative);
+}
+.presence-avatar { width: var(--c-avatar-size); border-radius: 50%; }
+.presence-dot {
+  width: var(--c-dot-size); height: var(--c-dot-size);
+  border-radius: var(--radius-pill);
+  background: var(--c-dot-live);   /* --lime-fill when online */
+  position: absolute; bottom: 0; right: 0;
+}
+.presence-dot[data-offline] { background: var(--c-dot-offline); }
+```
+States: loading (skeleton row), empty (not applicable per row), error (row hides, section shows error strip).
+
+### Stat tile
+```
+.stat-tile {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  display: flex; flex-direction: column; gap: var(--space-1);
+}
+.stat-numeral {
+  font: 800 var(--c-stat-numeral-sz)/1.1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  color: var(--achievement-text);   /* gold for ranks; lime for live counts */
+}
+.stat-label { font-size: var(--c-stat-label-sz); color: var(--text-secondary); }
+```
+Compact strip variant: unboxed columns, no border, inline on a glass card.
+
+### Clip card + player
+```
+.clip-card {
+  border-radius: var(--c-clip-radius);
+  background: var(--surface);
+  overflow: hidden;
+  border: 1px solid var(--border-decorative);
+}
+.clip-thumb { aspect-ratio: 16/9; width: 100%; object-fit: cover; }
+.clip-meta { padding: var(--space-3) var(--space-4); }
+```
+States: loading (skeleton with 16:9 aspect ratio), empty N/A, 410-purged (card shows "Clip removed", no thumb), in-progress (lime "Recording" chip on thumb).
+
+Player overlay (CL-17): full-screen `position: fixed`, `z-index: 45` (above sheet, below toast). Controls: play/pause, scrub, mute, close. ≥ 44 px touch targets.
+
+### Overlays: dialog + scrim
+Desktop/tablet: centred `role="dialog"`, `max-width: var(--c-dialog-max-w)`, top `padding: env(safe-area-inset-top)`, `border-radius: var(--c-dialog-radius)`, `box-shadow: var(--c-dialog-shadow)`. Scrim at `--z-scrim`. Background `inert`. Focus trapped. Escape closes.
+Mobile: same content, rendered as bottom sheet (see Chat Board sheet spec above).
+Both share `aria-modal="true"`, `aria-labelledby`.
+
+### Toast
+```
+.toast {
+  position: fixed; bottom: calc(var(--c-tabbar-h) + var(--space-3) + env(safe-area-inset-bottom));
+  left: var(--gutter); right: var(--gutter);
+  background: var(--c-toast-bg);
+  border-radius: var(--c-toast-radius);
+  border-left: 3px solid currentColor;   /* error=--error, success=--success, etc. */
+  padding: var(--space-3) var(--space-4);
+  z-index: var(--z-toast);
+}
+```
+`role="status"` (polite). Errors: `role="alert"` (assertive). Minimum display: 2 s (≥ 4 s for errors). Touch-dismiss: swipe down or tap ✕. One toast stack per `aria-live` region.
+
+### State patterns: loading / empty / error / stale
+
+**Skeleton:** Background `var(--surface)` with a static shimmer tint `rgba(255,255,255,.06)` for reduced motion, or a CSS `@keyframes` shimmer (`opacity: .5 → 1`, 1.2 s, only `opacity` animated).
+
+**Empty state:** illustration/icon + `--text-secondary` explanation + primary CTA. Follows interaction doctrine §Pattern 3.
+
+**Error strip (per-panel):**
+```
+.error-strip {
+  background: var(--c-panel-error-bg);
+  color: var(--c-panel-error-text);
+  border-radius: var(--c-panel-error-radius);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+}
+```
+
+**Stale marker:** a `--c-stale-color` dot + "Updated X min ago" in `--text-secondary`. Never replaces the content; overlaid at top-right of the section.
+
+### Send-state button
+The composer Send becomes this cycle: idle → Sending → Sent | Not sent | Unknown.
+```
+[data-send="sending"] { color: var(--c-send-sending-text); pointer-events: none; }
+[data-send="sent"]    { color: var(--c-send-sent-text);    /* lime */ }
+[data-send="notsent"] { color: var(--c-send-notsent-text); /* error */ }
+[data-send="unknown"] { color: var(--c-send-unknown-text); }
+[data-send="countdown"] { color: var(--c-send-countdown-text); }  /* 8/60 s PSN cooldown */
+```
+Under reduced motion, no spinner — a static indicator icon only.
+
+### Call mini-bar row
+```
+.minibar {
+  position: fixed;
+  bottom: var(--c-tabbar-h);   /* desktop: above account row */
+  left: 0; right: 0;            /* sidebar: scoped to sidebar width */
+  background: var(--c-minibar-bg);
+  z-index: var(--z-minibar);
+}
+.minibar-row {
+  height: var(--c-minibar-row-h);   /* 48px */
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border-top: 1px solid var(--border-decorative);
+}
+```
+Buttons: mute toggle, Return, Leave — each ≥ 44 px. Return is `--interactive-text`. Leave is `--error`. `role="region"`, `aria-label="Active call"`. Status changes are `aria-live="polite"`.
+
+**Handle row with call chip:** on Squad mobile, when a call is active, the Chat handle row's right slot shows the call chip (room name + return icon) instead of the bare mic icon. This merges the mini-bar into the handle row and holds the 12 % bottom-chrome budget (handle + tab bar = 96 px; mini-bar rows do not stack on top of the handle).
+
+### Stepper
+```
+.stepper { display: flex; gap: var(--space-2); align-items: center; }
+.step[data-state="active"] { color: var(--c-step-active-text); font-weight: 700; }
+.step[data-state="done"]   { color: var(--c-step-done-text); }
+.step[data-state="idle"]   { color: var(--c-step-idle-text); }
+.step-line { flex: 1; height: 1px; background: var(--c-step-line); }
+```
+Used in the Portal link-flow and Giveaway lifecycle.
+
+### Sortable table
+Desktop default: `<thead>` columns with `<button aria-sort="ascending|descending|none">` on the sortable headers. Active sort: `--c-table-sort-active` icon + colour. Row dividers: `--c-table-row-border`. Hover inside `@media (hover:hover)` only.
+
+Mobile fallback: a "Sort by" `<select>` above the table replaces the sortable headers. The select uses `--c-input-*` tokens. The table header sort buttons are hidden (`@media (max-width: 1023px) { .sort-btn { display: none } }`).
+
+### Lifecycle strip (Giveaway)
+Horizontal row of steps: Created → Nominations open → Nominations closed → Draw → Winner revealed. Each step is a pill, height `--c-lifecycle-step-h`. Active: `--c-lifecycle-active-bg + text`. Done: `--c-lifecycle-done-bg + text`. Idle: `--c-lifecycle-idle-bg + text`. This is a `role="list"`, not interactive; the action buttons are separate.
+
+### More sheet (mobile navigation)
+Opens from the More tab. Full-width bottom sheet to ~80% viewport height. `position: fixed; bottom: var(--c-tabbar-h); left: 0; right: 0`. Scrim `--c-scrim` covers the background (`z-index: --z-scrim`). Sheet panel is `z-index: --z-sheet`.
+
+**Structure:**
+- Handle knob (32 × 4 px pill, `--border-interactive`).
+- Title: "MORE" — Orbitron 800, `--text-lg`, uppercase.
+- Destination rows (≥ 44 px each): Huddle · Music · WhatsApp · Giveaway · Ask AI · Settings · Admin (if admin). Each row: `.nav-icon` SVG + label.
+- Active row: `--c-nav-active-text` + 2 px `--accent-solid` left mark.
+
+**Behaviour:** `role="dialog" aria-label="More" aria-modal="true"`. Focus trapped inside the sheet. `inert` on background content. Roving tabindex across `role="menuitem"` rows. Escape key + swipe-down close (returns focus to the More tab). Desktop ≥ 1024 px: these destinations appear directly in the sidebar — no More sheet.
+
+### Chat Board: desktop panel
+- `position: fixed; right: 0; top: var(--topbar-h); bottom: 0; width: var(--c-chat-panel-w, 360px); z-index: var(--z-chrome)`.
+- Background: `--chrome-surface`, backdrop-filter blur 18 px. Left border: 1 px `--border-decorative`.
+- `role="complementary" aria-label="Chat Board"`. Not modal — focus is not trapped (always-visible panel).
+
+**Expanded state (360 px):**
+- Header row (44 px): "CHAT BOARD" title + collapse-to-rail toggle button (≥ 32 × 32, `:focus-visible`).
+- Tabs row: Shared / Mine. `role="tablist"`. Active tab: `--accent-text` + 2 px `--accent-solid` bottom border.
+- Controls row: Edit + Organize buttons (`.panel-ctrl-btn`).
+- Tile grid: 2-col `display: grid`, same `.tile` component, scrollable. Tiles can be reordered in Organize mode.
+- Composer row: text input + Send button (`.panel-send`, `--accent-solid`, `--glow-magenta`).
+
+**Collapsed state (60 px rail):**
+- Only: collapse-toggle button (expand) + chat icon. `aria-expanded="false"` on the rail container. All content hidden.
+
+### Clip player
+Sits below the clip card thumbnail (same `border-radius` continuation). Required controls:
+
+- **Play/pause button:** 44 × 44 px, `border-radius: 50%`, `--accent-solid` fill, `--glow-magenta`. `:focus-visible`, `:active scale(.95)`.
+- **Seek track:** full remaining width. Track: 4 px `--border-interactive`. Fill: `--accent-solid`. Thumb: 12 px pill. `role="slider" aria-label="Seek" aria-valuenow aria-valuemin="0" aria-valuemax="100"`, arrow-key step 5 s.
+- **Drag-time readout:** always visible at the thumb position (not a hover tooltip — hover is not reliable). Small label in `--text-xs` Rajdhani. Aria-hidden (full time is in the elapsed/total label).
+- **Elapsed / total time:** `"0:38 / 1:42"`, Rajdhani 600 `--text-xs`, `--text-secondary`. `aria-label="Elapsed 0:38 of 1:42"`.
+
+**Additional states:**
+- **Loading:** skeleton seek bar + "Buffering…" text. `aria-busy="true"` on player container.
+- **Error:** `--error-surface` background, `--error` text, "Playback failed — try again" + Retry button. `role="alert"`.
+- **410 Purged (clip deleted after retention window):** `--surface-raised` background, dashed border, "Clip has been purged — no longer available". `role="status"`. No retry.
+
+### Call controls (in-call overlay bar)
+Persistent control bar shown during an active Watch Party or Huddle call. Distinct from the Call mini-bar (the mini-bar is the docked strip; this is the in-call control surface).
+
+**Watch Party bar:**
+- Mic toggle: on (`--interactive-text` fill) / muted (dimmed).
+- Camera toggle: on / off. Both ≥ 44 × 44 (52 × 52 in spec).
+- Screen share: present on desktop; `aria-disabled="true"` on mobile.
+- Leave: danger style (`--error` fill, white label). All buttons have `:focus-visible`, `:active scale(.94)`.
+- `role="toolbar" aria-label="Call controls"`.
+
+**Huddle bar:** mic toggle only (no camera, no share) + Leave. Includes the **auto-muted-by-Huddle** state:
+- Auto-muted state: mic button shows `--error` border + colour; `aria-pressed="true"`.
+- Banner above controls (`role="status" aria-live="polite"`): "Muted by Huddle — you joined while someone was speaking". Background: `rgba(--error / .12)`, border `--error`.
+
