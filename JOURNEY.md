@@ -1,6 +1,6 @@
 # JOURNEY.md: CRCMZ App (`/app`)
 
-**Status:** Phases 1–2 of `.design-foundations/plans/2026-09-30-crcmz-app.md` are done: §Inventory, §Job, §Journey, §IA (Phase 1) and §Flows, §Page specs (Phase 2). §Microcopy comes in Phase 5 and §Data specs in Phase 6. The inventory now counts 163 KEEP / 12 MOVE / 10 EXCLUDE; Phase 2 moved AD-07 (roast) to EXCLUDE per owner decision O-1 and added the O-2 note to CL-30.
+**Status:** Phases 1–2 done (§Inventory, §Job, §Journey, §IA, §Flows, §Page specs). Phase 5 done (§Voice, §Microcopy). §Data specs comes in Phase 6. The inventory now counts 163 KEEP / 12 MOVE / 10 EXCLUDE; Phase 2 moved AD-07 (roast) to EXCLUDE per owner decision O-1 and added the O-2 note to CL-30.
 **Pairs with:** `DESIGN.md` (locked in Phase 3; not yet present).
 **Owner:** Moiz (squad admin). **Date:** 2026-09-30.
 **Sources of truth:** `_DASHBOARD_TMPL` and routes in `server.py` (template lines 7557–16998), the `reels.py` router, `soundboard.py`, `_portal_page()`, and the research doc `.design-foundations/research/2026-09-30-crcmz-app.md`. The prior attempt (`frontend/src`, `docs/ux/`) was deliberately not consulted.
@@ -1100,7 +1100,7 @@ Display names use the SL-20 map (`username → name`); an unknown username falls
 | stale | A late response from an old range is discarded, never shown (the generation guard). A failed refresh keeps the last data with "Updated N min ago" |
 | 429 | N/A: no WhatsApp route calls `_rate_limit` |
 | signed-out | Default. Export and import 401 → banner |
-| forbidden | `can_import:false` → the import section is hidden. An import 403 (role revoked mid-session) → "You're not allowed to import — ask Moiz", and the section hides |
+| forbidden | `can_import:false` → the import section is hidden. An import 403 (role revoked mid-session) → "You're not allowed to import — ask an admin", and the section hides |
 | 410-purged | N/A: analytics only, no media |
 | in-call | Default (mini-bar) |
 
@@ -1435,7 +1435,7 @@ The inline 3-step flow is gone (ST-06 moved).
 |---|---|
 | loading | Card and table skeletons |
 | empty | Queue depth 0 → "Queue is clear". No PSN accounts → "No one has linked PSN yet" + a link to Portal to share. Users `[]` → "No users returned" (with a Retry, since an empty list is unlikely) |
-| error | Per card: a service `down` shows as **data** (a red dot + "unreachable"), not a page error. A fetch failure → card error + Retry. Users 502/503 → "Zitadel didn't answer" + Retry |
+| error | Per card: a service `down` shows as **data** (a red dot + "unreachable"), not a page error. A fetch failure → card error + Retry. Users 502/503 → "Sign-in service didn't answer" + Retry |
 | stale | Health/status/jobs poll failure → "Updated N min ago" on the health row. Stale health is labelled, never shown as current |
 | 429 | N/A: no admin route calls `_rate_limit` |
 | signed-out | Default |
@@ -1491,3 +1491,492 @@ The inline 3-step flow is gone (ST-06 moved).
 | Phase 5 (words) | Every state row above needs copy in the "YES. WE HAVE ONE." voice. F-0 "may or may not have sent" wording. Fair giveaway copy (F-6). Neutral 429 copy (B-4) |
 | Phase 6 (data) | Hype meter with scale ticks 15/40/80/120 of 150. Stat tiles. WA charts/table. Slap charts. Coach trajectory and bars |
 | Code plan | B-1…B-9. Shell-owned call connections. Studio −1 s / +1 s buttons (new) and the breakpoint aligned to 1024. Watch volume is gated on a settable `volume` (feature detection), and WP-08 keys are scoped to the Watch page. URL-encode `message_uid`. `Accept: application/json` on `/clips`. Tree test (Phase 1 follow-up) |
+
+---
+
+## §Voice
+
+**Added in Phase 5. This is the design contract for all copy in `/app`.**
+
+### Voice attributes
+
+| Attribute | In-range | Out-of-range |
+|---|---|---|
+| **Irreverent-but-fluent** | "Nobody linked yet", "AI is cooking", "Slow down a sec", "YES. WE HAVE ONE." | Corporate-speak, fake-warm onboarding, buzzwords |
+| **Confident, short** | ≤ 12 words in normal states; present-tense commands; no hedging | Passive voice, "Please be advised", "It seems like…" |
+| **Clear first, funny second** | Errors: fact then fix; dry observation after the fix is allowed for low-stakes states | Humor on destructive confirms, auth failures, 410-purged, Unknown send outcomes |
+
+### Tone matrix
+
+| Moment | Tone | Rule |
+|---|---|---|
+| **Celebration** — giveaway revealed, Squad Up sent, clip sent | Warm, expressive; one exclamation mark allowed | Let it land. Don't explain the celebration |
+| **Neutral** — presence, counts, stale, info | Dry, plain, no punctuation flourish | State the fact |
+| **Error** — service down, 500, network | Calm, specific; name the thing that failed; no levity | Apply Yifrah formula: what → why (if useful) → fix → next |
+| **Destructive** — delete, close giveaway, clear history, veto, re-send confirm | Serious; no contractions; name the item being removed | Name the consequence and permanence. No humor |
+| **Waiting** — loading, upload progress, 429 countdown, render | Neutral, factual; no false urgency | State progress as a fact ("Uploading 42 %") |
+
+### Do / don't
+
+| Do | Don't |
+|---|---|
+| "Slow down a sec — try again in Ns" | "Error 429: rate limit exceeded" |
+| "PSN isn't answering" | "An unexpected error occurred" |
+| "The send may or may not have landed. Keep the draft." | "Send failed" or "Send succeeded" (for Unknown) |
+| "Remove [Name] from this draw?" | "Are you sure?" |
+| "Draw & reveal now" | "Confirm" |
+| "Link your account" | "OK" or "Submit" |
+| "Media cleared after the 14-day retention" | "File not found (410)" |
+| "Admins only" | "403 Forbidden" |
+| "Sign in to build it" | "Authentication required" |
+| Tagline: "YES. WE HAVE ONE." (all caps, exactly) | "yes, we have one" or "Yes. We have one." |
+
+### Linguistic rules
+
+- Contractions always — except in destructive confirm body copy, where removing them makes the consequence land heavier.
+- Active voice, second person: "Post a clip…", not "A clip can be posted…".
+- Sentence length ≤ 12 words for state labels and button labels.
+- No exclamation marks on errors or warnings. One permitted in celebration states.
+- Button labels are verb + noun or verb alone: "Link your account", "Save & approve", "Render again", "Retry". Never bare "OK", "Yes", "Submit", "Confirm".
+- 429 copy is neutral — never implies the individual is at fault (B-4: limit may be squad-wide).
+- F-0 Unknown outcome always includes "may or may not have sent" — never auto-retry language.
+- Giveaway copy: no urgency/scarcity ("hurry", "only N left", "last chance", "don't miss"). Rotation rule stated plainly.
+
+---
+
+## §Microcopy
+
+**Phase 5 output. One block per PS-n. Each state row maps to the string shown in the UI.**
+
+Copy conventions used here:
+- `[X]` = a tappable control (button or link)
+- `{n}` = a runtime value
+- `|` separates two variant strings (use the first that applies)
+- Toast strings appear in the polite live region (G-06), ≥ 2 s, 4 s for errors.
+- Send-state button labels come from the `data-send` token: Sending / Sent / Not sent / Unknown / countdown (see DESIGN.md §Components).
+
+---
+
+### MC-PS-0 · App shell
+
+| State | Copy |
+|---|---|
+| loading | Shell renders immediately. No loading copy needed. Admin nav item appears when data lands. |
+| empty | N/A |
+| error | `/api/admin/check` fail → treated as non-admin, silent (fail closed). Squad badge failure → badge hidden, no copy. |
+| stale | Badge hidden while stale. No copy on the badge. |
+| 429 | N/A |
+| signed-out | Account row: "Sign in" [Sign in] |
+| forbidden | Admin nav hidden. Direct `/app/admin` → PS-11 forbidden state |
+| 410-purged | N/A |
+| in-call | **Call mini-bar:** "Watch Party · {names}" / "Huddle · crcmz · {n}" · 🎤 Live | 🎤 Muted · [Return] · [Leave]. Navigation confirm: "Signing out ends your call. Sign out anyway?" [Sign out] [Stay] |
+
+**Toasts (PS-0 live region):**
+- Send state transitions: see F-0 toast copy in MC-F0 below.
+- Mini-bar mic toggle: "Muted" / "Live" (announced politely, no toast).
+
+---
+
+### MC-F0 · Send outcome toasts (F-0 model, used across PS-1, PS-2, PS-6)
+
+| Send state | Button label | Toast |
+|---|---|---|
+| Sending | "Sending…" | — |
+| Sent | "Sent ✓" | — (the button state is the feedback) |
+| Not sent (400/401/403/409) | "Not sent" | "Didn't go. {server reason if present}" |
+| Not sent (503) | "Not sent" | "The PSN group isn't reachable right now." |
+| Slow down (429) | "Slow down · {n}s" | "Slow down a sec — try again in {n}s." |
+| Unknown (network / timeout / 500 / 502) | "Unknown" | "The send may or may not have landed. Keep the draft so nothing is lost." |
+
+**Clip re-send exception:** timeout is 190 s (not 15 s) before the Unknown state fires (F-0 §Exceptions).
+
+---
+
+### MC-PS-1 · Squad
+
+| State | Copy |
+|---|---|
+| loading | Skeleton: no text placeholder. Live count badge hidden until data lands. |
+| empty | Presence `[]`: "Nobody linked yet" [Link your account] → Portal. Nobody playing: "Nobody in a game right now" (count shown as 0). Mine board empty: "Your own tiles live here. They still fire into the group." [+ Custom] |
+| error | Presence 500 / `error`: "PSN isn't answering" [Retry]. Board load fail: "Board didn't load" [Retry]. Hype errors are silent (B-7). |
+| stale | Presence/hype poll fail: "Updated {n} min ago" on the panel header. Live count and badge hidden. |
+| 429 | `psn_send`: countdown on all tiles, Rally ▶ and Send. Label: "Slow down · {n}s". Copy under tiles: "Slow down a sec — try again in {n}s." (neutral — the limit may be shared squad-wide). `custom_add`: countdown on the add dialog's Save button: "Wait {n}s". |
+| signed-out | Default banner: "Sign in to keep up" [Sign in]. Draft kept. Mine tab: "Sign in to build it" (when `signed_in:false`). Tile fires on 401 → Not sent toast. |
+| forbidden | N/A |
+| 410-purged | N/A |
+| in-call | Call chip in handle row: "● Huddle {n}" / "● Watch Party". Tiles and composer work normally. |
+
+**Key UI copy:**
+- `h1`: "Squad"
+- Handle row trigger: "Chat"
+- Board header tabs: "Shared" / "Mine"
+- Board header actions: "Edit" · "Organize" · "Close"
+- Composer label: "Quick message", placeholder: "Message the squad…", send button: "Send"
+- Non-linked note under composer: "Sends as crcmz-mod until you link PSN" [Link PSN]
+- Add tile dialog title: "New tile", textarea label: "What does it say?", save button: "Add tile"
+- Add tile 400 (empty): "It needs something to say." 400 (> 200): "Keep it under 200 characters." 400 (24 max): "The board's full — remove one first."
+- Delete tile confirm: "Remove '{label}'? It's gone from the shared board." [Remove] [Cancel]
+- Delete personal tile confirm: "Remove '{label}' from your board?" [Remove] [Cancel]
+- AI cooking state: "✨ AI is cooking…" (legacy in-joke; keep)
+- Together card: "🔥 {n} in {game}" · "Rally ▶" button label: "Rally ▶"
+- Sent flyout: the message text + ✓ (no additional copy needed)
+
+---
+
+### MC-PS-2 · Clips
+
+| State | Copy |
+|---|---|
+| loading | Summary bar skeleton. Studio: "Loading clip…". Render in progress: "Rendering your reel… {n}s" |
+| empty | Reels `[]`: "Post a clip in the PSN group, then ↻ Sync". Month 0: "No clips yet this month. The montage builds {next_build_label}". Uploads `[]`: "Nothing sent yet" [Send a video]. Catalogue filter no results: "No clips match" [Clear filters] |
+| error | Reels 502/503: "Reel review is unreachable" [Retry]. Render failed: "Render failed" [Render again]. Upload 409 `already_queued`: "You already have one in the queue." 409 `duplicate`: "This exact video was already sent." 503 storage: "Storage isn't reachable right now" [Retry]. Paused after 8 chunks: "Upload paused — tap to resume" [Resume] |
+| stale | Pipeline poll fail: "Updated {n} min ago" on This Month header. Countdown keeps ticking. |
+| 429 | N/A |
+| signed-out | Default banner. Upload in progress: "Resume upload" [Resume] shown after sign-in if `open_session`. Studio: "Leave without saving?" guard still applies. |
+| forbidden | `needs_psn_link` or upload 403: "Link your PlayStation account — reels are matched to you by PSN ID." [Link PSN] → Portal. Re-send 403 (B-3 server gate): "Admins only" — control hidden. |
+| 410-purged | Player replaced by: "Media cleared after the 14-day retention." Metadata (sender, date, duration, montage status) still shown. Re-send disabled: "The archived clip is gone from storage." Reel source 404: "Video unavailable" |
+| in-call | Clip and reel players start muted; visible unmute button: "Unmute". Mini-bar chip in Studio top bar. |
+
+**Key UI copy:**
+- Summary bar: "📅 {month} · {n} clips · build in {n}d {n}h"
+- Upload pill: "Uploading {n} %" / "Queued ✓" / "Paused — tap to resume"
+- Upload button: "📤 Send a video"
+- Sync button: "↻ Sync"
+- Reels scope toggle (admin): "Everyone's" / "Mine"
+- Studio close button: "✕ Close"
+- Studio title: "{sender} · {duration} / {age} · {game}"
+- Veto button: "🛑 Veto" — confirm: "Veto '{title}'? It won't be included in the montage." [Veto] [Cancel]
+- Force post button: "🚀 Force post" — confirm: "Post '{title}' to the group now? This skips the normal pipeline." [Force post] [Cancel]
+- Save & approve button: "✅ Save & approve"
+- Re-send button (admin): "Re-send to WhatsApp" — confirm: "Re-send '{title}' to the Goopers group? **It will appear again even if it was already sent. The send can take up to 3 minutes.** " [Re-send] [Cancel]
+- 409 `twin_of_posted` (save): "A clip from the same post is already included."
+
+---
+
+### MC-PS-3 · Slap
+
+| State | Copy |
+|---|---|
+| loading | Per-panel skeleton. AI panels: "Asking the AI…" (shown only when scrolled into view) |
+| empty | Hot `tracks:[]`: "Nothing new in the last 24 h." Streaks none active: "No active streaks." Compare before a pick: "Pick two people to compare." Vibe or On Repeat unavailable: panel hidden (no copy) |
+| error | Per panel: "Slap didn't answer" [Retry]. Compare error: inline under the selects: "Compare didn't load" [Retry] |
+| stale | Manual ↻ that fails: "Updated {n} min ago" on the section. |
+| 429 | N/A |
+| signed-out | Default banner. |
+| forbidden | N/A |
+| 410-purged | N/A |
+| in-call | Default (mini-bar). No media on this page. |
+
+**Key UI copy:**
+- External link: "Full dashboard ↗"
+- ↻ button: "Refresh"
+- Compare prompt: "Pick two people to compare"
+- Recommendations user select label: "Whose recs?"
+
+---
+
+### MC-PS-4 · WhatsApp
+
+| State | Copy |
+|---|---|
+| loading | First load: skeletons. Range change: previous numbers shown dimmed. "Loading {range}…" marker. |
+| empty | `total_messages == 0`: "No WhatsApp messages yet." If `can_import`: "Import the chat to get started." Else: "Ask Moiz to import the chat." Range with no messages: "Nothing in this range" [All time] |
+| error | Per panel: "Didn't load" [Retry]. Import 400: "That file type won't work — upload a .txt or .zip from WhatsApp." Import 413: "File too large — keep it under 50 MB." Import 403: "You're not allowed to import — ask an admin." |
+| stale | Late response from old range: discarded (generation guard). Failed refresh: "Updated {n} min ago" |
+| 429 | N/A |
+| signed-out | Default. Export and import 401 → banner. |
+| forbidden | `can_import:false` → import section hidden. Import 403 mid-session: "You're not allowed to import — ask an admin" + section hides. |
+| 410-purged | N/A |
+| in-call | Default (mini-bar) |
+
+**Key UI copy:**
+- Range selector labels: "All time" / "This year" / "This month" / "Last month" / "Custom"
+- Import file label: "WhatsApp export (.txt or .zip)"
+- Import button: "Import"
+- Import result: "Imported {n} · {n} duplicates skipped · {n} parsed"
+- Export button: "Export {range} (.xlsx)"
+- "Without media" checkbox label: "Without media"
+- Sort by select label: "Sort by"
+- Sort options: "Messages" / "Words" / "Avg words" / "Media" / "Last seen"
+
+---
+
+### MC-PS-5 · Giveaway
+
+| State | Copy |
+|---|---|
+| loading | Hero skeleton. Countdown not rendered until `reveal_at` is known. |
+| empty | No active giveaway (or draft, for members): "No giveaway running right now. The next one shows up here." Admins: also [Start a giveaway]. History `[]`: section hidden. |
+| error | Per panel: "Didn't load" [Retry]. Admin action 400: inline under that action: "{server reason}" |
+| stale | Refresh failure: "Updated {n} min ago". Reveal overdue (`now > reveal_at`, still open/locked/drawn): "The reveal is on its way." (neutral — never "something went wrong", it is an async job B-2) |
+| 429 | N/A |
+| signed-out | Default banner. |
+| forbidden | Admin tools hidden unless `is_admin`. Admin action 403 (role revoked): "Admins only" + page re-fetches and tools hide. Member "not in this draw" is eligibility copy, not a forbidden state. |
+| 410-purged | N/A |
+| in-call | Default (mini-bar). Confetti is visual only, no audio. |
+
+**Key UI copy (member view):**
+- Hero by state:
+  - Open: "{title} · 🎁 {prize} · Reveal in"
+  - Drawn: "{title} · 🎁 {prize} · Winner reveal in"
+  - Revealed: "🏆 {winner_name} · 🎁 {prize}"
+  - Closed: "{title} · {prize} · Closed"
+  - None/draft: "No giveaway running right now."
+- Countdown `aria-label` (refreshed every minute): "Reveal in {n} hours and {n} minutes"
+- Eligibility badge:
+  - Eligible: "You're in this draw"
+  - Not eligible (won this cycle): "You won this cycle — back in next time. One win per rotation cycle."
+  - Not eligible (other): "You're not in this draw"
+  - Won: "You won! 🏆"
+- Rotation progress: "Cycle {n} · {eligible_count} of {total_members} still eligible"
+- Rotation rule explainer (shown on hover/tap of the eligibility badge): "Everyone wins once before anyone wins twice."
+- Past winners section heading: "Past winners"
+- Past winners collapse label: "Show past winners" / "Hide past winners"
+
+**Key UI copy (admin tools):**
+- Section heading: "Admin tools" (collapsed by default)
+- Lifecycle state labels: "None" / "Draft" / "Open" / "Locked" / "Drawn" / "Revealed" / "Closed"
+- Primary action buttons by state:
+  - None: "Start a giveaway"
+  - Draft: "Publish"
+  - Open/Locked: "Draw & reveal now" — confirm: "Draw a winner and reveal immediately. This cannot be undone." [Draw & reveal now] [Cancel]
+  - Drawn: "Reveal now" — confirm: "Reveal the winner to everyone now." [Reveal now] [Cancel]
+  - Revealed/Closed: no primary action
+- Redraw button: "Disqualify & redraw" — sheet: "Reason for redraw", textarea label: "Why?", button: "Redraw"
+- Close button: "Close giveaway" — confirm: "Close '{title}'? No more draws can happen after this." [Close] [Cancel]
+- Add entry button: "＋ Add entry"
+- Remove entry confirm: "Remove {name} from this draw?" [Remove] [Cancel]
+- Winner preview heading: "Winner preview" (admins only; never shown to members — B-5)
+- Danger zone heading: "Danger zone"
+- Reset & seed: type-to-confirm label: "Type the winner's name to confirm"
+- `no_match` result: "Nobody matched '{query}'. Try a different name."
+- `ambiguous` result: "Multiple matches. Pick one:"
+
+---
+
+### MC-PS-6 · Watch
+
+| State | Copy |
+|---|---|
+| loading | Pill: "connecting…". Stage: skeleton. Controls disabled: "Connecting to the party…" |
+| empty | Nothing playing: "Nothing playing yet — paste a link" (URL field focused). Alone: roster "Just you". History `[]`: "Nothing watched yet in this room" |
+| error | Config 503 / socket fail: "Watch Party server unreachable" [Retry]. Extract 422: "Couldn't find a video at that link." 400 Drive folder: "{server hint}." Playback error: "This video won't play here" [Clear]. Socket `errorMessage`: shown inline. |
+| stale | Socket disconnected: pill "offline — reconnecting". Stage keeps last frame. Sync controls disabled. History refresh fail: "Updated {n} min ago" |
+| 429 | Join (30/60 s): wait `Retry-After`, then auto-reconnect (idempotent; no copy shown to user). Extract (5/60 s): countdown on Play: "Try again in {n}s". Title rename (10/60 s): countdown in dialog. Progress pings: dropped silently. |
+| signed-out | Config/join 401: default banner. Ticket expires mid-call: call ends: "Sign in to rejoin" [Sign in] |
+| forbidden | Join 403: "Link your PSN account to join" [Link PSN] → Portal. Kicked: "A moderator removed you from the party." (pre-join shown). Mod-only "Remove from party" hidden for non-mods. |
+| 410-purged | N/A |
+| in-call | **This is the call's own page — mini-bar hidden.** Action row shows Live/Muted, camera, flip, Leave. If Huddle is also live, the Watch mini-bar for Huddle still shows. **Note (F-5 cross-reference):** if joining Watch while Huddle auto-mute is active (F-5), the 🎤 state reflects the auto-muted state and the "Everyone's mic" toggle stays available. See PS-7 in-call for Huddle auto-mute copy. |
+
+**Key UI copy:**
+- Presence pill: "connecting…" / "live · {n}" / "offline — reconnecting"
+- Roster "Just you"
+- URL field label: "What are we watching?"
+- Play button: "▶ Play"
+- Clear button: "✕ Clear"
+- Rally button: "📣 Rally"
+- Display name button: "✏️ Display name"
+- Join button: "Join with camera + mic"
+- Leave button: "Leave"
+- History tab labels: "This room" / "Just me"
+- Forget confirm: "Forget '{title}'? Your progress and the chat are gone." [Forget] [Cancel]
+- Rename dialog: input label: "Title", save button: "Save"
+
+---
+
+### MC-PS-7 · Huddle
+
+| State | Copy |
+|---|---|
+| loading | Pre-join: "Starting camera…". Join: "Connecting to crcmz…" (controls disabled) |
+| empty | In a call alone: "You're the only one here." AI panel before first question: "Ask it anything about what's happening in-game. It reads the transcript." |
+| error | 503: "Huddle isn't set up on this server." CDN/WS fail: "Couldn't connect to the call" [Retry]. Camera permission denied: "Camera blocked — allow it in your browser settings, or" [Join without camera]. AI/transcribe 502: inline in panel: "AI didn't answer" [Try again] |
+| stale | LiveKit `reconnecting`: overlay "Reconnecting…" over the stage; controls disabled. `disconnected` after retries: pre-join shown: "The call dropped" [Rejoin] |
+| 429 | N/A |
+| signed-out | Before join: token 401 → default. During call: LiveKit token valid 6 h, call continues. AI/transcribe 401: banner inside AI panel: "Sign in to use the AI" |
+| forbidden | N/A |
+| 410-purged | N/A |
+| in-call | **This is the call's own page — mini-bar hidden.** If Watch is also live, its row still shows. Navigating away keeps the room. Auto-mute banner (F-5): "🔇 Auto-muted — you joined while someone was speaking. Tap to unmute." [Unmute] (shown in top bar as a chip, and as a banner on pre-join). |
+
+**Key UI copy:**
+- Pre-join: room field label: "Room", default value: "crcmz"
+- Join button: "🎥 Join"
+- Mic button: "🎤 Live" / "🎤 Muted"
+- Camera button: "📷 On" / "📷 Off"
+- Leave button: "🔴 Leave"
+- AI panel tab: "💬 AI"
+- Transcript tab: "🎙 Transcript"
+- Transcript active chip: "🎙 Transcript on"
+- Notes tab: "📋 Notes"
+- Layout button: "⊞ Layout"
+- Screen share button: "🖥 Screen"
+- Blur button: "🌫 Blur"
+- Remove from party (mod): "Remove from party" — confirm: "Remove {name} from the call?" [Remove] [Cancel]
+
+---
+
+### MC-PS-8 · AI Coach
+
+| State | Copy |
+|---|---|
+| loading | Hero + 3 report card skeletons |
+| empty | No reviews (Mine): "Send **rev** in the PSN group within ~5 s of a clip and the coach will grade it." Squad scope empty: "No one's been graded yet." Filters no results: "No reports match" [Clear filters] |
+| error | Default: "Didn't load" [Retry]. Feedback submit error: inline on that card: "Couldn't save your feedback" (rating kept). |
+| stale | Processing refresh fail: "Updated {n} min ago" on the Processing list |
+| 429 | N/A |
+| signed-out | `/api/coaching` 401: default banner: "Sign in to see coaching." Feedback draft kept. |
+| forbidden | N/A |
+| 410-purged | N/A |
+| in-call | Default (mini-bar) |
+
+**Key UI copy:**
+- Scope tabs: "Mine ({n})" / "Squad ({n})"
+- Hero grade label: "{grade} {delta}" e.g. "B+ ▲"
+- Focus line label: "Focus:"
+- Next session label: "Next time:"
+- Processing list heading: "In the queue"
+- Processing item: "{psn_user} · {reason}"
+- Sightings heading: "Spotted in squad clips"
+- Feedback: "👍" / "👎" · [Send feedback] · "✓ saved"
+- Notify prefs label: "Notify me:" · "Group" / "DM" / "Off"
+- Detail prefs label: "Reports as:" · "Full report" / "Link only"
+- "Ask again" refills composer (no additional toast needed)
+
+---
+
+### MC-PS-9 · Ask AI
+
+| State | Copy |
+|---|---|
+| loading | Thread skeleton (3 bubbles). Composer disabled: "Loading…" |
+| empty | No messages: explainer + 6 suggestion chips. No facts: "Teach it something about the squad" + add form |
+| error | `available:false` / 503: composer disabled: "The AI is offline (it runs on the Mac at home)" + links: "Try Squad, WhatsApp, or Slap instead." Answer `status:"error"`: "Couldn't get an answer" [Ask again] (refills composer). 400 too long: inline at counter: "Too long — keep it under 1 000 characters." Facts delete 404: "That fact is already gone." |
+| stale | History poll fail while pending: pending bubble: "Still waiting — reconnecting" |
+| 429 | Ask (10/60 s): countdown on Send: "Try again in {n}s." Draft kept. Facts add (12/60 s): countdown on Add: "Wait {n}s." |
+| signed-out | Default. Draft kept; image kept in memory. |
+| forbidden | N/A |
+| 410-purged | N/A |
+| in-call | Default (mini-bar). Composer sits above mini-bar + tab bar on mobile. |
+
+**Key UI copy:**
+- Header: "Ask AI"
+- Model line: "{model} · {n} tools"
+- Clear button: "🗑 Clear" — confirm: "Clear all messages? Your facts stay, just the conversation goes." [Clear] [Cancel]
+- Explainer heading: "What is this?" (collapsible after first visit)
+- Explainer text: "It knows the squad — clips, scores, vibes. It can look things up but never acts. Ask it anything."
+- Pending bubble: "thinking… {n}s"
+- Answer meta line: "{tools} · {elapsed}ms"
+- Composer label: "Ask something"
+- Textarea placeholder: "What's the squad up to?"
+- Image button: "📎"
+- Character counter: "{n}/1000" (shown at 900+)
+- Send button: "Send"
+- 409 guard: Send disabled: "Still answering your last one."
+- Squad facts button: "🧠 Squad facts ({n})"
+- Facts sheet heading: "Squad facts"
+- Facts counts: "Total {n} · Yours {n} of {max}"
+- Add fact: subject combobox label: "Subject", text label: "Fact", add button: "Add fact"
+- Delete fact: "✕" — no confirm (facts are low-stakes, not destructive)
+
+---
+
+### MC-PS-10 · Settings
+
+| State | Copy |
+|---|---|
+| loading | Per-tab-panel skeleton. Tab strip live immediately. |
+| empty | Passkeys `[]`: "No passkeys yet" [＋ Add a passkey] (may hide an error, B-9). MCP not connected: steps + config block [Copy] [🔄 Refresh]. Mattermost not linked: [🔗 Connect] |
+| error | Per tab: "Didn't load" [Retry]. Password 400 wrong current: "Current password isn't right." (inline on current-password field). Password 400 missing: "Fill in both fields." Mattermost popup blocked: "Allow pop-ups, or" [open the connect page] (link). |
+| stale | N/A |
+| 429 | N/A |
+| signed-out | Default. Form input kept (not passwords). |
+| forbidden | N/A |
+| 410-purged | N/A |
+| in-call | Default. Mattermost connect opens a popup — call survives. |
+
+**Key UI copy:**
+- Tab labels: "Passkeys" / "Security" / "PSN" / "Mattermost" / "MCP"
+- PSN status line:
+  - Active: "Active"
+  - Expiring: "Expiring in {n} days" (within 7 days of `refresh_expires_at`)
+  - Expired: "Expired — re-link to keep your account connected"
+- PSN relink button: "Re-link in Link PSN" → Portal
+- PSN not linked: unclaimed list + [This is mine] + [Link your PlayStation account] → Portal
+- Add passkey button: "＋ Add a passkey"
+- Delete passkey confirm: "Remove '{name}'? You won't be able to sign in with it anymore." [Remove] [Cancel]
+- Password form:
+  - Current label: "Current password"
+  - New label: "New password"
+  - Confirm label: "Confirm new password"
+  - Client check fail (mismatch): "Passwords don't match."
+  - Client check fail (< 8): "At least 8 characters."
+  - Save button: "Update password"
+  - Success toast: "Password updated."
+- Mattermost link status: "Connected as {handle}" / "Not connected"
+- MCP active: "Active · last used {date}"
+- MCP revoke button: "Revoke access" — confirm: "Revoke MCP access? Any connected tools will stop working." [Revoke] [Cancel]
+
+---
+
+### MC-PS-11 · Admin
+
+| State | Copy |
+|---|---|
+| loading | Card and table skeletons |
+| empty | Queue depth 0: "Queue is clear." No PSN accounts: "No one has linked PSN yet" + [Share the link to Portal]. Users `[]`: "No users returned" [Retry] |
+| error | Service `down`: data row "unreachable" (red dot) — not a page error. Fetch fail: card error + [Retry]. Users 502/503: "Sign-in service didn't answer" [Retry]. Reset password 400 (< 8): "At least 8 characters." |
+| stale | Health/status/jobs poll fail: "Updated {n} min ago" on the health row. Stale is labelled. |
+| 429 | N/A |
+| signed-out | Default banner |
+| forbidden | `admin:false` or 403 from users/reset: full-page "Admins only" [Back to Squad]. Nav item hidden for non-admins. |
+| 410-purged | N/A |
+| in-call | Default (mini-bar) |
+
+**Key UI copy:**
+- Section headings: "Health" / "Job queue" / "PSN accounts" / "Users" / "Shortcuts"
+- Health status labels: "OK · {n}ms" / "error · {n}ms" / "unreachable"
+- Queue: "Queue depth: {n}"
+- PSN account status: "Active" / "Expiring in {n} days" / "Expired"
+- Reset password button: "Reset password" — dialog: "Reset password for {display_name}?", new password label: "New password", confirm label: "Confirm", submit: "Reset" — validation: "At least 8 characters." / "Passwords don't match." Success toast: "Password reset."
+- Shortcuts: "Giveaway admin" / "Everyone's reels" / "WhatsApp import"
+
+---
+
+### MC-PS-12 · Portal
+
+| State | Copy |
+|---|---|
+| loading | Status card skeleton. Stepper renders locked until status is known. |
+| empty | No unclaimed accounts: step 0 omitted. Not linked: stepper starts at ①. |
+| error | Link 400/500: banner on step ③: "{server message} — try a fresh token." [Back to ②] (pasted value kept). Claim 404: "Someone already claimed that one." + list refreshes. Clipboard denied: "Paste it manually (long-press → Paste)." |
+| stale | N/A |
+| 429 | N/A |
+| signed-out | Default. Token value not persisted after sign-in (it is a credential). |
+| forbidden | N/A |
+| 410-purged | N/A |
+| in-call | Default. PlayStation and Sony open in new tabs — call and wizard progress both survive. |
+
+**Key UI copy:**
+- Page heading: "Link PSN"
+- Status card:
+  - Linked: "Linked as {online_id} · since {linked_at}"
+  - Expiring: "Linked as {online_id} · Expiring in {n} days" — **carry-over from PS-10: same 7-day threshold, same `refresh_expires_at` source**
+  - Expired: "Linked as {online_id} · Expired"
+  - Not linked: "Not linked"
+- Step 0 title: "Is one of these yours?"
+  - Instruction: "One of these accounts was set up before you joined. Tap the one that's yours."
+  - Button: "This is mine" — confirm: "Claim {online_id} as your account?" [Claim] [Cancel]
+  - Claim success: inline: "Claimed. Linking you now…" (then continues to step ③)
+- Step ① title: "Open PlayStation.com"
+  - Instruction: "Sign in to your PlayStation account in a new tab."
+  - Button: "Open PlayStation.com ↗"
+- Step ② title: "Get your token"
+  - Instruction: "In the same tab, go to the Sony cookie page. Your token is in the response."
+  - Button: "Open token page ↗"
+- Step ③ title: "Paste your token"
+  - Instruction: "Copy the NPSSO value and paste it here."
+  - Textarea label: "NPSSO token", masked after paste, show toggle label: "Show"
+  - Paste button: "📋 Paste from clipboard"
+  - Link button: "🔗 Link my account" (primary)
+  - Link result (success): heading "You're linked as {online_id}" + "See the Squad" [See the Squad] → /app
+  - Link 500 generic: "Something went wrong. Try a fresh token." [Back to ②]
