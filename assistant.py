@@ -491,11 +491,14 @@ def _giveaway_status() -> Any:
     import giveaway as gv
     members = server._portal_members()
     active = gv.get_active_giveaway()
-    rotation = gv.get_rotation_state(members)
+    # The assistant and MCP answer members, so a drawn-but-unrevealed win must
+    # not surface through the rotation. Filter only; never mutate.
+    rotation = gv.redact_rotation_for_member(gv.get_rotation_state(members), active,
+                                           members)
     if not active:
         return {"active": False,
                 "rotation": {"cycle": rotation.get("cycle"),
-                             "already_won": [m.get("display") for m in
+                             "already_won": [m.get("display_name") for m in
                                              (rotation.get("won_members") or [])]}}
     return {
         "active": True,
@@ -505,7 +508,7 @@ def _giveaway_status() -> Any:
         "draw_at": active.get("draw_at"),
         "entries": len(active.get("entries") or []),
         "rotation": {"cycle": rotation.get("cycle"),
-                     "already_won": [m.get("display") for m in
+                     "already_won": [m.get("display_name") for m in
                                      (rotation.get("won_members") or [])]},
     }
 
