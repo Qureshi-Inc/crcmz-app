@@ -1,22 +1,35 @@
 // PS-2 · Clips: the month at a glance, my reels, uploads and the full catalogue.
-// The Studio editor and the upload flow still live in the classic app (handoff).
-import { useEffect } from 'react'
+// `?upload` opens Send a video: a bottom sheet on a phone, the inline card on desktop.
 import { useOutletContext, useSearchParams } from 'react-router-dom'
 import * as Tabs from '@radix-ui/react-tabs'
 import type { ShellContext } from '../../app/Shell'
 import { useTitle } from '../../app/title'
 import { usePipelineStatus } from '../../lib/clips'
+import { useDesktop } from '../../lib/media'
+import { pillText, useUpload } from '../../lib/upload'
 import { Catalogue } from './Catalogue'
-import { Overview, UPLOAD_HREF, useCountdown } from './Overview'
+import { Overview, useCountdown } from './Overview'
+import { UploadSheet, useUploadRefresh } from './SendVideo'
 
 export function ClipsPage() {
   useTitle('Clips')
   const [params, setParams] = useSearchParams()
   const upload = params.has('upload')
-  useEffect(() => { if (upload) window.location.replace(UPLOAD_HREF) }, [upload])
+  const desktop = useDesktop()
   const { isAdmin } = useOutletContext<ShellContext>()
   const status = usePipelineStatus()
-  const view = params.get('view') === 'all' ? 'all' : 'overview'
+  const view = params.get('view') === 'all' && !(upload && desktop) ? 'all' : 'overview'
+  const up = useUpload()
+  const pill = pillText(up)
+  useUploadRefresh()
+
+  function setUpload(on: boolean) {
+    setParams((p) => {
+      const n = new URLSearchParams(p)
+      if (on) { n.set('upload', ''); if (desktop) n.delete('view') } else n.delete('upload')
+      return n
+    }, { replace: !on })
+  }
 
   function setView(v: string) {
     setParams((p) => {
@@ -27,7 +40,6 @@ export function ClipsPage() {
     }, { replace: true })
   }
 
-  if (upload) return null
   return (
     <div className="page">
       <div className="clips-head">
@@ -35,16 +47,24 @@ export function ClipsPage() {
           <h1 className="page-h1" tabIndex={-1}>Clips</h1>
           <SummaryBar q={status} />
         </div>
-        <a className="btn btn-primary" href={UPLOAD_HREF}>📤 Send a video</a>
+        <div className="clips-cta">
+          {pill && (
+            <button type="button" className="upload-pill" data-kind={up.kind} onClick={() => setUpload(true)} aria-live="polite">
+              {pill}
+            </button>
+          )}
+          <button type="button" className="btn btn-primary" onClick={() => setUpload(true)}>📤 Send a video</button>
+        </div>
       </div>
       <Tabs.Root value={view} onValueChange={setView} className="clips-tabs">
         <Tabs.List className="seg clips-seg" aria-label="Clips view">
           <Tabs.Trigger value="overview" className="seg-tab">Overview</Tabs.Trigger>
           <Tabs.Trigger value="all" className="seg-tab">All clips</Tabs.Trigger>
         </Tabs.List>
-        <Tabs.Content value="overview"><Overview status={status} /></Tabs.Content>
+        <Tabs.Content value="overview"><Overview status={status} focusUpload={upload && desktop} onFocused={() => setUpload(false)} onSendVideo={() => setUpload(true)} /></Tabs.Content>
         <Tabs.Content value="all"><Catalogue isAdmin={isAdmin} /></Tabs.Content>
       </Tabs.Root>
+      {!desktop && <UploadSheet open={upload} onOpenChange={(v) => setUpload(v)} />}
     </div>
   )
 }

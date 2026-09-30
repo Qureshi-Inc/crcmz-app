@@ -11,12 +11,15 @@ import {
   type PipelineStatus, type Reel, type ReelsResponse, type Upload,
 } from '../../lib/clips'
 import { ClipSheet, ConfirmDialog } from './ClipSheet'
+import { SendVideoCard } from './SendVideo'
 
-export const UPLOAD_HREF = '/?p=upload'
 const STUDIO_HREF = '/?p=pipeline'
 const PORTAL_HREF = '/portal'
 
-export function Overview({ status }: { status: UseQueryResult<PipelineStatus> }) {
+export function Overview({ status, focusUpload, onFocused, onSendVideo }: {
+  status: UseQueryResult<PipelineStatus>; focusUpload: boolean; onFocused: () => void; onSendVideo: () => void
+}) {
+  const desktop = useDesktop()
   return (
     <div className="clips-overview">
       <div className="clips-col clips-col-reels"><ReelsSection /></div>
@@ -25,7 +28,10 @@ export function Overview({ status }: { status: UseQueryResult<PipelineStatus> })
         <MontageCard q={status} />
         <Manifest q={status} />
       </div>
-      <div className="clips-col clips-col-uploads"><UploadsSection /></div>
+      <div className="clips-col clips-col-uploads">
+        {desktop && <SendVideoCard focus={focusUpload} onFocused={onFocused} />}
+        <UploadsSection onSendVideo={onSendVideo} />
+      </div>
     </div>
   )
 }
@@ -337,7 +343,7 @@ function Manifest({ q }: { q: UseQueryResult<PipelineStatus> }) {
 const UPLOAD_STATE: Record<string, string> = { queued: 'Queued', posted: 'Posted', skipped: 'Skipped' }
 const PLATFORM: Record<string, string> = { instagram: 'Instagram', tiktok: 'TikTok', youtube: 'YouTube' }
 
-function UploadsSection() {
+function UploadsSection({ onSendVideo }: { onSendVideo: () => void }) {
   const q = useUploads()
   const list = q.data?.uploads ?? []
   const forbidden = q.error instanceof ApiError && q.error.status === 403
@@ -355,20 +361,40 @@ function UploadsSection() {
       ) : list.length === 0 ? (
         <div className="empty">
           <p className="empty-title">Nothing sent yet</p>
-          <a className="btn btn-secondary" href={UPLOAD_HREF}>Send a video</a>
+          <button type="button" className="btn btn-secondary" onClick={onSendVideo}>Send a video</button>
         </div>
       ) : (
-        <>
-          <ul className="rows">{list.map((u) => <UploadRow key={u.video_post_id} u={u} />)}</ul>
-          <a className="btn btn-ghost show-more" href={UPLOAD_HREF}>Withdraw or resume in the classic app</a>
-        </>
+        <ul className="rows">{list.map((u) => <UploadRow key={u.video_post_id} u={u} />)}</ul>
       )}
     </Fold>
   )
 }
 
 function UploadRow({ u }: { u: Upload }) {
+  const qc = useQueryClient()
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
   const links = useMemo(() => Object.entries(u.platforms || {}).filter((e): e is [string, { url: string }] => Boolean(e[1]?.url)), [u.platforms])
+  // Withdraw only before any platform has it (the server enforces the same).
+  const canWithdraw = u.status === 'queued' && !Object.values(u.platforms || {}).some(Boolean)
+  const name = u.caption || u.filename || 'this video'
+
+  async function withdraw() {
+    if (busy) return
+    setBusy(true)
+    try {
+      await request('/api/video-uploads/withdraw', { body: { video_post_id: u.video_post_id } })
+      await qc.invalidateQueries({ queryKey: ['uploads'] })
+      toast("Withdrawn. It won't be posted.", 'success')
+    } catch (e) {
+      const posting = e instanceof ApiError && e.status === 409
+      toast(posting ? "Too late — it's already being posted." : "The withdraw didn't go through. Try again.", 'error')
+      if (posting) void qc.invalidateQueries({ queryKey: ['uploads'] })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <li className="upload-row">
       <div className="upload-main">
@@ -380,8 +406,21 @@ function UploadRow({ u }: { u: Upload }) {
             {links.map(([p, v]) => <a key={p} href={v.url} target="_blank" rel="noreferrer">{PLATFORM[p] ?? p} ↗</a>)}
           </span>
         )}
+        {canWithdraw && (
+          <button type="button" className="btn btn-ghost upload-wd" onClick={() => setConfirm(true)} aria-busy={busy || undefined}>
+            {busy ? 'Withdrawing…' : 'Withdraw'}
+          </button>
+        )}
       </div>
       <span className="badge" data-tone={u.status === 'posted' ? 'live' : u.status === 'queued' ? 'gold' : 'dim'}>{UPLOAD_STATE[u.status] ?? u.status}</span>
+      <ConfirmDialog
+        open={confirm}
+        onOpenChange={setConfirm}
+        title="Withdraw this video?"
+        body={<p style={{ margin: 0 }}>Withdraw '{name}'? It won't be posted.</p>}
+        action="Withdraw"
+        onConfirm={withdraw}
+      />
     </li>
   )
 }

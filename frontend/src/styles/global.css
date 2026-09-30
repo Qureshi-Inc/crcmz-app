@@ -746,3 +746,33 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 /* A confirm opened from a clip sheet sits above it, with its own scrim. */
 .scrim-top { z-index: calc(var(--z-sheet) + 1); }
 .dialog-confirm { z-index: calc(var(--z-sheet) + 2); background: #0c081c; }
+
+/* ── Send a video (CL-26) ──────────────────────────────────────────────────── */
+.clips-cta { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.upload-pill {
+  min-height: var(--tap-min); padding: 0 var(--space-3); border-radius: var(--radius-pill);
+  border: 1px solid var(--border-control); background: rgba(6, 4, 18, .45); color: var(--interactive-text);
+  font-weight: 700; font-size: var(--text-sm); font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.upload-pill[data-kind="queued"] { color: var(--live-text); }
+.upload-pill[data-kind="paused"], .upload-pill[data-kind="failed"] { color: var(--error); }
+.send-card { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+.send-body { display: flex; flex-direction: column; gap: var(--space-3); }
+.sheet .send-body { padding: 0 var(--space-4) var(--space-4); }
+.dialog .send-body { padding-bottom: var(--space-2); }
+.file-pick { cursor: pointer; }
+.file-pick[aria-disabled] { opacity: .55; cursor: not-allowed; }
+.file-pick:focus-within, .file-pick:focus-visible { box-shadow: var(--focus-ring); }
+.send-file { margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.send-cap { min-height: 80px; }
+.send-count { margin: var(--space-1) 0 0; text-align: right; }
+.send-bar { height: 8px; border-radius: var(--radius-pill); background: rgba(255, 255, 255, .08); overflow: hidden; }
+.send-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--neon-cyan), var(--neon-magenta)); transition: width var(--dur-std) linear; }
+.send-bar i[data-paused] { background: var(--error); }
+.send-msg { margin: 0; min-height: 1.4em; font-weight: 600; font-size: var(--text-sm); }
+.send-msg[data-tone="error"] { color: var(--error); }
+.send-msg[data-tone="ok"] { color: var(--live-text); }
+.send-msg:empty { min-height: 0; }
+.send-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.upload-wd { align-self: flex-start; margin-left: calc(-1 * var(--space-3)); }
+@media (prefers-reduced-motion: reduce) { .send-bar i { transition: none; } }

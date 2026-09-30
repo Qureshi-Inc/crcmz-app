@@ -1,6 +1,7 @@
 // PS-2 · Clips endpoint contract. Only the fields the UI reads are typed.
 import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { getJSON } from './http'
+import type { OpenSession, UploadLimits } from './upload'
 
 // ── GET /api/pipeline-status (30 s while Overview is visible) ─────────────────
 export type ManifestClip = { uid: string; sender: string | null; duration: number | null; at: number | null; included: boolean | null; reason: string | null }
@@ -77,7 +78,7 @@ export type Upload = {
   duration_seconds: number | null
   platforms: Record<string, { url: string } | null>
 }
-export type UploadsResponse = { psn_id: string; uploads: Upload[]; can_upload: boolean; open_session: unknown }
+export type UploadsResponse = { psn_id: string; uploads: Upload[]; can_upload: boolean; open_session: OpenSession | null; limits: UploadLimits }
 
 export function useUploads() {
   return useQuery({

@@ -79,6 +79,8 @@ const CLIP_ROWS = Array.from({ length: 50 }, (_, i) => ({
   duration_seconds: 30, width: 1920, height: 1080, file_size: 12_000_000, whatsapp_delivered_at: i % 4 === 0 ? NOW - i * 3600 : null,
   montage_eligible: 1, game_name: 'Rocket League', body: '', last_error: null,
 }))
+const UPLOAD_LIMITS = { max_bytes: 25_000_000, max_seconds: 600, min_seconds: 3, max_caption: 300, formats: ['mp4', 'mov'] }
+const MB = 1024 * 1024
 const CLIP_READS = {
   'GET /api/pipeline-status': json(200, {
     clips_this_month: 142, last_clip_at: NOW - 600, last_clip_sender: 'Goopy', next_build_ts: NOW + 3 * 86400 + 4 * 3600,
@@ -88,7 +90,7 @@ const CLIP_READS = {
       { uid: 'm1', sender: 'Bizzle', duration: 4, at: NOW - 900, included: false, reason: 'too short' }],
   }),
   'GET /api/reels': json(200, { me: { psn_id: 'Goopy', display_name: 'Goopy', admin: true }, scope: 'mine', clips: REELS, source: 'reel-review', roster: null, needs_psn_link: false }),
-  'GET /api/video-uploads/mine': json(200, { psn_id: 'Goopy', uploads: [{ video_post_id: 'v1', status: 'posted', caption: 'Montage cut', filename: 'a.mp4', uploaded_at: NOW - 86400, posted_at: NOW - 80000, skip_reason: null, duration_seconds: 42, platforms: { youtube: { url: 'https://example.com/v' } } }], can_upload: true, open_session: null }),
+  'GET /api/video-uploads/mine': json(200, { psn_id: 'Goopy', uploads: [{ video_post_id: 'v1', status: 'posted', caption: 'Montage cut', filename: 'a.mp4', uploaded_at: NOW - 86400, posted_at: NOW - 80000, skip_reason: null, duration_seconds: 42, platforms: { youtube: { url: 'https://example.com/v' } } }], can_upload: true, open_session: null, limits: UPLOAD_LIMITS }),
   'GET /clips': json(200, { clips: CLIP_ROWS, count: 50 }),
   'GET /clips/m0': json(200, CLIP_ROWS[0]),
   'GET /clips/m1': json(200, CLIP_ROWS[1]),
@@ -260,7 +262,7 @@ try {
   // ── 3. Routing: legacy ?p=, handoffs, not found, admin gating ──────────────
   {
     const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { 'GET /': classicStub, ...CLIP_READS } })
-    const map = { squad: '/app', pipeline: '/app/clips', upload: '/?p=upload', slap: '/app/slap', wa: '/app/whatsapp', giveaway: '/app/giveaway', watch: '/app/watch', huddle: '/app/huddle', coach: '/app/coach', ai: '/app/ask', nope: '/app', '../../etc': '/app' }
+    const map = { squad: '/app', pipeline: '/app/clips', upload: '/app/clips?upload', slap: '/app/slap', wa: '/app/whatsapp', giveaway: '/app/giveaway', watch: '/app/watch', huddle: '/app/huddle', coach: '/app/coach', ai: '/app/ask', nope: '/app', '../../etc': '/app' }
     for (const [k, want] of Object.entries(map)) {
       await page.goto(`${BASE}${process.env.LEGACY_PREFIX || "/app/"}?p=${encodeURIComponent(k)}`)
       await page.waitForSelector('h1')
@@ -274,9 +276,9 @@ try {
       const got = await page.getAttribute('.handoff a.btn', 'href')
       check(`/app/${route} hands off to ${href}`, got === href, got)
     }
-    await page.goto(`${BASE}/app/clips?upload`).catch(() => {}) // superseded by location.replace
-    await page.waitForFunction(() => location.pathname === '/' && location.search === '?p=upload', null, { timeout: 10_000 }).catch(() => {})
-    check('/app/clips?upload goes straight to the classic upload', page.url() === `${BASE}/?p=upload`, page.url())
+    await page.goto(`${BASE}/app/clips?upload`)
+    await page.waitForSelector('.sheet-clip .send-body')
+    check('/app/clips?upload opens Send a video in /app', (await page.textContent('.sheet-clip .clip-sheet-title')) === '📤 Send a video' && new URL(page.url()).pathname === '/app/clips', page.url())
     await page.goto(`${BASE}/app/admin`)
     await page.waitForSelector('.handoff-lede')
     check('/app/admin for a non-admin says "Admins only"', (await page.textContent('.handoff-lede')) === 'Admins only')
@@ -587,6 +589,106 @@ try {
     check('desktop clip dialog is 760px', Math.round(w) === 760, `${w}`)
     await shot(page, 'clips-1440-reel-dialog')
     check('no unmocked writes and no page errors (Clips desktop)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+
+  // ── 6. Send a video (CL-26): chunked, resumable; start/chunk/finish/withdraw mocked ──
+  {
+    const starts = [], chunks = [], finishes = []
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        ...CLIP_READS,
+        'POST /api/video-uploads/start': (r) => {
+          const b = r.request().postDataJSON()
+          starts.push(b)
+          return json(200, { upload_id: 'u1', chunk_bytes: 8 * MB, size: b.size, received: 0, resumed: false })(r)
+        },
+        'PUT /api/video-uploads/chunk': delayed(150, (r) => {
+          const u = new URL(r.request().url())
+          const off = Number(u.searchParams.get('offset'))
+          const len = r.request().postDataBuffer()?.length ?? 0
+          chunks.push([off, len])
+          // The first chunk is "already on the server": the client must carry on from its count.
+          if (chunks.length === 1) return json(409, { detail: 'chunk out of order', code: 'offset', received: 8 * MB })(r)
+          return json(200, { received: off + len })(r)
+        }),
+        'POST /api/video-uploads/finish': (r) => {
+          finishes.push(r.request().postDataJSON())
+          return json(200, { ok: true, upload: { video_post_id: 'v2', status: 'queued', caption: 'clutch', filename: 'clip.mp4', uploaded_at: NOW, platforms: {} } })(r)
+        },
+      },
+    })
+    await ready(page, '/app/clips')
+    await page.waitForSelector('.reel-card')
+    await page.click('.clips-cta .btn-primary')
+    await page.waitForSelector('.sheet-clip .send-body .file-pick')
+    check('Send a video opens as a bottom sheet on a phone', new URL(page.url()).searchParams.has('upload'))
+    await shot(page, 'upload-375-sheet')
+    await axe(page, 'Send a video sheet', '.sheet-clip')
+    // Wrong format is refused before anything is sent.
+    await page.setInputFiles('.sheet-clip input[type=file]', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hi') })
+    await page.waitForSelector('.send-msg[data-tone="error"]')
+    check('a non-video file is refused in words', (await page.textContent('.send-msg')).includes('MP4 or MOV'))
+    await page.setInputFiles('.sheet-clip input[type=file]', { name: 'big.mp4', mimeType: 'video/mp4', buffer: Buffer.alloc(26_000_000) })
+    await page.waitForFunction(() => document.querySelector('.send-msg')?.textContent?.includes('limit'))
+    check('an over-size video is refused before upload', starts.length === 0)
+    await page.setInputFiles('.sheet-clip input[type=file]', { name: 'clip.mp4', mimeType: 'video/mp4', buffer: Buffer.alloc(20 * MB, 7) })
+    await page.waitForSelector('.send-file:has-text("clip.mp4")', { timeout: 10_000 })
+    await page.fill('.sheet-clip textarea', 'clutch')
+    await page.click('.send-actions .btn-primary')
+    await page.waitForSelector('.send-bar')
+    await page.waitForSelector('.upload-pill')
+    await shot(page, 'upload-375-sending')
+    await page.waitForSelector('.send-msg[data-tone="ok"]', { timeout: 20_000 })
+    check('one start with caption and a file key', starts.length === 1 && starts[0].caption === 'clutch' && /^20971520\|[0-9a-f]{24}\|[0-9a-f]{24}$/.test(starts[0].file_key), JSON.stringify(starts.map((x) => ({ ...x, file_key: x.file_key?.slice(0, 20) }))))
+    check('chunks are 8 MB, in order, and follow the server offset', JSON.stringify(chunks) === JSON.stringify([[0, 8 * MB], [8 * MB, 8 * MB], [16 * MB, 4 * MB]]), JSON.stringify(chunks))
+    check('finish once with the upload id', finishes.length === 1 && finishes[0].upload_id === 'u1', JSON.stringify(finishes))
+    check('summary pill says Queued ✓', (await page.textContent('.upload-pill')) === 'Queued ✓')
+    await shot(page, 'upload-375-queued')
+    check('no unmocked writes and no page errors (upload)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // A 409 at start is explained in words; nothing else is sent.
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: { ...CLIP_READS, 'POST /api/video-uploads/start': json(409, { detail: 'already queued', code: 'already_queued' }) },
+    })
+    await ready(page, '/app/clips?upload')
+    await page.waitForSelector('.sheet-clip .file-pick')
+    await page.setInputFiles('.sheet-clip input[type=file]', { name: 'clip.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(MB) })
+    await page.waitForSelector('.send-file:has-text("clip.mov")', { timeout: 10_000 })
+    await page.click('.send-actions .btn-primary')
+    await page.waitForSelector('.send-msg[data-tone="error"]')
+    check('409 already_queued → "You already have one in the queue."', (await page.textContent('.send-msg')) === 'You already have one in the queue.')
+    check('no unmocked writes (upload 409)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // A queued video with no links can be withdrawn behind a confirm; the form waits.
+    const withdraws = []
+    const queued = { video_post_id: 'v9', status: 'queued', caption: 'late night', filename: 'b.mp4', uploaded_at: NOW - 600, posted_at: null, skip_reason: null, duration_seconds: 20, platforms: { instagram: null } }
+    const { ctx, page } = await newPage({
+      width: 1440, height: 900,
+      mocks: {
+        ...CLIP_READS,
+        'GET /api/video-uploads/mine': json(200, { psn_id: 'Goopy', uploads: [queued], can_upload: false, open_session: null, limits: UPLOAD_LIMITS }),
+        'POST /api/video-uploads/withdraw': (r) => { withdraws.push(r.request().postDataJSON()); return json(200, { ok: true, upload: { ...queued, status: 'skipped' } })(r) },
+      },
+    })
+    await ready(page, '/app/clips?upload')
+    await page.waitForSelector('.send-card .send-msg')
+    check('desktop: ?upload uses the inline card, no sheet', (await page.locator('.sheet-clip').count()) === 0)
+    check('one in the queue: the form explains why it waits', (await page.textContent('.send-card .send-msg')).includes("hasn't been posted yet"))
+    await shot(page, 'upload-1440-inline')
+    await page.click('.upload-wd')
+    await page.waitForSelector('.dialog-confirm')
+    check('withdraw asks first', withdraws.length === 0 && (await page.textContent('.dialog-confirm .dialog-title')) === 'Withdraw this video?')
+    await page.click('.dialog-confirm .btn-primary')
+    await page.waitForFunction(() => document.querySelector('.toast')?.textContent?.includes('Withdrawn'))
+    check('withdraw posts the video id once', withdraws.length === 1 && withdraws[0].video_post_id === 'v9', JSON.stringify(withdraws))
+    check('no unmocked writes and no page errors (withdraw)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 } finally {
