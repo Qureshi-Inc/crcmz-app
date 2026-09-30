@@ -109,7 +109,8 @@ def read(tool, **args):
 
 V1 = make_video(4, "one.mp4")
 V2 = make_video(5, "two.mov", "blue")
-LONG = make_video(91, "long.mp4", "green")
+MINUTE_AND_HALF = make_video(91, "ninety-one.mp4", "green")
+LONG = make_video(601, "long.mp4", "yellow")
 SHORT = make_video(1, "short.mp4", "white")
 STATE = {}
 
@@ -137,14 +138,21 @@ def t_duplicate_rejected_for_anyone():
     rejected("duplicate", lambda: upload("zid-b", "Mutasif", V1))
 
 
-def t_oversize_rejected_before_bytes_move():
-    rejected("too_large", lambda: vu.start_session("zid-b", "Mutasif", "big.mp4",
-                                                   vu.MAX_BYTES + 1, None))
+def t_no_size_cap():
+    # Chunked upload carries any size; only the duration is capped.
+    s = vu.start_session("zid-bigfile", "Big", "big.mp4", 5 * 1024 ** 3, None)
+    assert s["size"] == 5 * 1024 ** 3 and s["received"] == 0, s
 
 
-def t_over_90s_rejected():
+def t_over_90s_accepted():
+    row = upload("zid-long", "LongPlayer", MINUTE_AND_HALF)
+    assert row["status"] == "queued" and 90 < row["duration_seconds"] < 92, row
+    vu.skip(row["video_post_id"], "test fixture")   # free the queue for later tests
+
+
+def t_over_10_minutes_rejected():
     msg = rejected("too_long", lambda: upload("zid-b", "Mutasif", LONG))
-    assert "90s" in msg, msg
+    assert "600s" in msg, msg
 
 
 def t_under_3s_rejected():
@@ -435,12 +443,12 @@ def http_tests():
                         json={"upload_id": s["upload_id"]})
         assert r.status_code == 200, r.text
 
-    def t_over_200mb_refused_over_http():
+    def t_over_200mb_accepted_over_http():
         people["zid-big"] = {"zitadel_id": "zid-big", "psn_id": "Big"}
         login("zid-big")
         r = client.post("/api/video-uploads/start", headers=ORIGIN,
                         json={"filename": "a.mp4", "size": 200 * 1024 * 1024 + 1})
-        assert r.status_code == 400 and "200 MB" in r.json()["detail"], r.text
+        assert r.status_code == 200 and r.json()["size"] == 200 * 1024 * 1024 + 1, r.text
         r = client.put(f"/api/video-uploads/chunk?id={'0' * 32}&offset=0", headers=ORIGIN,
                        content=b"x" * (vu.CHUNK_BYTES + 1))
         assert r.status_code == 413, r.status_code

@@ -54,6 +54,11 @@ import ig_posts  # noqa: E402
 import mcp_oauth  # noqa: E402
 import month_montage  # noqa: E402
 import wa_reactions  # noqa: E402
+import clip_retention  # noqa: E402
+
+# Recording both links now triggers the month-end retention run, which would
+# delete these fixtures' media mid-test; tests/test_clip_retention.py covers it.
+clip_retention.run = lambda **k: {"ok": True, "stub": True}
 
 clips._DB_PATH = _tmp / "clips.db"
 mcp_oauth.DB_PATH = _tmp / "mcp_user_tokens.db"

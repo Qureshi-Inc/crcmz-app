@@ -184,6 +184,24 @@ def stream(key: str, chunk_size: int = 1024 * 256):
             yield chunk
 
 
+def delete(key: str) -> int:
+    """Remove one object. Returns the bytes freed; 0 when it was already gone."""
+    if CLIP_BUCKET:
+        s3 = _s3_client()
+        try:
+            size = s3.head_object(Bucket=CLIP_BUCKET, Key=key).get("ContentLength", 0)
+        except Exception:
+            return 0
+        s3.delete_object(Bucket=CLIP_BUCKET, Key=key)
+        return int(size or 0)
+    path = local_file(key)
+    if path is None:
+        return 0
+    size = path.stat().st_size
+    path.unlink()
+    return size
+
+
 def exists(key: str) -> bool:
     """Cheap existence check without loading bytes."""
     if CLIP_BUCKET:

@@ -103,6 +103,9 @@ def init() -> None:
         if "title_id" not in cols:
             db.execute("ALTER TABLE clips ADD COLUMN title_id TEXT")
             db.commit()
+        if "purged_at" not in cols:
+            db.execute("ALTER TABLE clips ADD COLUMN purged_at REAL")
+            db.commit()
         # One-time backfill: clips inserted before message_source was added have a
         # non-null body but no source label. They all came from the poller's
         # _adjacent_caption window, so they are clip_caption.
@@ -362,6 +365,28 @@ def recoverable_jobs() -> list[dict]:
             (now,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+PURGED = "purged"
+
+
+def archived_before(ts: float) -> list[dict]:
+    """Archived clips captured before `ts`, for the month-end retention run."""
+    with _conn() as db:
+        rows = db.execute(
+            "SELECT message_uid, storage_key_original, storage_key_normalized FROM clips"
+            " WHERE archive_status = 'archived' AND COALESCE(psn_created_at, created_at) < ?",
+            (ts,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_purged(message_uid: str) -> None:
+    """The media is gone by retention; the row stays for stats and history."""
+    now = time.time()
+    with _lock, _conn() as db:
+        db.execute("UPDATE clips SET archive_status = ?, purged_at = ?, updated_at = ?"
+                   " WHERE message_uid = ?", (PURGED, now, now, message_uid))
+        db.commit()
 
 
 def stats() -> dict:

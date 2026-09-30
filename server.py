@@ -3460,6 +3460,8 @@ def api_clip_media(uid: str, request: Request):
     if not row:
         raise HTTPException(status_code=404, detail="clip not found")
     key = row.get("storage_key_original")
+    if row.get("archive_status") == "purged":
+        raise HTTPException(status_code=410, detail="clip media was cleared by the 14-day retention")
     if not key or row.get("archive_status") != "archived":
         # Healing: derived key may exist in the store even when the DB flag is stale
         derived = _cstore.storage_key(message_uid, row.get("psn_created_at"))
@@ -3666,6 +3668,8 @@ def api_video_upload_media(id: str, request: Request):  # noqa: A002
     row = _vu.get(id)
     if not row:
         raise HTTPException(status_code=404, detail="video not found")
+    if row.get("media_purged_at"):
+        raise HTTPException(status_code=410, detail="video media was cleared by the 14-day retention")
     key = row["storage_key"]
     who = (caller or {}).get("zitadel_id", "shared-token")
     logger.info("video upload media served id=%s key=%s caller=%s", id, key, who)
@@ -7740,6 +7744,20 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .wp-minibar.speaking .wp-minibar-back { border-color:rgba(140,255,43,.5);
     color:var(--lime); animation:wpMiniPulse 1.15s ease-in-out infinite; }
   .board-wrap > * { max-width:760px; margin:0 auto; }
+  /* Desktop: every page uses the width. Squad puts the Chat Board in a right-hand
+     column instead of a bar over the content; fullscreen and collapse still work. */
+  @media (min-width:1024px) {
+    .wrap { max-width:1320px; }
+    body[data-tab=squad] .board-wrap:not(.fullscreen) { left:auto; right:max(14px, calc((100vw - 1320px) / 2 + 14px));
+      top:172px; bottom:calc(var(--minibar-h,0px) + 16px); width:420px; overflow-y:auto;
+      border:1px solid var(--line); border-radius:18px; background:rgba(12,8,28,.9); padding:14px; }
+    body[data-tab=squad] .board-wrap:not(.fullscreen) .board { grid-template-columns:repeat(2,1fr); max-height:none; }
+    body[data-tab=squad] .board-wrap:not(.fullscreen) .board-hint { display:none; }
+    body[data-tab=squad]:not(.board-off) #p-squad { margin-right:440px; }
+    #slap-inner { columns:2; column-gap:18px; }
+    #slap-inner > .pip-section { break-inside:avoid; }
+    #p-ai { max-width:980px; margin-left:auto; margin-right:auto; }
+  }
   /* The Chat Board belongs to Squad; on every other page it covered the content. */
   body.board-off .board-wrap { display:none; }
   /* fullscreen: covers the whole viewport */
@@ -8313,6 +8331,8 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   .rr-chip.on { background:var(--neon); border-color:var(--neon); color:#fff; }
   .rr-counts { font-size:12px; color:var(--dim); margin:0 2px 8px; }
   .rr-list { display:flex; flex-direction:column; gap:8px; }
+  .rr-more { width:100%; margin-top:10px; min-height:42px; }
+  @media (min-width:1024px) { #reels-inner .rr-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; } }
   .rr-clip { display:flex; align-items:center; gap:12px; text-align:left; width:100%;
     background:var(--card); border:1px solid var(--line); border-radius:13px;
     padding:8px 12px 8px 8px; color:var(--txt); font-family:inherit; cursor:pointer; }
@@ -8475,6 +8495,39 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     .rrs-lane { height:28px; } .rrs-lane-win { height:42px; } .rrs-lanelbl { line-height:28px; }
     .rrs-blk { top:2px; bottom:2px; line-height:24px; }
     .rrs-transport .rrs-ic { height:40px; } .rrs-play { width:50px; height:50px; }
+  }
+  /* Editor in the app's own look: aurora backdrop, glass cards, pill tabs, Orbitron labels. */
+  .rrs { background:
+      radial-gradient(38% 40% at 16% 6%, rgba(255,47,214,.2), transparent 60%),
+      radial-gradient(40% 40% at 88% 12%, rgba(34,230,255,.15), transparent 60%),
+      radial-gradient(46% 42% at 55% 104%, rgba(157,92,255,.2), transparent 62%), var(--bg); }
+  .rrs-top { background:rgba(18,10,38,.6); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); }
+  .rrs-title b { font-weight:900; letter-spacing:1px; text-transform:uppercase;
+    background:linear-gradient(90deg,var(--cyan),var(--neon)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .rrs-pipe { margin:8px 10px 0; border:1px solid var(--line); border-radius:12px; }
+  .rrs-tl { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:6px 0 2px; margin-bottom:6px; }
+  .rrs-winwrap { position:relative; margin:3px 0; }
+  .rrs-winwrap .rrs-lane-win { margin:0; background:transparent; }
+  .rrs-strip { position:absolute; inset:0; display:flex; border-radius:6px; overflow:hidden; pointer-events:none; opacity:.6; background:rgba(255,255,255,.035); }
+  .rrs-strip img { flex:1 1 0; min-width:0; height:100%; object-fit:cover; }
+  .rrs-ruler { position:relative; height:14px; margin-top:2px; font-size:10px; color:var(--dim); pointer-events:none; font-variant-numeric:tabular-nums; }
+  .rrs-ruler span { position:absolute; top:0; transform:translateX(-50%); white-space:nowrap; }
+  .rrs-ruler span:first-child { transform:none; } .rrs-ruler span:last-child { transform:translateX(-100%); }
+  .rrs-tabs { gap:6px; padding:8px 10px; }
+  .rrs-tab { border:1px solid var(--line) !important; border-radius:12px; background:rgba(255,255,255,.03); }
+  .rrs-tab.on { background:var(--neon); border-color:var(--neon) !important; color:#fff; }
+  .rrs-ptitle { display:none; font-family:"Orbitron",sans-serif; font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--dim); margin:0 0 12px; }
+  .rrs-keys { display:none; margin:14px 0 0; padding-top:12px; border-top:1px solid var(--line); font-size:12px; color:var(--dim); line-height:1.9; }
+  .rrs-keys kbd { font:700 11px "Rajdhani",sans-serif; color:var(--txt); background:rgba(255,255,255,.06); border:1px solid var(--line); border-radius:6px; padding:1px 6px; }
+  @media (min-width:960px) {
+    .rrs-side { width:400px; margin:12px 12px 12px 0; border:1px solid var(--line) !important; border-radius:18px;
+      background:var(--card); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); overflow:hidden; }
+    .rrs-tabs { padding:12px; border-bottom:1px solid var(--line); }
+    .rrs-tab { flex-direction:row; gap:6px; justify-content:center; padding:9px 4px; border-radius:999px; }
+    .rrs-tab i { font-size:15px; }
+    .rrs-ptitle, .rrs-keys { display:block; }
+    .rrs-pipe { margin:10px 20px 0; }
+    .rrs-tl { padding:10px 0 4px; margin-bottom:10px; }
   }
   .last-montage { background:var(--card); border:1px solid var(--line);
     border-radius:13px; padding:14px 16px; margin-bottom:14px; }
@@ -9527,10 +9580,64 @@ _DASHBOARD_TMPL = r"""<!doctype html>
       .up-links a{color:#22e6ff}
       .up-links span{color:var(--dim)}
       .up-wd{margin-top:8px;background:none;border:1px solid rgba(255,107,139,.4);color:#ffc0cd;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer}
+      /* Clips layout: one column of folding sections on phones, three columns on desktop. */
+      .cl-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+      .cl-sum{flex:1;min-width:0;font-size:13px;color:var(--dim)}
+      .cl-send,.cl-pill{border:none;border-radius:12px;padding:11px 14px;font-weight:800;font-size:14px;color:#fff;cursor:pointer;background:linear-gradient(135deg,#ff2fd6,#9d5cff)}
+      .cl-pill{background:rgba(34,230,255,.12);color:#22e6ff;border:1px solid rgba(34,230,255,.35)}
+      .cl-send[hidden],.cl-pill[hidden]{display:none}
+      .cl-grid{display:flex;flex-direction:column}
+      .cl-b{order:1}.cl-a{order:2}.cl-c{order:3}
+      #cl-send-slot:empty{display:none}
+      #pipeline-inner{display:flex;flex-direction:column}
+      #pipeline-inner [data-sec=clips]{order:1}#pipeline-inner [data-sec=montage]{order:2}#pipeline-inner [data-sec=services]{order:3}
+      #pipeline-inner [data-sec=month]{display:none}
+      #p-pipeline [data-sec] > :first-child{display:flex;align-items:center;gap:8px;margin:0 0 8px;padding:13px 14px;background:var(--card);border:1px solid var(--line);border-radius:13px;cursor:pointer;user-select:none;-webkit-user-select:none}
+      #p-pipeline [data-sec] > p.pip-title:first-child{font-size:11px}
+      #p-pipeline [data-sec] > :first-child::after{content:"";flex:none;width:7px;height:7px;margin:0 3px 3px 4px;border-right:2px solid var(--dim);border-bottom:2px solid var(--dim);transform:rotate(45deg);transition:transform .2s}
+      #p-pipeline .cl-closed > :first-child::after{transform:rotate(-45deg);margin-bottom:0}
+      #p-pipeline .cl-closed > :not(:first-child){display:none}
+      #p-pipeline .cl-fixed > :first-child{cursor:default}
+      #p-pipeline .cl-fixed > :first-child::after{display:none}
+      .cl-m{margin-left:auto;display:flex;gap:5px;align-items:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;letter-spacing:0;text-transform:none;font-size:12px;color:var(--dim)}
+      .cl-n{margin-left:8px;opacity:.75}
+      .lm-sub{font-size:11px;color:var(--dim);margin:12px 2px 6px;text-transform:uppercase;letter-spacing:1.5px}
+      #upload-list .up-card{margin-top:0}
+      .cl-sheet{display:none;position:fixed;inset:0;z-index:9000}
+      body.cl-sheet-open .cl-sheet{display:block}
+      .cl-sheet-bg{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+      .cl-sheet-card{position:absolute;left:0;right:0;bottom:0;max-height:88dvh;overflow:auto;padding:10px 14px calc(16px + env(safe-area-inset-bottom));border-radius:20px 20px 0 0;background:#120a26;border-top:1px solid rgba(255,60,200,.35);animation:clUp .22s ease-out}
+      .cl-sheet-card .up-card{border:none;background:none;margin:0;padding:10px 2px 4px}
+      .cl-x{position:absolute;right:10px;top:10px;width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:inherit;font-size:14px;cursor:pointer}
+      @keyframes clUp{from{transform:translateY(40px);opacity:0}}
+      @media (min-width:1024px){
+        .cl-top{display:none}
+        .cl-grid{display:grid;grid-template-columns:300px minmax(0,1fr) 300px;gap:18px;align-items:start}
+        .cl-a,.cl-b,.cl-c{order:0}
+        #pipeline-inner [data-sec=month]{display:block;order:1}
+        #pipeline-inner [data-sec=montage]{order:2}#pipeline-inner [data-sec=services]{order:3}#pipeline-inner [data-sec=clips]{order:4}
+        #cl-send-slot .up-card{margin-top:0}
+      }
     </style>
-    <div id="upload-inner"><div class="spin">Loading uploads…</div></div>
+    <div class="cl-top">
+      <div class="cl-sum" id="cl-sum">🎞 Clips</div>
+      <button class="cl-send" id="cl-send" type="button" onclick="clSheet(true)">📤 Send a video</button>
+      <button class="cl-pill" id="cl-pill" type="button" onclick="clSheet(true)" hidden></button>
+    </div>
   </div>
-<div id="reels-inner"></div><div id="pipeline-inner"><div class="spin">Loading pipeline…</div></div></div>
+  <div class="cl-grid">
+    <div class="cl-col cl-a">
+      <div id="cl-send-slot"><div id="upload-inner"><div class="spin">Loading uploads…</div></div></div>
+      <div class="pip-section" data-sec="uploads"><p class="pip-title">📤 Your uploads<span class="cl-m" id="clm-uploads"></span></p><div id="upload-list"></div></div>
+    </div>
+    <div class="cl-col cl-b"><div id="reels-inner"></div></div>
+    <div class="cl-col cl-c"><div id="pipeline-inner"><div class="spin">Loading pipeline…</div></div></div>
+  </div>
+</div>
+<div class="cl-sheet" id="up-sheet" role="dialog" aria-modal="true" aria-label="Send a video">
+  <div class="cl-sheet-bg" onclick="clSheet(false)"></div>
+  <div class="cl-sheet-card"><button class="cl-x" type="button" onclick="clSheet(false)" aria-label="Close">✕</button><div id="cl-sheet-body"></div></div>
+</div>
   <div class="panel" id="p-slap">
     <div id="slap-stats" class="statgrid" style="margin-bottom:10px"></div>
     <div id="slap-vibe" class="card" style="display:none;margin-bottom:10px;padding:12px 16px;font-size:13px;color:var(--dim);font-style:italic;text-align:center"></div>
@@ -9991,7 +10098,8 @@ function syncBoardHeight(){
   const mini = $('wpMiniBar');
   const miniH = (mini && mini.classList.contains('on')) ? (mini.offsetHeight || 0) : 0;
   document.body.style.setProperty('--minibar-h', miniH + 'px');
-  if(bar) document.body.style.setProperty('--board-h', (_isFullscreen ? miniH : bar.offsetHeight + miniH + 16) + 'px');
+  const side = !_isFullscreen && document.body.dataset.tab === 'squad' && window.matchMedia('(min-width:1024px)').matches;
+  if(bar) document.body.style.setProperty('--board-h', (_isFullscreen || side ? miniH : bar.offsetHeight + miniH + 16) + 'px');
 }
 function toggleBoard(){
   if(_isFullscreen) return;
@@ -11123,10 +11231,14 @@ function upRender(){
     '<p class="up-sub">Muse posts it to Instagram, TikTok and YouTube, credited to <b>'+esc(d.psn_id)+'</b>. '+
     'MP4 or MOV, up to '+Math.round(L.max_seconds/60)+' minutes long. '+
     'One video in the queue at a time.</p>'+ form +
-    '<div class="up-msg" id="upMsg"></div></div>'+
-    '<div class="up-card"><h3>Your uploads</h3>'+
-    ((d.uploads||[]).length ? d.uploads.map(upRow).join('') : '<p class="up-sub" style="margin:0">Nothing yet.</p>')+
-    '</div>';
+    '<div class="up-msg" id="upMsg"></div></div>';
+  const ups = d.uploads || [];
+  const list = $('upload-list');
+  if(list) list.innerHTML = '<div class="up-card">'+
+    (ups.length ? ups.map(upRow).join('') : '<p class="up-sub" style="margin:0">Nothing yet.</p>')+'</div>';
+  const queued = ups.filter(function(u){ return u.status === 'queued'; }).length;
+  const meta = $('clm-uploads');
+  if(meta) meta.textContent = queued ? queued+' queued' : (ups.length ? String(ups.length) : '');
 }
 function upSay(text, cls){
   const m = $('upMsg'); if(!m) return;
@@ -11187,7 +11299,7 @@ async function upSend(){
   upBusy = true; $('upGo').disabled = true; $('upBar').style.display = 'block';
   const H = {'Content-Type':'application/json'};
   const pct = function(n){ return Math.round(100*n/f.size); };
-  const show = function(n){ $('upFill').style.width = pct(n)+'%'; };
+  const show = function(n){ $('upFill').style.width = pct(n)+'%'; clPill('Uploading '+pct(n)+'%'); };
   let off = 0;
   try{
     upSay('Starting…');
@@ -11219,15 +11331,17 @@ async function upSend(){
       await upSleep(Math.min(30000, 1000 * Math.pow(2, fails)));
       try{ s = await begin(); off = s.received || 0; show(off); }catch(e){}
     }
-    upSay('Checking the video…');
+    upSay('Checking the video…'); clPill('Checking video…');
     await upJson(await fetch('/api/video-uploads/finish', {method:'POST', headers:H,
       body: JSON.stringify({upload_id:s.upload_id})}));
     upBusy = false;
     await loadUpload(true);
     upSay('Queued ✓ — Muse will post it soon.', 'ok');
+    clPill('Queued ✓'); setTimeout(function(){ clPill(''); }, 5000);
   }catch(e){
     upBusy = false;
     const go = $('upGo'); if(go){ go.disabled = false; go.textContent = 'Resume upload'; }
+    clPill(e.paused ? 'Upload paused — tap to resume' : 'Upload failed — tap for details');
     if(e.paused){
       upSay('Upload paused at '+pct(off)+'% — the connection keeps dropping. Tap Resume upload '+
             'when you are back online (if you reload, pick the same file). Kept for 24 hours.', 'err');
@@ -11246,6 +11360,64 @@ async function upWithdraw(id){
     await loadUpload(true);
   }catch(e){ alert(e.message || e); }
 }
+
+// Clips layout. Phones: folding sections, upload in a bottom sheet. Desktop: three
+// columns with the upload form inline; only the long clip list folds there.
+const CL_WIDE = window.matchMedia('(min-width:1024px)');
+const CL_OPEN_BY_DEFAULT = {reels:true};
+function clIsOpen(k){
+  if(CL_WIDE.matches && k !== 'clips') return true;
+  let v = null; try{ v = localStorage.getItem('cl-open-'+k); }catch(e){}
+  return v === null ? !!CL_OPEN_BY_DEFAULT[k] : v === '1';
+}
+function clApply(){
+  document.querySelectorAll('#p-pipeline [data-sec]').forEach(function(sec){
+    const k = sec.dataset.sec, open = clIsOpen(k), fixed = CL_WIDE.matches && k !== 'clips';
+    const h = sec.firstElementChild;
+    if(sec.classList.contains('cl-closed') === open) sec.classList.toggle('cl-closed', !open);
+    if(sec.classList.contains('cl-fixed') !== fixed) sec.classList.toggle('cl-fixed', fixed);
+    if(!h) return;
+    if(fixed){ h.removeAttribute('role'); h.removeAttribute('tabindex'); h.removeAttribute('aria-expanded'); }
+    else { h.setAttribute('role','button'); h.setAttribute('tabindex','0'); h.setAttribute('aria-expanded', String(open)); }
+  });
+}
+function clToggle(h){
+  const k = h.parentElement && h.parentElement.dataset.sec;
+  if(!k || (CL_WIDE.matches && k !== 'clips')) return;
+  try{ localStorage.setItem('cl-open-'+k, clIsOpen(k) ? '0' : '1'); }catch(e){}
+  clApply();
+}
+document.addEventListener('click', function(e){
+  const h = e.target.closest('#p-pipeline [data-sec] > :first-child');
+  if(!h || e.target.closest('button,a,input,select,textarea')) return;
+  clToggle(h);
+});
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape' && document.body.classList.contains('cl-sheet-open')) return clSheet(false);
+  if(e.key !== 'Enter' && e.key !== ' ') return;
+  const h = e.target.closest && e.target.closest('#p-pipeline [data-sec] > [role=button]');
+  if(!h || h !== e.target) return;
+  e.preventDefault(); clToggle(h);
+});
+function clSheet(open){
+  if(open && CL_WIDE.matches){ const c = $('upload-inner'); if(c) c.scrollIntoView({block:'start', behavior:'smooth'}); return; }
+  document.body.classList.toggle('cl-sheet-open', !!open);
+  document.documentElement.style.overflow = open ? 'hidden' : '';
+  if(open) loadUpload();
+}
+function clPill(t){
+  const p = $('cl-pill'), s = $('cl-send'); if(!p) return;
+  p.textContent = t || ''; p.hidden = !t; if(s) s.hidden = !!t;
+}
+function clPlace(){
+  const card = $('upload-inner'), slot = CL_WIDE.matches ? $('cl-send-slot') : $('cl-sheet-body');
+  if(card && slot && card.parentElement !== slot) slot.appendChild(card);
+  if(CL_WIDE.matches && document.body.classList.contains('cl-sheet-open')) clSheet(false);
+  clApply();
+}
+if(CL_WIDE.addEventListener) CL_WIDE.addEventListener('change', clPlace); else CL_WIDE.addListener(clPlace);
+new MutationObserver(clApply).observe($('p-pipeline'), {childList:true, subtree:true});
+clPlace();
 
 const PANEL_LOADERS = {
   pipeline: function(){ if(window.loadReels) window.loadReels(); loadUpload(); },
@@ -11281,7 +11453,9 @@ function paintTab(btn){
   const onSquad = p === 'squad';
   if(!onSquad && typeof _isFullscreen !== 'undefined' && _isFullscreen) toggleBoardFs();
   document.body.classList.toggle('board-off', !onSquad);
+  document.body.dataset.tab = p;
   if(typeof syncBoardHeight === 'function') syncBoardHeight();
+  if(p !== 'pipeline' && document.body.classList.contains('cl-sheet-open')) clSheet(false);
 }
 // Paint a panel, record it in history, and run its loader. `skipHash` leaves the
 // URL alone — used by popstate, where the URL is already correct.
@@ -11330,7 +11504,7 @@ window.addEventListener('popstate', function(){
   setTimeout(function(){
     const load = PANEL_LOADERS[btn.dataset.p];
     if(load) load();
-    if(toUpload){ const u = $('clips-upload'); if(u) u.scrollIntoView(); }
+    if(toUpload) clSheet(true);
   }, 0);
 })();
 function fmtLast(iso){ if(!iso) return 'offline';
@@ -11493,8 +11667,8 @@ async function loadPipeline() {
     const lm = d.last_montage;
     const monthLabel = d.next_build_month || '';
     $('pipeline-inner').innerHTML = `
-<div class="pip-section">
-  <p class="pip-title">Services</p>
+<div class="pip-section" data-sec="services">
+  <p class="pip-title">⚙️ Services<span class="cl-m">${[sv.psn_messenger, sv.psn_montage, sv.wa_bridge].map(x => '<span class="svc-dot ' + dotClass(x) + '"></span>').join('')}</span></p>
   <div class="svc-row"><span class="svc-dot ${dotClass(sv.psn_messenger)}"></span>
     <span class="svc-name">PSN Messenger</span><span class="svc-meta">${svcLabel(sv.psn_messenger)}</span></div>
   <div class="svc-row"><span class="svc-dot ${dotClass(sv.psn_montage)}"></span>
@@ -11502,33 +11676,31 @@ async function loadPipeline() {
   <div class="svc-row"><span class="svc-dot ${dotClass(sv.wa_bridge)}"></span>
     <span class="svc-name">WhatsApp Bridge</span><span class="svc-meta">${svcLabel(sv.wa_bridge)}</span></div>
 </div>
-<div class="pip-section">
-  <p class="pip-title">This Month — ${monthLabel}</p>
+<div class="pip-section" data-sec="month">
+  <p class="pip-title">📅 This Month — ${monthLabel}</p>
   <div class="big-stat">
     <div class="bstat"><div class="bv">${d.clips_this_month ?? 0}</div><div class="bl">Clips Captured</div></div>
     <div class="bstat"><div class="bv">${fmtCountdown(d.next_build_ts)}</div><div class="bl">Until Build</div></div>
   </div>
   ${d.last_clip_at ? `<p class="last-clip-note">Last clip: <b>${fmtAgo(d.last_clip_at)}</b> from <b>${esc(d.last_clip_sender||'')}</b></p>` : '<p class="last-clip-note">No clips captured yet this month</p>'}
 </div>
-<div class="pip-section">
-  <p class="pip-title">Next Auto-Build</p>
+<div class="pip-section" data-sec="montage">
+  <p class="pip-title">🏗 Montage<span class="cl-m">${esc(d.next_build_label || '')}</span></p>
   <div class="pip-build">
     <div class="pb-label">Scheduled</div>
     <div class="pb-date">${d.next_build_label || '—'}</div>
     <div class="pb-countdown">${fmtCountdown(d.next_build_ts)} · auto-send to Goopers</div>
   </div>
-</div>
-${lm ? `<div class="pip-section">
-  <p class="pip-title">Last Montage</p>
+${lm ? `<p class="lm-sub">Last montage</p>
   <div class="last-montage">
     <div class="lm-row"><span class="lm-key">Version</span><span class="lm-val">v${lm.version} · ${lm.year}-${String(lm.month).padStart(2,'0')}</span></div>
     <div class="lm-row"><span class="lm-key">Clips</span><span class="lm-val">${lm.clips} included</span></div>
     <div class="lm-row"><span class="lm-key">Duration</span><span class="lm-val">${lm.duration}s</span></div>
     <div class="lm-row"><span class="lm-key">Sent to group</span><span class="lm-val"><span class="sent-badge ${lm.sent?'yes':'no'}">${lm.sent?'✓ Sent':'Not sent'}</span></span></div>
-  </div>
-</div>` : ''}
-${(d.clips||[]).length ? `<div class="pip-section">
-  <p class="pip-title">Clips This Month (${(d.clips||[]).length})</p>
+  </div>` : ''}
+</div>
+${(d.clips||[]).length ? `<div class="pip-section" data-sec="clips">
+  <p class="pip-title">🎬 Clips This Month<span class="cl-m">${(d.clips||[]).length}</span></p>
   <div class="clip-list">
   ${(d.clips||[]).map(c => {
     const statusDot = c.included === true ? '<span class="cdot cdot-in">✓</span>'
@@ -11539,6 +11711,8 @@ ${(d.clips||[]).length ? `<div class="pip-section">
   }).join('')}
   </div>
 </div>` : '<p class="last-clip-note" style="margin-top:8px">No clips captured this month yet</p>'}`;
+    const clSum = $('cl-sum');
+    if(clSum) clSum.textContent = '📅 ' + (monthLabel || 'This month') + ' · ' + (d.clips_this_month ?? 0) + ' clips · build in ' + fmtCountdown(d.next_build_ts);
   } catch(e) {
     $('pipeline-inner').innerHTML = '<div class="card"><div class="empty">Could not load pipeline status.</div></div>';
   }
@@ -11618,13 +11792,13 @@ setInterval(loadPipeline, 30000);
   /* ---------- list ---------- */
   function renderList() {
     const el = root(); if (!el) return;
-    const head = `<div class="rr-head"><p class="pip-title" style="margin:0">${title()}</p>
+    const head = `<div class="rr-head"><p class="pip-title" style="margin:0">${title()}<span class="cl-n">${S.clips.length}</span></p>
       <div class="rr-head-actions">
         ${S.me && S.me.admin ? `<button class="rr-btn rr-small" data-act="scope">${S.all ? 'Only mine' : 'Everyone’s'}</button>` : ''}
         ${S.needsLink ? '' : '<button class="rr-btn rr-small" data-act="sync">↻ Sync clips</button>'}
       </div></div>`;
     if (S.needsLink) {
-      el.innerHTML = `<div class="pip-section rr">${head}<div class="rr-empty">
+      el.innerHTML = `<div class="pip-section rr" data-sec="reels">${head}<div class="rr-empty">
         <b>Link your PlayStation account</b><br>Reels are matched to you by PSN ID.<br><br>
         <button class="rr-btn rr-small" data-act="settings">⚙️ Open Settings</button></div></div>`;
       return;
@@ -11641,7 +11815,9 @@ setInterval(loadPipeline, 30000);
       : S.source === 'mirror' ? 'best-effort list — pipeline roster not pushed yet' : '';
     const chips = [['all', 'All'], ['noreview', 'Needs review'], ['rendered', 'Rendered'], ['vetoed', '🛑 Vetoed']]
       .map(([k, l]) => `<button class="rr-chip${S.filter === k ? ' on' : ''}" data-filter="${k}">${l}</button>`).join('');
-    const rows = items.map(c => {
+    const page = window.matchMedia('(min-width:1024px)').matches ? 24 : 12;
+    const limit = S.limit || page, shown = items.slice(0, limit);
+    const rows = shown.map(c => {
       const ts = whenTs(c.when);
       const who = S.scope === 'all' ? (c.sender || '?') : (c.game || c.sender || 'Clip');
       const w = c.analysis_window, tt = w && w[0] != null ? (+w[0] + +w[1]) / 2 : 1;
@@ -11654,10 +11830,11 @@ setInterval(loadPipeline, 30000);
     }).join('');
     const empty = S.clips.length ? 'No clips match this filter.'
       : 'No reels waiting. Clips you share in the PSN group (60s or shorter) show up here before they go into highlights.';
-    el.innerHTML = `<div class="pip-section rr">${head}
+    el.innerHTML = `<div class="pip-section rr" data-sec="reels">${head}
       <div class="rr-chips">${chips}</div>
       <p class="rr-counts">${S.clips.length - vetoedN} eligible · ${S.clips.length} total · ${vetoedN} vetoed${src ? ' · ' + esc(src) : ''}</p>
-      <div class="rr-list">${rows || `<div class="rr-empty">${empty}</div>`}</div></div>`;
+      <div class="rr-list">${rows || `<div class="rr-empty">${empty}</div>`}</div>
+      ${items.length > shown.length ? `<button class="rr-btn rr-more" data-act="more">Show more · ${items.length - shown.length} left</button>` : ''}</div>`;
   }
 
   async function loadReels(force) {
@@ -11666,13 +11843,13 @@ setInterval(loadPipeline, 30000);
     S.loaded = true;
     const el = root(); if (!el) return;
     if (!S.clips.length) {
-      el.innerHTML = `<div class="pip-section rr"><p class="pip-title">${title()}</p><div class="spin">Loading your reels…</div></div>`;
+      el.innerHTML = `<div class="pip-section rr" data-sec="reels"><p class="pip-title">${title()}</p><div class="spin">Loading your reels…</div></div>`;
     }
     let d;
     try { d = await api(S.all ? '?all=true' : ''); }
     catch (e) {
       S.loaded = false;
-      el.innerHTML = `<div class="pip-section rr"><p class="pip-title">${title()}</p>
+      el.innerHTML = `<div class="pip-section rr" data-sec="reels"><p class="pip-title">${title()}</p>
         <div class="rr-empty">Could not load reels: ${esc(e.message)}<br><br>
         <button class="rr-btn rr-small" data-act="retry">Retry</button></div></div>`;
       return;
@@ -11691,10 +11868,11 @@ setInterval(loadPipeline, 30000);
     el.addEventListener('click', async e => {
       const t = e.target.closest('[data-act],[data-filter],[data-open]');
       if (!t || !el.contains(t)) return;
-      if (t.dataset.filter) { S.filter = t.dataset.filter; return renderList(); }
+      if (t.dataset.filter) { S.filter = t.dataset.filter; S.limit = 0; return renderList(); }
       if (t.dataset.open) return openStudio(t.dataset.open);
       switch (t.dataset.act) {
         case 'retry': return loadReels(true);
+        case 'more': S.limit = (S.limit || (window.matchMedia('(min-width:1024px)').matches ? 24 : 12)) * 2; return renderList();
         case 'settings': if (window.openSettings) openSettings(); return;
         case 'scope': S.all = !S.all; S.clips = []; return loadReels(true);
         case 'sync':
@@ -11812,9 +11990,12 @@ setInterval(loadPipeline, 30000);
 
   function initState(d) {
     const clip = d.clip || {}, a = d.analysis, ov = d.override || {};
+    // A saved edit keeps its trim; otherwise start from the whole clip. The AI's
+    // pick stays one tap away on "Use AI pick".
     let ws = ov.window_start, we = ov.window_end;
+    if (ws == null && +clip.duration > 0) { ws = 0; we = +clip.duration; }
     if (ws == null && a) { ws = a.primary_start; we = a.primary_end; }
-    if (ws == null) { ws = 0; we = Math.min(clip.duration || 15, 15); }
+    if (ws == null) { ws = 0; we = 15; }
     const subsEdited = Array.isArray(ov.subtitles);
     Object.assign(E, {
       d, clip, a, ws: +ws, we: +we, dur: +clip.duration || Math.max(+we, 1),
@@ -11875,9 +12056,10 @@ setInterval(loadPipeline, 30000);
       <span class="rrs-time"></span>
     </div>
     <div class="rrs-tl" aria-label="Timeline">
-      <div class="rrs-lane rrs-lane-win"></div>
+      <div class="rrs-winwrap"><div class="rrs-strip"></div><div class="rrs-lane rrs-lane-win"></div></div>
       <div class="rrs-lane rrs-lane-zoom"></div>
       <div class="rrs-lane rrs-lane-sub"></div>
+      <div class="rrs-ruler"></div>
       <div class="rrs-ph"></div>
     </div>
   </div>
@@ -11897,6 +12079,7 @@ setInterval(loadPipeline, 30000);
       if (isFinite(E.v.duration) && E.v.duration > 0) E.dur = E.v.duration;
       E.v.currentTime = E.ws;
       renderTimeline();
+      buildStrip();
     });
     E.v.src = API + '/clips/' + enc(E.id) + '/source';
     E.ro = new ResizeObserver(layout);
@@ -12086,6 +12269,20 @@ setInterval(loadPipeline, 30000);
       E.subs.map((s, i) => blk('s', i, +s.start, +s.end, esc(String(s.text || '')), i === E.selSub)).join('');
     drawPath();
   }
+  // Filmstrip and seconds ruler depend only on the clip, so they are built once,
+  // not on every timeline repaint during a drag.
+  function buildStrip() {
+    const strip = q('.rrs-strip', E.el), ruler = q('.rrs-ruler', E.el);
+    if (!strip || !ruler || !(E.dur > 0)) return;
+    const n = window.innerWidth >= 960 ? 14 : 7;
+    strip.innerHTML = Array.from({ length: n }, (_, i) =>
+      `<img loading="lazy" alt="" src="${API}/clips/${enc(E.id)}/frame?t=${f1((i + 0.5) * E.dur / n)}">`).join('');
+    const step = E.dur <= 12 ? 1 : E.dur <= 30 ? 5 : E.dur <= 90 ? 10 : 30;
+    const marks = [];
+    for (let t = 0; t < E.dur - step * 0.4; t += step) marks.push(t);
+    marks.push(E.dur);
+    ruler.innerHTML = marks.map(t => `<span style="left:${pct(t)}">${t === E.dur ? f1(t) : t}s</span>`).join('');
+  }
   function drawPath() {
     const cv = E && q('.rrs-path', E.el);
     if (!cv) return;
@@ -12204,6 +12401,13 @@ setInterval(loadPipeline, 30000);
       activeVideo().pause();
       seek(nowTs() + (e.shiftKey ? 1 : 0.1) * (e.key === 'ArrowLeft' ? -1 : 1));
     } else if (e.key === 'Escape') closeStudio(false);
+    else if (!e.metaKey && !e.ctrlKey && !e.altKey && /^[ioa]$/i.test(e.key)) {
+      const ts = nowTs(), k = e.key.toLowerCase();
+      if (k === 'i') E.ws = r2(clamp(ts, 0, E.we - 0.5));
+      else if (k === 'o') E.we = r2(clamp(ts, E.ws + 0.5, E.dur));
+      else { E.ws = 0; E.we = r2(E.dur); }
+      E.dirty = true; renderPanel(); renderTimeline();
+    }
   }
   function onInput(e) {
     const t = e.target, k = t.dataset.in;
@@ -12266,6 +12470,7 @@ setInterval(loadPipeline, 30000);
       case 'set-ws': E.ws = r2(clamp(ts, 0, E.we - 0.5)); break;
       case 'set-we': E.we = r2(clamp(ts, E.ws + 0.5, E.dur)); break;
       case 'aiwin': if (!E.a) return; E.ws = +E.a.primary_start; E.we = +E.a.primary_end; seek(E.ws); break;
+      case 'fullwin': E.ws = 0; E.we = r2(E.dur); seek(0); break;
       case 'zoom-add': {
         if (E.view !== 'live') setView('live');
         const st = r2(clamp(ts, 0, Math.max(0, E.dur - 0.5)));
@@ -12316,11 +12521,14 @@ setInterval(loadPipeline, 30000);
       return `<div class="rrs-kv">Reel <b>${f1(E.ws)}s → ${f1(E.we)}s</b> · <b>${f1(E.we - E.ws)}s</b> long</div>
         <div class="rrs-row"><button class="rr-btn" data-a="set-ws">⇤ Start here</button>
           <button class="rr-btn" data-a="set-we">End here ⇥</button></div>
-        <div class="rrs-row"><button class="rr-btn rr-small" data-a="aiwin"${a ? '' : ' disabled'}>✨ Use AI pick${a ? ` (${f1(a.primary_start)}–${f1(a.primary_end)}s)` : ''}</button></div>
+        <div class="rrs-row"><button class="rr-btn rr-small" data-a="fullwin">↔ Whole clip</button>
+          <button class="rr-btn rr-small" data-a="aiwin"${a ? '' : ' disabled'}>✨ Use AI pick${a ? ` (${f1(a.primary_start)}–${f1(a.primary_end)}s)` : ''}</button></div>
         <p class="rrs-muted">Drag the cyan handles on the timeline, or play to a moment and tap Start / End here.</p>
         ${a ? `<p class="rrs-muted"><b>AI:</b> featured ${esc(String(a.featured_label || a.featured_player || '?'))}
           (confidence ${esc(String(a.identity_confidence || '?'))}) · ${(a.subtitle_segments || []).length} subtitle lines</p>`
-            : '<p class="rrs-muted">No AI analysis for this clip yet — renders use your trim, the sender as label, and no subtitles unless you add some.</p>'}`;
+            : '<p class="rrs-muted">No AI analysis for this clip yet — renders use your trim, the sender as label, and no subtitles unless you add some.</p>'}
+        <p class="rrs-keys"><kbd>Space</kbd> play · <kbd>←</kbd> <kbd>→</kbd> step 0.1s (<kbd>Shift</kbd> 1s)<br>
+          <kbd>I</kbd> start here · <kbd>O</kbd> end here · <kbd>A</kbd> whole clip · <kbd>Esc</kbd> close</p>`;
     },
     crop() {
       const seg = [['ai', 'AI tracking'], ['center', 'Center'], ['manual', 'Manual']]
@@ -12373,7 +12581,8 @@ setInterval(loadPipeline, 30000);
     const p = q('.rrs-panel', E.el);
     qa('.rrs-tab', E.el).forEach(b => b.classList.toggle('on', b.dataset.tool === E.tool));
     p.hidden = !E.tool;
-    if (E.tool) p.innerHTML = PANELS[E.tool]();
+    const tabName = { trim: 'Trim', crop: 'Crop', zoom: 'Zoom', text: 'Text', subs: 'Subtitles' }[E.tool];
+    if (E.tool) p.innerHTML = `<p class="rrs-ptitle">${tabName}</p>` + PANELS[E.tool]();
   }
 
   /* ---------- studio: actions ---------- */

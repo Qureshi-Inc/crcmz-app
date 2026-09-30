@@ -765,6 +765,10 @@ def _clip_media(clip_id: str, row: dict | None) -> dict:
     import urllib.parse
     if not row:
         return {"clip_id": clip_id, "error": "no clip with that clip_id"}
+    if row.get("archive_status") == "purged":
+        return {"clip_id": clip_id,
+                "error": "clip media was cleared by the 14-day retention after the month's montage",
+                "archive_status": "purged"}
     if row.get("archive_status") != "archived" or not row.get("storage_key_original"):
         return {"clip_id": clip_id,
                 "error": "clip is not archived, so no media is stored for it",
@@ -2498,7 +2502,10 @@ def _task_release(caller: dict, task_id: str = "", note: str = "") -> dict:
     "coaching clip, not archived, not captured in that month, already used in "
     "another month's montage, or byte-identical to another selected clip — and "
     "refused outright if the Reel Review veto list cannot be read. Saves a "
-    "record only; nothing is posted. Rate limit: 30 per hour.",
+    "record only; nothing is posted. Once the record holds both the Instagram and "
+    "TikTok links, the platform clears stored clip media older than 14 days (the "
+    "month-end retention run) and returns its summary as `retention` — record "
+    "the links only after the montage is live. Rate limit: 30 per hour.",
     {"type": "object",
      "properties": {
          "month":      {"type": "string", "description": "YYYY-MM."},
@@ -2563,7 +2570,17 @@ def _montage_record(caller: dict, month: str = "", clip_ids: list | None = None,
                           json.dumps({"month": month, "clips": len(rec["clip_ids"]),
                                       "ig": bool(rec["ig_url"]), "tiktok": bool(rec["tiktok_url"])}),
                           "ok")
-    return {"ok": True, "record": rec}
+    out = {"ok": True, "record": rec}
+    # A published montage (both links in) is the month's cue to clear media older
+    # than 14 days. It never fails the record.
+    if rec.get("ig_url") and rec.get("tiktok_url"):
+        try:
+            import clip_retention
+            out["retention"] = clip_retention.run()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("montage_record: retention run failed: %s", e)
+            out["retention"] = {"ok": False, "error": str(e)}
+    return out
 
 
 # ── WhatsApp reaction tracking ───────────────────────────────────────────────

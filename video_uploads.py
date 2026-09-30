@@ -124,6 +124,7 @@ def init() -> None:
         for col_sql in [
             "ALTER TABLE upload_sessions ADD COLUMN file_key TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE video_posts ADD COLUMN dm_notified_at REAL",
+            "ALTER TABLE video_posts ADD COLUMN media_purged_at REAL",
         ]:
             try:
                 db.execute(col_sql)
@@ -554,6 +555,23 @@ def release_dm_notification(video_post_id: str) -> None:
     with _lock, _conn() as db:
         db.execute("UPDATE video_posts SET dm_notified_at=NULL WHERE video_post_id=?",
                    (video_post_id,))
+        db.commit()
+
+
+def purgeable_before(ts: float) -> list[dict]:
+    """Posted or skipped uploads older than `ts` whose media is still stored.
+    Queued videos are never returned, whatever their age."""
+    with _lock, _conn() as db:
+        rows = db.execute("SELECT video_post_id, storage_key FROM video_posts"
+                          " WHERE status IN ('posted','skipped') AND uploaded_at < ?"
+                          " AND media_purged_at IS NULL", (ts,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_media_purged(video_post_id: str) -> None:
+    with _lock, _conn() as db:
+        db.execute("UPDATE video_posts SET media_purged_at=? WHERE video_post_id=?",
+                   (time.time(), video_post_id))
         db.commit()
 
 
