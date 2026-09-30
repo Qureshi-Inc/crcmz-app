@@ -11109,7 +11109,7 @@ function upRender(){
   const d = upData, el = $('upload-inner');
   const L = d.limits;
   const form = d.can_upload
-    ? '<input type="file" id="upFile" class="up-file" accept="video/mp4,video/quicktime,.mp4,.mov" onchange="if(this.files&&this.files[0])upSend()">'+
+    ? '<input type="file" id="upFile" class="up-file" accept="video/*" onchange="if(this.files&&this.files[0])upSend()">'+
       '<input type="text" id="upCap" class="up-in" maxlength="'+L.max_caption+'" placeholder="Caption (optional)">'+
       (d.open_session && d.open_session.received
         ? '<div class="up-msg">Unfinished upload: <b>'+esc(d.open_session.filename)+'</b> ('+
