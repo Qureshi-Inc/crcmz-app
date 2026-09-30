@@ -1,0 +1,731 @@
+{
+  "detector": "detect.mjs",
+  "version": 1,
+  "attribution": "Rule subset ported from Impeccable (pbakaus/impeccable), Apache-2.0, with modifications — see file header. Catalog: references/visual/ai-tells.md.",
+  "status": "ran",
+  "sources": [
+    ".design-foundations/build/components.html"
+  ],
+  "rules": 16,
+  "findings": [
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"topbar-avatar-btn\"> is a card inside a card ancestor",
+      "line": 1401
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"minibar-btn\"> is a card inside a card ancestor",
+      "line": 1446
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"minibar-btn return\"> is a card inside a card ancestor",
+      "line": 1447
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"minibar-btn leave\"> is a card inside a card ancestor",
+      "line": 1448
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div> is a card inside a card ancestor",
+      "line": 1496
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"topbar-avatar-btn\"> is a card inside a card ancestor",
+      "line": 1506
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div> is a card inside a card ancestor",
+      "line": 1509
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"topbar-avatar-btn\"> is a card inside a card ancestor",
+      "line": 1524
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div> is a card inside a card ancestor",
+      "line": 1527
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div> is a card inside a card ancestor",
+      "line": 1532
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c1\"> is a card inside a card ancestor",
+      "line": 1570
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c2\"> is a card inside a card ancestor",
+      "line": 1574
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c3\"> is a card inside a card ancestor",
+      "line": 1578
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c4 fired\"> is a card inside a card ancestor",
+      "line": 1582
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c5\"> is a card inside a card ancestor",
+      "line": 1586
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile add\"> is a card inside a card ancestor",
+      "line": 1590
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c1 disabled\"> is a card inside a card ancestor",
+      "line": 1603
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c2 loading\"> is a card inside a card ancestor",
+      "line": 1608
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile-spinner\"> is a card inside a card ancestor",
+      "line": 1609
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c3\"> is a card inside a card ancestor",
+      "line": 1613
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"send-btn\"> is a card inside a card ancestor",
+      "line": 1633
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"send-btn\"> is a card inside a card ancestor",
+      "line": 1634
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"send-btn\"> is a card inside a card ancestor",
+      "line": 1635
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"send-btn\"> is a card inside a card ancestor",
+      "line": 1636
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"send-btn\"> is a card inside a card ancestor",
+      "line": 1637
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"send-btn\"> is a card inside a card ancestor",
+      "line": 1638
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"sheet-panel\"> is a card inside a card ancestor",
+      "line": 1659
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<input class=\"sheet-input\"> is a card inside a card ancestor",
+      "line": 1664
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"sheet-send\"> is a card inside a card ancestor",
+      "line": 1666
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"handle-row\"> is a card inside a card ancestor",
+      "line": 1677
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"call-chip\"> is a card inside a card ancestor",
+      "line": 1680
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"presence-avatar\"> is a card inside a card ancestor",
+      "line": 1697
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<span class=\"presence-dot online\"> is a card inside a card ancestor",
+      "line": 1698
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"presence-avatar\"> is a card inside a card ancestor",
+      "line": 1709
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<span class=\"presence-dot offline\"> is a card inside a card ancestor",
+      "line": 1710
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"stat-tile\"> is a card inside a card ancestor",
+      "line": 1735
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"stat-tile\"> is a card inside a card ancestor",
+      "line": 1739
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"stat-tile\"> is a card inside a card ancestor",
+      "line": 1743
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"clip-card\"> is a card inside a card ancestor",
+      "line": 1757
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"dialog\"> is a card inside a card ancestor",
+      "line": 1778
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"btn-secondary\"> is a card inside a card ancestor",
+      "line": 1782
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"btn-primary\"> is a card inside a card ancestor",
+      "line": 1783
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"toast success\"> is a card inside a card ancestor",
+      "line": 1795
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"toast error\"> is a card inside a card ancestor",
+      "line": 1800
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"toast info\"> is a card inside a card ancestor",
+      "line": 1805
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"btn-primary\"> is a card inside a card ancestor",
+      "line": 1839
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"minibar-demo\"> is a card inside a card ancestor",
+      "line": 1869
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"minibar-btn\"> is a card inside a card ancestor",
+      "line": 1873
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"minibar-btn return\"> is a card inside a card ancestor",
+      "line": 1874
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"minibar-btn leave\"> is a card inside a card ancestor",
+      "line": 1875
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"minibar-btn\"> is a card inside a card ancestor",
+      "line": 1880
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"minibar-btn return\"> is a card inside a card ancestor",
+      "line": 1881
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"minibar-btn leave\"> is a card inside a card ancestor",
+      "line": 1882
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<select class=\"sort-select\"> is a card inside a card ancestor",
+      "line": 1925
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"more-tab-bar-mock\"> is a card inside a card ancestor",
+      "line": 2013
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"more-sheet-panel\"> is a card inside a card ancestor",
+      "line": 2031
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"panel-demo\"> is a card inside a card ancestor",
+      "line": 2080
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"panel-sidebar\"> is a card inside a card ancestor",
+      "line": 2086
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"panel-ctrl-btn\"> is a card inside a card ancestor",
+      "line": 2100
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"panel-ctrl-btn\"> is a card inside a card ancestor",
+      "line": 2101
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c1\"> is a card inside a card ancestor",
+      "line": 2105
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c2\"> is a card inside a card ancestor",
+      "line": 2108
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c4 fired\"> is a card inside a card ancestor",
+      "line": 2111
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c3\"> is a card inside a card ancestor",
+      "line": 2115
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile c5\"> is a card inside a card ancestor",
+      "line": 2118
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"tile add\"> is a card inside a card ancestor",
+      "line": 2121
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<input class=\"panel-input\"> is a card inside a card ancestor",
+      "line": 2127
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"panel-send\"> is a card inside a card ancestor",
+      "line": 2128
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div> is a card inside a card ancestor",
+      "line": 2134
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"panel-demo\"> is a card inside a card ancestor",
+      "line": 2143
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"panel-sidebar collapsed\"> is a card inside a card ancestor",
+      "line": 2145
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div> is a card inside a card ancestor",
+      "line": 2156
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div> is a card inside a card ancestor",
+      "line": 2169
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"clip-player\"> is a card inside a card ancestor",
+      "line": 2174
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"play-btn\"> is a card inside a card ancestor",
+      "line": 2176
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"seek-time-tip\"> is a card inside a card ancestor",
+      "line": 2187
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button> is a card inside a card ancestor",
+      "line": 2215
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"player-purged\"> is a card inside a card ancestor",
+      "line": 2220
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"cc-btn on\"> is a card inside a card ancestor",
+      "line": 2239
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"cc-btn off\"> is a card inside a card ancestor",
+      "line": 2244
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"cc-btn on\"> is a card inside a card ancestor",
+      "line": 2250
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"cc-btn off\"> is a card inside a card ancestor",
+      "line": 2255
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"cc-btn disabled\"> is a card inside a card ancestor",
+      "line": 2261
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"cc-btn danger\"> is a card inside a card ancestor",
+      "line": 2267
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"call-auto-mute-banner\"> is a card inside a card ancestor",
+      "line": 2282
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"cc-btn muted-by-huddle\"> is a card inside a card ancestor",
+      "line": 2287
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"cc-btn on\"> is a card inside a card ancestor",
+      "line": 2292
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"cc-btn danger\"> is a card inside a card ancestor",
+      "line": 2297
+    },
+    {
+      "source": ".design-foundations/build/components.html",
+      "rule": "em-dash-overuse",
+      "category": "copy",
+      "severity": "medium",
+      "evidence": "46 em-dashes in body copy",
+      "line": null
+    }
+  ],
+  "counts": {
+    "total": 89,
+    "byRule": {
+      "nested-cards": 88,
+      "em-dash-overuse": 1
+    }
+  }
+}

@@ -1,0 +1,1899 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CRCMZ Data Surfaces — Phase 6</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ============================================================
+       DESIGN.md LOCKED TOKENS — verbatim (Phase 3, owner 2026-09-30)
+    ============================================================ */
+    :root {
+      color-scheme: dark;
+      --bg: #05030f;
+      --neon-magenta: #ff2fd6;
+      --neon-cyan: #22e6ff;
+      --neon-lime: #8cff2b;
+      --neon-violet: #9d5cff;
+      --neon-gold: #ffd24a;
+      --aurora-magenta: rgba(255,47,214,.32);
+      --aurora-cyan: rgba(34,230,255,.30);
+      --aurora-violet: rgba(157,92,255,.28);
+      --grid-cyan: rgba(34,230,255,.035);
+      --grid-magenta: rgba(255,47,214,.03);
+      --grid-opacity: .5;
+      --glass: rgba(18,10,38,.66);
+      --glass-border: rgba(255,60,200,.22);
+      --sheet: rgba(12,8,28,.92);
+      --chrome: rgba(8,5,20,.86);
+      --ink: #0b0616;
+      --text: #f3ecff;
+      --text-dim: #9d8fc4;
+      --magenta-text: #ff5ce0;
+      --cyan-text: #22e6ff;
+      --lime-text: #8cff2b;
+      --gold-text: #ffd24a;
+      --violet-text: #c1a5ff;
+      --magenta-fill: #ff2fd6; --on-magenta-fill: var(--ink);
+      --cyan-fill: #22e6ff;    --on-cyan-fill: var(--ink);
+      --lime-fill: #8cff2b;    --on-lime-fill: var(--ink);
+      --gold-fill: #ffd24a;    --on-gold-fill: var(--ink);
+      --violet-fill-deep: #7a3cf0;
+      --font-display: "Orbitron","Eurostile","Arial Black",sans-serif;
+      --font-body: "Rajdhani","Barlow Semi Condensed","Arial Narrow",sans-serif;
+      --text-xs: 0.8125rem;
+      --text-sm: 0.9375rem;
+      --text-base: 1.0625rem;
+      --text-lg: 1.25rem;
+      --text-xl: clamp(1.5rem,1.412rem + 0.376vw,1.75rem);
+      --text-2xl: clamp(1.8125rem,1.658rem + 0.657vw,2.25rem);
+      --text-3xl: clamp(2.1875rem,1.967rem + 0.939vw,2.8125rem);
+      --text-4xl: clamp(2.625rem,2.317rem + 1.315vw,3.5rem);
+      --leading-body: 1.45;
+      --leading-display: 1.1;
+      --tracking-caps: .06em;
+      --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px;
+      --space-5:20px; --space-6:24px; --space-8:32px;
+      --radius-sm:8px; --radius-md:12px; --radius-lg:16px;
+      --border-control: #8d78c4;
+      --interactive-text: var(--cyan-text);
+      --live-text: var(--lime-text);
+      --achievement-text: var(--gold-text);
+      --ambient-text: var(--violet-text);
+      --error: #ff958d;
+      --surface: var(--glass);
+      --surface-raised: var(--sheet);
+      --gutter: var(--space-4);
+    }
+    @media (min-width:1024px) { :root { --gutter: var(--space-6); } }
+
+    /* ── Aurora + grid ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font: 500 var(--text-base)/var(--leading-body) var(--font-body);
+      min-height: 100vh; padding: var(--space-4);
+    }
+    body::before {
+      content:""; position:fixed; inset:-30% -10%; z-index:-2; pointer-events:none;
+      background:
+        radial-gradient(38% 40% at 18% 12%, var(--aurora-magenta), transparent 60%),
+        radial-gradient(40% 40% at 84% 18%, var(--aurora-cyan), transparent 60%),
+        radial-gradient(46% 42% at 55% 96%, var(--aurora-violet), transparent 62%);
+      filter:blur(34px); will-change:transform;
+      animation:drift 22s ease-in-out infinite alternate;
+    }
+    @keyframes drift { to { transform:translate3d(4%,3%,0) scale(1.12); } }
+    body::after {
+      content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
+      opacity:var(--grid-opacity);
+      background-image:linear-gradient(var(--grid-cyan) 1px,transparent 1px),
+                       linear-gradient(90deg,var(--grid-magenta) 1px,transparent 1px);
+      background-size:40px 40px;
+    }
+    @media (prefers-reduced-motion:reduce) { body::before { animation:none; } }
+
+    /* ── Layout ── */
+    .page { max-width:1280px; margin:0 auto; }
+    .page-title {
+      font: 800 var(--text-2xl)/1.1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      color: var(--cyan-text);
+      margin-bottom: var(--space-6);
+      padding-bottom: var(--space-4);
+      border-bottom: 1px solid var(--glass-border);
+    }
+    .section { margin-bottom: var(--space-8); }
+    .section-title {
+      font: 700 var(--text-lg)/1.1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--text);
+      margin-bottom: var(--space-4);
+      display: flex; align-items: center; gap: var(--space-3);
+    }
+    .section-title .tag {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+      background: rgba(255,255,255,.06);
+      padding: 2px var(--space-2);
+      border-radius: var(--radius-sm);
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      backdrop-filter: blur(14px) saturate(1.2);
+    }
+    .card-label {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: var(--space-1);
+    }
+
+    /* ── Stat tiles ── */
+    .stat-grid { display:grid; gap:var(--space-3); }
+    .stat-grid-2 { grid-template-columns:1fr 1fr; }
+    .stat-grid-3 { grid-template-columns:1fr 1fr 1fr; }
+    .stat-grid-wa { grid-template-columns:1fr 1fr; }
+    @media (min-width:640px) {
+      .stat-grid-wa { grid-template-columns:repeat(3,1fr); }
+    }
+    @media (min-width:1024px) {
+      .stat-grid-2 { grid-template-columns:repeat(4,1fr); }
+      .stat-grid-wa { grid-template-columns:repeat(6,1fr); }
+    }
+    .stat-tile {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      display:flex; flex-direction:column; gap:var(--space-1);
+    }
+    .stat-numeral {
+      font: 800 var(--text-3xl)/1.1 var(--font-display);
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-numeral.hero {
+      font-size: var(--text-4xl);
+      font-weight: 900;
+    }
+    .stat-label { font-size: var(--text-xs); color: var(--text-dim); }
+
+    /* ── Hype meter ── */
+    .hype-strip {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      display:grid;
+      grid-template-columns: auto 1fr;
+      gap: var(--space-4);
+      align-items: center;
+    }
+    .hype-numeral-block { display:flex; flex-direction:column; gap:2px; min-width:90px; }
+    .hype-numeral {
+      font: 900 var(--text-4xl)/1.0 var(--font-display);
+      font-variant-numeric: tabular-nums;
+      color: var(--neon-lime);
+      line-height:1;
+    }
+    .hype-label { font: 600 var(--text-xs) var(--font-body); color: var(--text-dim); }
+    .hype-max { font: 600 var(--text-xs) var(--font-body); color: var(--text-dim); }
+    .hype-bar-block { flex:1; }
+    .hype-bar-track {
+      height:8px; border-radius:4px;
+      background: rgba(255,255,255,.08);
+      position:relative;
+      margin-bottom: var(--space-2);
+    }
+    .hype-bar-fill {
+      height:100%; border-radius:4px;
+      background: var(--neon-lime);
+      box-shadow: 0 0 10px rgba(140,255,43,.5);
+    }
+    .hype-ticks {
+      display:flex; justify-content:space-between;
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+    }
+    .hype-tick-mark {
+      position:absolute; top:-4px; width:1px; height:16px;
+      background: rgba(255,255,255,.2);
+    }
+
+    /* ── Compact stat chips (squad strip) ── */
+    .stat-chips { display:flex; gap:var(--space-4); }
+    .stat-chip { display:flex; flex-direction:column; gap:2px; }
+    .stat-chip-num {
+      font: 800 var(--text-3xl)/1.0 var(--font-display);
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-chip-label { font: 600 var(--text-xs) var(--font-body); color: var(--text-dim); }
+
+    /* ── Bar chart (vertical) ── */
+    .bar-chart-wrap {
+      display:flex; flex-direction:column; gap:var(--space-3);
+    }
+    .bar-chart-controls {
+      display:flex; gap:var(--space-2); align-items:center;
+    }
+    .chart-toggle {
+      font: 600 var(--text-sm) var(--font-body);
+      background: rgba(255,255,255,.06);
+      border: 1px solid var(--border-control);
+      border-radius: var(--radius-md);
+      color: var(--text-dim);
+      padding: var(--space-1) var(--space-3);
+      cursor:pointer;
+      min-height: 32px;
+    }
+    .chart-toggle.active {
+      background: rgba(34,230,255,.1);
+      border-color: var(--neon-cyan);
+      color: var(--cyan-text);
+    }
+    .bar-chart-area {
+      position:relative;
+      height:160px;
+      overflow-x:auto;
+      overflow-y:hidden;
+    }
+    .bar-chart-inner {
+      display:flex;
+      align-items:flex-end;
+      gap:3px;
+      height:100%;
+      min-width:100%;
+      padding-bottom: 24px; /* room for x labels */
+    }
+    .bar-item {
+      display:flex; flex-direction:column; align-items:center;
+      justify-content:flex-end;
+      gap:2px;
+      flex-shrink:0;
+      width:18px;
+      height:100%;
+      position:relative;
+    }
+    .bar-item:last-child { width: 28px; }
+    .bar-rect {
+      width:100%;
+      border-radius:2px 2px 0 0;
+      min-height:2px;
+      transition: opacity .1s;
+      cursor:pointer;
+    }
+    .bar-rect:focus { outline: 2px solid var(--neon-cyan); outline-offset:1px; }
+    .bar-x-label {
+      position:absolute;
+      bottom:0;
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+      white-space:nowrap;
+      transform:translateX(-50%);
+      left:50%;
+    }
+    .bar-gridline {
+      position:absolute; left:0; right:0; height:1px;
+      background: rgba(141,120,196,.25);
+      pointer-events:none;
+    }
+    .bar-y-label {
+      position:absolute; left:-28px;
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+      transform:translateY(50%);
+    }
+
+    /* ── Heatmap ── */
+    .heatmap-wrap {
+      overflow-x:auto;
+    }
+    .heatmap-grid {
+      display:grid;
+      grid-template-columns: 36px repeat(24, 1fr);
+      grid-template-rows: 20px repeat(7, 1fr);
+      gap:2px;
+      min-width: 560px;
+    }
+    .hm-corner { grid-column:1; grid-row:1; }
+    .hm-hour-label {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+      text-align:center;
+      display:flex; align-items:center; justify-content:center;
+    }
+    .hm-day-label {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+      display:flex; align-items:center; padding-right: var(--space-2);
+      white-space:nowrap;
+    }
+    .hm-cell {
+      border-radius:2px;
+      height: 28px;
+      cursor:pointer;
+      position:relative;
+    }
+    .hm-cell:focus { outline: 2px solid var(--neon-cyan); }
+    @media (min-width:1024px) { .hm-cell { height: 32px; } }
+
+    /* ── Horizontal bar chart ── */
+    .hbar-list { display:flex; flex-direction:column; gap:var(--space-2); }
+    .hbar-item { display:flex; align-items:center; gap:var(--space-3); }
+    .hbar-label {
+      font: 600 var(--text-sm) var(--font-body);
+      color: var(--text);
+      min-width: 100px;
+      max-width: 120px;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .hbar-track {
+      flex:1;
+      height:12px;
+      background: rgba(255,255,255,.06);
+      border-radius:6px;
+      overflow:hidden;
+    }
+    .hbar-fill {
+      height:100%;
+      border-radius:6px;
+    }
+    .hbar-value {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+      min-width: 40px;
+      text-align:right;
+    }
+
+    /* ── Show as table disclosure ── */
+    .show-table-disclosure {
+      margin-top: var(--space-3);
+    }
+    .show-table-disclosure summary {
+      font: 600 var(--text-sm) var(--font-body);
+      color: var(--cyan-text);
+      cursor:pointer;
+      list-style:none;
+      display:inline-flex; align-items:center; gap:var(--space-1);
+    }
+    .show-table-disclosure summary::before { content:"▶"; font-size:10px; transition:.1s; }
+    .show-table-disclosure[open] summary::before { content:"▼"; }
+    .data-table {
+      width:100%; border-collapse:collapse;
+      margin-top: var(--space-2);
+      font: 500 var(--text-sm) var(--font-body);
+    }
+    .data-table th {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+      text-align:left;
+      padding: var(--space-2) var(--space-3);
+      border-bottom: 1px solid var(--glass-border);
+    }
+    .data-table td {
+      padding: var(--space-1) var(--space-3);
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      color: var(--text);
+    }
+    .data-table tr:last-child td { border-bottom: none; }
+
+    /* ── Member cards (WA mobile) ── */
+    .member-cards { display:flex; flex-direction:column; gap:var(--space-3); }
+    .member-card {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      padding: var(--space-3) var(--space-4);
+    }
+    .member-name {
+      font: 700 var(--text-base) var(--font-body);
+      color: var(--text);
+      margin-bottom: var(--space-2);
+    }
+    .member-chips { display:flex; gap:var(--space-4); flex-wrap:wrap; }
+    .member-chip { display:flex; flex-direction:column; gap:1px; }
+    .member-chip-val {
+      font: 800 var(--text-xl)/1.0 var(--font-display);
+      font-variant-numeric: tabular-nums;
+      color: var(--cyan-text);
+    }
+    .member-chip-key {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+    }
+
+    /* ── Clips manifest ── */
+    .clip-manifest { display:flex; flex-direction:column; gap:var(--space-2); }
+    .clip-row {
+      display:flex; align-items:center; gap:var(--space-3);
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius-sm);
+      background: rgba(255,255,255,.04);
+    }
+    .clip-status-dot {
+      width:8px; height:8px; border-radius:50%;
+      flex-shrink:0;
+    }
+    .clip-row-sender { font: 600 var(--text-sm) var(--font-body); flex:1; }
+    .clip-row-dur { font: 600 var(--text-xs) var(--font-body); color: var(--text-dim); }
+    .clip-row-status { font: 600 var(--text-xs) var(--font-body); min-width: 60px; text-align:right; }
+
+    /* ── Awards grid ── */
+    .awards-grid {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap: var(--space-3);
+    }
+    @media (min-width:640px) {
+      .awards-grid { grid-template-columns:repeat(3,1fr); }
+    }
+    @media (min-width:1024px) {
+      .awards-grid { grid-template-columns:repeat(5,1fr); }
+    }
+    .award-card {
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      padding: var(--space-3);
+      display:flex; flex-direction:column; gap:var(--space-1);
+    }
+    .award-icon { font-size: 20px; line-height:1; }
+    .award-title {
+      font: 700 var(--text-sm) var(--font-body);
+      color: var(--text-dim);
+    }
+    .award-winner {
+      font: 800 var(--text-base) var(--font-body);
+      color: var(--gold-text);
+    }
+
+    /* ── Divider ── */
+    .divider { height:1px; background:var(--glass-border); margin: var(--space-6) 0; }
+
+    /* ── Split bar (head-to-head DS-SL-09) ── */
+    .split-bar-row {
+      display:flex; align-items:center; gap:var(--space-2); margin-bottom:var(--space-2);
+    }
+    .split-bar-label {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim);
+      min-width: 70px;
+      text-align:center;
+    }
+    .split-bar-track {
+      flex:1; display:flex; height:12px;
+      background: rgba(255,255,255,.06);
+      border-radius:6px;
+      overflow:hidden;
+    }
+    .split-bar-left {
+      height:100%;
+      border-radius:6px 0 0 6px;
+      background: var(--neon-magenta);
+      margin-left:auto;
+    }
+    .split-bar-right {
+      height:100%;
+      border-radius:0 6px 6px 0;
+      background: var(--neon-cyan);
+    }
+    .split-bar-u1 {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--magenta-text);
+      min-width:40px; text-align:right;
+    }
+    .split-bar-u2 {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--cyan-text);
+      min-width:40px; text-align:left;
+    }
+    /* ── Tappable chart bars: cyan focus ring per the role ── */
+    .bar-rect:focus-visible,
+    .hm-cell:focus-visible {
+      outline: 2px solid var(--neon-cyan);
+      outline-offset: 1px;
+    }
+
+    /* ── DS-WA-MB: member desktop table ── */
+    .member-desktop-table { display:none; }
+    .member-table {
+      width:max-content; min-width:100%;
+      border-collapse:collapse;
+      font: 500 var(--text-sm)/1.3 var(--font-body);
+    }
+    .member-table th, .member-table td {
+      padding: var(--space-2) var(--space-3);
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      white-space: nowrap; text-align:left;
+    }
+    .member-table th {
+      font: 600 var(--text-xs) var(--font-body);
+      color: var(--text-dim); text-transform:uppercase; letter-spacing:.06em;
+      position:sticky; top:0;
+      background: rgba(12,8,28,.97);
+      border-bottom: 1px solid var(--glass-border);
+      z-index:1;
+    }
+    .member-table th button {
+      background:none; border:none; color:inherit; font:inherit;
+      cursor:pointer; display:flex; align-items:center; gap:4px; padding:0;
+      min-height:32px;
+    }
+    .member-table th button[aria-sort="ascending"]::after  { content:"↑"; color:var(--cyan-text); }
+    .member-table th button[aria-sort="descending"]::after { content:"↓"; color:var(--cyan-text); }
+    .member-table th button[aria-sort="none"]::after { content:"↕"; opacity:.35; font-size:10px; }
+    .col-frozen {
+      position:sticky; left:0;
+      background: rgba(12,8,28,.97);
+      border-right: 1px solid var(--glass-border);
+      z-index:2;
+    }
+    @media (min-width:1024px) {
+      .member-sort-select { display:none; }
+      .member-mobile-only { display:none; }
+      .member-desktop-table { display:block; }
+    }
+
+    /* ── DS-WA-RT: vertical histogram ── */
+    .rt-hist {
+      display:flex; align-items:flex-end; gap:var(--space-2);
+      height:120px; padding-bottom:28px; position:relative;
+    }
+    .rt-hist-bar-item {
+      display:flex; flex-direction:column; align-items:center;
+      flex:1; height:100%; justify-content:flex-end;
+    }
+    .rt-hist-bar {
+      width:100%; background:var(--neon-gold); border-radius:3px 3px 0 0;
+      min-height:4px; position:relative;
+    }
+    .rt-hist-val {
+      font: 700 var(--text-xs) var(--font-body);
+      color: var(--text); margin-bottom:3px;
+    }
+    .rt-hist-label {
+      position:absolute; bottom:-24px;
+      font: 600 var(--text-xs) var(--font-body); color:var(--text-dim);
+      text-align:center; width:120%; left:-10%;
+    }
+
+    /* ── Heatmap right-edge scroll fade (mobile affordance) ── */
+    .heatmap-fade-wrap { position:relative; }
+    .heatmap-fade-wrap::after {
+      content:""; pointer-events:none;
+      position:absolute; top:0; right:0; bottom:0; width:48px;
+      background:linear-gradient(to right, transparent, rgba(18,10,38,.85));
+      z-index:1;
+    }
+    @media (min-width:1024px) {
+      .heatmap-fade-wrap::after { display:none; }
+    }
+
+    /* ── Desktop grid adjustments ── */
+    @media (min-width:1024px) {
+      body { padding: var(--space-8); }
+      .two-col { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-6); }
+      .two-col .full-span { grid-column:1/-1; }
+      .stat-chips { gap:var(--space-8); }
+      #slap-achievements { grid-template-columns:repeat(3,1fr); }
+      #slap-personalities { grid-template-columns:repeat(3,1fr); }
+      #slap-hall { grid-template-columns:repeat(2,1fr); }
+      #squad-stat-chips { display:none; }
+      #squad-stat-tiles { display:grid; }
+    }
+    @media (orientation:portrait) { body::before { inset:-10%; } }
+    .wc-desktop-only { display:none; }
+    @media (min-width:1024px) { .wc-desktop-only { display:flex; } }
+
+    /* ── Achievement / personality / hall cards ── */
+    .achv-card {
+      background:var(--glass); border:1px solid var(--glass-border);
+      border-radius:var(--radius-md); padding:var(--space-3);
+    }
+    .achv-card.locked { opacity:.45; }
+    .achv-emoji { font-size:24px; margin-bottom:4px; }
+    .achv-name { font:700 var(--text-sm) var(--font-body); color:var(--text); margin-bottom:2px; }
+    .achv-desc { font:500 var(--text-xs) var(--font-body); color:var(--text-dim); }
+    .achv-by   { font:600 var(--text-xs) var(--font-body); color:var(--lime-text); margin-top:4px; }
+    .pers-card {
+      padding:var(--space-3); border-radius:var(--radius-md);
+      background:var(--glass); border-width:1px; border-style:solid;
+    }
+    .pers-user { font:700 var(--text-sm) var(--font-body); color:var(--text); margin-bottom:2px; }
+    .pers-title { font:600 var(--text-sm) var(--font-body); color:var(--magenta-text); }
+    .pers-desc  { font:500 var(--text-xs) var(--font-body); color:var(--text-dim); margin:2px 0; }
+    .pers-meta  { font:600 var(--text-xs) var(--font-body); color:var(--text-dim); }
+    .hall-card {
+      background:var(--glass); border:1px solid var(--glass-border);
+      border-radius:var(--radius-md); padding:var(--space-4);
+      display:flex; gap:var(--space-3); align-items:flex-start;
+    }
+    .hall-emoji { font-size:28px; flex-shrink:0; }
+    .hall-title { font:700 var(--text-base) var(--font-body); color:var(--gold-text); }
+    .hall-desc  { font:500 var(--text-xs) var(--font-body); color:var(--text-dim); margin-top:2px; }
+    .hall-value { font:600 var(--text-sm) var(--font-body); color:var(--text); margin-top:4px; }
+    .on-repeat-row { font:500 var(--text-sm) var(--font-body); color:var(--text); display:flex; gap:6px; align-items:baseline; }
+    .on-repeat-rank { font:700 var(--text-xs) var(--font-body); color:var(--gold-text); min-width:16px; }
+    .hot-row { font:500 var(--text-sm)/1.4 var(--font-body); color:var(--text); }
+    .hot-sub  { font:600 var(--text-xs) var(--font-body); color:var(--text-dim); }
+  </style>
+</head>
+<body>
+<div class="page">
+  <!-- Tap-inspect live region -->
+  <div id="tap-inspect-live" role="status" aria-live="polite" style="position:fixed;bottom:var(--space-4);left:50%;transform:translateX(-50%);background:rgba(12,8,28,.95);border:1px solid var(--border-control);border-radius:var(--radius-md);padding:var(--space-2) var(--space-4);font:600 var(--text-sm) var(--font-body);color:var(--text);z-index:100;pointer-events:none;opacity:0;transition:opacity .15s;white-space:nowrap" aria-atomic="true"></div>
+
+  <h1 class="page-title">Data Surfaces — Phase 6</h1>
+
+  <!-- ====================================================
+       SQUAD COMPACT STRIP: hype meter + stat chips
+  ==================================================== -->
+  <section class="section" aria-label="Squad compact strip">
+    <div class="section-title">Squad Strip <span class="tag">PS-1 · DS-HY · DS-ST</span></div>
+
+    <!-- Hype meter (hero numeral in --text-4xl exercises the unrendered token) -->
+    <div class="hype-strip card" role="img" aria-label="Hype meter: 137 of 150 messages today. On Fire.">
+      <div class="hype-numeral-block">
+        <span class="hype-numeral" style="color:var(--neon-lime)">137</span>
+        <span class="hype-label">🔥🔥 ON FIRE</span>
+        <span class="hype-max">/ 150 max</span>
+      </div>
+      <div class="hype-bar-block">
+        <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-bottom:6px;">Today's Hype</div>
+        <div class="hype-bar-track">
+          <!-- fill at 137/150 = 91.3% -->
+          <div class="hype-bar-fill" style="width:91.3%;background:var(--neon-lime);box-shadow:0 0 12px rgba(140,255,43,.55)"></div>
+          <!-- threshold ticks -->
+          <div class="hype-tick-mark" style="left:0%"></div><!-- 0/150 -->
+          <div class="hype-tick-mark" style="left:10%"></div><!-- 15/150 -->
+          <div class="hype-tick-mark" style="left:26.7%"></div><!-- 40/150 -->
+          <div class="hype-tick-mark" style="left:53.3%"></div><!-- 80/150 -->
+          <div class="hype-tick-mark" style="left:80%"></div><!-- 120/150 -->
+          <div class="hype-tick-mark" style="right:0%"></div><!-- 150/150 -->
+        </div>
+        <div class="hype-ticks">
+          <span>0</span><span>15</span><span>40</span><span>80</span><span>120</span><span>150</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stat chips: Platinums · Top Level · Fav Game -->
+    <div id="squad-stat-chips" style="margin-top:var(--space-4);padding:var(--space-4);background:var(--glass);border:1px solid var(--glass-border);border-radius:var(--radius-lg);display:flex;gap:var(--space-6);align-items:center;flex-wrap:wrap;">
+      <div class="stat-chip">
+        <span class="stat-chip-num" style="color:var(--gold-text)">24</span>
+        <span class="stat-chip-label">Platinums</span>
+      </div>
+      <div style="width:1px;height:36px;background:var(--glass-border)"></div>
+      <div class="stat-chip">
+        <span class="stat-chip-num" style="color:var(--gold-text)">571</span>
+        <span class="stat-chip-label">Top Level</span>
+      </div>
+      <div style="width:1px;height:36px;background:var(--glass-border)"></div>
+      <div class="stat-chip">
+        <span class="stat-chip-num" style="color:var(--lime-text);font-size:var(--text-base);font-family:var(--font-body);">ARC Raider</span>
+        <span class="stat-chip-label">Fav Game</span>
+      </div>
+    </div>
+    <!-- Desktop stat tiles (≥1024px) — full glass cards shown instead of chips -->
+    <div id="squad-stat-tiles" class="stat-grid stat-grid-3" style="margin-top:var(--space-4);display:none">
+      <div class="stat-tile"><span class="stat-numeral" style="color:var(--gold-text)">24</span><span class="stat-label">Platinums</span></div>
+      <div class="stat-tile"><span class="stat-numeral" style="color:var(--gold-text)">571</span><span class="stat-label">Top Level</span></div>
+      <div class="stat-tile"><span class="stat-numeral" style="color:var(--lime-text);font-size:var(--text-lg)">ARC Raider</span><span class="stat-label">Fav Game</span></div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ====================================================
+       WHATSAPP SECTION
+  ==================================================== -->
+  <section class="section" aria-label="WhatsApp analytics">
+    <div class="section-title">WhatsApp Analytics <span class="tag">PS-4 · DS-WA-*</span></div>
+
+    <!-- Stats tiles 2×3 -->
+    <div class="stat-grid stat-grid-wa" style="margin-bottom:var(--space-6);">
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--cyan-text)">12,847</span>
+        <span class="stat-label">Total Messages</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--cyan-text)">8</span>
+        <span class="stat-label">Members</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--gold-text)">847</span>
+        <span class="stat-label">Days Active</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--lime-text)">234</span>
+        <span class="stat-label">Videos</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--lime-text)">156</span>
+        <span class="stat-label">Photos</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--lime-text)">89</span>
+        <span class="stat-label">Media Omitted</span>
+      </div>
+    </div>
+
+    <!-- Awards grid -->
+    <div class="card-label" style="margin-bottom:var(--space-3)">Awards · WA-03</div>
+    <div class="awards-grid" style="margin-bottom:var(--space-6)">
+      <div class="award-card"><span class="award-icon">🗣️</span><span class="award-title">Certified Yapper</span><span class="award-winner">MoizQ</span></div>
+      <div class="award-card"><span class="award-icon">🦉</span><span class="award-title">Night Owl</span><span class="award-winner">ShadowByte</span></div>
+      <div class="award-card"><span class="award-icon">🌅</span><span class="award-title">Early Bird</span><span class="award-winner">PrimeXFusion</span></div>
+      <div class="award-card"><span class="award-icon">📹</span><span class="award-title">Video King</span><span class="award-winner">Gooper99</span></div>
+      <div class="award-card"><span class="award-icon">⚡</span><span class="award-title">Fastest Replier</span><span class="award-winner">MoizQ <span style="color:var(--text-dim);font-weight:500">2.3m</span></span></div>
+      <div class="award-card"><span class="award-icon">👻</span><span class="award-title">Ghost of Month</span><span class="award-winner">AnonRacer</span></div>
+      <div class="award-card"><span class="award-icon">💀</span><span class="award-title">Most 💀</span><span class="award-winner">Gooper99</span></div>
+      <div class="award-card"><span class="award-icon">🔥</span><span class="award-title">Most 🔥</span><span class="award-winner">MoizQ</span></div>
+    </div>
+
+    <!-- Activity timeline (DS-WA-TL) -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Activity Timeline · DS-WA-TL</div>
+      <div class="bar-chart-wrap">
+        <div class="bar-chart-controls">
+          <button class="chart-toggle active" aria-pressed="true">Daily</button>
+          <button class="chart-toggle" aria-pressed="false">Monthly</button>
+        </div>
+        <div class="bar-chart-area" style="padding-left:36px;position:relative;">
+          <!-- Gridlines -->
+          <div class="bar-y-label" id="wa-tl-hi-label" style="bottom:80px;">80</div>
+          <div class="bar-gridline" id="wa-tl-hi-line" style="bottom:80px;"></div>
+          <div class="bar-y-label" id="wa-tl-lo-label" style="bottom:40px;">40</div>
+          <div class="bar-gridline" id="wa-tl-lo-line" style="bottom:40px;"></div>
+          <div class="bar-y-label" style="bottom:24px;">0</div>
+          <div class="bar-chart-inner" id="wa-timeline-bars"></div>
+        </div>
+        <details class="show-table-disclosure">
+          <summary>Show as table</summary>
+          <table class="data-table" id="wa-timeline-table">
+            <thead><tr><th>Date</th><th>Messages</th></tr></thead>
+            <tbody id="wa-timeline-tbody"></tbody>
+          </table>
+        </details>
+      </div>
+    </div>
+
+    <!-- Hour×day heatmap (DS-WA-HM) -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Hour × Day Heatmap · DS-WA-HM <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">tap cell to inspect</span></div>
+      <div class="heatmap-fade-wrap">
+        <div class="heatmap-wrap" role="img" aria-label="Message activity heatmap by day and hour">
+          <div class="heatmap-grid" id="wa-heatmap-grid"></div>
+        </div>
+      </div>
+      <details class="show-table-disclosure">
+        <summary>Show as table</summary>
+        <div style="max-height:200px;overflow-y:auto;margin-top:var(--space-2)">
+          <table class="data-table" id="wa-heatmap-table">
+            <thead><tr><th>Day</th><th>Hour</th><th>Count</th></tr></thead>
+            <tbody id="wa-heatmap-tbody"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+
+    <!-- Member table (DS-WA-MB) mobile cards + desktop sticky table -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Member Stats · DS-WA-MB</div>
+
+      <!-- Mobile sort select (hidden ≥1024px) -->
+      <div class="member-sort-select" style="display:flex;gap:var(--space-2);align-items:center;margin-bottom:var(--space-3)">
+        <label style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim)">Sort by:</label>
+        <select style="background:rgba(6,4,18,.8);border:1px solid var(--border-control);border-radius:var(--radius-md);color:var(--text);font:600 var(--text-sm) var(--font-body);padding:var(--space-1) var(--space-3);min-height:32px;">
+          <option>Messages</option><option>Words</option><option>Avg words/msg</option>
+          <option>Media</option><option>Last seen</option>
+        </select>
+      </div>
+
+      <!-- Mobile: member cards (hidden ≥1024px) -->
+      <div class="member-mobile-only">
+        <div class="member-cards" id="wa-member-cards"></div>
+        <!-- Mobile accessible table path -->
+        <details class="show-table-disclosure" style="margin-top:var(--space-3)">
+          <summary>Show as table</summary>
+          <div style="overflow-x:auto;margin-top:var(--space-2)">
+            <table class="member-table" id="wa-member-mobile-table" aria-label="WhatsApp member statistics">
+              <thead>
+                <tr>
+                  <th class="col-frozen"><button aria-sort="none">Member</button></th>
+                  <th><button aria-sort="descending">Msgs</button></th>
+                  <th><button aria-sort="none">Words</button></th>
+                  <th><button aria-sort="none">Avg/msg</button></th>
+                  <th><button aria-sort="none">Photos</button></th>
+                  <th><button aria-sort="none">Videos</button></th>
+                  <th><button aria-sort="none">Audio</button></th>
+                  <th><button aria-sort="none">Omitted</button></th>
+                </tr>
+              </thead>
+              <tbody id="wa-member-mobile-tbody"></tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+
+      <!-- Desktop: sticky-header sortable table (Member column frozen) -->
+      <div class="member-desktop-table">
+        <div style="overflow-x:auto;max-height:400px;border-radius:var(--radius-sm)">
+          <table class="member-table" id="wa-member-desktop-table" aria-label="WhatsApp member statistics, sortable">
+            <thead>
+              <tr>
+                <th class="col-frozen"><button aria-sort="none">Member</button></th>
+                <th><button aria-sort="descending">Messages</button></th>
+                <th><button aria-sort="none">Words</button></th>
+                <th><button aria-sort="none">Avg/msg</button></th>
+                <th><button aria-sort="none">Photos</button></th>
+                <th><button aria-sort="none">Videos</button></th>
+                <th><button aria-sort="none">Audio</button></th>
+                <th><button aria-sort="none">Omitted</button></th>
+                <th><button aria-sort="none">First seen</button></th>
+                <th><button aria-sort="none">Last seen</button></th>
+              </tr>
+            </thead>
+            <tbody id="wa-member-desktop-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Word counts (DS-WA-WC) -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Top Words · DS-WA-WC</div>
+      <div class="hbar-list" id="wa-words-bars"></div>
+      <details class="show-table-disclosure">
+        <summary>Show as table</summary>
+        <table class="data-table" id="wa-words-table">
+          <thead><tr><th>Word</th><th>Count</th></tr></thead>
+          <tbody id="wa-words-tbody"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- Top emoji (DS-WA-EM) — two-col at ≥1024px: ranked list left, per-member grid right -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Top Emoji · DS-WA-EM <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">position = rank · cyan pct bar = magnitude · emoji = user data (content, not chrome)</span></div>
+      <div class="two-col">
+        <!-- Left: top-20 ranked list -->
+        <div>
+          <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-bottom:var(--space-3)">Top emoji by usage</div>
+          <div id="wa-emoji-list" style="display:flex;flex-direction:column;gap:4px"></div>
+          <details class="show-table-disclosure">
+            <summary>Show as table</summary>
+            <table class="data-table">
+              <thead><tr><th>Emoji</th><th>Count</th><th>%</th></tr></thead>
+              <tbody id="wa-emoji-tbody"></tbody>
+            </table>
+          </details>
+        </div>
+        <!-- Right: per-member top emoji chips -->
+        <div>
+          <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-bottom:var(--space-3)">Per-member favourites</div>
+          <div id="wa-emoji-member-grid" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Response times (DS-WA-RT) — two-col at ≥1024px -->
+    <div class="card">
+      <div class="card-label">Response Times · DS-WA-RT</div>
+      <div class="two-col">
+        <!-- Distribution: vertical histogram (buckets on x-axis per spec) -->
+        <div>
+          <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-bottom:var(--space-3)">Distribution (buckets fastest → slowest)</div>
+          <div class="rt-hist" id="wa-rt-hist" role="img" aria-label="Response time distribution: 0-5m through 30-60m">
+            <!-- populated by JS -->
+          </div>
+          <details class="show-table-disclosure">
+            <summary>Show as table</summary>
+            <table class="data-table">
+              <thead><tr><th>Bucket</th><th>Replies</th></tr></thead>
+              <tbody id="wa-rt-dist-tbody"></tbody>
+            </table>
+          </details>
+        </div>
+        <!-- Member averages: horizontal bars (fastest first) -->
+        <div>
+          <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-bottom:var(--space-2)">Average by member (fastest first)</div>
+          <div class="hbar-list" id="wa-rt-member-bars"></div>
+          <details class="show-table-disclosure">
+            <summary>Show as table</summary>
+            <table class="data-table">
+              <thead><tr><th>Member</th><th>Avg (min)</th><th>Responses</th></tr></thead>
+              <tbody>
+                <tr><td>MoizQ</td><td style="color:var(--gold-text)">2.3</td><td>847</td></tr>
+                <tr><td>ShadowByte</td><td>4.1</td><td>612</td></tr>
+                <tr><td>PrimeXFusion</td><td>6.8</td><td>503</td></tr>
+                <tr><td>Gooper99</td><td>9.2</td><td>445</td></tr>
+                <tr><td>NightRacer7</td><td>14.3</td><td>389</td></tr>
+              </tbody>
+            </table>
+          </details>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ====================================================
+       SLAP SECTION
+  ==================================================== -->
+  <section class="section" aria-label="Slapshare music analytics">
+    <div class="section-title">Slapshare Music <span class="tag">PS-3 · DS-SL-*</span></div>
+
+    <!-- Slap stats tiles (SL-01) -->
+    <div class="stat-grid stat-grid-2" style="margin-bottom:var(--space-6)">
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--magenta-text)">320</span>
+        <span class="stat-label">Tracks Added</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--cyan-text)">7</span>
+        <span class="stat-label">Contributors</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--magenta-text);font-size:var(--text-xl)">Fred Again</span>
+        <span class="stat-label">Top Artist</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--cyan-text)">13</span>
+        <span class="stat-label">This Week</span>
+      </div>
+    </div>
+
+    <!-- The Throne (DS-SL-05) — single KPI: leaderboard rank-1 contributor -->
+    <div class="card" style="margin-bottom:var(--space-6);border-left:3px solid var(--neon-gold)">
+      <div class="card-label">The Throne · DS-SL-05 <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">leaderboard[0] — single KPI stat card, card is the accessible display</span></div>
+      <div style="display:flex;align-items:baseline;gap:var(--space-3);margin-bottom:4px">
+        <span style="font:800 var(--text-3xl)/1 var(--font-display);color:var(--gold-text)" id="throne-count">223</span>
+        <span style="font:600 var(--text-lg)/1 var(--font-body);color:var(--magenta-text)" id="throne-user">themoosecompany</span>
+      </div>
+      <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim)">Latest: 2026-09-28</div>
+    </div>
+
+    <!-- On Repeat IRL (DS-SL-04) — scrobble ranked lists; shown when enabled+populated; hidden when disabled/empty -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">On Repeat IRL · DS-SL-04 <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">hidden when enabled=false or arrays empty; populated sample shown here</span></div>
+      <div class="two-col">
+        <div>
+          <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-bottom:var(--space-2)">Top Artists (7 days)</div>
+          <div style="display:flex;flex-direction:column;gap:4px" id="on-repeat-artists"></div>
+        </div>
+        <div>
+          <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-bottom:var(--space-2)">Top Tracks (7 days)</div>
+          <div style="display:flex;flex-direction:column;gap:4px" id="on-repeat-tracks"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hot Right Now (DS-SL-06) — last-24h tracks; empty state when tracks=[]; populated sample shown here -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Hot Right Now · DS-SL-06 <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">empty state: "Nothing new in the last 24 h." when tracks=[]</span></div>
+      <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-bottom:var(--space-3)">Last 24 h</div>
+      <ol style="margin:0;padding-left:var(--space-5);display:flex;flex-direction:column;gap:6px" id="hot-now-list"></ol>
+    </div>
+
+    <!-- Slap timeline (DS-SL-TL, SL-11) -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Submission Timeline · DS-SL-TL (SL-11)</div>
+      <div class="bar-chart-area" style="padding-left:36px;position:relative;height:140px;">
+        <div class="bar-y-label" style="bottom:70px;">15</div>
+        <div class="bar-gridline" style="bottom:70px;"></div>
+        <div class="bar-y-label" style="bottom:24px;">0</div>
+        <div class="bar-chart-inner" id="slap-timeline-bars"></div>
+      </div>
+      <details class="show-table-disclosure">
+        <summary>Show as table</summary>
+        <table class="data-table" id="slap-timeline-table">
+          <thead><tr><th>Date</th><th>Submissions</th></tr></thead>
+          <tbody id="slap-timeline-tbody"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- Slap platform breakdown (DS-SL-PL, SL-12) -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Platform Breakdown · DS-SL-PL (SL-12) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">colour + length + label = 3 encodings</span></div>
+      <div class="hbar-list" id="slap-platform-bars"></div>
+      <details class="show-table-disclosure">
+        <summary>Show as table</summary>
+        <table class="data-table">
+          <thead><tr><th>Platform</th><th>Count</th><th>%</th></tr></thead>
+          <tbody>
+            <tr><td>Spotify Finds</td><td>208</td><td>65%</td></tr>
+            <tr><td>YouTube</td><td>64</td><td>20%</td></tr>
+            <tr><td>Apple Music</td><td>32</td><td>10%</td></tr>
+            <tr><td>TikTok</td><td>16</td><td>5%</td></tr>
+          </tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- Slap heatmap (DS-SL-HM, SL-13) -->
+    <div class="card">
+      <div class="card-label">Submission Heatmap · DS-SL-HM (SL-13) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">tap to inspect</span></div>
+      <div class="heatmap-fade-wrap">
+        <div class="heatmap-wrap" role="img" aria-label="Music submission heatmap by day and hour">
+          <div class="heatmap-grid" id="slap-heatmap-grid"></div>
+        </div>
+      </div>
+      <details class="show-table-disclosure">
+        <summary>Show as table</summary>
+        <div style="max-height:200px;overflow-y:auto;margin-top:var(--space-2)">
+          <table class="data-table">
+            <thead><tr><th>Day</th><th>Hour</th><th>Submissions</th></tr></thead>
+            <tbody id="slap-heatmap-tbody"></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+
+    <!-- Slap top artists (DS-SL-14) — gold bars, ranked leaderboard -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Top Artists · DS-SL-14 (SL-14) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">gold = ranked achievement (artist leaderboard by count)</span></div>
+      <div class="hbar-list" id="slap-artists-bars"></div>
+      <details class="show-table-disclosure">
+        <summary>Show as table</summary>
+        <table class="data-table">
+          <thead><tr><th>Rank</th><th>Artist</th><th>Submissions</th><th>Latest Album</th></tr></thead>
+          <tbody id="slap-artists-tbody"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- Head-to-head + Taste DNA (DS-SL-09) — split bars -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Head-to-Head · DS-SL-09 (SL-09) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">magenta = user1 · cyan = user2 · cyan focus ring on :focus-visible per tappable role</span></div>
+      <div style="display:flex;gap:var(--space-3);margin-bottom:var(--space-2);flex-wrap:wrap">
+        <select id="h2h-u1" style="background:rgba(6,4,18,.8);border:1px solid var(--border-control);border-radius:var(--radius-md);color:var(--text);font:600 var(--text-sm) var(--font-body);padding:var(--space-1) var(--space-3);min-height:32px;">
+          <option>themoosecompany</option><option>nooramin40</option><option>asamad89</option>
+        </select>
+        <span style="color:var(--text-dim);font:600 var(--text-sm) var(--font-body);align-self:center">vs</span>
+        <select id="h2h-u2" style="background:rgba(6,4,18,.8);border:1px solid var(--border-control);border-radius:var(--radius-md);color:var(--text);font:600 var(--text-sm) var(--font-body);padding:var(--space-1) var(--space-3);min-height:32px;">
+          <option>nooramin40</option><option>themoosecompany</option><option>asamad89</option>
+        </select>
+      </div>
+      <button id="h2h-compare-btn" style="width:100%;margin-bottom:var(--space-4);background:rgba(34,230,255,.12);border:1px solid var(--neon-cyan);border-radius:var(--radius-md);color:var(--cyan-text);font:700 var(--text-base) var(--font-body);padding:var(--space-2) var(--space-4);cursor:pointer;min-height:44px;" aria-label="Compare selected users">Compare</button>
+      <!-- Split bar: user1 (magenta) left | user2 (cyan) right -->
+      <div style="margin-bottom:var(--space-4)" id="h2h-split-bars"></div>
+      <!-- Compatibility score tile -->
+      <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-3);flex-wrap:wrap">
+        <div style="background:rgba(255,47,214,.08);border:1px solid var(--glass-border);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4)">
+          <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim)">Taste Compatibility</div>
+          <div id="h2h-compat" style="font:800 var(--text-2xl)/1 var(--font-display);color:var(--gold-text)">87%</div>
+        </div>
+        <div style="font:500 var(--text-sm)/1.4 var(--font-body);color:var(--text-dim);flex:1" id="h2h-vibe"></div>
+      </div>
+      <div style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-bottom:4px">Shared artists</div>
+      <div id="h2h-shared" style="font:500 var(--text-sm) var(--font-body);color:var(--text)"></div>
+      <details class="show-table-disclosure" style="margin-top:var(--space-3)">
+        <summary>Show as table</summary>
+        <table class="data-table">
+          <thead><tr><th>Metric</th><th id="h2h-th-u1">user1</th><th id="h2h-th-u2">user2</th></tr></thead>
+          <tbody id="h2h-table-body"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- Slap leaderboard (DS-SL-07) — horizontal bars -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Leaderboard · DS-SL-07 (SL-07) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">gold = ranked-achievement count (tracks added); colour dot = API decoration only</span></div>
+      <div class="hbar-list" id="slap-lb-bars"></div>
+      <details class="show-table-disclosure">
+        <summary>Show as table</summary>
+        <table class="data-table">
+          <thead><tr><th>Rank</th><th>Username</th><th>Tracks</th><th>Latest</th></tr></thead>
+          <tbody id="slap-lb-tbody"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- Streak tracker (DS-SL-08) — horizontal bars, gold = accumulated achievement -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Streak Tracker · DS-SL-08 (SL-08) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">gold = longest streak = accumulated achievement (consecutive days)</span></div>
+      <div class="hbar-list" id="slap-streak-bars"></div>
+      <details class="show-table-disclosure">
+        <summary>Show as table</summary>
+        <table class="data-table">
+          <thead><tr><th>Username</th><th>Longest Streak</th><th>Current Streak</th><th>Active</th></tr></thead>
+          <tbody id="slap-streak-tbody"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- Slap hipster index (DS-SL-16) — horizontal bars -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Hipster Index · DS-SL-16 (SL-16) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">violet = ambient/analytical score (not a rank); higher = more obscure taste</span></div>
+      <div class="hbar-list" id="slap-hipster-bars"></div>
+      <details class="show-table-disclosure">
+        <summary>Show as table</summary>
+        <table class="data-table">
+          <thead><tr><th>Username</th><th>Hipster Score</th><th>Unique Artists</th></tr></thead>
+          <tbody id="slap-hipster-tbody"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- Achievements (DS-SL-15) — card grid; unlocked=full colour, locked=dimmed -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Achievements · DS-SL-15 (SL-15) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">cards are self-labelled; unlocked=lime label, locked=dimmed</span></div>
+      <div id="slap-achievements" style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--space-3)"></div>
+    </div>
+
+    <!-- Personality cards (DS-SL-17) — profile card grid + "Show all as table" -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Music Personalities · DS-SL-17 (SL-17) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">2-col mobile · 3-col desktop · per-user border = API decoration only</span></div>
+      <div id="slap-personalities" style="display:grid;grid-template-columns:repeat(2,1fr);gap:var(--space-3);margin-bottom:var(--space-3)"></div>
+      <details class="show-table-disclosure">
+        <summary>Show all as table</summary>
+        <table class="data-table">
+          <thead><tr><th>Username</th><th>Personality</th><th>Platform</th><th>Songs</th></tr></thead>
+          <tbody id="slap-personalities-tbody"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <!-- Hall of fame (DS-SL-18) — milestone card list; 2-col at ≥1024px -->
+    <div class="card" style="margin-bottom:var(--space-6)">
+      <div class="card-label">Hall of Fame · DS-SL-18 (SL-18) <span style="font-size:var(--text-xs);color:var(--text-dim);margin-left:4px">milestone cards self-labelled; 2-col desktop</span></div>
+      <div id="slap-hall" style="display:grid;grid-template-columns:1fr;gap:var(--space-3)"></div>
+    </div>
+
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ====================================================
+       CLIPS MONTH SUMMARY (DS-CL-MO)
+  ==================================================== -->
+  <section class="section" aria-label="Clips month summary">
+    <div class="section-title">Clips This Month <span class="tag">PS-2 · DS-CL-MO</span></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4);margin-bottom:var(--space-4)">
+      <div class="stat-tile">
+        <span class="stat-numeral" style="color:var(--gold-text)">23</span>
+        <span class="stat-label">Clips this month</span>
+        <span style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim);margin-top:var(--space-2)">Build in <strong style="color:var(--gold-text)">3d 4h</strong></span>
+      </div>
+      <div class="stat-tile">
+        <span style="font:700 var(--text-sm) var(--font-body);color:var(--text-dim);margin-bottom:4px">Last Montage · v2</span>
+        <span class="stat-numeral" style="color:var(--gold-text);font-size:var(--text-xl)">18 clips · 3m 14s</span>
+        <span style="font:700 var(--text-sm) var(--font-body);color:var(--lime-text);margin-top:4px">✓ Sent to WhatsApp</span>
+      </div>
+    </div>
+
+    <!-- Clip manifest mini-table -->
+    <div class="card">
+      <div class="card-label">This Month's Clips · CL-05</div>
+      <div class="clip-manifest" id="clip-manifest"></div>
+    </div>
+  </section>
+
+</div><!-- .page -->
+
+<script>
+/* ---- Realistic sample data ---- */
+
+/* WA Timeline: 30 days Sep 2026 */
+const waDailyData = [
+  {date:"Sep 1",count:12},{date:"Sep 2",count:45},{date:"Sep 3",count:38},
+  {date:"Sep 4",count:67},{date:"Sep 5",count:23},{date:"Sep 6",count:89},
+  {date:"Sep 7",count:54},{date:"Sep 8",count:31},{date:"Sep 9",count:76},
+  {date:"Sep 10",count:48},{date:"Sep 11",count:92},{date:"Sep 12",count:105},
+  {date:"Sep 13",count:61},{date:"Sep 14",count:44},{date:"Sep 15",count:87},
+  {date:"Sep 16",count:33},{date:"Sep 17",count:59},{date:"Sep 18",count:71},
+  {date:"Sep 19",count:98},{date:"Sep 20",count:42},{date:"Sep 21",count:65},
+  {date:"Sep 22",count:113},{date:"Sep 23",count:55},{date:"Sep 24",count:38},
+  {date:"Sep 25",count:81},{date:"Sep 26",count:47},{date:"Sep 27",count:69},
+  {date:"Sep 28",count:95},{date:"Sep 29",count:78},{date:"Sep 30",count:52},
+];
+
+/* WA Heatmap: realistic squad chat — active evenings (19-23h) on weekends */
+function makeWaHeatmap() {
+  const cells = [];
+  const maxCount = 45;
+  for (let dow = 0; dow < 7; dow++) {
+    for (let h = 0; h < 24; h++) {
+      let base = 0;
+      if (h >= 19 && h <= 23) base = 20 + Math.round(Math.random()*25);
+      else if (h >= 12 && h <= 14) base = 8 + Math.round(Math.random()*15);
+      else if (h >= 8 && h <= 10) base = 5 + Math.round(Math.random()*10);
+      else base = Math.round(Math.random()*6);
+      if (dow >= 5) base = Math.round(base * 1.4); // Sat/Sun busier
+      cells.push({dow, hour:h, count:Math.min(maxCount, base)});
+    }
+  }
+  return {cells, max_count: maxCount};
+}
+
+/* WA Members */
+const waMembers = [
+  {name:"MoizQ",messages:3241,total_words:28400,avg_words_per_msg:8.8,photos:67,videos:89,audios:12,media_omitted:34},
+  {name:"ShadowByte",messages:2187,total_words:14200,avg_words_per_msg:6.5,photos:45,videos:54,audios:8,media_omitted:22},
+  {name:"PrimeXFusion",messages:1834,total_words:11800,avg_words_per_msg:6.4,photos:38,videos:41,audios:5,media_omitted:17},
+  {name:"Gooper99",messages:1542,total_words:9100,avg_words_per_msg:5.9,photos:29,videos:67,audios:3,media_omitted:14},
+  {name:"NightRacer7",messages:1203,total_words:7400,avg_words_per_msg:6.1,photos:22,videos:23,audios:6,media_omitted:9},
+  {name:"ArcZephyr",messages:987,total_words:5200,avg_words_per_msg:5.3,photos:18,videos:19,audios:2,media_omitted:8},
+  {name:"BladeSync",messages:892,total_words:4800,avg_words_per_msg:5.4,photos:14,videos:15,audios:1,media_omitted:5},
+  {name:"AnonRacer",messages:961,total_words:3200,avg_words_per_msg:3.3,photos:8,videos:6,audios:0,media_omitted:7},
+];
+
+/* WA Words */
+const waWords = [
+  {word:"game",count:892},{word:"clip",count:743},{word:"night",count:689},
+  {word:"playing",count:621},{word:"squad",count:598},{word:"fire",count:534},
+  {word:"watch",count:487},{word:"wait",count:456},{word:"join",count:423},
+  {word:"server",count:398},{word:"arc",count:367},{word:"online",count:344},
+  {word:"send",count:312},{word:"montage",count:287},{word:"bro",count:265},
+  {word:"ranked",count:243},{word:"goated",count:231},{word:"clutch",count:218},
+  {word:"lobby",count:201},{word:"carry",count:187},
+];
+
+/* WA Response time distribution */
+const waRtDist = [
+  {label:"0–5m",count:847},{label:"5–10m",count:634},
+  {label:"10–20m",count:423},{label:"20–30m",count:187},{label:"30–60m",count:89},
+];
+const waRtMembers = [
+  {name:"MoizQ",avg_minutes:2.3},{name:"ShadowByte",avg_minutes:4.1},
+  {name:"PrimeXFusion",avg_minutes:6.8},{name:"Gooper99",avg_minutes:9.2},
+  {name:"NightRacer7",avg_minutes:14.3},
+];
+
+/* Slap timeline: ~90 days of submissions */
+function makeSlapTimeline() {
+  const entries = [];
+  const start = new Date("2026-07-01");
+  for (let i = 0; i < 91; i++) {
+    const d = new Date(start); d.setDate(d.getDate()+i);
+    const count = Math.round(Math.random()*6);
+    if (count > 0) entries.push({date:d.toISOString().split("T")[0], count});
+  }
+  return entries;
+}
+
+/* Slap platforms */
+const slapPlatforms = [
+  {name:"Spotify Finds",count:208,percentage:65,color:"var(--neon-magenta)"},
+  {name:"YouTube",count:64,percentage:20,color:"var(--neon-cyan)"},
+  {name:"Apple Music",count:32,percentage:10,color:"var(--neon-gold)"},
+  {name:"TikTok",count:16,percentage:5,color:"var(--neon-lime)"},
+];
+
+/* Slap heatmap: music submissions — more on evenings, weekends */
+function makeSlapHeatmap() {
+  const cells = [];
+  const maxCount = 12;
+  for (let day = 0; day < 7; day++) {
+    for (let h = 0; h < 24; h++) {
+      let base = 0;
+      if (h >= 20 && h <= 23) base = 3 + Math.round(Math.random()*9);
+      else if (h >= 14 && h <= 17) base = 1 + Math.round(Math.random()*5);
+      else base = Math.round(Math.random()*2);
+      if (day >= 5) base = Math.round(base * 1.5);
+      cells.push({day, hour:h, count: Math.min(maxCount, base)});
+    }
+  }
+  return {cells, max_count: maxCount};
+}
+
+/* Clips manifest */
+const clipManifest = [
+  {sender:"MoizQ",duration:"0:38",included:true,reason:null},
+  {sender:"ShadowByte",duration:"1:12",included:true,reason:null},
+  {sender:"PrimeXFusion",duration:"0:55",included:true,reason:null},
+  {sender:"Gooper99",duration:"2:04",included:false,reason:"Too long (>2m)"},
+  {sender:"NightRacer7",duration:"0:43",included:true,reason:null},
+  {sender:"MoizQ",duration:"0:29",included:true,reason:null},
+  {sender:"BladeSync",duration:"0:17",included:false,reason:"Too short (<20s)"},
+  {sender:"ArcZephyr",duration:"1:08",included:true,reason:null},
+];
+
+/* ---- Helper: heatmap alpha to RGB ---- */
+function cyanAlpha(alpha) {
+  // rgba(34,230,255,alpha) is the fill; CSS rgba will composite over the card
+  return `rgba(34,230,255,${alpha})`;
+}
+function limeAlpha(alpha) {
+  return `rgba(140,255,43,${alpha})`;
+}
+function heatAlpha(count, maxCount, colorFn, lowAlpha=0.55) {
+  if (!count) return "transparent";
+  const ratio = count / maxCount;
+  const alpha = ratio <= 0.33 ? lowAlpha : ratio <= 0.67 ? 0.75 : 1.0;
+  return colorFn(alpha);
+}
+function showTapInspect(msg) {
+  const el = document.getElementById("tap-inspect-live");
+  el.textContent = msg;
+  el.style.opacity = "1";
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = "0"; }, 3000);
+}
+
+/* ---- Render WA timeline bars ---- */
+const waMax = Math.max(...waDailyData.map(d=>d.count));
+const chartUsableH = 160 - 24;
+const loVal = Math.round(waMax * 0.25), hiVal = Math.round(waMax * 0.75);
+const loBottom = Math.round(loVal / waMax * chartUsableH) + 24;
+const hiBottom = Math.round(hiVal / waMax * chartUsableH) + 24;
+document.getElementById("wa-tl-lo-label").textContent = loVal;
+document.getElementById("wa-tl-lo-label").style.bottom = loBottom + "px";
+document.getElementById("wa-tl-lo-line").style.bottom  = loBottom + "px";
+document.getElementById("wa-tl-hi-label").textContent = hiVal;
+document.getElementById("wa-tl-hi-label").style.bottom = hiBottom + "px";
+document.getElementById("wa-tl-hi-line").style.bottom  = hiBottom + "px";
+const waBarsEl = document.getElementById("wa-timeline-bars");
+const waTableBody = document.getElementById("wa-timeline-tbody");
+waDailyData.forEach((d,i) => {
+  const pct = (d.count / waMax) * (160 - 24); // px height
+  const item = document.createElement("div");
+  item.className = "bar-item";
+  item.innerHTML = `
+    <div class="bar-rect" tabindex="0" role="button"
+         aria-label="${d.date}: ${d.count} messages"
+         style="height:${pct}px;background:var(--neon-cyan)"></div>
+    ${i % 7 === 0 ? `<div class="bar-x-label">${d.date.replace("Sep ","")}</div>` : ""}
+  `;
+  const _d=d;
+  item.querySelector(".bar-rect").addEventListener("click",()=>showTapInspect(`${_d.date} — ${_d.count} messages`));
+  item.querySelector(".bar-rect").addEventListener("keydown",e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();showTapInspect(`${_d.date} — ${_d.count} messages`);}});
+  waBarsEl.appendChild(item);
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td>${d.date}</td><td>${d.count}</td>`;
+  waTableBody.appendChild(tr);
+});
+
+/* ---- Render WA heatmap ---- */
+const waHm = makeWaHeatmap();
+const waHmGrid = document.getElementById("wa-heatmap-grid");
+const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+// Corner
+const corner = document.createElement("div");
+corner.className = "hm-corner";
+waHmGrid.appendChild(corner);
+// Hour labels (0,6,12,18,23 shown)
+for (let h = 0; h < 24; h++) {
+  const lbl = document.createElement("div");
+  lbl.className = "hm-hour-label";
+  lbl.textContent = (h===0||h===6||h===12||h===18) ? h+"h" : "";
+  waHmGrid.appendChild(lbl);
+}
+// Rows
+const waHmByKey = {};
+waHm.cells.forEach(c => { waHmByKey[`${c.dow},${c.hour}`] = c.count; });
+const waHmTableBody = document.getElementById("wa-heatmap-tbody");
+for (let dow = 0; dow < 7; dow++) {
+  const dayLbl = document.createElement("div");
+  dayLbl.className = "hm-day-label";
+  dayLbl.textContent = DAYS[dow];
+  waHmGrid.appendChild(dayLbl);
+  for (let h = 0; h < 24; h++) {
+    const count = waHmByKey[`${dow},${h}`] || 0;
+    const cell = document.createElement("div");
+    cell.className = "hm-cell";
+    cell.style.background = heatAlpha(count, waHm.max_count, cyanAlpha);
+    cell.setAttribute("tabindex","0");
+    cell.setAttribute("aria-label",`${DAYS[dow]} ${h}h: ${count} messages`);
+    const _waDow=dow,_waH=h,_waCount=count;
+    cell.addEventListener("click", ()=>showTapInspect(`${DAYS[_waDow]} ${_waH}h — ${_waCount} messages`));
+    cell.addEventListener("keydown", e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();showTapInspect(`${DAYS[_waDow]} ${_waH}h — ${_waCount} messages`);}});
+    waHmGrid.appendChild(cell);
+    if (count > 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${DAYS[dow]}</td><td>${h}h</td><td>${count}</td>`;
+      waHmTableBody.appendChild(tr);
+    }
+  }
+}
+
+/* ---- Render WA member cards ---- */
+const memberCardsEl = document.getElementById("wa-member-cards");
+waMembers.forEach(m => {
+  const el = document.createElement("div");
+  el.className = "member-card";
+  el.innerHTML = `
+    <div class="member-name">${m.name}</div>
+    <div class="member-chips">
+      <div class="member-chip">
+        <span class="member-chip-val">${m.messages.toLocaleString()}</span>
+        <span class="member-chip-key">Msgs</span>
+      </div>
+      <div class="member-chip">
+        <span class="member-chip-val">${(m.total_words/1000).toFixed(1)}k</span>
+        <span class="member-chip-key">Words</span>
+      </div>
+      <div class="member-chip">
+        <span class="member-chip-val">${m.avg_words_per_msg}</span>
+        <span class="member-chip-key">Avg/msg</span>
+      </div>
+    </div>
+  `;
+  memberCardsEl.appendChild(el);
+});
+
+/* ---- Populate WA member tables (mobile + desktop) ---- */
+const memberMobileTbody = document.getElementById("wa-member-mobile-tbody");
+const memberDesktopTbody = document.getElementById("wa-member-desktop-tbody");
+waMembers.forEach(m => {
+  const cells = `
+    <td class="col-frozen" style="font-weight:600">${m.name}</td>
+    <td style="color:var(--cyan-text)">${m.messages.toLocaleString()}</td>
+    <td>${(m.total_words/1000).toFixed(1)}k</td>
+    <td>${m.avg_words_per_msg}</td>
+    <td>${m.photos}</td><td>${m.videos}</td><td>${m.audios}</td><td>${m.media_omitted}</td>`;
+  memberMobileTbody.innerHTML += `<tr>${cells}</tr>`;
+  const memberId = m.name.replace(/\s+/g,'_');
+  memberDesktopTbody.innerHTML += `<tr>
+    ${cells}
+    <td colspan="2"><button onclick="var r=document.getElementById('exp-${memberId}');r.hidden=!r.hidden" style="background:rgba(34,230,255,.10);border:1px solid var(--border-control);border-radius:var(--radius-sm);color:var(--cyan-text);font:600 var(--text-xs) var(--font-body);padding:2px 8px;cursor:pointer" aria-label="Expand ${m.name}">▶ Details</button></td>
+  </tr>
+  <tr id="exp-${memberId}" hidden style="background:rgba(255,255,255,.02)">
+    <td colspan="10" style="padding:var(--space-3)"><div style="font:500 var(--text-sm) var(--font-body);color:var(--text-dim)">Top words &amp; emoji — stub</div></td>
+  </tr>`;
+});
+
+/* ---- Render WA word bars ---- */
+const wordsMax = waWords[0].count;
+const wordsBarsEl = document.getElementById("wa-words-bars");
+const wordsTableBody = document.getElementById("wa-words-tbody");
+waWords.forEach((w, i) => {
+  const pct = (w.count / wordsMax * 100).toFixed(1);
+  wordsBarsEl.innerHTML += `
+    <div class="hbar-item${i >= 15 ? " wc-desktop-only" : ""}">
+      <span class="hbar-label">${w.word}</span>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:var(--neon-lime)"></div></div>
+      <span class="hbar-value">${w.count}</span>
+    </div>`;
+  wordsTableBody.innerHTML += `<tr><td>${w.word}</td><td>${w.count}</td></tr>`;
+});
+
+/* ---- DS-WA-EM: WA top emoji ---- */
+const waEmojiData = {
+  total_emoji: 8547,
+  top_emoji: [
+    {emoji:"😂",count:1243,pct:14.5},{emoji:"💀",count:987,pct:11.5},{emoji:"🔥",count:812,pct:9.5},
+    {emoji:"👀",count:634,pct:7.4},{emoji:"💯",count:598,pct:7.0},{emoji:"🎮",count:543,pct:6.3},
+    {emoji:"🤣",count:489,pct:5.7},{emoji:"😭",count:421,pct:4.9},{emoji:"👑",count:387,pct:4.5},
+    {emoji:"🫡",count:312,pct:3.6}
+  ],
+  member_top_emoji: {
+    "MoizQ":        [{emoji:"😂",count:312},{emoji:"💀",count:287},{emoji:"🔥",count:198}],
+    "ShadowByte":   [{emoji:"🎮",count:221},{emoji:"💯",count:183},{emoji:"🤣",count:167}],
+    "PrimeXFusion": [{emoji:"👑",count:198},{emoji:"🫡",count:154},{emoji:"💀",count:143}],
+    "Gooper99":     [{emoji:"👀",count:187},{emoji:"😭",count:143},{emoji:"😂",count:128}],
+    "NightRacer7":  [{emoji:"🔥",count:201},{emoji:"🎮",count:167},{emoji:"💯",count:134}]
+  }
+};
+const emojiListEl   = document.getElementById("wa-emoji-list");
+const emojiTbody    = document.getElementById("wa-emoji-tbody");
+const emojiMemberEl = document.getElementById("wa-emoji-member-grid");
+waEmojiData.top_emoji.forEach((e, i) => {
+  emojiListEl.innerHTML += `
+    <div style="display:flex;align-items:center;gap:8px;font:var(--text-sm) var(--font-body)">
+      <span style="width:16px;color:var(--text-dim);text-align:right;font-size:11px">${i+1}</span>
+      <span style="font-size:22px;line-height:1">${e.emoji}</span>
+      <div style="flex:1;height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${e.pct}%;background:var(--neon-cyan);border-radius:3px"></div>
+      </div>
+      <span style="color:var(--cyan-text);min-width:36px;text-align:right">${e.count}</span>
+      <span style="color:var(--text-dim);min-width:36px;text-align:right">${e.pct}%</span>
+    </div>`;
+  emojiTbody.innerHTML += `<tr><td style="font-size:18px">${e.emoji}</td><td style="color:var(--cyan-text)">${e.count}</td><td>${e.pct}%</td></tr>`;
+});
+Object.entries(waEmojiData.member_top_emoji).forEach(([name, emojis]) => {
+  emojiMemberEl.innerHTML += `
+    <div style="display:flex;align-items:center;gap:8px;font:var(--text-sm) var(--font-body)">
+      <span style="min-width:90px;color:var(--text)">${name}</span>
+      ${emojis.map(e=>`<span style="font-size:20px" title="${e.count} uses">${e.emoji}</span>`).join("")}
+    </div>`;
+});
+
+/* ---- Render WA response time distribution (vertical histogram) ---- */
+const rtDistMax = Math.max(...waRtDist.map(d=>d.count));
+const rtHistEl = document.getElementById("wa-rt-hist");
+const rtDistTbody = document.getElementById("wa-rt-dist-tbody");
+waRtDist.forEach(d => {
+  const pct = (d.count / rtDistMax * 100).toFixed(1);
+  const item = document.createElement("div");
+  item.className = "rt-hist-bar-item";
+  item.style.cssText = "flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;height:100%;padding-bottom:24px;position:relative;";
+  item.innerHTML = `
+    <span class="rt-hist-val" style="font:700 var(--text-xs) var(--font-body);color:var(--gold-text)">${d.count}</span>
+    <div class="rt-hist-bar" style="width:100%;height:${pct}%;background:var(--neon-gold);border-radius:3px 3px 0 0;min-height:4px;" aria-label="${d.label}: ${d.count} replies"></div>
+    <span class="rt-hist-label" style="position:absolute;bottom:2px;font:600 var(--text-xs) var(--font-body);color:var(--text-dim);text-align:center;width:100%">${d.label}</span>`;
+  rtHistEl.appendChild(item);
+  rtDistTbody.innerHTML += `<tr><td>${d.label}</td><td>${d.count}</td></tr>`;
+});
+const rtMemberMax = Math.max(...waRtMembers.map(m=>m.avg_minutes));
+const rtMemberBarsEl = document.getElementById("wa-rt-member-bars");
+waRtMembers.forEach(m => {
+  const pct = (m.avg_minutes / rtMemberMax * 100).toFixed(1);
+  rtMemberBarsEl.innerHTML += `
+    <div class="hbar-item">
+      <span class="hbar-label">${m.name}</span>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:var(--neon-gold)"></div></div>
+      <span class="hbar-value">${m.avg_minutes}m</span>
+    </div>`;
+});
+
+/* ---- Render Slap timeline bars ---- */
+const slapTl = makeSlapTimeline();
+const slapMax = Math.max(...slapTl.map(e=>e.count));
+const slapBarsEl = document.getElementById("slap-timeline-bars");
+const slapTableBody = document.getElementById("slap-timeline-tbody");
+slapTl.forEach((e,i) => {
+  const pct = (e.count / slapMax) * (140 - 24);
+  const item = document.createElement("div");
+  item.className = "bar-item";
+  item.style.width = "14px";
+  item.innerHTML = `
+    <div class="bar-rect" tabindex="0" role="button"
+         aria-label="${e.date}: ${e.count} submissions"
+         style="height:${pct}px;background:var(--neon-magenta)"></div>
+    ${i % 14 === 0 ? `<div class="bar-x-label">${e.date.slice(5)}</div>` : ""}
+  `;
+  slapBarsEl.appendChild(item);
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td>${e.date}</td><td>${e.count}</td>`;
+  slapTableBody.appendChild(tr);
+});
+
+/* ---- Render Slap platform bars ---- */
+const slapPlatMax = slapPlatforms[0].percentage;
+const slapPlatBarsEl = document.getElementById("slap-platform-bars");
+slapPlatforms.forEach(p => {
+  slapPlatBarsEl.innerHTML += `
+    <div class="hbar-item">
+      <span class="hbar-label">${p.name}</span>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${p.percentage}%;background:${p.color}"></div></div>
+      <span class="hbar-value">${p.percentage}%</span>
+    </div>`;
+});
+
+/* ---- Render Slap heatmap ---- */
+const slapHm = makeSlapHeatmap();
+const slapHmGrid = document.getElementById("slap-heatmap-grid");
+const slapHmByKey = {};
+slapHm.cells.forEach(c => { slapHmByKey[`${c.day},${c.hour}`] = c.count; });
+const slapHmTableBody = document.getElementById("slap-heatmap-tbody");
+// Corner
+const sc = document.createElement("div"); sc.className = "hm-corner"; slapHmGrid.appendChild(sc);
+// Hour labels
+for (let h = 0; h < 24; h++) {
+  const lbl = document.createElement("div");
+  lbl.className = "hm-hour-label";
+  lbl.textContent = (h===0||h===6||h===12||h===18) ? h+"h" : "";
+  slapHmGrid.appendChild(lbl);
+}
+// Rows
+for (let day = 0; day < 7; day++) {
+  const dayLbl = document.createElement("div");
+  dayLbl.className = "hm-day-label";
+  dayLbl.textContent = DAYS[day];
+  slapHmGrid.appendChild(dayLbl);
+  for (let h = 0; h < 24; h++) {
+    const count = slapHmByKey[`${day},${h}`] || 0;
+    const cell = document.createElement("div");
+    cell.className = "hm-cell";
+    cell.style.background = heatAlpha(count, slapHm.max_count, limeAlpha, 0.50);
+    cell.setAttribute("tabindex","0");
+    cell.setAttribute("aria-label",`${DAYS[day]} ${h}h: ${count} submissions`);
+    const _slDay=day,_slH=h,_slCount=count;
+    cell.addEventListener("click", ()=>showTapInspect(`${DAYS[_slDay]} ${_slH}h — ${_slCount} submissions`));
+    cell.addEventListener("keydown", e=>{if(e.key===" "||e.key==="Enter"){e.preventDefault();showTapInspect(`${DAYS[_slDay]} ${_slH}h — ${_slCount} submissions`);}});
+    slapHmGrid.appendChild(cell);
+    if (count > 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${DAYS[day]}</td><td>${h}h</td><td>${count}</td>`;
+      slapHmTableBody.appendChild(tr);
+    }
+  }
+}
+
+/* ---- Slap top artists (DS-SL-14) — gold bars, ranked leaderboard ---- */
+const slapArtists = [
+  {name:"Arijit Singh, Shilpa Rao & Vishal & Shekhar", count:15, latest_album:"Ghungroo (From \"War\") - Single"},
+  {name:"Young the Giant",  count:13, latest_album:"Young The Giant (Special Edition)"},
+  {name:"In Color",         count:10, latest_album:"Snowed In"},
+  {name:"The 1975",         count:8,  latest_album:"The 1975 (Deluxe Version)"},
+  {name:"Atif Aslam",       count:7,  latest_album:"Subah Aye Na"},
+  {name:"Anuv Jain",        count:6,  latest_album:"Meri Baaton Mein Tu - Single"},
+  {name:"Novo Amor",        count:5,  latest_album:"Birthplace"},
+  {name:"Hasan Raheem",     count:5,  latest_album:"Joona - Single"},
+  {name:"Drake",            count:4,  latest_album:"Honestly, Nevermind"},
+  {name:"Fred Again..",     count:4,  latest_album:"Actual Life 3"},
+];
+const artMax = slapArtists[0].count;
+const artBarsEl = document.getElementById("slap-artists-bars");
+const artTbody  = document.getElementById("slap-artists-tbody");
+slapArtists.forEach((a,i) => {
+  const pct = (a.count / artMax * 100).toFixed(1);
+  const name = a.name.length > 24 ? a.name.slice(0,22)+"…" : a.name;
+  artBarsEl.innerHTML += `
+    <div class="hbar-item">
+      <span class="hbar-label" style="max-width:130px">
+        <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
+        <span style="font:500 var(--text-xs) var(--font-body);color:var(--text-dim);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.latest_album.length>24?a.latest_album.slice(0,22)+"…":a.latest_album}</span>
+      </span>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:var(--neon-gold)"></div></div>
+      <span class="hbar-value">${a.count}</span>
+    </div>`;
+  artTbody.innerHTML += `<tr><td>${i+1}</td><td>${a.name}</td><td>${a.count}</td><td>${a.latest_album}</td></tr>`;
+});
+
+/* ---- Head-to-head (DS-SL-09) — split bars, magenta=user1, cyan=user2 ---- */
+const h2hData = {
+  user1:"themoosecompany", user2:"nooramin40",
+  user1_songs:223, user2_songs:40,
+  user1_artists:177, user2_artists:31,
+  user1_platforms:{"Spotify":236,"YouTube":7,"Other":2},
+  user2_platforms:{"Apple Music":40,"SoundCloud":2},
+  shared_artists:["Atif Aslam","Anuv Jain","Hasan Raheem"],
+  compatibility_score:0.87,
+  vibe_user1:"Dreamy indie + South Asian", vibe_user2:"Emotional Urdu romantics",
+};
+const h2hMetrics = [
+  {label:"Songs",  u1: h2hData.user1_songs,   u2: h2hData.user2_songs},
+  {label:"Artists",u1: h2hData.user1_artists, u2: h2hData.user2_artists},
+];
+const splitBarsEl = document.getElementById("h2h-split-bars");
+const h2hMax = Math.max(h2hData.user1_songs, h2hData.user2_songs);
+h2hMetrics.forEach(m => {
+  const pct1 = (m.u1 / h2hMax * 50).toFixed(1); // 50% = full left side
+  const pct2 = (m.u2 / h2hMax * 50).toFixed(1); // 50% = full right side
+  splitBarsEl.innerHTML += `
+    <div class="split-bar-row">
+      <span class="split-bar-u1">${m.u1}</span>
+      <span class="split-bar-label">${m.label}</span>
+      <div class="split-bar-track">
+        <div class="split-bar-left" style="width:${pct1}%"></div>
+        <div class="split-bar-right" style="width:${pct2}%"></div>
+      </div>
+      <span class="split-bar-u2">${m.u2}</span>
+    </div>`;
+});
+// Compatibility score + vibes
+document.getElementById("h2h-compat").textContent = Math.round(h2hData.compatibility_score * 100) + "%";
+document.getElementById("h2h-vibe").innerHTML = `<strong style="color:var(--magenta-text)">${h2hData.user1}</strong>: ${h2hData.vibe_user1}<br><strong style="color:var(--cyan-text)">${h2hData.user2}</strong>: ${h2hData.vibe_user2}`;
+document.getElementById("h2h-shared").textContent = h2hData.shared_artists.join(", ") || "No shared artists.";
+// Table
+document.getElementById("h2h-th-u1").textContent = h2hData.user1;
+document.getElementById("h2h-th-u2").textContent = h2hData.user2;
+const h2hTableBody = document.getElementById("h2h-table-body");
+h2hMetrics.forEach(m => {
+  h2hTableBody.innerHTML += `<tr><td>${m.label}</td><td style="color:var(--magenta-text)">${m.u1}</td><td style="color:var(--cyan-text)">${m.u2}</td></tr>`;
+});
+h2hTableBody.innerHTML += `<tr><td>Compatibility</td><td colspan="2" style="color:var(--gold-text)">${Math.round(h2hData.compatibility_score*100)}%</td></tr>`;
+
+/* ---- Slap leaderboard (DS-SL-07) — gold bars (ranked-achievement count); per-user colour dot decoration only ---- */
+const slapLeaderboard = [
+  {rank:1, username:"themoosecompany", song_count:223, color:"#06b6d4", latest_addition:"2026-09-28"},
+  {rank:2, username:"nooramin40",       song_count:40,  color:"#f59e0b", latest_addition:"2026-09-28"},
+  {rank:3, username:"asamad89",         song_count:37,  color:"#3b82f6", latest_addition:"2026-09-26"},
+  {rank:4, username:"shahraiz",         song_count:8,   color:"#f43f5e", latest_addition:"2026-09-20"},
+  {rank:5, username:"moiz",             song_count:6,   color:"#8b5cf6", latest_addition:"2026-09-18"},
+  {rank:6, username:"deception",        song_count:3,   color:"#ec4899", latest_addition:"2026-09-10"},
+  {rank:7, username:"zubair221b",       song_count:3,   color:"#10b981", latest_addition:"2026-09-08"},
+];
+const lbMax = slapLeaderboard[0].song_count;
+const lbBarsEl = document.getElementById("slap-lb-bars");
+const lbTbody  = document.getElementById("slap-lb-tbody");
+slapLeaderboard.forEach(e => {
+  const pct = (e.song_count / lbMax * 100).toFixed(1);
+  lbBarsEl.innerHTML += `
+    <div class="hbar-item">
+      <span class="hbar-label" style="display:flex;align-items:center;gap:6px">
+        <span style="width:10px;height:10px;border-radius:50%;background:${e.color};flex-shrink:0" title="API decoration colour (not data-ink)"></span>
+        ${e.username}
+      </span>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:var(--neon-gold)"></div></div>
+      <span class="hbar-value" style="color:var(--gold-text)">${e.song_count}</span>
+    </div>`;
+  lbTbody.innerHTML += `<tr><td>${e.rank}</td><td>${e.username}</td><td>${e.song_count}</td><td>${e.latest_addition}</td></tr>`;
+});
+
+/* ---- Slap hipster index (DS-SL-16) — violet bars (ambient/analytical score, not a rank) ---- */
+const slapHipster = [
+  {username:"deception",   color:"#ec4899", unique_artists:1,  hipster_score:1.00},
+  {username:"zubair221b",  color:"#10b981", unique_artists:1,  hipster_score:1.00},
+  {username:"asamad89",    color:"#3b82f6", unique_artists:36, hipster_score:1.08},
+  {username:"shahraiz",    color:"#f43f5e", unique_artists:7,  hipster_score:1.14},
+  {username:"nooramin40",  color:"#f59e0b", unique_artists:30, hipster_score:1.20},
+  {username:"moiz",        color:"#8b5cf6", unique_artists:4,  hipster_score:1.25},
+  {username:"themoosecompany", color:"#06b6d4", unique_artists:183, hipster_score:1.52},
+];
+const hpMax = Math.max(...slapHipster.map(e=>e.hipster_score));
+const hpBarsEl = document.getElementById("slap-hipster-bars");
+const hpTbody  = document.getElementById("slap-hipster-tbody");
+slapHipster.forEach(e => {
+  const pct = (e.hipster_score / hpMax * 100).toFixed(1);
+  hpBarsEl.innerHTML += `
+    <div class="hbar-item">
+      <span class="hbar-label">${e.username}</span>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:var(--neon-violet)"></div></div>
+      <span class="hbar-value" style="color:var(--violet-text)">${e.hipster_score.toFixed(2)}</span>
+    </div>`;
+  hpTbody.innerHTML += `<tr><td>${e.username}</td><td>${e.hipster_score.toFixed(2)}</td><td>${e.unique_artists}</td></tr>`;
+});
+
+/* ---- DS-SL-05 Throne: already static in HTML; JS updates values ---- */
+/* (mock data from slapLeaderboard[0] above) */
+
+/* ---- DS-SL-04 On Repeat IRL (populated sample) ---- */
+const onRepeatArtists = ["Fred Again", "Bicep", "Four Tet", "Burial", "Floating Points"];
+const onRepeatTracks  = [
+  {title:"Bleu", artist:"Fred Again"}, {title:"Atlas", artist:"Bicep"},
+  {title:"Moth", artist:"Four Tet"}, {title:"Archangel", artist:"Burial"},
+  {title:"LesAlpx", artist:"Floating Points"}
+];
+const orArtistsEl = document.getElementById("on-repeat-artists");
+const orTracksEl  = document.getElementById("on-repeat-tracks");
+onRepeatArtists.forEach((a,i) => {
+  orArtistsEl.innerHTML += `<div class="on-repeat-row"><span class="on-repeat-rank">${i+1}</span><span>${a}</span></div>`;
+});
+onRepeatTracks.forEach((t,i) => {
+  orTracksEl.innerHTML += `<div class="on-repeat-row"><span class="on-repeat-rank">${i+1}</span><div><div>${t.title}</div><div class="hot-sub">${t.artist}</div></div></div>`;
+});
+
+/* ---- DS-SL-06 Hot Right Now (populated sample; note: live data empty → hidden state) ---- */
+const hotTracks = [
+  {title:"Turn On The Lights again..", artist:"Fred Again x Caribou", addedBy:"themoosecompany"},
+  {title:"Rumble", artist:"Skrillex x Fred Again x Flowdan", addedBy:"nooramin40"},
+  {title:"Computers", artist:"Fred Again", addedBy:"themoosecompany"},
+];
+const hotListEl = document.getElementById("hot-now-list");
+hotTracks.forEach(t => {
+  hotListEl.innerHTML += `<li class="hot-row">${t.title} <span class="hot-sub">— ${t.artist} · added by ${t.addedBy}</span></li>`;
+});
+
+/* ---- DS-SL-08 Streak tracker — gold bars (accumulated achievement) ---- */
+const slapStreaks = [
+  {username:"themoosecompany",color:"#06b6d4",current_streak:14,longest_streak:28,is_active:true},
+  {username:"nooramin40",     color:"#f59e0b",current_streak:7, longest_streak:21,is_active:true},
+  {username:"asamad89",       color:"#3b82f6",current_streak:3, longest_streak:15,is_active:true},
+  {username:"shahraiz",       color:"#f43f5e",current_streak:0, longest_streak:9, is_active:false},
+  {username:"moiz",           color:"#8b5cf6",current_streak:2, longest_streak:7, is_active:true},
+  {username:"deception",      color:"#ec4899",current_streak:0, longest_streak:5, is_active:false},
+  {username:"zubair221b",     color:"#10b981",current_streak:1, longest_streak:4, is_active:true},
+];
+const strkMax = slapStreaks[0].longest_streak;
+const strkBarsEl = document.getElementById("slap-streak-bars");
+const strkTbody  = document.getElementById("slap-streak-tbody");
+slapStreaks.forEach(e => {
+  const pct = (e.longest_streak / strkMax * 100).toFixed(1);
+  strkBarsEl.innerHTML += `
+    <div class="hbar-item">
+      <span class="hbar-label" style="display:flex;align-items:center;gap:6px">
+        <span style="width:10px;height:10px;border-radius:50%;background:${e.color};flex-shrink:0" title="API decoration colour"></span>
+        ${e.username}${e.is_active ? ' <span style="font:600 var(--text-xs) var(--font-body);color:var(--lime-text);margin-left:2px">Active</span>' : ''}
+      </span>
+      <div class="hbar-track"><div class="hbar-fill" style="width:${pct}%;background:var(--neon-gold)"></div></div>
+      <span class="hbar-value" style="color:var(--gold-text)">${e.longest_streak}d
+        <span style="font:600 var(--text-xs) var(--font-body);color:var(--text-dim)"> / cur:${e.current_streak}</span>
+      </span>
+    </div>`;
+  strkTbody.innerHTML += `<tr><td>${e.username}</td><td>${e.longest_streak}</td><td>${e.current_streak}</td><td>${e.is_active?'Yes':'—'}</td></tr>`;
+});
+
+/* ---- DS-SL-15 Achievements card grid ---- */
+const slapAchievements = [
+  {emoji:"🏆",name:"Century Club",     description:"100+ tracks added",        unlocked:true, unlocked_by:["themoosecompany","nooramin40"]},
+  {emoji:"🔥",name:"On Fire",          description:"7-day active streak",       unlocked:true, unlocked_by:["themoosecompany"]},
+  {emoji:"🎵",name:"Genre Explorer",   description:"Added 10+ different genres",unlocked:true, unlocked_by:["themoosecompany"]},
+  {emoji:"🌅",name:"Early Bird",       description:"Added before 8am",          unlocked:false,unlocked_by:[]},
+  {emoji:"🦉",name:"Night Owl",        description:"Added after midnight",      unlocked:true, unlocked_by:["moiz","asamad89"]},
+  {emoji:"💿",name:"Vinyl Head",       description:"50+ album-format adds",     unlocked:false,unlocked_by:[]},
+];
+const achvEl = document.getElementById("slap-achievements");
+slapAchievements.forEach(a => {
+  achvEl.innerHTML += `
+    <div class="achv-card ${a.unlocked?'':'locked'}">
+      <div class="achv-emoji">${a.emoji}${a.unlocked?'':' 🔒'}</div>
+      <div class="achv-name">${a.name}</div>
+      <div class="achv-desc">${a.description}</div>
+      ${a.unlocked && a.unlocked_by.length ? `<div class="achv-by">Unlocked by: ${a.unlocked_by.join(', ')}</div>` : ''}
+    </div>`;
+});
+
+/* ---- DS-SL-17 Personality cards + "Show all as table" ---- */
+const slapPersonalities = [
+  {username:"themoosecompany",color:"#06b6d4",personality:"The Excavator",    description:"Digs deep for obscure gems nobody else has heard",dominant_platform:"YouTube",    song_count:223},
+  {username:"nooramin40",     color:"#f59e0b",personality:"The Selector",     description:"Curates a tightly focused pocket of sound",        dominant_platform:"Spotify",     song_count:40},
+  {username:"asamad89",       color:"#3b82f6",personality:"The Completionist",description:"Finishes artists' discographies before moving on",  dominant_platform:"Apple Music", song_count:37},
+  {username:"shahraiz",       color:"#f43f5e",personality:"The Hypeman",      description:"Drops high-energy bangers for peak session fuel",   dominant_platform:"Spotify",     song_count:8},
+  {username:"moiz",           color:"#8b5cf6",personality:"The Ambient Drifter",description:"Sets the mood with texture over tempo",           dominant_platform:"YouTube",     song_count:6},
+  {username:"deception",      color:"#ec4899",personality:"The Lurker",       description:"Rarely adds, but always a banger when they do",     dominant_platform:"Spotify",     song_count:3},
+];
+const persEl    = document.getElementById("slap-personalities");
+const persTbody = document.getElementById("slap-personalities-tbody");
+slapPersonalities.forEach(p => {
+  persEl.innerHTML += `
+    <div class="pers-card" style="border-color:${p.color}33">
+      <div class="pers-user">${p.username}</div>
+      <div class="pers-title">${p.personality}</div>
+      <div class="pers-desc">${p.description}</div>
+      <div class="pers-meta">${p.dominant_platform} · <span style="color:var(--gold-text)">${p.song_count} tracks</span></div>
+    </div>`;
+  persTbody.innerHTML += `<tr><td>${p.username}</td><td>${p.personality}</td><td>${p.dominant_platform}</td><td style="color:var(--gold-text)">${p.song_count}</td></tr>`;
+});
+
+/* ---- DS-SL-18 Hall of fame milestone cards ---- */
+const slapHallOfFame = [
+  {emoji:"🎉",title:"300 Tracks",   description:"Slapshare library hit 300 songs",    value:"320 tracks as of Sep 2026"},
+  {emoji:"👑",title:"The Throne",   description:"Single contributor hit 200+ songs",   value:"themoosecompany: 223 tracks"},
+  {emoji:"🔥",title:"Streak Legend",description:"Longest ever daily submission streak", value:"28 days — themoosecompany"},
+  {emoji:"🌍",title:"Genre Odyssey",description:"Covered 15+ distinct genres",         value:"17 genres logged"},
+];
+const hallEl = document.getElementById("slap-hall");
+slapHallOfFame.forEach(m => {
+  hallEl.innerHTML += `
+    <div class="hall-card">
+      <div class="hall-emoji">${m.emoji}</div>
+      <div>
+        <div class="hall-title">${m.title}</div>
+        <div class="hall-desc">${m.description}</div>
+        <div class="hall-value">${m.value}</div>
+      </div>
+    </div>`;
+});
+
+/* ---- Tap-inspect handlers for timeline bars ---- */
+waBarsEl.addEventListener("click", e => {
+  const bar = e.target.closest(".bar-rect");
+  if (bar) showTapInspect(bar.getAttribute("aria-label"));
+});
+waBarsEl.addEventListener("keydown", e => {
+  const bar = e.target.closest(".bar-rect");
+  if (bar && (e.key === " " || e.key === "Enter")) { e.preventDefault(); showTapInspect(bar.getAttribute("aria-label")); }
+});
+slapBarsEl.addEventListener("click", e => {
+  const bar = e.target.closest(".bar-rect");
+  if (bar) showTapInspect(bar.getAttribute("aria-label"));
+});
+slapBarsEl.addEventListener("keydown", e => {
+  const bar = e.target.closest(".bar-rect");
+  if (bar && (e.key === " " || e.key === "Enter")) { e.preventDefault(); showTapInspect(bar.getAttribute("aria-label")); }
+});
+
+/* ---- Compare button (DS-SL-09) ---- */
+document.getElementById("h2h-compare-btn").addEventListener("click", () => {
+  const u1 = document.getElementById("h2h-u1").value;
+  const u2 = document.getElementById("h2h-u2").value;
+  document.getElementById("h2h-th-u1").textContent = u1;
+  document.getElementById("h2h-th-u2").textContent = u2;
+  document.getElementById("throne-user").textContent = u1;
+});
+
+/* ---- Render clips manifest ---- */
+const manifestEl = document.getElementById("clip-manifest");
+clipManifest.forEach(c => {
+  manifestEl.innerHTML += `
+    <div class="clip-row">
+      <div class="clip-status-dot" style="background:${c.included?"var(--neon-lime)":"var(--text-dim)"}"></div>
+      <span class="clip-row-sender">${c.sender}</span>
+      <span class="clip-row-dur">${c.duration}</span>
+      <span class="clip-row-status" style="color:${c.included?"var(--lime-text)":"var(--text-dim)"}">
+        ${c.included ? "✓ In" : "✗ " + c.reason}
+      </span>
+    </div>`;
+});
+</script>
+</body>
+</html>

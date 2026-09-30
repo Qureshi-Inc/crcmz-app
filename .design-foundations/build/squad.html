@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<!-- No DESIGN.md found — wireframe mode: greyscale defaults. Run /design-for-ai to establish tokens. -->
+<!-- Throwaway-fidelity checkpoint mock: Squad (home). Structure only; the neon arcade identity is NOT represented. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Squad (home) — wireframe mock</title>
+<style>
+  :root {
+    --background: #ffffff;
+    --surface: #f5f5f5;
+    --surface-hover: #ebebeb;
+    --border-subtle: #e0e0e0;
+    --border: #bdbdbd;
+    --border-strong: #9e9e9e;
+    --text-secondary: #616161;
+    --text: #212121;
+    --accent-solid: #424242;
+    --accent-on-solid: #ffffff;
+    --accent-text: #212121;
+    --tap: 44px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: var(--background); color: var(--text); line-height: 1.5; font-size: 1rem; }
+  button, input { font: inherit; color: inherit; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  }
+
+  .flag { background: var(--accent-solid); color: var(--accent-on-solid); font-size: .75rem; padding: .25rem .75rem; text-align: center; }
+  .label { font-size: .7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .06em; }
+  .box { background: var(--surface); border: 2px solid var(--border); border-radius: 8px; }
+  h2 { font-size: 1rem; }
+
+  /* ---------- App shell ---------- */
+  .app { display: grid; min-height: calc(100vh - 1.5rem); }
+  .sidebar, .mob-header, .tabbar { display: none; }
+
+  .wordmark { font-weight: 800; letter-spacing: .08em; }
+  .tagline { font-size: .7rem; color: var(--text-secondary); letter-spacing: .1em; }
+  .logo { width: 36px; height: 36px; border: 2px solid var(--border-strong); border-radius: 8px; background: var(--border-subtle); display: grid; place-items: center; font-size: .6rem; flex: none; }
+
+  /* ---------- Main column ---------- */
+  main { padding: 1rem; display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+  .page-title { display: flex; align-items: baseline; justify-content: space-between; }
+  .page-title h1 { font-size: 1.5rem; }
+
+  .hype { padding: 1rem; display: grid; gap: .5rem; }
+  .hype-row { display: flex; justify-content: space-between; align-items: baseline; }
+  .hype-count { font-size: 1.75rem; font-weight: 700; }
+  .meter { height: 14px; border: 2px solid var(--border-strong); border-radius: 999px; overflow: hidden; }
+  .meter > span { display: block; height: 100%; width: 68%; background: var(--accent-solid); }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; }
+  .stat { padding: .75rem; }
+  .stat b { display: block; font-size: 1.35rem; }
+  .stat small { font-size: .75rem; color: var(--text-secondary); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .presence { list-style: none; }
+  .presence li { display: grid; grid-template-columns: 44px 1fr auto; gap: .75rem; align-items: center; padding: .75rem; border-bottom: 1px solid var(--border-subtle); min-height: 64px; }
+  .presence li:last-child { border-bottom: 0; }
+  .avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--border-subtle); border: 2px solid var(--border); position: relative; display: grid; place-items: center; font-size: .7rem; font-weight: 700; }
+  .avatar::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--background); background: var(--border); }
+  .on .avatar::after { background: var(--accent-solid); }
+  .who { min-width: 0; }
+  .who .name { font-weight: 700; }
+  .who .status { font-size: .8rem; color: var(--text-secondary); }
+  .on .who .status { color: var(--text); font-weight: 600; }
+  .who .game { font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .off .who .game { color: var(--text-secondary); }
+  .trophies { text-align: right; font-size: .8rem; color: var(--text-secondary); white-space: nowrap; }
+  .trophies b { color: var(--text); font-size: .95rem; }
+  .section-head { display: flex; justify-content: space-between; align-items: center; padding: .75rem; border-bottom: 2px solid var(--border); }
+
+  /* ---------- Chat Board ---------- */
+  .board { display: flex; flex-direction: column; gap: .75rem; padding: 1rem; background: var(--surface); }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; border: 2px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .tabs button { min-height: var(--tap); background: var(--background); border: 0; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--accent-solid); color: var(--accent-on-solid); font-weight: 700; }
+  .dots { display: flex; justify-content: center; gap: 6px; }
+  .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+  .dots i:first-child { background: var(--accent-solid); }
+  .sb-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem; }
+  .sb-grid button { min-height: 64px; border: 2px solid var(--border-strong); border-radius: 8px; background: var(--background); font-weight: 600; cursor: pointer; padding: .5rem; }
+  .sb-grid button small { display: block; font-size: .65rem; font-weight: 400; color: var(--text-secondary); }
+  .sb-grid .custom { border-style: dashed; color: var(--text-secondary); }
+  .composer { display: flex; gap: .5rem; }
+  .composer input { flex: 1; min-height: var(--tap); border: 2px solid var(--border); border-radius: 8px; padding: 0 .75rem; background: var(--background); min-width: 0; }
+  .composer button { min-height: var(--tap); min-width: var(--tap); padding: 0 1rem; border: 0; border-radius: 8px; background: var(--accent-solid); color: var(--accent-on-solid); font-weight: 700; }
+
+  /* ================= MOBILE (< 900px) ================= */
+  @media (max-width: 899px) {
+    .app { grid-template-rows: auto 1fr; }
+    .mob-header { display: flex; align-items: center; gap: .6rem; padding: .5rem 1rem; min-height: 56px; border-bottom: 2px solid var(--border); position: sticky; top: 0; background: var(--background); z-index: 5; }
+    .mob-header .spacer { flex: 1; }
+    .icon-btn { width: var(--tap); height: var(--tap); border: 2px solid var(--border); border-radius: 50%; background: var(--surface); font-size: .6rem; }
+    /* leave room for sheet peek (~132px) + tab bar (64px) */
+    main { padding-bottom: 220px; }
+
+    .board { position: fixed; left: 0; right: 0; bottom: 64px; z-index: 10; border-top: 2px solid var(--border-strong); border-radius: 16px 16px 0 0; box-shadow: 0 -4px 16px rgba(0,0,0,.12); padding-top: 0; }
+    .handle { display: flex; flex-direction: column; align-items: center; min-height: var(--tap); justify-content: center; width: 100%; border: 0; background: none; cursor: pointer; }
+    .handle::before { content: ""; width: 40px; height: 5px; border-radius: 3px; background: var(--border-strong); margin-bottom: 4px; }
+    .handle span { font-size: .75rem; color: var(--text-secondary); }
+    /* collapsed peek: only handle + composer */
+    .board:not(.open) .tabs, .board:not(.open) .dots, .board:not(.open) .sb-grid, .board:not(.open) .board-title { display: none; }
+    .board.open { max-height: 75vh; overflow: auto; }
+
+    .tabbar { display: grid; grid-template-columns: repeat(4, 1fr); position: fixed; left: 0; right: 0; bottom: 0; height: 64px; background: var(--background); border-top: 2px solid var(--border); z-index: 11; }
+    .tabbar a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: var(--tap); text-decoration: none; color: var(--text-secondary); font-size: .75rem; }
+    .tabbar a i { width: 22px; height: 22px; border: 2px solid currentColor; border-radius: 6px; }
+    .tabbar a[aria-current="page"] { color: var(--text); font-weight: 700; }
+    .tabbar a[aria-current="page"] i { background: var(--accent-solid); border-color: var(--accent-solid); }
+  }
+
+  /* ================= DESKTOP (>= 900px) ================= */
+  @media (min-width: 900px) {
+    .app { grid-template-columns: 240px minmax(0, 1fr) 360px; }
+    .sidebar { display: flex; flex-direction: column; border-right: 2px solid var(--border); padding: 1rem .75rem; gap: .25rem; position: sticky; top: 0; height: calc(100vh - 1.5rem); }
+    .brand { display: flex; gap: .6rem; align-items: center; padding: .25rem .5rem 1.25rem; }
+    .sidebar a { display: flex; align-items: center; gap: .6rem; min-height: 40px; padding: 0 .6rem; border-radius: 8px; text-decoration: none; color: var(--text); }
+    .sidebar a i { width: 18px; height: 18px; border: 2px solid var(--border-strong); border-radius: 4px; }
+    .sidebar a:hover { background: var(--surface-hover); }
+    .sidebar a[aria-current="page"] { background: var(--accent-solid); color: var(--accent-on-solid); font-weight: 700; }
+    .sidebar a[aria-current="page"] i { border-color: var(--accent-on-solid); }
+    .sidebar .bottom { margin-top: auto; border-top: 2px solid var(--border-subtle); padding-top: .5rem; display: grid; gap: .25rem; }
+    main { padding: 1.5rem 2rem; }
+    .top { display: grid; grid-template-columns: 1.2fr 2fr; gap: 1rem; }
+    .stats { gap: 1rem; }
+    .stat { padding: 1rem; }
+    .presence li { grid-template-columns: 44px 1.2fr 1.6fr auto; }
+    .presence .who .game { display: none; }
+    .presence .game-col { display: block !important; font-size: .9rem; }
+    .off .game-col { color: var(--text-secondary); }
+    .board { border-left: 2px solid var(--border); position: sticky; top: 0; height: calc(100vh - 1.5rem); padding: 1.5rem 1.25rem; }
+    .handle { display: none; }
+    .sb-grid { grid-template-columns: repeat(2, 1fr); }
+    .composer { margin-top: auto; }
+  }
+  .game-col { display: none; }
+  @media (max-width: 899px) { .top { display: grid; gap: 1rem; } }
+</style>
+</head>
+<body>
+<div class="flag" role="note">WIREFRAME — no DESIGN.md locked. Greyscale defaults; neon arcade identity not yet applied.</div>
+
+<div class="app">
+  <!-- Desktop: persistent sidebar -->
+  <nav class="sidebar" aria-label="Main">
+    <div class="brand">
+      <div class="logo">[Logo]</div>
+      <div><div class="wordmark">CRCMZ APP</div><div class="tagline">YES. WE HAVE ONE.</div></div>
+    </div>
+    <a href="#" aria-current="page"><i></i>Squad</a>
+    <a href="#"><i></i>Clips</a>
+    <a href="#"><i></i>Slap</a>
+    <a href="#"><i></i>WhatsApp</a>
+    <a href="#"><i></i>Giveaway</a>
+    <a href="#"><i></i>Watch</a>
+    <a href="#"><i></i>Huddle</a>
+    <a href="#"><i></i>AI Coach</a>
+    <a href="#"><i></i>Ask AI</a>
+    <div class="bottom">
+      <a href="#"><i></i>Settings</a>
+      <a href="#"><i></i>Admin</a>
+    </div>
+  </nav>
+
+  <!-- Mobile: header -->
+  <header class="mob-header">
+    <div class="logo">[Logo]</div>
+    <div><div class="wordmark">CRCMZ APP</div><div class="tagline">YES. WE HAVE ONE.</div></div>
+    <span class="spacer"></span>
+    <button class="icon-btn" aria-label="Account">[Me]</button>
+  </header>
+
+  <main>
+    <div class="page-title">
+      <h1>Squad</h1>
+      <span class="label">4 of 7 online · updated 12s ago</span>
+    </div>
+
+    <div class="top">
+      <section class="box hype" aria-labelledby="hype-h">
+        <div class="hype-row">
+          <h2 id="hype-h">Today's hype</h2>
+          <span class="label">[Hype level]</span>
+        </div>
+        <div class="hype-row"><span class="hype-count">137</span><span class="label">messages today</span></div>
+        <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="200" aria-valuenow="137" aria-label="Hype meter"><span></span></div>
+      </section>
+
+      <section class="stats" aria-label="Squad stats">
+        <div class="box stat"><span class="label">Platinums</span><b>214</b><small>squad total</small></div>
+        <div class="box stat"><span class="label">Top level</span><b>812</b><small>Zubi_Plays</small></div>
+        <div class="box stat"><span class="label">Squad fav</span><b>[Art]</b><small>Helldivers 2</small></div>
+      </section>
+    </div>
+
+    <section class="box" aria-labelledby="pres-h">
+      <div class="section-head"><h2 id="pres-h">Who's on</h2><span class="label">[Sort: online first]</span></div>
+      <ul class="presence">
+        <li class="on">
+          <div class="avatar">ZU</div>
+          <div class="who"><div class="name">Zubi_Plays</div><div class="status">Online</div><div class="game">Helldivers 2 · PS5</div></div>
+          <div class="game-col">Helldivers 2 · PS5</div>
+          <div class="trophies">Lv <b>812</b><br>41 plat · 388 gold</div>
+        </li>
+        <li class="on">
+          <div class="avatar">IC</div>
+          <div class="who"><div class="name">IcedCapKing</div><div class="status">Online</div><div class="game">EA Sports FC 26 · PS5</div></div>
+          <div class="game-col">EA Sports FC 26 · PS5</div>
+          <div class="trophies">Lv <b>634</b><br>29 plat · 301 gold</div>
+        </li>
+        <li class="on">
+          <div class="avatar">RZ</div>
+          <div class="who"><div class="name">razor_hx</div><div class="status">Online</div><div class="game">Call of Duty: BO7 · PS5</div></div>
+          <div class="game-col">Call of Duty: BO7 · PS5</div>
+          <div class="trophies">Lv <b>577</b><br>33 plat · 260 gold</div>
+        </li>
+        <li class="on">
+          <div class="avatar">MO</div>
+          <div class="who"><div class="name">MoWaterBreak</div><div class="status">Online</div><div class="game">In menus · PS5</div></div>
+          <div class="game-col">In menus · PS5</div>
+          <div class="trophies">Lv <b>402</b><br>18 plat · 190 gold</div>
+        </li>
+        <li class="off">
+          <div class="avatar">NV</div>
+          <div class="who"><div class="name">NeverNate</div><div class="status">Last seen 2h ago</div><div class="game">Last: Ghost of Yōtei</div></div>
+          <div class="game-col">Last: Ghost of Yōtei</div>
+          <div class="trophies">Lv <b>511</b><br>37 plat · 244 gold</div>
+        </li>
+        <li class="off">
+          <div class="avatar">SQ</div>
+          <div class="who"><div class="name">sqd_up_sam</div><div class="status">Last seen yesterday</div><div class="game">Last: Helldivers 2</div></div>
+          <div class="game-col">Last: Helldivers 2</div>
+          <div class="trophies">Lv <b>388</b><br>22 plat · 175 gold</div>
+        </li>
+        <li class="off">
+          <div class="avatar">GT</div>
+          <div class="who"><div class="name">GameTimeGus</div><div class="status">Last seen 3d ago</div><div class="game">Last: Gran Turismo 7</div></div>
+          <div class="game-col">Last: Gran Turismo 7</div>
+          <div class="trophies">Lv <b>296</b><br>34 plat · 150 gold</div>
+        </li>
+      </ul>
+    </section>
+  </main>
+
+  <!-- Chat Board: right column (desktop) / bottom sheet (mobile) -->
+  <aside class="board" id="board" aria-label="Chat Board">
+    <button class="handle" aria-expanded="false" aria-controls="board"
+      onclick="const b=document.getElementById('board');b.classList.toggle('open');this.setAttribute('aria-expanded',b.classList.contains('open'));this.querySelector('span').textContent=b.classList.contains('open')?'Tap to collapse':'Chat Board — tap or swipe up for soundboard';">
+      <span>Chat Board — tap or swipe up for soundboard</span>
+    </button>
+    <h2 class="board-title">Chat Board</h2>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true">Shared board</button>
+      <button role="tab" aria-selected="false">My board</button>
+    </div>
+    <div class="dots" aria-hidden="true"><i></i><i></i></div>
+    <div class="sb-grid">
+      <button>Have you ever?<small>[neon: cyan]</small></button>
+      <button>Iced Cap STORY<small>[neon: magenta]</small></button>
+      <button>Never<small>[neon: lime]</small></button>
+      <button>Water Break<small>[neon: violet]</small></button>
+      <button>Zubi Clip It<small>[neon: cyan]</small></button>
+      <button>Squad Up<small>[neon: magenta]</small></button>
+      <button>Game Time<small>[neon: lime]</small></button>
+      <button class="custom">+ Custom<small>add a button</small></button>
+    </div>
+    <form class="composer" onsubmit="return false">
+      <label class="label" for="qm" style="position:absolute;left:-9999px">Quick message</label>
+      <input id="qm" placeholder="Send a quick message to the squad…">
+      <button type="submit">Send</button>
+    </form>
+  </aside>
+
+  <!-- Mobile: bottom tab bar -->
+  <nav class="tabbar" aria-label="Main">
+    <a href="#" aria-current="page"><i></i>Squad</a>
+    <a href="#"><i></i>Watch</a>
+    <a href="#"><i></i>Clips</a>
+    <a href="#"><i></i>More</a>
+  </nav>
+</div>
+<script>if (location.hash === '#open') document.querySelector('.handle').click();</script>
+</body>
+</html>

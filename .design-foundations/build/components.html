@@ -1,0 +1,2340 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CRCMZ Design System — Component Sheet</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ============================================================
+       DESIGN.md LOCKED TOKENS — verbatim (Phase 3, owner 2026-09-30)
+       Component tokens — Phase 4 additions
+    ============================================================ */
+    :root {
+      color-scheme: dark;
+      /* --- pinned brand primitives --- */
+      --bg: #05030f;
+      --neon-magenta: #ff2fd6;
+      --neon-cyan: #22e6ff;
+      --neon-lime: #8cff2b;
+      --neon-violet: #9d5cff;
+      --neon-gold: #ffd24a;
+      --aurora-magenta: rgba(255, 47, 214, .32);
+      --aurora-cyan: rgba(34, 230, 255, .30);
+      --aurora-violet: rgba(157, 92, 255, .28);
+      --grid-cyan: rgba(34, 230, 255, .035);
+      --grid-magenta: rgba(255, 47, 214, .03);
+      --grid-opacity: .5;
+      --glass: rgba(18, 10, 38, .66);
+      --glass-border: rgba(255, 60, 200, .22);
+      --sheet: rgba(12, 8, 28, .92);
+      --chrome: rgba(8, 5, 20, .86);
+      --input-fill: rgba(6, 4, 18, .8);
+      --ink: #0b0616;
+      --wordmark-gradient: linear-gradient(90deg, #22e6ff, #ff2fd6);
+      --wordmark-glow: 0 0 18px rgba(255, 47, 214, .35); /* intent; implementation uses filter:drop-shadow on wrapper */
+      /* --- text roles --- */
+      --text: #f3ecff;
+      --text-dim: #9d8fc4;
+      --magenta-text: #ff5ce0;
+      --cyan-text: #22e6ff;
+      --lime-text: #8cff2b;
+      --gold-text: #ffd24a;
+      --violet-text: #c1a5ff;
+      /* --- fill roles --- */
+      --magenta-fill: #ff2fd6;  --on-magenta-fill: #0b0616;
+      --cyan-fill: #22e6ff;     --on-cyan-fill: #0b0616;
+      --lime-fill: #8cff2b;     --on-lime-fill: #0b0616;
+      --gold-fill: #ffd24a;     --on-gold-fill: #0b0616;
+      --violet-fill-deep: #7a3cf0; --on-violet-fill: #ffffff;
+      /* --- semantic (Phase 4 alias tier) --- */
+      --background:        var(--bg);
+      --surface:           var(--glass);
+      --surface-raised:    var(--sheet);
+      --chrome-surface:    var(--chrome);
+      --text-primary:      var(--text);
+      --text-secondary:    var(--text-dim);
+      --text-on-fill:      var(--ink);
+      --accent-solid:      var(--magenta-fill);
+      --accent-on-solid:   var(--on-magenta-fill);
+      --accent-text:       var(--magenta-text);
+      --interactive-text:  var(--cyan-text);
+      --live-text:         var(--lime-text);
+      --achievement-text:  var(--gold-text);
+      --ambient-text:      var(--violet-text);
+      /* --- functional / status --- */
+      --error:             #ff958d;
+      --error-surface:     #391614;
+      --success:           #71d176;
+      --success-surface:   #0e2910;
+      --warning:           #d6b267;
+      --warning-surface:   #2a210b;
+      --info:              #7bc0f0;
+      --info-surface:      #112432;
+      /* --- borders --- */
+      --border-decorative: var(--glass-border);
+      --border-control: #8d78c4;
+      --border-interactive: var(--border-control);
+      --focus-ring:        0 0 0 2px var(--bg), 0 0 0 4px var(--neon-cyan);
+      /* --- depth --- */
+      --scrim:             rgba(3, 1, 10, .62);
+      --shadow-card:       0 8px 24px rgba(4, 2, 14, .45);
+      --shadow-sheet:      0 -12px 40px rgba(4, 2, 14, .65);
+      /* --- z-index --- */
+      --z-content: 0; --z-chrome: 10; --z-minibar: 20;
+      --z-scrim: 30;  --z-sheet: 40;  --z-toast: 50;
+      /* --- type --- */
+      --font-display: "Orbitron", "Eurostile", "Arial Black", sans-serif;
+      --font-body:    "Rajdhani", "Barlow Semi Condensed", "Arial Narrow", sans-serif;
+      --text-xs:  0.8125rem;
+      --text-sm:  0.9375rem;
+      --text-base: 1.0625rem;
+      --text-lg:  1.25rem;
+      --text-xl:  clamp(1.5rem, 1.412rem + 0.376vw, 1.75rem);
+      --text-2xl: clamp(1.8125rem, 1.658rem + 0.657vw, 2.25rem);
+      --text-3xl: clamp(2.1875rem, 1.967rem + 0.939vw, 2.8125rem);
+      --text-4xl: clamp(2.625rem, 2.317rem + 1.315vw, 3.5rem);
+      --leading-body: 1.45; --leading-snug: 1.25; --leading-display: 1.1;
+      --tracking-caps: 0.06em; --weight-body: 500;
+      /* --- space --- */
+      --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+      --space-5: 20px; --space-6: 24px; --space-8: 32px;
+      --gutter: 16px;
+      /* --- shape --- */
+      --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px;
+      --radius-xl: 22px; --radius-pill: 999px;
+      /* --- sizing --- */
+      --tap-min: 44px; --tile-min: 64px; --brand-mark: 64px;
+      --topbar-h: 72px; --topbar-h-condensed: 48px;
+      --brand-mark-condensed: 40px; --topbar-condense-threshold: 8px;
+      --tabbar-h: 56px; --handle-h: 40px;
+      --sidebar-w: 240px; --panel-w: 360px;
+      /* --- glow --- */
+      --glow-tile-rest-blur: 10px; --glow-tile-rest-alpha: .22;
+      --glow-tile-fire-blur: 18px; --glow-tile-fire-alpha: .55;
+      --glow-magenta: 0 0 18px rgba(255, 47, 214, .45);
+      /* --- tile colour tokens (c1–c5) --- */
+      --tile-c1-rgb: 34 230 255;   --tile-c1-edge: #22e6ff; --tile-c1-label: #c8fbff;
+      --tile-c2-rgb: 255 47 214;   --tile-c2-edge: #ff5ce0; --tile-c2-label: #ffd6f6;
+      --tile-c3-rgb: 157 92 255;   --tile-c3-edge: #b18cff; --tile-c3-label: #e4d4ff;
+      --tile-c4-rgb: 140 255 43;   --tile-c4-edge: #8cff2b; --tile-c4-label: #e0ffc0;
+      --tile-c5-rgb: 255 210 74;   --tile-c5-edge: #ffd24a; --tile-c5-label: #fff0c0;
+      --tile-fill-hi: .20; --tile-fill-lo: .05;
+      /* --- motion --- */
+      --dur-micro: 100ms; --dur-std: 240ms; --dur-large: 400ms;
+      --ease-out: cubic-bezier(.16, 1, .3, 1);
+      --ease-in:  cubic-bezier(.7, 0, .84, 0);
+    }
+
+    @media (min-width: 1024px) { :root { --gutter: var(--space-6); } }
+
+    /* ============================================================
+       RESET + BASE
+    ============================================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text-primary);
+      font: var(--weight-body) var(--text-base)/var(--leading-body) var(--font-body);
+      letter-spacing: .01em;
+      min-height: 100vh;
+    }
+
+    /* Aurora */
+    body::before {
+      content: ""; position: fixed; inset: -30% -10%; z-index: -2; pointer-events: none;
+      background:
+        radial-gradient(38% 40% at 18% 12%, var(--aurora-magenta), transparent 60%),
+        radial-gradient(40% 40% at 84% 18%, var(--aurora-cyan), transparent 60%),
+        radial-gradient(46% 42% at 55% 96%, var(--aurora-violet), transparent 62%);
+      filter: blur(34px); will-change: transform;
+      animation: drift 22s ease-in-out infinite alternate;
+    }
+    @keyframes drift { to { transform: translate3d(4%, 3%, 0) scale(1.12); } }
+    @media (orientation: portrait) { body::before { inset: -10%; } }
+
+    /* Scanline grid */
+    body::after {
+      content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      opacity: var(--grid-opacity);
+      background-image:
+        linear-gradient(var(--grid-cyan) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-magenta) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      body::before { animation: none; }
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* ============================================================
+       LAYOUT SHELL
+    ============================================================ */
+    .app-shell { min-height: 100vh; }
+
+    /* ── Top Bar ── */
+    .topbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--topbar-h);
+      background: var(--chrome-surface);
+      backdrop-filter: blur(18px) saturate(1.2);
+      -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      border-bottom: 1px solid var(--border-decorative);
+      z-index: var(--z-chrome);
+      display: flex; align-items: center;
+      padding: 0 var(--gutter);
+      gap: var(--space-3);
+      padding-top: env(safe-area-inset-top, 0);
+    }
+    .topbar-brand { display: flex; align-items: center; gap: var(--space-3); flex: 1; }
+    .topbar-mascot {
+      width: var(--brand-mark); height: var(--brand-mark);
+      object-fit: contain; flex-shrink: 0;
+    }
+    .topbar-wordmark-stack { display: flex; flex-direction: column; gap: 1px; }
+
+    /* Wordmark — glow via filter:drop-shadow on wrapper (text-shadow suppressed by background-clip:text) */
+    .wordmark-wrap {
+      display: inline-block;
+      filter: drop-shadow(0 0 14px rgba(255, 47, 214, .35));
+    }
+    .wordmark-text {
+      font: 700 var(--text-lg)/1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      white-space: nowrap;                              /* never wrap on one line */
+      background: var(--wordmark-gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .topbar-tagline {
+      font-size: var(--text-xs); font-weight: 500;
+      color: var(--text-secondary); letter-spacing: .04em;
+      text-transform: uppercase;                        /* "YES. WE HAVE ONE." — all caps */
+    }
+
+    /* ── Monochrome nav icons (SVG currentColor, 20px in 44px row) ── */
+    .nav-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; flex-shrink: 0; color: inherit;
+    }
+    .nav-icon svg { width: 20px; height: 20px; display: block; }
+    .topbar-avatar-btn {
+      width: var(--tap-min); height: var(--tap-min);
+      border-radius: var(--radius-pill);
+      background: var(--surface);
+      border: 1.5px solid var(--border-interactive);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: var(--text-primary);
+      font-size: var(--text-sm); font-weight: 700;
+      flex-shrink: 0;
+    }
+    .topbar-avatar-btn:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+
+    /* ── Bottom Tab Bar ── */
+    .tabbar {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      height: var(--tabbar-h);
+      background: var(--chrome-surface);
+      backdrop-filter: blur(18px) saturate(1.2);
+      -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      border-top: 1px solid var(--border-decorative);
+      z-index: var(--z-chrome);
+      display: flex;
+      padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    @media (min-width: 1024px) { .tabbar { display: none; } }
+    .tab-item {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 2px;
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--text-secondary);
+      border-top: 2px solid transparent;
+      cursor: pointer; min-height: var(--tap-min);
+      transition: color var(--dur-micro);
+    }
+    .tab-item[aria-current="page"] {
+      color: var(--accent-text);
+      border-top-color: var(--accent-solid);
+    }
+    .tab-item:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    .tab-icon { /* inherits .nav-icon sizing: 20px SVG in 44px flex target */ }
+
+    /* ── Desktop Sidebar ── */
+    .sidebar {
+      display: none;
+      position: fixed; top: 0; bottom: 0; left: 0;
+      width: var(--sidebar-w);
+      background: var(--chrome-surface);
+      backdrop-filter: blur(18px) saturate(1.2);
+      -webkit-backdrop-filter: blur(18px) saturate(1.2);
+      border-right: 1px solid var(--border-decorative);
+      z-index: var(--z-chrome);
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    @media (min-width: 1024px) {
+      .sidebar { display: flex; }
+      .topbar { left: var(--sidebar-w); }
+    }
+    .sidebar-header {
+      padding: var(--space-4) var(--space-4) var(--space-3);
+      display: flex; align-items: center; gap: var(--space-3);
+      border-bottom: 1px solid var(--border-decorative);
+    }
+    .sidebar-mascot { width: 48px; height: 48px; object-fit: contain; }
+    .sidebar-wordmark-wrap {
+      filter: drop-shadow(0 0 10px rgba(255, 47, 214, .30));
+    }
+    .sidebar-wordmark-text {
+      font: 800 var(--text-xl)/1.1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      background: var(--wordmark-gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .sidebar-nav { flex: 1; padding: var(--space-2) 0; }
+    .sidebar-nav-row {
+      display: flex; align-items: center; gap: var(--space-3);
+      height: var(--tap-min);
+      padding: 0 var(--space-4);
+      font: 600 var(--text-sm)/1 var(--font-body);
+      color: var(--text-secondary);
+      border-left: 2px solid transparent;
+      cursor: pointer;
+      transition: background var(--dur-micro), color var(--dur-micro);
+    }
+    @media (hover: hover) {
+      .sidebar-nav-row:hover { background: rgba(255,60,200,.07); }
+    }
+    .sidebar-nav-row[aria-current="page"] {
+      color: var(--accent-text);
+      border-left-color: var(--accent-solid);
+      background: rgba(255, 47, 214, .06);
+    }
+    .sidebar-nav-row:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    .sidebar-nav-icon { font-size: 1rem; width: 20px; text-align: center; }
+    .sidebar-section-label {
+      padding: var(--space-3) var(--space-4) var(--space-1);
+      font: 700 var(--text-xs)/1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+    .sidebar-footer {
+      padding: var(--space-2) 0;
+      border-top: 1px solid var(--border-decorative);
+    }
+    /* Mini-bar slot in sidebar */
+    .sidebar-minibar {
+      margin: 0; border-top: 1px solid var(--border-decorative);
+    }
+
+    /* ── Main content ── */
+    .main-content {
+      padding-top: calc(var(--topbar-h) + var(--space-6));
+      padding-bottom: calc(var(--tabbar-h) + var(--space-8));
+      padding-left: var(--gutter);
+      padding-right: var(--gutter);
+    }
+    @media (min-width: 1024px) {
+      .main-content {
+        margin-left: var(--sidebar-w);
+        padding-bottom: var(--space-8);
+      }
+    }
+
+    /* ── Section wrapper ── */
+    .section {
+      margin-bottom: var(--space-8);
+    }
+    .section-label {
+      font: 700 var(--text-xs)/1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-3);
+      padding: 0 var(--space-1);
+    }
+    .section-card {
+      background: var(--surface);
+      border: 1px solid var(--border-decorative);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      backdrop-filter: blur(14px) saturate(1.2);
+      -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    }
+
+    /* ============================================================
+       SOUNDBOARD TILES
+    ============================================================ */
+    .tile-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: var(--space-3);
+    }
+    @media (min-width: 400px) {
+      .tile-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .tile {
+      min-height: var(--tile-min);
+      border-radius: var(--radius-md);
+      border: 1.5px solid var(--tile-edge);
+      background: linear-gradient(135deg,
+        rgb(var(--rgb) / var(--tile-fill-hi)),
+        rgb(var(--rgb) / var(--tile-fill-lo)));
+      box-shadow: 0 0 var(--glow-tile-rest-blur) rgb(var(--rgb) / var(--glow-tile-rest-alpha));
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: var(--space-1);
+      cursor: pointer;
+      -webkit-user-select: none; user-select: none;
+      position: relative; overflow: hidden;
+      padding: var(--space-2);
+    }
+    .tile:active { transform: scale(.96); transition: transform var(--dur-micro); }
+    .tile:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    .tile-label {
+      font: 700 var(--text-sm)/var(--leading-snug) var(--font-body);
+      color: var(--tile-label-color);
+      text-align: center;
+    }
+    .tile-sub {
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--tile-label-color);
+      opacity: .7;
+    }
+    /* Colour assignments */
+    .c1 { --rgb: var(--tile-c1-rgb); --tile-edge: var(--tile-c1-edge); --tile-label-color: var(--tile-c1-label); }
+    .c2 { --rgb: var(--tile-c2-rgb); --tile-edge: var(--tile-c2-edge); --tile-label-color: var(--tile-c2-label); }
+    .c3 { --rgb: var(--tile-c3-rgb); --tile-edge: var(--tile-c3-edge); --tile-label-color: var(--tile-c3-label); }
+    .c4 { --rgb: var(--tile-c4-rgb); --tile-edge: var(--tile-c4-edge); --tile-label-color: var(--tile-c4-label); }
+    .c5 { --rgb: var(--tile-c5-rgb); --tile-edge: var(--tile-c5-edge); --tile-label-color: var(--tile-c5-label); }
+
+    /* Fired state */
+    .tile.fired {
+      box-shadow: 0 0 var(--glow-tile-fire-blur) rgb(var(--rgb) / var(--glow-tile-fire-alpha));
+    }
+    .tile.fired::after {
+      content: "";
+      position: absolute; left: 0; right: 0; top: 0; height: 2px;
+      background: var(--tile-edge);
+      animation: scanline-sweep var(--dur-std) var(--ease-out) forwards;
+    }
+    @keyframes scanline-sweep {
+      from { transform: translateY(0); opacity: 1; }
+      to   { transform: translateY(64px); opacity: .4; }
+    }
+    .tile.fired .tile-sent {
+      display: block;
+      font: 700 var(--text-xs)/1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--live-text);
+    }
+    .tile-sent { display: none; }
+
+    /* Add tile */
+    .tile.add {
+      box-shadow: none;
+      border: 1.5px dashed var(--border-interactive);
+      background: rgba(141, 120, 196, .06);
+      --tile-edge: var(--border-interactive);
+    }
+    .tile.add .tile-label { color: var(--text-secondary); }
+
+    /* Disabled tile */
+    .tile[aria-disabled="true"], .tile.disabled {
+      opacity: .38; cursor: not-allowed; pointer-events: none;
+    }
+    /* Loading / pending tile */
+    .tile.loading { cursor: wait; }
+    .tile-spinner {
+      width: 20px; height: 20px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      opacity: .6;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .tile-spinner { animation: none; opacity: .4; }
+    }
+
+    /* ============================================================
+       SEND-STATE BUTTONS
+    ============================================================ */
+    .send-states { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+    .send-btn {
+      display: inline-flex; align-items: center; gap: var(--space-2);
+      height: var(--tap-min);
+      padding: 0 var(--space-4);
+      border-radius: var(--radius-md);
+      background: var(--surface-raised);
+      border: 1px solid var(--border-decorative);
+      font: 700 var(--text-sm)/1 var(--font-body);
+      cursor: default;
+    }
+    .send-btn[data-send="idle"]      { color: var(--text-primary); background: var(--accent-solid); color: var(--accent-on-solid); border: none; cursor: pointer; }
+    .send-btn[data-send="sending"]   { color: var(--text-secondary); }
+    .send-btn[data-send="sent"]      { color: var(--live-text); border-color: var(--live-text); }
+    .send-btn[data-send="notsent"]   { color: var(--error); border-color: var(--error); }
+    .send-btn[data-send="unknown"]   { color: var(--text-secondary); }
+    .send-btn[data-send="countdown"] { color: var(--achievement-text); border-color: var(--achievement-text); }
+    .send-btn[data-send="idle"]:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    /* All enabled send-btn states get focus-visible (covers sent/notsent/unknown/countdown) */
+    .send-btn:not([disabled]):focus-visible { box-shadow: var(--focus-ring); outline: none; }
+
+    /* ============================================================
+       MOBILE SHEET DEMO (static representation)
+    ============================================================ */
+    .sheet-demo {
+      position: relative;
+      min-height: 280px;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .sheet-scrim {
+      position: absolute; inset: 0;
+      background: var(--scrim);
+      border-radius: var(--radius-lg);
+      z-index: 1;
+    }
+    .sheet-scrim-label {
+      position: absolute; top: var(--space-3); left: 50%;
+      transform: translateX(-50%);
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: rgba(243,236,255,.5);
+      z-index: 2; white-space: nowrap;
+    }
+    .sheet-panel {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      height: 62%;
+      background: var(--surface-raised);
+      border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+      box-shadow: var(--shadow-sheet);
+      z-index: 3;
+      padding: var(--space-3) var(--space-4) var(--space-4);
+      display: flex; flex-direction: column; gap: var(--space-3);
+    }
+    .sheet-handle-knob {
+      width: 32px; height: 4px; border-radius: var(--radius-pill);
+      background: var(--border-interactive);
+      margin: 0 auto var(--space-2);
+    }
+    .sheet-title {
+      font: 700 var(--text-lg)/1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--text-primary);
+    }
+    .sheet-input-row {
+      display: flex; gap: var(--space-2);
+    }
+    .sheet-input {
+      flex: 1;
+      height: var(--tap-min);
+      background: var(--input-fill);
+      border: 1.5px solid var(--border-interactive);
+      border-radius: var(--radius-md);
+      padding: 0 var(--space-3);
+      color: var(--text-primary);
+      font: 500 var(--text-base)/1 var(--font-body);
+    }
+    .sheet-input::placeholder { color: var(--text-secondary); }
+    .sheet-send {
+      height: var(--tap-min); width: var(--tap-min);
+      border-radius: var(--radius-md);
+      background: var(--accent-solid);
+      box-shadow: var(--glow-magenta);
+      border: none; cursor: pointer;
+      color: var(--accent-on-solid);
+      font-size: 1.1rem;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .sheet-send:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+
+    /* ============================================================
+       CALL MINI-BAR
+    ============================================================ */
+    .minibar-demo {
+      background: var(--chrome-surface);
+      border: 1px solid var(--border-decorative);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+    .minibar-row {
+      height: 48px;
+      display: flex; align-items: center; gap: var(--space-3);
+      padding: 0 var(--space-4);
+      border-top: 1px solid var(--border-decorative);
+    }
+    .minibar-row:first-child { border-top: none; }
+    .minibar-room {
+      flex: 1;
+      font: 600 var(--text-sm)/1 var(--font-body);
+      color: var(--text-primary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .minibar-btn {
+      height: var(--tap-min); min-width: var(--tap-min);
+      padding: 0 var(--space-3);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      border: 1px solid var(--border-decorative);
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--text-secondary);
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;
+    }
+    .minibar-btn.return { color: var(--interactive-text); border-color: var(--interactive-text); }
+    .minibar-btn.leave  { color: var(--error); border-color: var(--error); }
+    .minibar-btn:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+
+    /* ============================================================
+       HANDLE ROW WITH CALL CHIP
+    ============================================================ */
+    .handle-row {
+      min-height: var(--tap-min); /* 44px — raised from locked 40px token; resolves call-chip exception */
+      background: var(--surface-raised);
+      border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+      border-top: 1px solid var(--border-decorative);
+      display: flex; align-items: center;
+      padding: 0 var(--space-4); gap: var(--space-3);
+      cursor: pointer;
+    }
+    .handle-row:focus-visible { box-shadow: var(--focus-ring); outline: none; border-radius: var(--radius-xl) var(--radius-xl) 0 0; }
+    .handle-chat-label {
+      flex: 1;
+      font: 700 var(--text-sm)/1 var(--font-body);
+      color: var(--text-primary);
+    }
+    .call-chip {
+      min-height: var(--tap-min); /* 44px — full hit area, no exception needed */
+      padding: 0 var(--space-3);
+      border-radius: var(--radius-pill);
+      background: rgba(34, 230, 255, .12);
+      border: 1px solid var(--interactive-text);
+      font: 700 var(--text-xs)/1 var(--font-body);
+      color: var(--interactive-text);
+      display: flex; align-items: center; gap: var(--space-1);
+      cursor: pointer; white-space: nowrap;
+    }
+    .call-chip:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+
+    /* ============================================================
+       PRESENCE ROWS
+    ============================================================ */
+    .presence-list { display: flex; flex-direction: column; }
+    .presence-row {
+      height: 56px;
+      display: flex; align-items: center; gap: var(--space-3);
+      padding: 0 var(--space-4);
+      border-bottom: 1px solid var(--border-decorative);
+    }
+    .presence-row:last-child { border-bottom: none; }
+    .presence-avatar-wrap { position: relative; flex-shrink: 0; }
+    .presence-avatar {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: var(--surface-raised);
+      border: 1px solid var(--border-decorative);
+      display: flex; align-items: center; justify-content: center;
+      font: 700 var(--text-sm)/1 var(--font-body);
+      color: var(--text-secondary);
+      overflow: hidden;
+    }
+    .presence-dot {
+      width: 10px; height: 10px;
+      border-radius: var(--radius-pill);
+      position: absolute; bottom: 0; right: 0;
+      border: 2px solid var(--surface-raised);
+    }
+    .presence-dot.online  { background: var(--lime-fill); }
+    .presence-dot.offline { background: var(--border-interactive); }
+    .presence-info { flex: 1; min-width: 0; }
+    .presence-name {
+      font: 600 var(--text-base)/var(--leading-snug) var(--font-body);
+      color: var(--text-primary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .presence-game {
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--live-text); margin-top: 2px;
+    }
+    .presence-game.offline { color: var(--text-secondary); }
+    .presence-platform {
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--text-secondary);
+    }
+    /* Skeleton */
+    .skeleton-row {
+      height: 56px; display: flex; align-items: center;
+      gap: var(--space-3); padding: 0 var(--space-4);
+    }
+    .skel {
+      background: rgba(255,255,255,.06);
+      border-radius: var(--radius-sm);
+      animation: shimmer 1.2s ease-in-out infinite alternate;
+    }
+    .skel-circle { width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; }
+    .skel-line-group { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+    .skel-line-a { height: 14px; width: 60%; }
+    .skel-line-b { height: 11px; width: 40%; }
+    @keyframes shimmer { from { opacity: .5; } to { opacity: .9; } }
+
+    /* ============================================================
+       STAT TILES
+    ============================================================ */
+    .stat-row { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+    .stat-tile {
+      flex: 1; min-width: 90px;
+      background: var(--surface);
+      border: 1px solid var(--border-decorative);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4) var(--space-3);
+      display: flex; flex-direction: column; gap: var(--space-1);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+    .stat-numeral {
+      font: 800 var(--text-3xl)/var(--leading-display) var(--font-display);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -.01em;
+    }
+    .stat-numeral.gold { color: var(--achievement-text); }
+    .stat-numeral.lime { color: var(--live-text); }
+    .stat-label {
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--text-secondary);
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+
+    /* ============================================================
+       CLIP CARD
+    ============================================================ */
+    .clip-card {
+      background: var(--surface);
+      border: 1px solid var(--border-decorative);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .clip-thumb {
+      aspect-ratio: 16/9;
+      background: var(--surface-raised);
+      display: flex; align-items: center; justify-content: center;
+      font: 600 var(--text-sm)/1 var(--font-body);
+      color: var(--text-secondary);
+      position: relative;
+    }
+    .clip-badge {
+      position: absolute; top: var(--space-2); right: var(--space-2);
+      height: 22px; padding: 0 var(--space-2);
+      border-radius: var(--radius-pill);
+      font: 700 var(--text-xs)/1 var(--font-body);
+      display: flex; align-items: center;
+    }
+    .clip-badge.included { background: var(--lime-fill); color: var(--on-lime-fill); }
+    .clip-badge.excluded { background: var(--error-surface); color: var(--error); }
+    .clip-meta {
+      padding: var(--space-3) var(--space-4);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .clip-sender {
+      font: 700 var(--text-base)/1 var(--font-body);
+      color: var(--text-primary);
+    }
+    .clip-duration {
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--text-secondary);
+    }
+
+    /* ============================================================
+       DIALOG
+    ============================================================ */
+    .dialog-demo {
+      position: relative;
+      min-height: 220px;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .dialog-scrim {
+      position: absolute; inset: 0;
+      background: var(--scrim);
+    }
+    .dialog {
+      position: relative; z-index: 2;
+      background: var(--surface-raised);
+      border-radius: var(--radius-xl);
+      padding: var(--space-6);
+      max-width: 320px; width: 90%;
+      box-shadow: var(--shadow-sheet);
+    }
+    .dialog-title {
+      font: 800 var(--text-lg)/var(--leading-snug) var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--text-primary);
+      margin-bottom: var(--space-3);
+    }
+    .dialog-body {
+      font: 500 var(--text-sm)/var(--leading-body) var(--font-body);
+      color: var(--text-secondary);
+      margin-bottom: var(--space-6);
+    }
+    .dialog-actions {
+      display: flex; gap: var(--space-3); justify-content: flex-end;
+    }
+    .btn-secondary {
+      height: var(--tap-min); padding: 0 var(--space-4);
+      border-radius: var(--radius-md);
+      background: transparent;
+      border: 1.5px solid var(--border-interactive);
+      font: 700 var(--text-sm)/1 var(--font-body);
+      color: var(--interactive-text);
+      cursor: pointer;
+    }
+    .btn-primary {
+      height: var(--tap-min); padding: 0 var(--space-4);
+      border-radius: var(--radius-md);
+      background: var(--accent-solid);
+      box-shadow: var(--glow-magenta);
+      border: none;
+      font: 700 var(--text-sm)/1 var(--font-body);
+      color: var(--accent-on-solid);
+      cursor: pointer;
+    }
+    .btn-secondary:focus-visible, .btn-primary:focus-visible {
+      box-shadow: var(--focus-ring); outline: none;
+    }
+    .btn-primary:active  { transform: scale(.97); filter: brightness(.92); transition: transform var(--dur-micro); }
+    .btn-secondary:active { transform: scale(.97); filter: brightness(.88); transition: transform var(--dur-micro); }
+
+    /* ============================================================
+       TOASTS
+    ============================================================ */
+    .toast-stack { display: flex; flex-direction: column; gap: var(--space-2); }
+    .toast {
+      display: flex; align-items: center; gap: var(--space-3);
+      background: var(--surface-raised);
+      border-radius: var(--radius-md);
+      border-left: 3px solid currentColor;
+      padding: var(--space-3) var(--space-4);
+      box-shadow: var(--shadow-card);
+    }
+    .toast.success { color: var(--success); }
+    .toast.error   { color: var(--error); }
+    .toast.info    { color: var(--info); }
+    .toast-icon { font-size: 1.1rem; flex-shrink: 0; }
+    .toast-msg {
+      flex: 1;
+      font: 600 var(--text-sm)/var(--leading-snug) var(--font-body);
+      color: var(--text-primary);
+    }
+    .toast-close {
+      /* visual: ~20px × 20px icon; hit area: 44×44 via padding */
+      min-width: 44px; min-height: 44px; padding: 12px;
+      border-radius: var(--radius-sm);
+      background: none; border: none;
+      color: var(--text-secondary);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .toast-close:focus-visible { box-shadow: var(--focus-ring); outline: none; border-radius: var(--radius-sm); }
+
+    /* ============================================================
+       STATE PATTERNS
+    ============================================================ */
+    .state-group { display: flex; flex-direction: column; gap: var(--space-4); }
+
+    .empty-state {
+      display: flex; flex-direction: column;
+      align-items: center; text-align: center;
+      padding: var(--space-8) var(--space-4);
+      gap: var(--space-3);
+    }
+    .empty-icon { font-size: 2.5rem; line-height: 1; opacity: .5; }
+    .empty-msg {
+      font: 500 var(--text-sm)/var(--leading-body) var(--font-body);
+      color: var(--text-secondary); max-width: 220px;
+    }
+
+    .error-strip {
+      display: flex; align-items: center; gap: var(--space-2);
+      background: var(--error-surface);
+      color: var(--error);
+      border-radius: var(--radius-sm);
+      padding: var(--space-2) var(--space-3);
+      font: 600 var(--text-sm)/var(--leading-snug) var(--font-body);
+    }
+
+    .stale-marker {
+      display: inline-flex; align-items: center; gap: var(--space-1);
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--warning);
+    }
+    .stale-dot {
+      width: 6px; height: 6px; border-radius: var(--radius-pill);
+      background: var(--warning); flex-shrink: 0;
+    }
+
+    /* ============================================================
+       STEPPER
+    ============================================================ */
+    .stepper {
+      display: flex; align-items: center;
+      gap: var(--space-2); overflow-x: auto;
+    }
+    .step-item {
+      display: flex; align-items: center; gap: var(--space-1);
+      white-space: nowrap;
+      font: 700 var(--text-xs)/1 var(--font-body);
+    }
+    .step-item[data-state="done"]   { color: var(--live-text); }
+    .step-item[data-state="active"] { color: var(--accent-text); }
+    .step-item[data-state="idle"]   { color: var(--text-secondary); }
+    .step-line {
+      flex-shrink: 0; width: var(--space-6); height: 1px;
+      background: var(--border-decorative);
+    }
+    .step-num {
+      width: 20px; height: 20px;
+      border-radius: var(--radius-pill);
+      display: flex; align-items: center; justify-content: center;
+      font: 700 var(--text-xs)/1 var(--font-display);
+      font-size: 0.7rem;
+    }
+    .step-item[data-state="done"]   .step-num { background: var(--lime-fill); color: var(--on-lime-fill); }
+    .step-item[data-state="active"] .step-num { background: var(--accent-solid); color: var(--accent-on-solid); }
+    .step-item[data-state="idle"]   .step-num { background: var(--surface-raised); color: var(--text-secondary); border: 1px solid var(--border-decorative); }
+
+    /* ============================================================
+       SORTABLE TABLE
+    ============================================================ */
+    .sort-select-row {
+      display: flex; align-items: center; gap: var(--space-2);
+      margin-bottom: var(--space-3);
+    }
+    @media (min-width: 1024px) { .sort-select-row { display: none; } }
+    .sort-select-label {
+      font: 600 var(--text-sm)/1 var(--font-body);
+      color: var(--text-secondary);
+    }
+    .sort-select {
+      height: var(--tap-min);
+      background: var(--input-fill);
+      border: 1.5px solid var(--border-interactive);
+      border-radius: var(--radius-md);
+      padding: 0 var(--space-3);
+      color: var(--text-primary);
+      font: 600 var(--text-sm)/1 var(--font-body);
+      cursor: pointer;
+    }
+    .data-table { width: 100%; border-collapse: collapse; }
+    .data-table th {
+      font: 700 var(--text-xs)/1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      text-align: left;
+      padding: var(--space-2) var(--space-3);
+      border-bottom: 1px solid var(--border-decorative);
+    }
+    .sort-btn {
+      background: none; border: none; cursor: pointer;
+      font: inherit; color: inherit; letter-spacing: inherit;
+      text-transform: inherit;
+      display: flex; align-items: center; gap: 4px;
+      padding: var(--space-2) 0; min-height: var(--tap-min); /* 44px min: touch-capable wide displays */
+    }
+    .sort-btn[aria-sort="ascending"]  { color: var(--interactive-text); }
+    .sort-btn[aria-sort="descending"] { color: var(--interactive-text); }
+    .sort-btn:focus-visible { box-shadow: var(--focus-ring); outline: none; border-radius: 4px; }
+    .sort-arrow { font-size: 0.7rem; opacity: .7; }
+    @media (max-width: 1023px) { .sort-btn { display: none; } }
+    @media (max-width: 1023px) {
+      .th-content { font: 700 var(--text-xs)/1 var(--font-display); }
+    }
+    .data-table td {
+      font: 500 var(--text-sm)/1 var(--font-body);
+      color: var(--text-primary);
+      padding: var(--space-3);
+      border-bottom: 1px solid var(--border-decorative);
+    }
+    .data-table tr:last-child td { border-bottom: none; }
+
+    /* ============================================================
+       LIFECYCLE STRIP (Giveaway)
+    ============================================================ */
+    .lifecycle-strip-wrap {
+      position: relative;
+      /* Right-edge fade: signals content continues beyond viewport */
+      mask-image: linear-gradient(to right, #000 80%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to right, #000 80%, transparent 100%);
+      overflow: hidden;
+    }
+    .lifecycle-strip {
+      display: flex; align-items: center; gap: var(--space-2);
+      overflow-x: auto; padding-bottom: var(--space-1);
+      padding-right: var(--space-6); /* extra space so last pill is partially visible under fade */
+      scrollbar-width: none;
+    }
+    .lifecycle-strip::-webkit-scrollbar { display: none; }
+    .lifecycle-step {
+      height: 32px; padding: 0 var(--space-3);
+      border-radius: var(--radius-pill);
+      font: 700 var(--text-xs)/1 var(--font-body);
+      white-space: nowrap;
+      display: flex; align-items: center; gap: var(--space-1);
+    }
+    .lifecycle-step.done {
+      background: var(--lime-fill); color: var(--on-lime-fill);
+    }
+    .lifecycle-step.active {
+      background: var(--accent-solid); color: var(--accent-on-solid);
+    }
+    .lifecycle-step.idle {
+      background: var(--surface-raised);
+      color: var(--text-secondary);
+      border: 1px solid var(--border-decorative);
+    }
+    .lifecycle-connector {
+      width: var(--space-3); height: 1px;
+      background: var(--border-decorative);
+      flex-shrink: 0;
+    }
+
+    /* ============================================================
+       MORE SHEET
+    ============================================================ */
+    .more-sheet-demo {
+      position: relative;
+      min-height: 360px;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .more-sheet-bg {
+      position: absolute; inset: 0;
+      background: var(--background);
+      display: flex; flex-direction: column; justify-content: flex-end;
+    }
+    .more-tab-bar-mock {
+      height: var(--tabbar-h);
+      background: var(--chrome-surface);
+      border-top: 1px solid var(--border-decorative);
+      display: flex; align-items: center;
+      padding: 0 var(--space-2);
+    }
+    .more-tab-item {
+      flex: 1;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 2px; height: 100%;
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--text-secondary);
+    }
+    .more-sheet-scrim {
+      position: absolute; inset: 0;
+      background: var(--scrim);
+      z-index: 2;
+    }
+    .more-sheet-panel {
+      position: absolute; bottom: var(--tabbar-h); left: 0; right: 0;
+      max-height: 75%;
+      background: var(--surface-raised);
+      border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+      box-shadow: var(--shadow-sheet);
+      z-index: 3;
+      overflow: hidden;
+    }
+    .more-sheet-handle {
+      display: flex; justify-content: center;
+      padding: var(--space-3) 0 var(--space-2);
+    }
+    .more-sheet-title {
+      font: 800 var(--text-lg)/1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--text-primary);
+      padding: 0 var(--space-4) var(--space-2);
+    }
+    .more-sheet-row {
+      min-height: 44px; padding: 0 var(--space-4);
+      display: flex; align-items: center; gap: var(--space-3);
+      border-top: 1px solid var(--border-decorative);
+      font: 600 var(--text-base)/1 var(--font-body);
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+    .more-sheet-row:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    .more-sheet-row.active {
+      color: var(--accent-text);
+      border-left: 2px solid var(--accent-solid);
+      padding-left: calc(var(--space-4) - 2px);
+    }
+
+    /* ============================================================
+       CHAT BOARD DESKTOP PANEL
+    ============================================================ */
+    .panel-demo {
+      display: flex;
+      height: 520px;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      border: 1px solid var(--border-decorative);
+    }
+    .panel-main {
+      flex: 1;
+      background: var(--background);
+      padding: var(--space-4);
+      display: flex; align-items: flex-start; justify-content: flex-start;
+      font: 500 var(--text-sm)/var(--leading-body) var(--font-body);
+      color: var(--text-secondary);
+    }
+    .panel-sidebar {
+      width: var(--panel-w, 360px);
+      background: var(--chrome-surface);
+      border-left: 1px solid var(--border-decorative);
+      display: flex; flex-direction: column;
+      flex-shrink: 0;
+    }
+    .panel-sidebar.collapsed {
+      width: 60px;
+    }
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 var(--space-3);
+      height: 44px;
+      border-bottom: 1px solid var(--border-decorative);
+      flex-shrink: 0;
+    }
+    .panel-title {
+      font: 700 var(--text-sm)/1 var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--text-primary);
+    }
+    .panel-toggle-btn {
+      min-width: var(--tap-min); min-height: var(--tap-min); /* 44px — was 32px */
+      border-radius: var(--radius-sm);
+      background: none; border: none;
+      color: var(--text-secondary); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .panel-toggle-btn:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    .panel-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border-decorative);
+      flex-shrink: 0;
+    }
+    .panel-tab {
+      flex: 1; min-height: var(--tap-min); /* 44px — was 40px */
+      font: 700 var(--text-xs)/1 var(--font-display);
+      letter-spacing: var(--tracking-caps); text-transform: uppercase;
+      color: var(--text-secondary); background: none; border: none;
+      cursor: pointer; border-bottom: 2px solid transparent;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .panel-tab.active {
+      color: var(--accent-text);
+      border-bottom-color: var(--accent-solid);
+    }
+    .panel-tab:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    .panel-controls {
+      display: flex; gap: var(--space-2); padding: var(--space-2) var(--space-3);
+      border-bottom: 1px solid var(--border-decorative);
+      flex-shrink: 0;
+    }
+    .panel-ctrl-btn {
+      min-height: var(--tap-min); min-width: var(--tap-min); /* 44px each — was 28px */
+      padding: 0 var(--space-3);
+      border-radius: var(--radius-sm);
+      background: var(--surface-raised);
+      border: 1px solid var(--border-interactive);
+      font: 700 var(--text-xs)/1 var(--font-body);
+      color: var(--interactive-text); cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .panel-ctrl-btn:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    .panel-tile-grid {
+      flex: 1; overflow-y: auto;
+      display: grid; grid-template-columns: repeat(2, 1fr);
+      gap: var(--space-2); padding: var(--space-3);
+    }
+    .panel-composer {
+      display: flex; gap: var(--space-2); padding: var(--space-3);
+      border-top: 1px solid var(--border-decorative);
+      flex-shrink: 0;
+    }
+    .panel-input {
+      flex: 1; height: var(--tap-min);
+      background: var(--input-fill);
+      border: 1.5px solid var(--border-interactive);
+      border-radius: var(--radius-md);
+      padding: 0 var(--space-3);
+      color: var(--text-primary);
+      font: 500 var(--text-base)/1 var(--font-body);
+    }
+    .panel-send {
+      width: var(--tap-min); height: var(--tap-min);
+      border-radius: var(--radius-md);
+      background: var(--accent-solid);
+      box-shadow: var(--glow-magenta); border: none;
+      color: var(--accent-on-solid); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .panel-send:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    /* Rail (collapsed) state */
+    .panel-sidebar.collapsed .panel-title,
+    .panel-sidebar.collapsed .panel-tabs,
+    .panel-sidebar.collapsed .panel-controls,
+    .panel-sidebar.collapsed .panel-tile-grid,
+    .panel-sidebar.collapsed .panel-composer { display: none; }
+    .panel-rail-icon {
+      display: none;
+      padding: var(--space-3); margin: 0 auto;
+    }
+    .panel-sidebar.collapsed .panel-rail-icon { display: block; }
+
+    /* ============================================================
+       CLIP PLAYER
+    ============================================================ */
+    .clip-player {
+      background: var(--surface);
+      border-radius: 0 0 var(--radius-md) var(--radius-md);
+      padding: var(--space-3) var(--space-4);
+      display: flex; flex-direction: column; gap: var(--space-2);
+      border: 1px solid var(--border-decorative);
+      border-top: none;
+    }
+    .player-controls-row {
+      display: flex; align-items: center; gap: var(--space-2);
+    }
+    .play-btn {
+      width: 44px; height: 44px; flex-shrink: 0;
+      border-radius: var(--radius-pill);
+      background: var(--accent-solid);
+      box-shadow: var(--glow-magenta);
+      border: none; cursor: pointer;
+      color: var(--accent-on-solid);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .play-btn:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    .play-btn:active { transform: scale(.95); transition: transform var(--dur-micro); }
+    .player-time {
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: var(--text-secondary);
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .seek-wrap {
+      flex: 1; position: relative;
+      height: 44px; /* full hit area */
+      display: flex; align-items: center;
+      cursor: pointer;
+    }
+    .seek-track {
+      width: 100%; height: 4px;
+      border-radius: var(--radius-pill);
+      background: var(--border-interactive);
+      position: relative; overflow: visible;
+    }
+    .seek-fill {
+      height: 100%; border-radius: var(--radius-pill);
+      background: var(--accent-solid);
+      width: 38%;
+    }
+    .seek-thumb {
+      position: absolute; top: 50%; right: -6px;
+      width: 12px; height: 12px;
+      border-radius: var(--radius-pill);
+      background: var(--accent-solid);
+      transform: translateY(-50%);
+      right: calc(62% - 6px);
+    }
+    .seek-time-tip {
+      position: absolute; bottom: 28px; left: 38%;
+      transform: translateX(-50%);
+      background: var(--surface-raised);
+      border: 1px solid var(--border-decorative);
+      border-radius: var(--radius-sm);
+      padding: 2px var(--space-2);
+      font: 700 var(--text-xs)/1 var(--font-body);
+      color: var(--text-primary);
+      white-space: nowrap; pointer-events: none;
+    }
+    .player-state-row {
+      display: flex; flex-direction: column; gap: var(--space-3);
+    }
+    .player-state-label {
+      font: 700 var(--text-xs)/1 var(--font-body);
+      color: var(--text-secondary); letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+    }
+    .player-loading {
+      display: flex; align-items: center; gap: var(--space-2);
+      height: 44px; padding: 0 var(--space-2);
+      font: 600 var(--text-sm)/1 var(--font-body); color: var(--text-secondary);
+    }
+    .player-error {
+      display: flex; align-items: center; gap: var(--space-2);
+      height: 44px; padding: var(--space-2) var(--space-3);
+      background: var(--error-surface); border-radius: var(--radius-sm);
+      font: 600 var(--text-sm)/1 var(--font-body); color: var(--error);
+    }
+    .player-purged {
+      display: flex; align-items: center; gap: var(--space-2);
+      height: 44px; padding: var(--space-2) var(--space-3);
+      background: var(--surface-raised); border-radius: var(--radius-sm);
+      border: 1px dashed var(--border-decorative);
+      font: 600 var(--text-sm)/1 var(--font-body); color: var(--text-secondary);
+    }
+    /* Skeleton shimmer for loading */
+    .skel-bar {
+      height: 4px; border-radius: var(--radius-pill);
+      background: linear-gradient(90deg, var(--surface-raised) 25%, rgba(141,120,196,.18) 50%, var(--surface-raised) 75%);
+      background-size: 200% 100%;
+      animation: shimmer var(--dur-skeleton, 1.5s) linear infinite;
+      flex: 1;
+    }
+
+    /* ============================================================
+       CALL CONTROLS
+    ============================================================ */
+    .call-controls-demo {
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: rgba(4,2,14,.85);
+      padding: var(--space-3) 0;
+    }
+    .call-controls-label {
+      font: 600 var(--text-xs)/1 var(--font-body);
+      color: rgba(243,236,255,.4);
+      letter-spacing: var(--tracking-caps); text-transform: uppercase;
+      padding: 0 var(--space-4) var(--space-2);
+    }
+    .cc-row {
+      display: flex; align-items: center; justify-content: center;
+      gap: var(--space-3); padding: var(--space-2) var(--space-4);
+    }
+    .cc-btn {
+      width: 52px; height: 52px; flex-shrink: 0;
+      border-radius: var(--radius-pill);
+      background: rgba(141,120,196,.18);
+      border: 1px solid var(--border-decorative);
+      color: var(--text-primary); cursor: pointer;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 2px;
+    }
+    .cc-btn .cc-label {
+      font: 600 .6rem/1 var(--font-body);
+      color: var(--text-secondary);
+    }
+    .cc-btn:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+    .cc-btn:active { transform: scale(.94); transition: transform var(--dur-micro); }
+    .cc-btn.on  { background: rgba(34,230,255,.16); border-color: var(--interactive-text); color: var(--interactive-text); }
+    .cc-btn.off { background: rgba(141,120,196,.10); color: var(--text-secondary); }
+    .cc-btn.muted-by-huddle { background: rgba(255,149,141,.12); border-color: var(--error); color: var(--error); }
+    .cc-btn.danger {
+      background: var(--error); border-color: var(--error);
+      color: #fff; font: 700 var(--text-sm)/1 var(--font-body);
+      width: auto; padding: 0 var(--space-5);
+    }
+    .cc-btn.disabled { opacity: .38; cursor: not-allowed; pointer-events: none; }
+    .cc-divider {
+      width: 1px; height: 40px; background: var(--border-decorative); flex-shrink: 0;
+    }
+    .call-auto-mute-banner {
+      margin: var(--space-2) var(--space-4);
+      padding: var(--space-2) var(--space-3);
+      background: rgba(255,149,141,.12);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--error);
+      font: 600 var(--text-xs)/var(--leading-snug) var(--font-body);
+      color: var(--error);
+    }
+
+    /* ============================================================
+       SECTION H2
+    ============================================================ */
+    h2.spec-section {
+      font: 800 var(--text-2xl)/var(--leading-display) var(--font-display);
+      letter-spacing: var(--tracking-caps);
+      text-transform: uppercase;
+      color: var(--text-primary);
+      margin-bottom: var(--space-6);
+      margin-top: var(--space-8);
+      padding-bottom: var(--space-3);
+      border-bottom: 1px solid var(--border-decorative);
+    }
+    h2.spec-section:first-of-type { margin-top: 0; }
+  </style>
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ===== TOP BAR (72px, fixed) ===== -->
+  <header class="topbar" role="banner">
+    <div class="topbar-brand">
+      <img class="topbar-mascot"
+           src="footer-avatar.png"
+           alt=""
+           width="64" height="64">
+      <div class="topbar-wordmark-stack">
+        <span class="wordmark-wrap" aria-label="CRCMZ APP">
+          <span class="wordmark-text" aria-hidden="true">CRCMZ APP</span>
+        </span>
+        <span class="topbar-tagline">YES. WE HAVE ONE.</span>
+      </div>
+    </div>
+    <button class="topbar-avatar-btn" aria-label="Account menu" aria-haspopup="menu">AQ</button>
+  </header>
+
+  <!-- ===== DESKTOP SIDEBAR ===== -->
+  <nav class="sidebar" aria-label="Primary">
+    <div class="sidebar-header">
+      <img class="sidebar-mascot" src="footer-avatar.png" alt="" width="48" height="48">
+      <span class="sidebar-wordmark-wrap" aria-label="CRCMZ APP">
+        <span class="sidebar-wordmark-text" aria-hidden="true">CRCMZ</span>
+      </span>
+    </div>
+    <div class="sidebar-nav" role="list">
+      <div class="sidebar-section-label">Main</div>
+      <div class="sidebar-nav-row" role="listitem" aria-current="page" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="5" width="18" height="11" rx="3"/><path d="M6 10h4M8 8v4"/><circle cx="14" cy="9.5" r=".75" fill="currentColor" stroke="none"/><circle cx="14" cy="12" r=".75" fill="currentColor" stroke="none"/></svg></span> Squad
+      </div>
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="16" height="11" rx="2"/><path d="M7 17h6M10 14v3"/></svg></span> Watch
+      </div>
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1" y="4" width="18" height="12" rx="2"/><path d="M1 8h18M1 12h18M6 4v4M6 12v4M14 4v4M14 12v4"/></svg></span> Clips
+      </div>
+      <div class="sidebar-section-label">Tools</div>
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="1" width="6" height="9" rx="3"/><path d="M4 9a6 6 0 0 0 12 0M10 18v-3M7 18h6"/></svg></span> Huddle
+      </div>
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 15V5l12-2v10"/><circle cx="4.5" cy="15" r="2.5"/><circle cx="16.5" cy="13" r="2.5"/></svg></span> Music
+      </div>
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 12a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2z"/></svg></span> WhatsApp
+      </div>
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17,9 17,19 3,19 3,9"/><rect x="1" y="5" width="18" height="4"/><line x1="10" y1="19" x2="10" y2="5"/><path d="M10 5H6.5a2 2 0 0 1 0-4C9 1 10 5 10 5z"/><path d="M10 5h3.5a2 2 0 0 0 0-4C11 1 10 5 10 5z"/></svg></span> Giveaway
+      </div>
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 1v3M10 16v3M1 10h3M16 10h3M3.5 3.5l2 2M14.5 14.5l2 2M16.5 3.5l-2 2M5.5 14.5l-2 2"/><circle cx="10" cy="10" r="3.5"/></svg></span> Ask AI
+      </div>
+    </div>
+
+    <!-- Mini-bar slot in sidebar -->
+    <div class="sidebar-minibar">
+      <div class="minibar-row">
+        <span class="nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="16" height="11" rx="2"/><polygon points="8,7 14,9.5 8,12" fill="currentColor" stroke="none"/><path d="M7 17h6M10 14v3"/></svg></span>
+        <span class="minibar-room">Watch Party · Alpha, Beta +2</span>
+        <button class="minibar-btn" aria-label="Mute microphone"><span class="nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="1" width="6" height="9" rx="3"/><path d="M4 9a6 6 0 0 0 12 0M10 18v-3M7 18h6"/></svg></span></button>
+        <button class="minibar-btn return" aria-label="Return to Watch">↩</button>
+        <button class="minibar-btn leave" aria-label="Leave call">✕</button>
+      </div>
+    </div>
+
+    <div class="sidebar-footer" role="list">
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 11a4 4 0 0 0 5.66.54l2.5-2.5A4 4 0 0 0 10.5 3.3L9.08 4.72"/><path d="M12 9a4 4 0 0 0-5.66-.54l-2.5 2.5a4 4 0 0 0 5.66 5.66l1.42-1.42"/></svg></span> Link PSN
+      </div>
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="3"/><path d="M10 1v2M10 17v2M1 10h2M17 10h2M3.2 3.2l1.4 1.4M15.4 15.4l1.4 1.4M16.8 3.2l-1.4 1.4M4.6 15.4l-1.4 1.4"/></svg></span> Settings
+      </div>
+      <div class="sidebar-nav-row" role="listitem" tabindex="0">
+        <span class="nav-icon sidebar-nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 18.5s7-3.5 7-8.5V4l-7-2.5L3 4v6c0 5 7 8.5 7 8.5z"/></svg></span> Admin
+      </div>
+    </div>
+  </nav>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="main-content">
+
+    <h2 class="spec-section">Navigation</h2>
+
+    <!-- Wordmark close-up -->
+    <div class="section">
+      <p class="section-label">Wordmark — filter:drop-shadow (fixes background-clip:text glow)</p>
+      <div class="section-card" style="display:flex;align-items:center;gap:var(--space-6);flex-wrap:wrap;">
+        <div>
+          <span class="wordmark-wrap" style="display:inline-block;">
+            <span class="wordmark-text" style="font-size:var(--text-2xl);">CRCMZ APP</span>
+          </span>
+          <p style="font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);margin-top:6px;">
+            filter: drop-shadow(0 0 14px rgba(255,47,214,.35)) on wrapper
+          </p>
+        </div>
+        <div>
+          <span style="font:500 var(--text-xs)/var(--leading-body) var(--font-body);color:var(--text-secondary);">
+            ✓ Glow renders correctly.<br>
+            ✗ text-shadow is suppressed by background-clip:text — never use it on the wordmark element.
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top bar: rest vs condensed states -->
+    <div class="section">
+      <p class="section-label">Top Bar States — rest (72 px) and condensed (48 px)</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <!-- Rest state — full-bleed, no inline annotations -->
+        <div style="display:flex;align-items:center;gap:var(--space-3);
+                    height:72px;padding:0 var(--gutter);
+                    background:var(--chrome-surface);
+                    backdrop-filter:blur(18px);
+                    border-bottom:1px solid var(--border-decorative);">
+          <img src="footer-avatar.png" alt="" width="64" height="64" style="object-fit:contain;flex-shrink:0;">
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;">
+            <span class="wordmark-wrap"><span class="wordmark-text">CRCMZ APP</span></span>
+            <span class="topbar-tagline" style="font:500 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);">YES. WE HAVE ONE.</span>
+          </div>
+          <button class="topbar-avatar-btn" style="font-size:var(--text-sm);">AQ</button>
+        </div>
+        <!-- Annotation below rest bar -->
+        <div style="padding:var(--space-1) var(--gutter);font:600 var(--text-xs)/1 var(--font-body);
+                    color:var(--text-secondary);background:rgba(141,120,196,.06);border-bottom:1px solid var(--border-decorative);">
+          rest state — 72 px · mascot 64 px · tagline visible
+        </div>
+        <!-- Condensed state — full-bleed, no inline annotations -->
+        <div style="display:flex;align-items:center;gap:var(--space-3);
+                    height:48px;padding:0 var(--gutter);
+                    background:var(--chrome-surface);
+                    backdrop-filter:blur(18px);">
+          <img src="footer-avatar.png" alt="" width="40" height="40"
+               style="object-fit:contain;flex-shrink:0;
+                      width:var(--brand-mark-condensed);height:var(--brand-mark-condensed);">
+          <div style="flex:1;min-width:0;display:flex;align-items:center;">
+            <span class="wordmark-wrap"><span class="wordmark-text">CRCMZ APP</span></span>
+          </div>
+          <button class="topbar-avatar-btn" style="font-size:var(--text-sm);">AQ</button>
+        </div>
+        <!-- Annotation below condensed bar -->
+        <div style="padding:var(--space-1) var(--gutter);font:600 var(--text-xs)/1 var(--font-body);
+                    color:var(--text-secondary);background:rgba(141,120,196,.06);border-bottom:1px solid var(--border-decorative);">
+          condensed state — 48 px · mascot 40 px · tagline hidden
+        </div>
+        <!-- Transition note -->
+        <div style="padding:var(--space-2) var(--gutter);font:500 var(--text-xs)/var(--leading-body) var(--font-body);
+                    color:var(--text-secondary);background:rgba(0,0,0,.3);border-top:1px solid var(--border-decorative);">
+          Transition: height + mascot width/height via <code style="color:var(--interactive-text);">var(--dur-std) var(--ease-out)</code>.
+          CSS scroll-driven (Chrome 115+) or IntersectionObserver sentinel fallback.
+          Under <code style="color:var(--interactive-text);">prefers-reduced-motion</code>: instant switch.
+          Content always reserves <code style="color:var(--interactive-text);">padding-top: 72px</code> — no CLS.
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom tab bar preview -->
+    <div class="section">
+      <p class="section-label">Tab Bar — mobile only (visible below 1024px)</p>
+      <div class="section-card" style="padding:0;">
+        <div style="display:flex;">
+          <div class="tab-item" style="height:56px;" aria-current="page">
+            <span class="tab-icon nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="5" width="18" height="11" rx="3"/><path d="M6 10h4M8 8v4"/><circle cx="14" cy="9.5" r=".75" fill="currentColor" stroke="none"/><circle cx="14" cy="12" r=".75" fill="currentColor" stroke="none"/></svg></span>Squad
+          </div>
+          <div class="tab-item" style="height:56px;">
+            <span class="tab-icon nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="11" rx="2"/><path d="M7 17h6M10 14v3"/></svg></span>Watch
+          </div>
+          <div class="tab-item" style="height:56px;">
+            <span class="tab-icon nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="18" height="12" rx="2"/><path d="M1 8h18M1 12h18M6 4v4M6 12v4M14 4v4M14 12v4"/></svg></span>Clips
+          </div>
+          <div class="tab-item" style="height:56px;">
+            <span class="tab-icon nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4" cy="10" r="1.75"/><circle cx="10" cy="10" r="1.75"/><circle cx="16" cy="10" r="1.75"/></svg></span>More
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="spec-section">Soundboard</h2>
+
+    <!-- Soundboard tiles -->
+    <div class="section">
+      <p class="section-label">Soundboard Tiles — resting glow + fired state (.c4 lime)</p>
+      <div class="section-card">
+        <div class="tile-grid">
+          <div class="tile c1" tabindex="0" role="button" aria-label="GG EZ">
+            <span class="tile-label">GG EZ</span>
+            <span class="tile-sub">cyan</span>
+          </div>
+          <div class="tile c2" tabindex="0" role="button" aria-label="SQUAD UP">
+            <span class="tile-label">SQUAD UP</span>
+            <span class="tile-sub">magenta</span>
+          </div>
+          <div class="tile c3" tabindex="0" role="button" aria-label="Coach AI">
+            <span class="tile-label">Coach AI</span>
+            <span class="tile-sub">violet</span>
+          </div>
+          <div class="tile c4 fired" tabindex="0" role="button" aria-label="LET'S GO — fired">
+            <span class="tile-label">LET'S GO</span>
+            <span class="tile-sent">Sent ✓</span>
+          </div>
+          <div class="tile c5" tabindex="0" role="button" aria-label="Gold Watch">
+            <span class="tile-label">Gold Watch</span>
+            <span class="tile-sub">gold</span>
+          </div>
+          <div class="tile add" tabindex="0" role="button" aria-label="Add tile">
+            <span class="tile-label">+ Custom</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tile: disabled + loading states -->
+    <div class="section">
+      <p class="section-label">Soundboard Tile — disabled and loading/pending states</p>
+      <div class="section-card">
+        <div class="tile-grid" style="grid-template-columns:repeat(3,1fr);max-width:360px;">
+          <!-- Disabled: opacity .38, cursor:not-allowed, pointer-events:none -->
+          <div class="tile c1 disabled" tabindex="-1" role="button" aria-disabled="true" aria-label="GG EZ — disabled">
+            <span class="tile-label">GG EZ</span>
+            <span class="tile-sub" style="font-size:.6rem;letter-spacing:0;">disabled</span>
+          </div>
+          <!-- Loading/pending: spinner replaces label -->
+          <div class="tile c2 loading" tabindex="0" role="button" aria-label="SQUAD UP — sending" aria-busy="true">
+            <div class="tile-spinner"></div>
+            <span class="tile-sub" style="font-size:.6rem;letter-spacing:0;">loading</span>
+          </div>
+          <!-- Resting (reference) -->
+          <div class="tile c3" tabindex="0" role="button" aria-label="Coach AI">
+            <span class="tile-label" style="font-size:var(--text-xs);">Coach AI</span>
+            <span class="tile-sub" style="font-size:.6rem;letter-spacing:0;">resting</span>
+          </div>
+        </div>
+        <p style="margin-top:var(--space-3);font:500 var(--text-xs)/var(--leading-body) var(--font-body);color:var(--text-secondary);">
+          Disabled: <code style="color:var(--interactive-text);">aria-disabled="true"</code>, <code style="color:var(--interactive-text);">opacity:.38; pointer-events:none</code>.
+          Loading: <code style="color:var(--interactive-text);">aria-busy="true"</code>, spinner replaces label, <code style="color:var(--interactive-text);">cursor:wait</code>.
+          Under <code style="color:var(--interactive-text);">prefers-reduced-motion</code>: spinner animation stopped, opacity .4.
+        </p>
+      </div>
+    </div>
+
+    <h2 class="spec-section">Send State</h2>
+
+    <!-- Send-state buttons -->
+    <div class="section">
+      <p class="section-label">Send-State Button — all 5 states</p>
+      <div class="section-card">
+        <div class="send-states">
+          <button class="send-btn" data-send="idle">Send ▶</button>
+          <button class="send-btn" data-send="sending" disabled aria-busy="true">⏳ Sending…</button>
+          <button class="send-btn" data-send="sent" aria-label="Sent">✓ Sent</button>
+          <button class="send-btn" data-send="notsent" aria-live="polite">✕ Not sent</button>
+          <button class="send-btn" data-send="unknown" aria-label="Unknown delivery">? Unknown</button>
+          <button class="send-btn" data-send="countdown" aria-label="Cooldown 5 seconds">⏱ 5s</button>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="spec-section">Chat Board</h2>
+
+    <!-- Mobile sheet with scrim -->
+    <div class="section">
+      <p class="section-label">Mobile Sheet — open at 60%, scrim + inert background</p>
+      <div class="section-card" style="padding:0;overflow:hidden;border-radius:var(--radius-lg);">
+        <div class="sheet-demo">
+          <!-- Simulated page content behind scrim -->
+          <div style="padding:var(--space-4);color:var(--text-secondary);font-size:var(--text-sm);">
+            <p>Squad page content (inert when sheet is open)</p>
+          </div>
+          <!-- Scrim -->
+          <div class="sheet-scrim" aria-hidden="true">
+            <span class="sheet-scrim-label">← scrim (--scrim)</span>
+          </div>
+          <!-- Sheet -->
+          <div class="sheet-panel" role="dialog" aria-label="Chat Board" aria-modal="true">
+            <div class="sheet-handle-knob" aria-hidden="true"></div>
+            <p class="sheet-title">Chat Board</p>
+            <div class="sheet-input-row">
+              <label class="sr-only" for="demo-composer">Message</label>
+              <input class="sheet-input" id="demo-composer" type="text"
+                     placeholder="Send to the squad…">
+              <button class="sheet-send" aria-label="Send message">▶</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Handle row with call chip -->
+    <div class="section">
+      <p class="section-label">Handle Row — with call chip (Squad mobile)</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <div class="handle-row" role="button" tabindex="0" aria-expanded="false"
+             aria-controls="chat-sheet" aria-label="Open Chat Board">
+          <span class="handle-chat-label"><span class="nav-icon" style="vertical-align:middle;" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 12a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2z"/></svg></span> Chat <span style="background:var(--accent-solid);color:var(--accent-on-solid);border-radius:var(--radius-pill);padding:1px 6px;font-size:.75rem;font-weight:700;">3</span></span>
+          <div class="call-chip" role="button" tabindex="0" aria-label="Return to Watch Party">
+            <span class="nav-icon" style="vertical-align:middle;" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="11" rx="2"/><polygon points="8,7 14,9.5 8,12" fill="currentColor" stroke="none"/><path d="M7 17h6M10 14v3"/></svg></span> Watch Party ↩
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="spec-section">Presence + Stats</h2>
+
+    <!-- Presence rows -->
+    <div class="section">
+      <p class="section-label">Presence Rows — online / offline / skeleton</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <div class="presence-list">
+          <!-- Online -->
+          <div class="presence-row">
+            <div class="presence-avatar-wrap">
+              <div class="presence-avatar">AQ</div>
+              <span class="presence-dot online" aria-hidden="true"></span>
+            </div>
+            <div class="presence-info">
+              <div class="presence-name">Acquarius</div>
+              <div class="presence-game">🎮 Spider-Man 2</div>
+            </div>
+            <div class="presence-platform">PS5</div>
+          </div>
+          <!-- Offline -->
+          <div class="presence-row">
+            <div class="presence-avatar-wrap">
+              <div class="presence-avatar">MX</div>
+              <span class="presence-dot offline" aria-hidden="true"></span>
+            </div>
+            <div class="presence-info">
+              <div class="presence-name">Maximus</div>
+              <div class="presence-game offline">Last online 2h ago</div>
+            </div>
+            <div class="presence-platform">PS5</div>
+          </div>
+          <!-- Skeleton -->
+          <div class="skeleton-row" aria-busy="true" aria-label="Loading">
+            <div class="skel skel-circle"></div>
+            <div class="skel-line-group">
+              <div class="skel skel-line-a"></div>
+              <div class="skel skel-line-b"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stat tiles -->
+    <div class="section">
+      <p class="section-label">Stat Tiles — gold (achievement) + lime (live)</p>
+      <div class="section-card">
+        <div class="stat-row">
+          <div class="stat-tile">
+            <span class="stat-numeral gold">14</span>
+            <span class="stat-label">Platinums</span>
+          </div>
+          <div class="stat-tile">
+            <span class="stat-numeral gold">87</span>
+            <span class="stat-label">Top Level</span>
+          </div>
+          <div class="stat-tile">
+            <span class="stat-numeral lime">3</span>
+            <span class="stat-label">Live Now</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="spec-section">Content Cards</h2>
+
+    <!-- Clip card -->
+    <div class="section">
+      <p class="section-label">Clip Card — included badge</p>
+      <div class="section-card" style="padding:0;overflow:hidden;max-width:300px;">
+        <div class="clip-card">
+          <div class="clip-thumb">
+            <span>[Clip thumbnail]</span>
+            <span class="clip-badge included">✓ Included</span>
+          </div>
+          <div class="clip-meta">
+            <span class="clip-sender">Acquarius</span>
+            <span class="clip-duration">0:43</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="spec-section">Overlays + Feedback</h2>
+
+    <!-- Dialog with scrim -->
+    <div class="section">
+      <p class="section-label">Dialog — centred overlay, scrim, focus trap</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <div class="dialog-demo">
+          <div class="dialog-scrim" aria-hidden="true"></div>
+          <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+            <h3 class="dialog-title" id="dialog-title">Remove Tile?</h3>
+            <p class="dialog-body">This tile will be removed from the board for all squad members.</p>
+            <div class="dialog-actions">
+              <button class="btn-secondary">Cancel</button>
+              <button class="btn-primary">Remove</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toasts -->
+    <div class="section">
+      <p class="section-label">Toast Variants — success / error / info</p>
+      <div class="section-card">
+        <div class="toast-stack" role="log" aria-live="polite" aria-label="Notifications">
+          <div class="toast success" role="status">
+            <span class="toast-icon">✓</span>
+            <span class="toast-msg">Message sent to the squad.</span>
+            <button class="toast-close" aria-label="Dismiss">✕</button>
+          </div>
+          <div class="toast error" role="alert">
+            <span class="toast-icon">✕</span>
+            <span class="toast-msg">Send failed — may or may not have gone through.</span>
+            <button class="toast-close" aria-label="Dismiss">✕</button>
+          </div>
+          <div class="toast info">
+            <span class="toast-icon">ℹ</span>
+            <span class="toast-msg">PSN data refreshing in 30 s.</span>
+            <button class="toast-close" aria-label="Dismiss">✕</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- State patterns -->
+    <div class="section">
+      <p class="section-label">State Patterns — skeleton / empty / error strip / stale</p>
+      <div class="section-card">
+        <div class="state-group">
+          <!-- Skeleton -->
+          <div>
+            <p style="font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);margin-bottom:var(--space-2);">Skeleton</p>
+            <div style="background:var(--surface-raised);border-radius:var(--radius-md);overflow:hidden;">
+              <div class="skeleton-row" aria-busy="true">
+                <div class="skel skel-circle"></div>
+                <div class="skel-line-group">
+                  <div class="skel skel-line-a"></div>
+                  <div class="skel skel-line-b"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Empty state -->
+          <div>
+            <p style="font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);margin-bottom:var(--space-2);">Empty State</p>
+            <div style="background:var(--surface-raised);border-radius:var(--radius-md);">
+              <div class="empty-state">
+                <div class="empty-icon">🎬</div>
+                <p class="empty-msg">No clips this month yet. Record something worth keeping.</p>
+                <button class="btn-primary" style="font-size:var(--text-sm);">Upload Clip</button>
+              </div>
+            </div>
+          </div>
+          <!-- Error strip -->
+          <div>
+            <p style="font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);margin-bottom:var(--space-2);">Per-Panel Error Strip</p>
+            <div class="error-strip">
+              <span>⚠</span>
+              <span>Failed to load squad data — retrying in 30 s.</span>
+            </div>
+          </div>
+          <!-- Stale marker -->
+          <div>
+            <p style="font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);margin-bottom:var(--space-2);">Stale Marker</p>
+            <div class="stale-marker">
+              <span class="stale-dot" aria-hidden="true"></span>
+              <span>Updated 4 min ago</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="spec-section">Calls</h2>
+
+    <!-- Call mini-bar -->
+    <div class="section">
+      <p class="section-label">Call Mini-Bar — one row per active call</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <div class="minibar-demo" role="region" aria-label="Active calls" aria-live="polite">
+          <div class="minibar-row">
+            <span class="nav-icon" style="flex-shrink:0;" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="11" rx="2"/><polygon points="8,7 14,9.5 8,12" fill="currentColor" stroke="none"/><path d="M7 17h6M10 14v3"/></svg></span>
+            <span class="minibar-room">Watch Party · Alpha, Beta +2</span>
+            <button class="minibar-btn" aria-label="Mute microphone"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="1" width="6" height="9" rx="3"/><path d="M4 9a6 6 0 0 0 12 0M10 18v-3M7 18h6"/></svg></span></button>
+            <button class="minibar-btn return" aria-label="Return to Watch">↩ Return</button>
+            <button class="minibar-btn leave" aria-label="Leave Watch Party">✕ Leave</button>
+          </div>
+          <div class="minibar-row">
+            <span class="nav-icon" style="flex-shrink:0;" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="1" width="6" height="9" rx="3"/><path d="M4 9a6 6 0 0 0 12 0M10 18v-3M7 18h6"/></svg></span>
+            <span class="minibar-room">Huddle · crcmz · 3</span>
+            <button class="minibar-btn" aria-pressed="true" aria-label="Unmute microphone"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="2" x2="18" y2="18"/><path d="M7 7v2a3 3 0 0 0 5.83 1M10 1a3 3 0 0 1 3 3v4M4 9a6 6 0 0 0 10 4.47"/><path d="M10 18v-2M7 18h6"/></svg></span> Muted</button>
+            <button class="minibar-btn return" aria-label="Return to Huddle">↩ Return</button>
+            <button class="minibar-btn leave" aria-label="Leave Huddle">✕ Leave</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="spec-section">Forms + Tables</h2>
+
+    <!-- Stepper -->
+    <div class="section">
+      <p class="section-label">Stepper — 4 steps (done / done / active / idle)</p>
+      <div class="section-card">
+        <div class="stepper" role="list" aria-label="Steps">
+          <div class="step-item" data-state="done" role="listitem">
+            <span class="step-num">✓</span>
+            <span>Link PSN</span>
+          </div>
+          <div class="step-line" aria-hidden="true"></div>
+          <div class="step-item" data-state="done" role="listitem">
+            <span class="step-num">✓</span>
+            <span>Verify</span>
+          </div>
+          <div class="step-line" aria-hidden="true"></div>
+          <div class="step-item" data-state="active" role="listitem" aria-current="step">
+            <span class="step-num">3</span>
+            <span>Confirm</span>
+          </div>
+          <div class="step-line" aria-hidden="true"></div>
+          <div class="step-item" data-state="idle" role="listitem">
+            <span class="step-num">4</span>
+            <span>Done</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sortable table -->
+    <div class="section">
+      <p class="section-label">Sortable Table — desktop: header sort buttons · mobile: Sort-by select</p>
+      <div class="section-card">
+        <!-- Mobile sort select (hidden ≥1024px) -->
+        <div class="sort-select-row">
+          <label class="sort-select-label" for="sort-by">Sort by</label>
+          <select class="sort-select" id="sort-by">
+            <option>Name</option>
+            <option selected>Trophies ↑</option>
+            <option>Level</option>
+          </select>
+        </div>
+        <table class="data-table" aria-label="Squad stats">
+          <thead>
+            <tr>
+              <th scope="col">
+                <button class="sort-btn" aria-sort="none">
+                  <span class="th-content">Name</span>
+                  <span class="sort-arrow" aria-hidden="true">↕</span>
+                </button>
+              </th>
+              <th scope="col">
+                <button class="sort-btn" aria-sort="ascending">
+                  <span class="th-content">Trophies</span>
+                  <span class="sort-arrow" aria-hidden="true">↑</span>
+                </button>
+              </th>
+              <th scope="col">
+                <button class="sort-btn" aria-sort="none">
+                  <span class="th-content">Level</span>
+                  <span class="sort-arrow" aria-hidden="true">↕</span>
+                </button>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Acquarius</td>
+              <td style="color:var(--achievement-text);font-weight:700;">3,214</td>
+              <td>87</td>
+            </tr>
+            <tr>
+              <td>Maximus</td>
+              <td style="color:var(--achievement-text);font-weight:700;">2,891</td>
+              <td>79</td>
+            </tr>
+            <tr>
+              <td>Rexford</td>
+              <td style="color:var(--achievement-text);font-weight:700;">1,450</td>
+              <td>61</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2 class="spec-section">Lifecycle Strip</h2>
+
+    <!-- Lifecycle strip -->
+    <div class="section">
+      <p class="section-label">Giveaway Lifecycle — done / done / active / idle / idle</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <!-- .lifecycle-strip-wrap provides a right-edge mask fade as a scroll affordance -->
+        <div class="lifecycle-strip-wrap" style="padding:var(--space-3) var(--space-3) var(--space-3) var(--space-4);">
+          <div class="lifecycle-strip" role="list" aria-label="Giveaway progress">
+            <div class="lifecycle-step done" role="listitem">✓ Created</div>
+            <div class="lifecycle-connector" aria-hidden="true"></div>
+            <div class="lifecycle-step done" role="listitem">✓ Nominations open</div>
+            <div class="lifecycle-connector" aria-hidden="true"></div>
+            <div class="lifecycle-step active" role="listitem" aria-current="step">Nominations closed</div>
+            <div class="lifecycle-connector" aria-hidden="true"></div>
+            <div class="lifecycle-step idle" role="listitem">Draw</div>
+            <div class="lifecycle-connector" aria-hidden="true"></div>
+            <div class="lifecycle-step idle" role="listitem">Winner revealed</div>
+          </div>
+        </div>
+        <div style="padding:var(--space-1) var(--space-4);font:500 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);background:rgba(0,0,0,.2);">
+          Right-edge mask fade signals scrollable content at 375 px. Scroll hides.
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== MORE SHEET ===== -->
+    <h2 class="spec-section">More Sheet</h2>
+
+    <div class="section">
+      <p class="section-label">More Sheet — open over tab bar, secondary destinations</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <div class="more-sheet-demo">
+          <!-- Page content behind scrim -->
+          <div class="more-sheet-bg">
+            <!-- Fake content rows -->
+            <div style="padding:var(--space-4);font:500 var(--text-sm)/var(--leading-body) var(--font-body);color:var(--text-secondary);">Squad page content (inert when sheet is open)</div>
+            <!-- Tab bar at bottom -->
+            <div class="more-tab-bar-mock">
+              <div class="more-tab-item" style="color:var(--text-secondary);">
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="5" width="18" height="11" rx="3"/><path d="M6 10h4M8 8v4"/><circle cx="14" cy="9.5" r=".75" fill="currentColor" stroke="none"/><circle cx="14" cy="12" r=".75" fill="currentColor" stroke="none"/></svg></span>Squad
+              </div>
+              <div class="more-tab-item">
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="11" rx="2"/><path d="M7 17h6M10 14v3"/></svg></span>Watch
+              </div>
+              <div class="more-tab-item">
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="18" height="12" rx="2"/><path d="M1 8h18M1 12h18M6 4v4M6 12v4M14 4v4M14 12v4"/></svg></span>Clips
+              </div>
+              <div class="more-tab-item" style="color:var(--accent-text);border-top:2px solid var(--accent-solid);">
+                <span class="nav-icon" style="color:var(--accent-text);" aria-hidden="true"><svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4" cy="10" r="1.75"/><circle cx="10" cy="10" r="1.75"/><circle cx="16" cy="10" r="1.75"/></svg></span>More
+              </div>
+            </div>
+          </div>
+          <!-- Scrim -->
+          <div class="more-sheet-scrim" aria-hidden="true"></div>
+          <!-- Sheet panel -->
+          <div class="more-sheet-panel" role="dialog" aria-label="More" aria-modal="true">
+            <!-- Drag handle -->
+            <div class="more-sheet-handle" aria-hidden="true">
+              <div style="width:32px;height:4px;border-radius:var(--radius-pill);background:var(--border-interactive);"></div>
+            </div>
+            <div class="more-sheet-title">More</div>
+            <!-- Secondary nav rows: Tools group -->
+            <div class="more-sheet-row active" role="menuitem" tabindex="0" aria-label="Huddle">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="1" width="6" height="9" rx="3"/><path d="M4 9a6 6 0 0 0 12 0M10 18v-3M7 18h6"/></svg></span>
+              Huddle
+            </div>
+            <div class="more-sheet-row" role="menuitem" tabindex="-1" aria-label="Music">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 15V5l12-2v10"/><circle cx="4.5" cy="15" r="2.5"/><circle cx="16.5" cy="13" r="2.5"/></svg></span>
+              Music
+            </div>
+            <div class="more-sheet-row" role="menuitem" tabindex="-1" aria-label="WhatsApp">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 12a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2z"/></svg></span>
+              WhatsApp
+            </div>
+            <div class="more-sheet-row" role="menuitem" tabindex="-1" aria-label="Giveaway">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17,9 17,19 3,19 3,9"/><rect x="1" y="5" width="18" height="4"/><line x1="10" y1="19" x2="10" y2="5"/><path d="M10 5H6.5a2 2 0 0 1 0-4C9 1 10 5 10 5z"/><path d="M10 5h3.5a2 2 0 0 0 0-4C11 1 10 5 10 5z"/></svg></span>
+              Giveaway
+            </div>
+            <div class="more-sheet-row" role="menuitem" tabindex="-1" aria-label="Ask AI">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 1v3M10 16v3M1 10h3M16 10h3M3.5 3.5l2 2M14.5 14.5l2 2M16.5 3.5l-2 2M5.5 14.5l-2 2"/><circle cx="10" cy="10" r="3.5"/></svg></span>
+              Ask AI
+            </div>
+            <div class="more-sheet-row" role="menuitem" tabindex="-1" aria-label="Settings">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="3"/><path d="M10 1v2M10 17v2M1 10h2M17 10h2M3.2 3.2l1.4 1.4M15.4 15.4l1.4 1.4M16.8 3.2l-1.4 1.4M4.6 15.4l-1.4 1.4"/></svg></span>
+              Settings
+            </div>
+          </div>
+        </div>
+        <div style="padding:var(--space-2) var(--gutter);font:500 var(--text-xs)/var(--leading-body) var(--font-body);color:var(--text-secondary);background:rgba(0,0,0,.3);">
+          <code style="color:var(--interactive-text);">role="dialog" aria-modal="true"</code> — focus trapped inside sheet.
+          <code style="color:var(--interactive-text);">inert</code> on background content.
+          Escape key + swipe-down close.
+          Active destination shows <code style="color:var(--interactive-text);">--c-nav-active-mark</code> 2px left edge.
+          Roving tabindex across menu items.
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== CHAT BOARD DESKTOP PANEL ===== -->
+    <h2 class="spec-section">Chat Board — Desktop Panel</h2>
+
+    <div class="section">
+      <p class="section-label">Chat Board Panel — 360px right panel (expanded), desktop only (≥1024px)</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <div class="panel-demo">
+          <!-- Main content area -->
+          <div class="panel-main">
+            <span style="opacity:.4;font-size:var(--text-sm);">Squad · main content area</span>
+          </div>
+          <!-- Right panel: expanded -->
+          <div class="panel-sidebar" style="--panel-w:360px;" aria-label="Chat Board">
+            <div class="panel-header">
+              <span class="panel-title">Chat Board</span>
+              <button class="panel-toggle-btn" aria-label="Collapse panel" title="Collapse to rail">
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5l-5 5 5 5"/></svg></span>
+              </button>
+            </div>
+            <!-- Shared / Mine tabs -->
+            <div class="panel-tabs" role="tablist" aria-label="Board view">
+              <button class="panel-tab active" role="tab" aria-selected="true" tabindex="0">Shared</button>
+              <button class="panel-tab" role="tab" aria-selected="false" tabindex="-1">Mine</button>
+            </div>
+            <!-- Edit / Organize controls -->
+            <div class="panel-controls">
+              <button class="panel-ctrl-btn" aria-label="Edit tiles">Edit</button>
+              <button class="panel-ctrl-btn" aria-label="Organize tiles">Organize</button>
+            </div>
+            <!-- Tile grid (mini tiles, 2-col) -->
+            <div class="panel-tile-grid" role="list" aria-label="Sound tiles">
+              <div class="tile c1" role="listitem" tabindex="0" style="min-height:56px;font-size:var(--text-xs);">
+                <span class="tile-label" style="font-size:var(--text-xs);">GG EZ</span>
+              </div>
+              <div class="tile c2" role="listitem" tabindex="0" style="min-height:56px;">
+                <span class="tile-label" style="font-size:var(--text-xs);">CLUTCH</span>
+              </div>
+              <div class="tile c4 fired" role="listitem" tabindex="0" style="min-height:56px;">
+                <span class="tile-label" style="font-size:var(--text-xs);">RATTED</span>
+                <span class="tile-sent">Sent ✓</span>
+              </div>
+              <div class="tile c3" role="listitem" tabindex="0" style="min-height:56px;">
+                <span class="tile-label" style="font-size:var(--text-xs);">NOPE</span>
+              </div>
+              <div class="tile c5" role="listitem" tabindex="0" style="min-height:56px;">
+                <span class="tile-label" style="font-size:var(--text-xs);">LETS GO</span>
+              </div>
+              <div class="tile add" role="listitem" tabindex="0" style="min-height:56px;">
+                <span class="tile-label" style="font-size:var(--text-xs);">+ Add</span>
+              </div>
+            </div>
+            <!-- Composer -->
+            <div class="panel-composer">
+              <input class="panel-input" type="text" placeholder="Message…" aria-label="Type a message">
+              <button class="panel-send" aria-label="Send message">
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="10" x2="17" y2="10"/><polyline points="11,4 17,10 11,16"/></svg></span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div style="padding:var(--space-1) var(--gutter);font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);background:rgba(141,120,196,.06);border-top:1px solid var(--border-decorative);">
+          expanded — 360px panel · Shared/Mine tabs · Edit/Organize · 2-col tile grid · composer
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <p class="section-label">Chat Board Panel — collapsed to rail (60px), desktop only</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <div class="panel-demo" style="height:160px;">
+          <div class="panel-main" style="opacity:.4;font-size:var(--text-sm);">main content</div>
+          <div class="panel-sidebar collapsed" style="--panel-w:360px;" aria-label="Chat Board (collapsed)" aria-expanded="false">
+            <div class="panel-header" style="justify-content:center;padding:0;">
+              <button class="panel-toggle-btn" aria-label="Expand Chat Board panel">
+                <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l5 5-5 5"/></svg></span>
+              </button>
+            </div>
+            <div class="panel-rail-icon" aria-hidden="true">
+              <span class="nav-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 12a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2z"/></svg></span>
+            </div>
+          </div>
+        </div>
+        <div style="padding:var(--space-1) var(--gutter);font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);background:rgba(141,120,196,.06);border-top:1px solid var(--border-decorative);">
+          collapsed rail — 60px · toggle button to expand · icon only · <code style="color:var(--interactive-text);">aria-expanded="false"</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== CLIP PLAYER ===== -->
+    <h2 class="spec-section">Clip Player</h2>
+
+    <div class="section">
+      <p class="section-label">Clip Player — play/pause, seek, time display (shown attached to clip card)</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <!-- Clip card thumbnail -->
+        <div style="height:180px;background:rgba(4,2,14,.9);display:flex;align-items:center;justify-content:center;
+                    border-bottom:1px solid var(--border-decorative);">
+          <span style="font:600 var(--text-sm)/1 var(--font-body);color:var(--text-secondary);">[ clip thumbnail ]</span>
+        </div>
+        <!-- Player controls -->
+        <div class="clip-player">
+          <div class="player-controls-row">
+            <button class="play-btn" aria-label="Pause">
+              <!-- Pause icon -->
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="3" width="4" height="14" rx="1"/><rect x="11" y="3" width="4" height="14" rx="1"/></svg></span>
+            </button>
+            <!-- Seek bar — drag-time readout, no hover tooltip -->
+            <div class="seek-wrap" role="slider" aria-label="Seek" aria-valuenow="38" aria-valuemin="0" aria-valuemax="100" tabindex="0">
+              <div class="seek-track">
+                <div class="seek-fill"></div>
+                <div class="seek-thumb"></div>
+              </div>
+              <!-- Drag-time readout: always visible at thumb (not hover-only) -->
+              <div class="seek-time-tip" aria-hidden="true">0:38</div>
+            </div>
+            <span class="player-time" aria-label="Elapsed 0:38 of 1:42">0:38 / 1:42</span>
+          </div>
+          <div style="font:500 var(--text-xs)/var(--leading-body) var(--font-body);color:var(--text-secondary);">
+            Seek: <code style="color:var(--interactive-text);">role="slider"</code>, arrow-key step 5 s.
+            Drag-time readout always visible at thumb position — not hover-dependent.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <p class="section-label">Clip Player — loading / error / 410-purged states</p>
+      <div class="section-card">
+        <div class="player-state-row">
+          <div>
+            <p class="player-state-label">Loading</p>
+            <div class="player-loading">
+              <div class="skel-bar"></div>
+              <span style="font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);white-space:nowrap;">Buffering…</span>
+            </div>
+          </div>
+          <div>
+            <p class="player-state-label">Error (playback failed)</p>
+            <div class="player-error" role="alert">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="8"/><line x1="10" y1="6" x2="10" y2="10"/><circle cx="10" cy="14" r=".5" fill="currentColor" stroke="none"/></svg></span>
+              Playback failed — try again
+              <button style="margin-left:auto;min-height:var(--tap-min);padding:0 var(--space-3);border-radius:var(--radius-sm);background:var(--error-surface);border:1px solid var(--error);color:var(--error);font:700 var(--text-xs)/1 var(--font-body);cursor:pointer;display:inline-flex;align-items:center;">Retry</button>
+            </div>
+          </div>
+          <div>
+            <p class="player-state-label">410 Purged (clip deleted after retention window)</p>
+            <div class="player-purged" role="status">
+              <span class="nav-icon" aria-hidden="true" style="color:var(--text-secondary);"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,6 5,6 17,6"/><path d="M8 6V4h4v2M7 6v10a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V6"/></svg></span>
+              Clip has been purged — no longer available
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== CALL CONTROLS ===== -->
+    <h2 class="spec-section">Call Controls</h2>
+
+    <div class="section">
+      <p class="section-label">Call Controls — Watch Party overlay bar (mic, camera, share, Leave)</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <div class="call-controls-demo">
+          <div class="call-controls-label">Watch Party · Alpha room</div>
+          <div class="cc-row" role="toolbar" aria-label="Call controls">
+            <!-- Mic on -->
+            <button class="cc-btn on" aria-label="Mute microphone" aria-pressed="false">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="1" width="6" height="9" rx="3"/><path d="M4 9a6 6 0 0 0 12 0M10 18v-3M7 18h6"/></svg></span>
+              <span class="cc-label">Mic</span>
+            </button>
+            <!-- Mic muted -->
+            <button class="cc-btn off" aria-label="Unmute microphone" aria-pressed="true">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="2" x2="18" y2="18"/><path d="M7 7v2a3 3 0 0 0 5.83 1M10 1a3 3 0 0 1 3 3v4M4 9a6 6 0 0 0 10 4.47"/><path d="M10 18v-2M7 18h6"/></svg></span>
+              <span class="cc-label">Muted</span>
+            </button>
+            <div class="cc-divider" aria-hidden="true"></div>
+            <!-- Camera on -->
+            <button class="cc-btn on" aria-label="Turn off camera" aria-pressed="false">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6h11l5 4-5 4H2z"/></svg></span>
+              <span class="cc-label">Camera</span>
+            </button>
+            <!-- Camera off -->
+            <button class="cc-btn off" aria-label="Turn on camera" aria-pressed="true">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="2" x2="18" y2="18"/><path d="M10 6H2v8h8M16 6l2 4-2 4"/></svg></span>
+              <span class="cc-label">Off</span>
+            </button>
+            <div class="cc-divider" aria-hidden="true"></div>
+            <!-- Share (disabled on mobile) -->
+            <button class="cc-btn disabled" aria-label="Share screen (desktop only)" aria-disabled="true" tabindex="-1">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="11" rx="2"/><path d="M7 17h6M10 14v3"/><path d="M9 8l2-2 2 2M11 6v5"/></svg></span>
+              <span class="cc-label">Share</span>
+            </button>
+            <div class="cc-divider" aria-hidden="true"></div>
+            <!-- Leave (danger) -->
+            <button class="cc-btn danger" aria-label="Leave Watch Party">Leave</button>
+          </div>
+        </div>
+        <div style="padding:var(--space-1) var(--gutter);font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);background:rgba(141,120,196,.06);">
+          Watch Party — Mic on/muted · Camera on/off · Share disabled (desktop only) · Leave (danger)
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <p class="section-label">Call Controls — Huddle bar (mic only, no camera/share) + auto-muted indicator</p>
+      <div class="section-card" style="padding:0;overflow:hidden;">
+        <div class="call-controls-demo">
+          <div class="call-controls-label">Huddle · crcmz · 3 members</div>
+          <!-- Auto-muted-by-Huddle banner -->
+          <div class="call-auto-mute-banner" role="status" aria-live="polite">
+            Muted by Huddle — you joined while someone was speaking
+          </div>
+          <div class="cc-row" role="toolbar" aria-label="Huddle controls">
+            <!-- Muted-by-Huddle state -->
+            <button class="cc-btn muted-by-huddle" aria-label="Unmute (muted by Huddle)" aria-pressed="true">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="2" x2="18" y2="18"/><path d="M7 7v2a3 3 0 0 0 5.83 1M10 1a3 3 0 0 1 3 3v4M4 9a6 6 0 0 0 10 4.47"/><path d="M10 18v-2M7 18h6"/></svg></span>
+              <span class="cc-label">Auto-muted</span>
+            </button>
+            <!-- Mic on (normal) -->
+            <button class="cc-btn on" aria-label="Mute microphone" aria-pressed="false">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="1" width="6" height="9" rx="3"/><path d="M4 9a6 6 0 0 0 12 0M10 18v-3M7 18h6"/></svg></span>
+              <span class="cc-label">Mic</span>
+            </button>
+            <div class="cc-divider" aria-hidden="true"></div>
+            <button class="cc-btn danger" aria-label="Leave Huddle">Leave</button>
+          </div>
+        </div>
+        <div style="padding:var(--space-1) var(--gutter);font:600 var(--text-xs)/1 var(--font-body);color:var(--text-secondary);background:rgba(141,120,196,.06);">
+          Huddle — mic only · auto-muted state (error colour) + banner · Leave (danger)
+        </div>
+      </div>
+    </div>
+
+  </main><!-- /main-content -->
+
+  <!-- ===== BOTTOM TAB BAR (mobile only) ===== -->
+  <nav class="tabbar" aria-label="Tab bar" role="tablist">
+    <div class="tab-item" role="tab" aria-current="page" tabindex="0">
+      <span class="tab-icon nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="5" width="18" height="11" rx="3"/><path d="M6 10h4M8 8v4"/><circle cx="14" cy="9.5" r=".75" fill="currentColor" stroke="none"/><circle cx="14" cy="12" r=".75" fill="currentColor" stroke="none"/></svg></span>
+      Squad
+    </div>
+    <div class="tab-item" role="tab" tabindex="-1">
+      <span class="tab-icon nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="16" height="11" rx="2"/><path d="M7 17h6M10 14v3"/></svg></span>
+      Watch
+    </div>
+    <div class="tab-item" role="tab" tabindex="-1">
+      <span class="tab-icon nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="18" height="12" rx="2"/><path d="M1 8h18M1 12h18M6 4v4M6 12v4M14 4v4M14 12v4"/></svg></span>
+      Clips
+    </div>
+    <div class="tab-item" role="tab" tabindex="-1">
+      <span class="tab-icon nav-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4" cy="10" r="1.75"/><circle cx="10" cy="10" r="1.75"/><circle cx="16" cy="10" r="1.75"/></svg></span>
+      More
+    </div>
+  </nav>
+
+</div><!-- /app-shell -->
+
+<!-- Screen-reader-only utility -->
+<style>
+  .sr-only {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
+</style>
+</body>
+</html>
