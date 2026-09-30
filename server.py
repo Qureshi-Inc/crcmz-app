@@ -6100,6 +6100,8 @@ from psn_messaging import ClipNotReady, ClipUnauthorized, ClipRateLimited, ClipE
 _clips.init()
 import reels as _reels
 app.include_router(_reels.build_router(_get_session, _is_iam_admin))
+import slap as _slap
+app.include_router(_slap.build_router(_get_session, _is_iam_admin))
 
 import whatsapp_analytics as _wa
 import giveaway as _giveaway

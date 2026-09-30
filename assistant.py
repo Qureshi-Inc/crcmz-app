@@ -1556,6 +1556,57 @@ def _watchparty_chat(room_id: str, limit: int = 50) -> dict:
     }
 
 
+@tool("slap_library_search",
+      "Search the squad's Slap music library (the Jellyfin server behind the Slap player) "
+      "by song title, artist or album. Returns title, artist, album, genres, year, duration "
+      "in seconds and when it was added. An empty list means no match, not an outage.",
+      {"type": "object", "required": ["query"], "properties": {
+          "query": {"type": "string", "description": "words to match, e.g. 'alt-J' or 'Breezeblocks'"},
+          "limit": {"type": "integer", "description": "1-50, default 20"},
+      }})
+def _slap_library_search(query: str, limit: int = 20) -> dict:
+    import slap as _slap
+    return _slap.library_search_sync(str(query or ""), max(1, min(int(limit or 20), 50)))
+
+
+@tool("slap_together",
+      "Live state of Slap's Listen Together room, where signed-in members share one player "
+      "and queue: who is listening, whether it is playing, the current track, the next ten "
+      "and the last action. active=false means nobody is in the room right now.",
+      {"type": "object", "properties": {}})
+def _slap_together() -> dict:
+    import slap as _slap
+    return _slap.together_status()
+
+
+_SLAP_VIEWS = {
+    "listening_now": "listening/now", "activity": "listening/feed", "comments": "listening/comments",
+    "most_played": "listening/stats", "library_stats": "dashboard/stats",
+    "leaderboard": "dashboard/leaderboard", "recently_added": "dashboard/recent",
+    "hot": "dashboard/hot", "top_artists": "dashboard/artists", "streaks": "dashboard/streaks",
+    "personalities": "dashboard/personalities", "hall_of_fame": "dashboard/hall-of-fame",
+    "achievements": "dashboard/achievements", "weekly_digest": "dashboard/ai/digest",
+}
+
+
+@tool("slap_stats",
+      "Slap music social stats. view picks one: listening_now (who is playing what), activity "
+      "(recent plays and skips), comments (reactions on tracks), most_played, library_stats, "
+      "leaderboard (who added the most songs), recently_added, hot, top_artists, streaks, "
+      "personalities, hall_of_fame, achievements, weekly_digest. Usernames are Slap/Jellyfin "
+      "names (e.g. moiz, noor) or, for songs added, Mattermost names (e.g. themoosecompany).",
+      {"type": "object", "required": ["view"], "properties": {
+          "view": {"type": "string", "enum": sorted(_SLAP_VIEWS)},
+          "limit": {"type": "integer", "description": "1-100, default 20 (where the view supports it)"},
+      }})
+def _slap_stats(view: str, limit: int = 20) -> dict:
+    import slap as _slap
+    path = _SLAP_VIEWS.get(str(view or ""))
+    if not path:
+        return {"error": f"unknown view; pick one of {sorted(_SLAP_VIEWS)}"}
+    return _slap.social_sync(path, {"limit": max(1, min(int(limit or 20), 100))})
+
+
 def tool_specs() -> list[dict]:
     """The registry in OpenAI function-calling form."""
     return [

@@ -29,6 +29,23 @@ const PATHS: Record<string, ReactNode> = {
   user: (<g {...S}><circle cx="10" cy="7" r="3.5" /><path d="M3.5 18c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /></g>),
   signout: (<g {...S}><path d="M8 3H4v14h4M13 6l4 4-4 4M17 10H8" /></g>),
   external: (<g {...S}><path d="M11 3h6v6M17 3l-8 8M15 12v5H3V5h5" /></g>),
+  play: (<g fill="currentColor"><path d="M6 3.5v13a.6.6 0 0 0 .9.5l10.2-6.5a.6.6 0 0 0 0-1L6.9 3a.6.6 0 0 0-.9.5z" /></g>),
+  pause: (<g fill="currentColor"><rect x="4.5" y="3" width="4" height="14" rx="1" /><rect x="11.5" y="3" width="4" height="14" rx="1" /></g>),
+  next: (<g fill="currentColor"><path d="M3 4.2v11.6a.5.5 0 0 0 .8.4l8.4-5.8a.5.5 0 0 0 0-.8L3.8 3.8a.5.5 0 0 0-.8.4z" /><rect x="14" y="3.5" width="2.5" height="13" rx=".8" /></g>),
+  prev: (<g fill="currentColor"><path d="M17 4.2v11.6a.5.5 0 0 1-.8.4L7.8 10.4a.5.5 0 0 1 0-.8l8.4-5.8a.5.5 0 0 1 .8.4z" /><rect x="3.5" y="3.5" width="2.5" height="13" rx=".8" /></g>),
+  shuffle: (<g {...S}><path d="M2 5h3.5c4 0 5 10 9 10H18M2 15h3.5c1.6 0 2.7-1.6 3.6-3.6M11 8.6c.9-2 2-3.6 3.5-3.6H18M15.5 2.5 18 5l-2.5 2.5M15.5 12.5 18 15l-2.5 2.5" /></g>),
+  repeat: (<g {...S}><path d="M3 9V7a3 3 0 0 1 3-3h11M14 1l3 3-3 3M17 11v2a3 3 0 0 1-3 3H3M6 19l-3-3 3-3" /></g>),
+  queue: (<g {...S}><path d="M2 4h11M2 9h11M2 14h6M15 11v7M12 15l3 3 3-3" /></g>),
+  heart: (<g {...S}><path d="M10 17s-7-4.4-7-9.2A3.8 3.8 0 0 1 10 5.6a3.8 3.8 0 0 1 7 2.2C17 12.6 10 17 10 17z" /></g>),
+  heartFill: (<g fill="currentColor"><path d="M10 17s-7-4.4-7-9.2A3.8 3.8 0 0 1 10 5.6a3.8 3.8 0 0 1 7 2.2C17 12.6 10 17 10 17z" /></g>),
+  thumbUp: (<g {...S}><path d="M6 9v9H3V9zM6 9l3.5-7a2 2 0 0 1 2 2.3L11 8h5a1.5 1.5 0 0 1 1.5 1.8l-1.3 6.6A2 2 0 0 1 14.3 18H6" /></g>),
+  thumbDown: (<g {...S}><path d="M6 11V2H3v9zM6 11l3.5 7a2 2 0 0 0 2-2.3L11 12h5a1.5 1.5 0 0 0 1.5-1.8l-1.3-6.6A2 2 0 0 0 14.3 2H6" /></g>),
+  plus: (<g {...S}><path d="M10 4v12M4 10h12" /></g>),
+  search: (<g {...S}><circle cx="8.5" cy="8.5" r="5.5" /><path d="M13 13l5 5" /></g>),
+  together: (<g {...S}><circle cx="6.5" cy="7" r="2.5" /><circle cx="13.5" cy="7" r="2.5" /><path d="M1.5 16c.5-2.6 2.5-4 5-4s4.5 1.4 5 4M10 13c.9-.7 2.1-1 3.5-1 2.5 0 4.5 1.4 5 4" /></g>),
+  trash: (<g {...S}><path d="M3 5h14M8 5V3h4v2M5 5l1 12h8l1-12" /></g>),
+  edit: (<g {...S}><path d="M13.5 3.5l3 3L7 16H4v-3z" /></g>),
+  refresh: (<g {...S}><path d="M16.5 8A7 7 0 0 0 4 5.5M3.5 12A7 7 0 0 0 16 14.5M4 2v3.5h3.5M16 18v-3.5h-3.5" /></g>),
 }
 
 export type IconName = keyof typeof PATHS

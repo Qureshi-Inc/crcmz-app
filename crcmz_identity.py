@@ -65,7 +65,9 @@ ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
 # or a human typing a number, while attribution of stored messages goes through
 # wa_names. People post under more than one name ("Zubair", "Zubair CRCMZ"), so
 # the tag is a list.
-TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone", "wa_names")
+# jellyfin_user is the person's account on the music server (see slap.py); it is
+# written by the app itself the first time someone opens Slap without one.
+TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone", "wa_names", "jellyfin_user")
 
 # Separators accepted inside a multi-value tag.
 _TAG_SPLIT = ",;|"
@@ -100,6 +102,7 @@ def bot_person() -> dict:
         "wa_jid": "",
         "wa_phone": "",
         "wa_names": [],
+        "jellyfin_user": "",
         "tags": {},
         "is_bot": True,
     }
@@ -254,12 +257,31 @@ def _fetch_people() -> list[dict]:
                 "wa_jid": tags.get("wa_jid", ""),
                 "wa_phone": tags.get("wa_phone", ""),
                 "wa_names": _split_tag(tags.get("wa_names", "")),
+                "jellyfin_user": tags.get("jellyfin_user", ""),
                 "tags": tags,
             })
 
     logger.info("identity: loaded %d people, %d fully tagged",
                 len(people), sum(1 for p in people if p["wa_jid"] and p["psn_id"]))
     return people
+
+
+def set_tag(zitadel_id: str, key: str, value: str) -> bool:
+    """Write one metadata tag on a person. Only app-owned keys may be written."""
+    if key != "jellyfin_user" or not configured() or not zitadel_id.isdigit():
+        return False
+    try:
+        r = httpx.post(
+            f"{ZITADEL_ISSUER}/management/v1/users/{zitadel_id}/metadata/{key}",
+            json={"value": base64.b64encode(value.encode()).decode()},
+            headers=_headers(), timeout=_HTTP_TIMEOUT,
+        )
+    except httpx.HTTPError as e:
+        logger.warning("identity: tag write failed for %s: %s", zitadel_id, e)
+        return False
+    if r.status_code != 200:
+        logger.warning("identity: tag write for %s answered %s", zitadel_id, r.status_code)
+    return r.status_code == 200
 
 
 def people(*, refresh: bool = False) -> list[dict]:

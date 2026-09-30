@@ -6,6 +6,7 @@ import { Shell } from './Shell'
 import { SquadPage } from '../features/squad/SquadPage'
 import { ClipsPage } from '../features/clips/ClipsPage'
 import { StudioPage } from '../features/clips/Studio'
+import { SlapPage } from '../features/slap/SlapPage'
 import { Handoff, NotFound } from '../features/handoff/Handoff'
 
 const queryClient = new QueryClient({
@@ -33,7 +34,7 @@ export function App() {
               <Route path="clips" element={<ClipsPage />} />
               <Route path="clips/:id/edit" element={<StudioPage />} />
               <Route path="clips/*" element={<Handoff id="clips" />} />
-              <Route path="slap" element={<Handoff id="slap" />} />
+              <Route path="slap" element={<SlapPage />} />
               <Route path="whatsapp" element={<Handoff id="whatsapp" />} />
               <Route path="giveaway" element={<Handoff id="giveaway" />} />
               <Route path="watch" element={<Handoff id="watch" />} />

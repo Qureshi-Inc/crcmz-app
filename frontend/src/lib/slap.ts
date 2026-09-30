@@ -1,0 +1,133 @@
+// PS-3 · Slap endpoint contract. The browser only ever talks to /api/slap/*;
+// the server holds the Jellyfin key and stamps every social write with the
+// caller's own Jellyfin name.
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { getJSON, request } from './http'
+
+export type Track = {
+  id: string
+  title: string
+  artist: string
+  album: string
+  album_id: string
+  album_artist: string
+  genres: string[]
+  year: number | null
+  duration: number
+  added: string
+  art: string | null
+  fav: boolean
+  plays: number
+}
+export type Playlist = { id: string; name: string; count: number; art: string | null; editable: boolean }
+export type Library = { tracks: Track[]; playlists: Playlist[] }
+export type PlaylistDetail = { id: string; name: string; editable: boolean; items: { entry: string; id: string }[] }
+export type SlapMe = { name: string; jellyfin_user: string; slap_user: string; created: boolean; admin: boolean }
+
+/** A queued track: the fields the Together room carries, plus its queue identity. */
+export type QueueItem = Pick<Track, 'id' | 'title' | 'artist' | 'album' | 'album_id' | 'duration' | 'art'> & { qid: string; added_by?: string }
+export type Room = {
+  queue: QueueItem[]
+  index: number
+  playing: boolean
+  position: number
+  at: number
+  version: number
+  by: string
+  last: string
+  members: { name: string; since: number }[]
+}
+
+export const streamUrl = (id: string) => `/api/slap/stream/${id}`
+export const artUrl = (id: string | null | undefined, size: 96 | 300 | 600 = 96) => (id ? `/api/slap/art/${id}?size=${size}` : null)
+
+export function useSlapMe(enabled = true) {
+  return useQuery({
+    queryKey: ['slap', 'me'],
+    queryFn: ({ signal }) => getJSON<SlapMe>('/api/slap/me', signal),
+    staleTime: 5 * 60_000,
+    retry: false,
+    enabled,
+  })
+}
+
+export function useLibrary() {
+  return useQuery({
+    queryKey: ['slap', 'library'],
+    queryFn: ({ signal }) => request<Library>('/api/slap/library', { signal, timeoutMs: 30_000 }),
+    staleTime: 60_000,
+  })
+}
+
+export function usePlaylist(pid: string | null) {
+  return useQuery({
+    queryKey: ['slap', 'playlist', pid],
+    queryFn: ({ signal }) => getJSON<PlaylistDetail>(`/api/slap/playlists/${pid}`, signal),
+    enabled: !!pid,
+  })
+}
+
+export function useRefreshLibrary() {
+  const qc = useQueryClient()
+  return () => qc.invalidateQueries({ queryKey: ['slap'] })
+}
+
+/** A slaptastic read through the proxy. No poll: loaded on open, refreshed by ↻. */
+export function useSocial<T>(path: string | null, params?: Record<string, string | number>, opts: { enabled?: boolean } = {}) {
+  const qs = params ? `?${new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]))}` : ''
+  return useQuery({
+    queryKey: ['slap', 'social', path, qs],
+    queryFn: ({ signal }) => request<T>(`/api/slap/social/${path}${qs}`, { signal, timeoutMs: 60_000 }),
+    enabled: !!path && (opts.enabled ?? true),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  })
+}
+
+// ── Writes ──────────────────────────────────────────────────────────────────
+const trackBody = (t: Pick<Track, 'id' | 'title' | 'artist' | 'album'>) => ({ track_id: t.id, title: t.title, artist: t.artist, album: t.album })
+
+export const setFavorite = (id: string, on: boolean) =>
+  request<{ fav: boolean }>(`/api/slap/favorites/${id}`, { method: on ? 'POST' : 'DELETE' })
+
+export const sendThumb = (t: Pick<Track, 'id' | 'title' | 'artist' | 'album'>, thumbs: -1 | 0 | 1) =>
+  request('/api/slap/thumb', { body: { ...trackBody(t), thumbs } })
+
+export const sendComment = (t: Pick<Track, 'id' | 'title' | 'artist' | 'album'>, text: string, isReaction: boolean) =>
+  request('/api/slap/comment', { body: { ...trackBody(t), text, is_reaction: isReaction } })
+
+export function reportListen(kind: 'play' | 'skip', t: Pick<Track, 'id' | 'title' | 'artist' | 'album' | 'duration'>, heard: number, completed: boolean) {
+  return request(`/api/slap/listen/${kind}`, {
+    quiet401: true,
+    body: {
+      ...trackBody(t), duration_seconds: Math.round(t.duration), listened_seconds: Math.round(heard),
+      completed, hour_of_day: new Date().getHours(),
+    },
+  })
+}
+
+export const createPlaylist = (name: string, ids: string[]) => request<{ id: string; name: string }>('/api/slap/playlists', { body: { name, ids } })
+export const addToPlaylist = (pid: string, ids: string[]) => request<{ added: number }>(`/api/slap/playlists/${pid}/items`, { body: { ids } })
+export const removeFromPlaylist = (pid: string, entries: string[]) => request(`/api/slap/playlists/${pid}/remove`, { body: { entries } })
+export const deletePlaylist = (pid: string) => request(`/api/slap/playlists/${pid}`, { method: 'DELETE' })
+export const editTrackInfo = (id: string, info: { title?: string; artist?: string; album?: string; genre?: string; year?: number | null }) =>
+  request(`/api/slap/tracks/${id}/info`, { body: info })
+
+export type TogetherOp = 'play' | 'pause' | 'seek' | 'next' | 'prev' | 'ended' | 'jump' | 'add' | 'next_up' | 'replace' | 'remove' | 'move' | 'clear'
+export const together = (op: TogetherOp, extra: Record<string, unknown> = {}) => request<Room>('/api/slap/together', { body: { op, ...extra } })
+
+// ── Display ─────────────────────────────────────────────────────────────────
+/** SL-20: slaptastic usernames → the names the squad uses. Unknown names pass through. */
+const SLAP_NAMES: Record<string, string> = {
+  moiz: 'moiz', themoosecompany: 'moose', mutasif: 'moose', shahraiz: 'shahraiz', zubair221b: 'zubair',
+  nooramin40: 'noor', deception: 'deception', brendan: 'deception', asamad89: 'asamad', samad: 'asamad',
+}
+export const slapName = (u: string | null | undefined) => (u ? SLAP_NAMES[u.toLowerCase()] ?? u : '')
+
+export function fmtTime(s: number | null | undefined): string {
+  if (s == null || !Number.isFinite(s) || s < 0) return '0:00'
+  const m = Math.floor(s / 60)
+  const sec = Math.floor(s % 60)
+  if (m >= 60) return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+  return `${m}:${String(sec).padStart(2, '0')}`
+}

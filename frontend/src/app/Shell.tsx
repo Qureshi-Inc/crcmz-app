@@ -13,6 +13,8 @@ import { useDesktop } from '../lib/media'
 import { loginUrl, redirectToLogin, useSignedOut } from '../lib/session'
 import { useSwipeDown } from '../lib/gestures'
 import { usePanelCollapsed } from '../features/chat/panelState'
+import { MiniPlayer, PlayerSheet } from '../features/slap/NowPlaying'
+import { current as nowPlaying, usePlayer } from '../features/slap/player'
 import { DESTS, MORE_ACCOUNT, MORE_SQUAD, SIDEBAR_FOOT, SIDEBAR_MAIN, TAB_IDS, destForPath, type DestId } from './nav'
 
 const MASCOT = '/footer-avatar.png'
@@ -51,6 +53,15 @@ export function Shell() {
 
   const chatMode = current === 'squad' ? (desktop ? (collapsed ? 'rail' : 'panel') : 'mobile') : undefined
 
+  // The mini-player is page chrome: while it shows, content and toasts make room for it.
+  const player = usePlayer()
+  const hasPlayer = !!nowPlaying(player) || player.mode === 'together'
+  useEffect(() => {
+    const d = document.documentElement.dataset
+    if (hasPlayer) d.player = ''
+    else delete d.player
+  }, [hasPlayer])
+
   return (
     <>
       <a className="skip-link" href="#main">Skip to content</a>
@@ -64,7 +75,9 @@ export function Shell() {
         )}
         <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
       </main>
+      {!desktop && <MiniPlayer variant="bar" />}
       {!desktop && <TabBar current={current} isAdmin={isAdmin} />}
+      <PlayerSheet />
       <Toaster />
     </>
   )
@@ -278,6 +291,7 @@ function Sidebar({ current, isAdmin }: { current: DestId | null; isAdmin: boolea
         <div className="sidebar-spacer" />
         <ul className="sidebar-group">{SIDEBAR_FOOT.map(row)}</ul>
       </nav>
+      <MiniPlayer variant="sidebar" />
       <div className="sidebar-account">
         <AccountControl variant="sidebar" />
       </div>

@@ -64,6 +64,9 @@ STORES: dict[str, list[str] | None] = {
     "/data/watchparty_events.db": ["watchparty_events_list"],
     "/data/watch_history.db": ["watch_history"],
     "/data/watch_diag.db": ["watch_diagnostics"],
+    "/data/slap_playlists.json": None,  # which Zitadel id made a Slap playlist, only
+                                        # used to allow edits; the playlists themselves
+                                        # are served by slap_library_search.
 
     "/data/mm_tokens.db": None,         # Mattermost OAuth access/refresh tokens.
                                        # Same rule as mcp_user_tokens — tokens

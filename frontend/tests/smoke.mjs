@@ -38,7 +38,7 @@ const browser = await chromium.launch({ executablePath: CHROME, headless: true }
  * A page where every write is mocked. `mocks` maps "METHOD path" → handler(route).
  * Unmocked writes are aborted and recorded as violations.
  */
-async function newPage({ width, height, mocks = {}, reducedMotion = 'no-preference' }) {
+async function newPage({ width, height, mocks = {}, match = null, reducedMotion = 'no-preference' }) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, reducedMotion, hasTouch: width < 1024 })
   const page = await ctx.newPage()
   page.violations = []
@@ -47,7 +47,8 @@ async function newPage({ width, height, mocks = {}, reducedMotion = 'no-preferen
     const req = route.request()
     const url = new URL(req.url())
     const key = `${req.method()} ${url.pathname}`
-    if (mocks[key]) { page.writes.push(key); return mocks[key](route) }
+    const h = mocks[key] || match?.(key, url)
+    if (h) { page.writes.push(key); return h(route) }
     if (req.method() !== 'GET' && req.method() !== 'HEAD') {
       page.violations.push(key)
       return route.abort()
@@ -111,6 +112,67 @@ const serveRange = (buf, type) => (route) => {
   return route.fulfill({ status: 206, contentType: type, body: buf.subarray(a, b + 1),
     headers: { 'accept-ranges': 'bytes', 'content-range': `bytes ${a}-${b}/${buf.length}` } })
 }
+
+// ── Slap fixtures (PS-3). Every /api/slap route is mocked, reads and writes. ──
+const SLAP_TRACKS = Array.from({ length: 30 }, (_, i) => ({
+  id: `t${i}`, title: `Track ${i}`, artist: ['Drake', 'SZA', 'Kendrick Lamar'][i % 3], album: `Album ${i % 5}`, album_id: `al${i % 5}`,
+  album_artist: ['Drake', 'SZA', 'Kendrick Lamar'][i % 3], genres: ['Hip-Hop'], year: 2020 + (i % 5), duration: 180 + i,
+  added: new Date((NOW - i * 86400) * 1000).toISOString(), art: i % 4 ? `al${i % 5}` : null, fav: i === 2, plays: 30 - i,
+}))
+const SLAP_LIB = { tracks: SLAP_TRACKS, playlists: [{ id: 'p1', name: 'Gym', count: 3, art: 'al1', editable: true }, { id: 'p2', name: 'Chill', count: 2, art: null, editable: false }] }
+const qi = (t, i, by) => ({ id: t.id, title: t.title, artist: t.artist, album: t.album, album_id: t.album_id, duration: t.duration, art: t.art, qid: `q${i}`, added_by: by })
+const SLAP_ROOM = {
+  queue: [qi(SLAP_TRACKS[3], 0, 'zubair'), qi(SLAP_TRACKS[4], 1, 'noor')], index: 0, playing: false, position: 12, at: NOW, version: 4,
+  by: 'zubair', last: 'zubair added Track 4', members: [{ name: 'zubair', since: NOW - 300 }, { name: 'noor', since: NOW - 60 }],
+}
+const SLAP_BASE = {
+  'GET /api/admin/check': json(200, { admin: false }),
+  'GET /api/slap/me': json(200, { name: 'Moiz', jellyfin_user: 'moiz', slap_user: 'moiz', created: false, admin: false }),
+  'GET /api/slap/library': json(200, SLAP_LIB),
+  'GET /api/slap/playlists/p1': json(200, { id: 'p1', name: 'Gym', editable: true, items: [{ entry: 'e1', id: 't1' }, { entry: 'e2', id: 't5' }, { entry: 'e3', id: 't9' }] }),
+  'GET /api/slap/together': json(200, SLAP_ROOM),
+}
+const slapMatch = (extra = {}) => (key) => {
+  if (extra[key]) return extra[key]
+  if (key.startsWith('GET /api/slap/art/')) return (r) => r.fulfill({ status: 200, contentType: 'image/jpeg', body: STUDIO_FRAME })
+  if (key.startsWith('GET /api/slap/stream/')) return serveRange(STUDIO_VIDEO, 'video/webm')
+  if (key.startsWith('GET /api/slap/social/')) return socialFixture(key.slice('GET /api/slap/social/'.length))
+  return null
+}
+const WHO = [{ username: 'moiz', color: '#ff3df0' }, { username: 'zubair221b', color: '#22e6ff' }, { username: 'nooramin40', color: '#ffd24a' }]
+const SONG = (i) => ({ title: `Song ${i}`, artist: ['Drake', 'SZA'][i % 2], username: WHO[i % 3].username, color: WHO[i % 3].color, created_at: new Date((NOW - i * 3600) * 1000).toISOString(), source_platform: 'spotify', track_id: `t${i}` })
+function socialFixture(path) {
+  const S = {
+    'dashboard/stats': { total_songs: 1234, total_contributors: 6, this_week_additions: 18, top_artist: 'Drake', total_artists: 410, most_active_day: 'Friday', peak_hour: 22, longest_streak_user: 'moiz', longest_streak_days: 12 },
+    'dashboard/hot': { tracks: [SONG(1), SONG(2)], period_hours: 24 },
+    'dashboard/listening': { enabled: true, top_tracks: [{ ...SONG(3), plays: 9 }], total_scrobbles: 253, period_days: 30 },
+    'dashboard/leaderboard': { entries: WHO.map((w, i) => ({ rank: i + 1, username: w.username, song_count: 300 - i * 50, color: w.color, latest_addition: null })) },
+    'dashboard/streaks': { entries: WHO.map((w, i) => ({ ...w, current_streak: 5 - i, longest_streak: 12 - i, is_active: i === 0 })) },
+    'dashboard/hipster': { entries: WHO.map((w, i) => ({ ...w, unique_artists: 100 - i * 10, hipster_score: 80 - i * 5 })) },
+    'dashboard/personalities': { cards: WHO.map((w) => ({ ...w, personality: 'The Curator', description: 'Always first to the new drop', dominant_platform: 'spotify', song_count: 120 })) },
+    'dashboard/hall-of-fame': { entries: [{ title: 'Most slapped', description: 'Played by everyone', value: 'Song 1', emoji: '🏆' }] },
+    'dashboard/achievements': [{ id: 'a1', name: 'First slap', emoji: '🎉', description: 'Share your first song', unlocked: true, unlocked_by: ['moiz'] }, { id: 'a2', name: 'Century', emoji: '💯', description: '100 slaps', unlocked: false, unlocked_by: [] }],
+    'dashboard/ai/vibe-check': { vibe: 'Late-night drive', mood_emoji: '🌙', description: 'Moody and slow this week.' },
+    'dashboard/timeline': { entries: Array.from({ length: 30 }, (_, i) => ({ date: `2026-09-${String(i + 1).padStart(2, '0')}`, count: (i * 7) % 11 })) },
+    'dashboard/genres': { genres: [{ name: 'spotify', count: 80, percentage: 64 }, { name: 'apple', count: 45, percentage: 36 }] },
+    'dashboard/heatmap': { cells: Array.from({ length: 7 * 24 }, (_, k) => ({ day: Math.floor(k / 24), hour: k % 24, count: (k * 13) % 5 })) },
+    'dashboard/artists': { artists: [{ name: 'Drake', count: 40 }, { name: 'SZA', count: 22 }] },
+    'listening/now': { listeners: [{ username: 'zubair221b', title: 'Track 3', artist: 'Drake', is_recent: false, track_id: 't3' }] },
+    'listening/user/moiz': { total_plays: 253, total_listen_hours: 15, top_tracks: [{ track_id: 't1', title: 'Track 1', artist: 'SZA', play_count: 12, unique_listeners: 2, thumb_ups: 1 }] },
+    'listening/insights': { trending: [], squad_favorites: [{ track_id: 't1', title: 'Track 1', artist: 'SZA', play_count: 12, unique_listeners: 3, thumb_ups: 2, score: 9 }] },
+    'listening/feed': { activity: [{ username: 'nooramin40', title: 'Track 5', artist: 'SZA', track_id: 't5', completed: true, skipped: false, timestamp: new Date((NOW - 600) * 1000).toISOString() }] },
+    'listening/comments': { comments: [{ id: 'c1', username: 'zubair221b', title: 'Track 3', artist: 'Drake', text: 'this one goes hard', is_reaction: false, created_at: new Date((NOW - 900) * 1000).toISOString() }] },
+    'dashboard/recent': { items: [SONG(4), SONG(5)] },
+    'dashboard/ai/digest': { digest: 'A quiet week with a Drake spike on Friday.', highlights: ['moiz kept the streak alive'] },
+    'dashboard/ai/weekly-playlist': { name: 'Friday fuel', description: 'For the drive', tracks: [{ track_id: 't1', title: 'Track 1', artist: 'SZA' }] },
+    'dashboard/ai/recommendations/moiz': { username: 'moiz', recommendations: ['Try more SZA deep cuts'], reasoning: 'You skip the singles.' },
+  }
+  if (path.startsWith('dashboard/head-to-head/')) return json(200, { user1: 'moiz', user2: 'zubair221b', user1_color: '#ff3df0', user2_color: '#22e6ff', user1_songs: 300, user2_songs: 250, user1_artists: 90, user2_artists: 70, shared_artists: ['Drake'] })
+  if (path.startsWith('dashboard/taste-dna/')) return json(200, { analysis: 'Close taste, different platforms.', compatibility_score: 0.72, shared_artists: ['Drake'] })
+  return S[path] ? json(200, S[path]) : json(404, { detail: `no fixture for ${path}` })
+}
+/** A one-shot SSE reply: the room, then the stream ends (EventSource retries). */
+const sse = (room) => (r) => r.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'cache-control': 'no-cache' }, body: `retry: 60000\nevent: state\ndata: ${JSON.stringify(room)}\n\n` })
 
 async function ready(page, path = '/app/') {
   await page.goto(BASE + path, { waitUntil: 'domcontentloaded' })
@@ -281,7 +343,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x': '/?p=pipeline', slap: '/?p=slap', whatsapp: '/?p=wa', giveaway: '/?p=giveaway', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai', portal: '/portal', settings: '/' }
+    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', giveaway: '/?p=giveaway', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai', portal: '/portal', settings: '/' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -898,6 +960,127 @@ try {
     await page.waitForSelector('.st-loading[role=alert]')
     check('404 says not found or not yours', (await page.textContent('.st-loading')).includes("isn't one of yours"))
     check('no unmocked writes and no page errors (Studio edge cases)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  // ── 8. Slap (PS-3): Listen, the mini-player and sheet, Together, Stats ──
+  {
+    const favs = [], plays = []
+    const { ctx, page } = await newPage({
+      width: 375, height: 800, mocks: SLAP_BASE,
+      match: (key, url) => (key.startsWith('POST /api/slap/favorites/') ? (r) => { favs.push(url.pathname.split('/').pop()); return json(200, { fav: true })(r) } : null) || slapMatch({
+        'POST /api/slap/listen/play': (r) => { plays.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+        'POST /api/slap/listen/skip': (r) => { plays.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+      })(key),
+    })
+    await ready(page, '/app/slap')
+    await page.waitForSelector('.track-row')
+    check('Slap header names the music account', (await page.textContent('.slap-sub')).includes('Listening as moiz'))
+    check('three segmented tabs (Listen / Together / Stats)', (await page.locator('.seg-3 [role=tab]').count()) === 3)
+    const segCols = await page.$eval('.seg-3', (e) => getComputedStyle(e).gridTemplateColumns.split(' ').length)
+    check('.seg-3 lays out three columns', segCols === 3, `${segCols}`)
+    check('no mini-player before anything plays', (await page.locator('.miniplayer-bar').count()) === 0)
+    await shot(page, 'slap-375')
+    await axe(page, 'Slap Listen 375', '.app-main')
+    await tapTargets(page, 'Slap Listen 375')
+
+    await page.fill('.search-field input', 'Track 1')
+    await page.waitForFunction(() => [...document.querySelectorAll('.track-row .track-title')].every((e) => e.textContent.includes('Track 1')))
+    check('search filters the track list', (await page.locator('.track-row').count()) >= 1)
+    await page.fill('.search-field input', '')
+
+    await page.click('.track-row .track-main >> nth=0')
+    await page.waitForSelector('.miniplayer-bar')
+    check('playing a track shows the mini-player bar', (await page.textContent('.miniplayer-title')).startsWith('Track'))
+    check('html[data-player] is set while something plays', await page.evaluate(() => 'player' in document.documentElement.dataset))
+    const geo = await page.evaluate(() => {
+      const b = document.querySelector('.miniplayer-bar').getBoundingClientRect()
+      const t = document.querySelector('.tabbar')?.getBoundingClientRect()
+      return { bar: [b.top, b.bottom, b.height], tab: t ? [t.top] : null }
+    })
+    check('mini-player sits directly above the tab bar', geo.tab && Math.abs(geo.bar[1] - geo.tab[0]) <= 1.5, JSON.stringify(geo))
+    await shot(page, 'slap-375-miniplayer')
+    await tapTargets(page, 'Slap mini-player 375')
+
+    await page.click('.miniplayer-open')
+    await page.waitForSelector('.sheet-player .player-controls')
+    check('mini-player opens the player sheet', (await page.textContent('.sheet-player .player-title')).startsWith('Track'))
+    await page.click('.sheet-player button[aria-label="Add to favourites"]')
+    await page.waitForFunction(() => document.querySelector('.sheet-player button[aria-label="Remove from favourites"]'), null, { timeout: 5000 }).catch(() => {})
+    const title = await page.textContent('.sheet-player .player-title')
+    check('favourite POSTs once for the current track', favs.length === 1 && `Track ${favs[0].slice(1)}` === title, `${JSON.stringify(favs)} ${title} ${page.violations}`)
+    await shot(page, 'slap-375-sheet')
+    await axe(page, 'Slap player sheet 375', '.sheet-player')
+    await page.click('.sheet-player button[aria-label="Close player"]')
+    await page.waitForSelector('.sheet-player', { state: 'detached' })
+
+    await page.click('.seg-tab:has-text("Together")')
+    await page.waitForSelector('.together-who')
+    check('Together peek shows who is in the room', (await page.textContent('.together-who')).includes('2 listening'))
+    check('no unmocked writes and no page errors (Slap Listen)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    const ops = []
+    const { ctx, page } = await newPage({
+      width: 375, height: 800, mocks: SLAP_BASE,
+      match: slapMatch({
+        'GET /api/slap/together/events': sse(SLAP_ROOM),
+        'POST /api/slap/together': (r) => {
+          const b = r.request().postDataJSON(); ops.push(b)
+          return json(200, { ...SLAP_ROOM, version: SLAP_ROOM.version + ops.length, queue: [...SLAP_ROOM.queue, qi(SLAP_TRACKS[0], 9, 'moiz')] })(r)
+        },
+        'POST /api/slap/listen/play': json(200, { ok: true }),
+        'POST /api/slap/listen/skip': json(200, { ok: true }),
+      }),
+    })
+    await ready(page, '/app/slap?tab=together')
+    await page.waitForSelector('.together-actions .btn-primary')
+    check('peek offers "Join them" when people are in', (await page.textContent('.together-actions .btn-primary')).includes('Join them'))
+    await shot(page, 'slap-375-together-peek')
+    await page.click('.together-actions .btn-primary')
+    await page.waitForSelector('.together-now-big')
+    check('joined: the room\'s track is shown', (await page.textContent('.together-now-big')).includes('Track 3'))
+    check('joined: the shared queue is listed', (await page.locator('.together-queue .queue-row').count()) === 2)
+    check('joined: the tab shows the member count', (await page.textContent('.seg-tab[data-state=active]')).includes('2'))
+    check('joined: the mini-player shows Together', (await page.textContent('.miniplayer-bar')).includes('Together'))
+    await shot(page, 'slap-375-together')
+    await axe(page, 'Slap Together 375', '.app-main')
+    await page.click('.together-actions button:has-text("Add from the library")')
+    await page.waitForSelector('.track-row')
+    await page.click('.track-row .track-main >> nth=0')
+    await page.waitForFunction(() => document.querySelectorAll('.miniplayer-bar').length === 1)
+    await page.waitForTimeout(300)
+    check('in the room, tapping a track adds it to the shared queue', ops.length === 1 && ops[0].op === 'add', JSON.stringify(ops))
+    await page.click('.seg-tab:has-text("Together")')
+    await page.click('.together-banner button:has-text("Leave")')
+    await page.waitForSelector('.together-intro')
+    check('Leave returns to the room peek', await page.isVisible('.together-actions .btn-primary'))
+    check('no unmocked writes and no page errors (Together)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    const { ctx, page } = await newPage({
+      width: 1440, height: 900, mocks: SLAP_BASE,
+      match: slapMatch({ 'GET /api/slap/social/dashboard/streaks': json(502, { detail: 'slap down' }) }),
+    })
+    await ready(page, '/app/slap?tab=stats')
+    await page.waitForFunction(() => document.querySelector('.kpis dd')?.textContent?.includes('1,234'))
+    check('Stats: library totals render', true)
+    check('Stats: leaderboard renders', (await page.textContent('.slap-stats')).includes('Leaderboard'))
+    await page.waitForSelector('.stat-err', { timeout: 15_000 })
+    check('Stats: one failed panel shows Retry, the rest carry on', (await page.locator('.stat-err').count()) === 1 && (await page.textContent('.stat-err')).includes('Retry'))
+    for (const id of ['compare', 'charts', 'listening', 'feed']) {
+      await page.evaluate((id) => document.getElementById(`stats-${id}`)?.scrollIntoView(), id)
+      await page.waitForTimeout(250)
+    }
+    await page.waitForFunction(() => document.querySelector('.digest')?.textContent?.includes('Drake spike'), null, { timeout: 10_000 })
+    check('Stats: lazy AI panels load when scrolled to', true)
+    check('Stats: heatmap draws 7 rows × 24 hours', (await page.locator('.heat-row:not(.heat-hours) i').count()) === 7 * 24)
+    check('desktop: no sidebar mini-player when nothing plays', (await page.locator('.miniplayer-sidebar').count()) === 0)
+    await page.evaluate(() => scrollTo(0, 0))
+    await shot(page, 'slap-1440-stats', true)
+    await axe(page, 'Slap Stats 1440', '.slap-stats')
+    check('no unmocked writes and no page errors (Stats)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 } finally {
