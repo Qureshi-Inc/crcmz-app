@@ -4319,20 +4319,47 @@ async def giveaway_get(request: Request):
     all_members = await asyncio.to_thread(_portal_members)
     g = await asyncio.to_thread(_giveaway.get_active_giveaway)
     rotation = await asyncio.to_thread(_giveaway.get_rotation_state, all_members)
+    payload = _giveaway_payload(g, rotation, all_members, user_id, is_admin)
+    if not is_admin:
+        payload = _redact_giveaway_for_member(payload, user_id)
+    return JSONResponse(payload)
+
+
+def _giveaway_payload(g, rotation, all_members, user_id, is_admin) -> dict:
     user_eligible = False
     user_won_this_cycle = False
     if g:
         user_eligible = any(e["member_id"] == user_id for e in (g.get("entries") or []))
         user_won_this_cycle = any(m["member_id"] == user_id for m in rotation.get("won_members", []))
-        if not is_admin and g.get("status") == "drawn":
-            g["active_draw"] = None
-    return JSONResponse({
+    return {
         "giveaway": g,
         "rotation": {**rotation, "all_members": all_members},
         "is_admin": is_admin,
         "user_eligible": user_eligible,
         "user_won_this_cycle": user_won_this_cycle,
-    })
+    }
+
+
+def _redact_giveaway_for_member(payload: dict, user_id: str) -> dict:
+    """GET /api/giveaway as a non-admin may see it: no hint of an unrevealed winner.
+
+    Before reveal the draw rows carry winner_id/winner_name and the rotation may
+    hold the pending win, so a member could read the result off the JSON (or be
+    told "you won this cycle") ahead of the reveal. Same keys, secret values
+    nulled, so the dashboard JS renders unchanged. Pure: returns a copy.
+    """
+    g = payload.get("giveaway")
+    if not _giveaway.winner_hidden(g):
+        return payload
+    rotation = payload.get("rotation") or {}
+    rotation = _giveaway.redact_rotation_for_member(rotation, g, rotation.get("all_members"))
+    return {
+        **payload,
+        "giveaway": _giveaway.redact_giveaway_for_member(g),
+        "rotation": rotation,
+        "user_won_this_cycle": any(m.get("member_id") == user_id
+                                   for m in rotation.get("won_members") or []),
+    }
 
 
 @app.get("/api/giveaway/history")

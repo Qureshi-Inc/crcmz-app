@@ -89,7 +89,8 @@ def get_rotation_state(all_members: list[dict]) -> dict:
     with _conn() as c:
         cycle = _get_cycle(c)
         won_rows = c.execute(
-            "SELECT member_id, display_name, won_at FROM rotation_history WHERE cycle=?", (cycle,)
+            "SELECT member_id, display_name, won_at, giveaway_id FROM rotation_history WHERE cycle=?",
+            (cycle,)
         ).fetchall()
         won_ids = {r["member_id"] for r in won_rows}
         total = len(all_members)
@@ -324,6 +325,59 @@ def get_active_giveaway() -> dict | None:
         if not row:
             return None
         return get_giveaway(row["id"])
+
+
+# ── member-facing redaction ──────────────────────────────────────────────────
+# Until a draw is revealed, only admins may know who was drawn. Every member
+# surface (GET /api/giveaway, the assistant/MCP read tools) passes its data
+# through these pure helpers. They copy, never mutate, and keep the response
+# shape: keys stay, winner values become None.
+REVEALED_STATUSES = frozenset({"revealed", "closed"})
+_WINNER_KEYS = ("winner_id", "winner_name")
+
+
+def winner_hidden(g: dict | None) -> bool:
+    """True while a giveaway exists and its winner must stay secret from members."""
+    return bool(g) and g.get("status") not in REVEALED_STATUSES
+
+
+def redact_giveaway_for_member(g: dict | None) -> dict | None:
+    """A copy of `g` with every draw's winner blanked, if the winner is still secret."""
+    if not winner_hidden(g):
+        return g
+    out = dict(g)
+    out["draws"] = [{**d, **{k: None for k in _WINNER_KEYS if k in d}}
+                    for d in (g.get("draws") or [])]
+    out["active_draw"] = None
+    return out
+
+
+def redact_rotation_for_member(rotation: dict, g: dict | None,
+                               all_members: list[dict] | None = None) -> dict:
+    """A copy of `rotation` without wins that belong to the still-secret giveaway.
+
+    Pass the same `all_members` the rotation was built from so `eligible` can be
+    rebuilt with the pending winner back in it (their absence would give them away).
+    """
+    if not winner_hidden(g) or not rotation:
+        return rotation
+    gid = g.get("id")
+    won_rows = rotation.get("won_members") or []
+    won = [m for m in won_rows if gid is None or m.get("giveaway_id") != gid]
+    if len(won) == len(won_rows):
+        return rotation
+    still_won = {m.get("member_id") for m in won}
+    out = dict(rotation)
+    out["won_members"] = won
+    out["won_count"] = len(still_won)
+    if all_members is not None:
+        eligible = [m for m in all_members if m.get("id") not in still_won]
+        out["eligible"] = eligible
+        out["eligible_count"] = len(eligible)
+    else:
+        out.pop("eligible", None)
+        out["eligible_count"] = max(0, rotation.get("total_members", 0) - len(still_won))
+    return out
 
 
 def reset_all() -> dict:
