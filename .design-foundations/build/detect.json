@@ -4,103 +4,89 @@
   "attribution": "Rule subset ported from Impeccable (pbakaus/impeccable), Apache-2.0, with modifications — see file header. Catalog: references/visual/ai-tells.md.",
   "status": "ran",
   "sources": [
-    "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html"
+    "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html"
   ],
   "rules": 16,
   "findings": [
     {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html",
       "rule": "nested-cards",
       "category": "layout",
       "severity": "high",
-      "evidence": "<div class=\"logo\"> is a card inside a card ancestor",
-      "line": 171
+      "evidence": "<div class=\"seg\"> is a card inside a card ancestor",
+      "line": 421
     },
     {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html",
       "rule": "nested-cards",
       "category": "layout",
       "severity": "high",
-      "evidence": "<button class=\"icon-btn\"> is a card inside a card ancestor",
-      "line": 174
+      "evidence": "<button class=\"tile c1\"> is a card inside a card ancestor",
+      "line": 424
     },
     {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html",
       "rule": "nested-cards",
       "category": "layout",
       "severity": "high",
-      "evidence": "<div class=\"meter\"> is a card inside a card ancestor",
-      "line": 190
+      "evidence": "<button class=\"tile c2 fired\"> is a card inside a card ancestor",
+      "line": 425
     },
     {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html",
       "rule": "nested-cards",
       "category": "layout",
       "severity": "high",
-      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
-      "line": 204
+      "evidence": "<button class=\"tile c3\"> is a card inside a card ancestor",
+      "line": 426
     },
     {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html",
       "rule": "nested-cards",
       "category": "layout",
       "severity": "high",
-      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
-      "line": 210
+      "evidence": "<button class=\"tile c4\"> is a card inside a card ancestor",
+      "line": 427
     },
     {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html",
       "rule": "nested-cards",
       "category": "layout",
       "severity": "high",
-      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
-      "line": 216
+      "evidence": "<button class=\"tile c5\"> is a card inside a card ancestor",
+      "line": 428
     },
     {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html",
       "rule": "nested-cards",
       "category": "layout",
       "severity": "high",
-      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
-      "line": 222
+      "evidence": "<button class=\"tile add\"> is a card inside a card ancestor",
+      "line": 429
     },
     {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
-      "rule": "nested-cards",
-      "category": "layout",
-      "severity": "high",
-      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
-      "line": 228
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html",
+      "rule": "gradient-text",
+      "category": "color",
+      "severity": "medium",
+      "evidence": "gradient-filled text (background-clip: text + gradient)",
+      "line": 177
     },
     {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
-      "rule": "nested-cards",
-      "category": "layout",
-      "severity": "high",
-      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
-      "line": 234
-    },
-    {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
-      "rule": "nested-cards",
-      "category": "layout",
-      "severity": "high",
-      "evidence": "<div class=\"avatar\"> is a card inside a card ancestor",
-      "line": 240
-    },
-    {
-      "source": "/home/opti3/services/streamdeck/crcmz-app/.design-foundations/build/squad.html",
-      "rule": "nested-cards",
-      "category": "layout",
-      "severity": "high",
-      "evidence": "<div class=\"tabs\"> is a card inside a card ancestor",
-      "line": 256
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/dna-specimen.html",
+      "rule": "em-dash-overuse",
+      "category": "copy",
+      "severity": "medium",
+      "evidence": "15 em-dashes in body copy",
+      "line": null
     }
   ],
   "counts": {
-    "total": 11,
+    "total": 9,
     "byRule": {
-      "nested-cards": 11
+      "nested-cards": 7,
+      "gradient-text": 1,
+      "em-dash-overuse": 1
     }
   }
 }
