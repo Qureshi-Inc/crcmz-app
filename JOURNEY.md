@@ -1729,7 +1729,7 @@ Copy conventions used here:
   - Not eligible (other): "You're not in this draw"
   - Won: "You won! 🏆"
 - Rotation progress: "Cycle {n} · {eligible_count} of {total_members} still eligible"
-- Rotation rule explainer (shown on hover/tap of the eligibility badge): "Everyone wins once before anyone wins twice."
+- Rotation rule explainer (shown when you tap the eligibility badge; never on hover): "Everyone wins once before anyone wins twice."
 - Past winners section heading: "Past winners"
 - Past winners collapse label: "Show past winners" / "Hide past winners"
 
