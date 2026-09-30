@@ -49,7 +49,7 @@ import clips  # noqa: E402
 
 clips.get = lambda cid: {"message_uid": cid, "sender_online_id": "ASamad89"}
 CALLER = {"zitadel_id": "service:test", "label": "Muse",
-          "scopes": {"ig_post_record", "ig_reel_share"}}
+          "scopes": {"ig_post_record", "ig_reel_share", "video_post_record"}}
 FAILED = []
 
 
@@ -226,6 +226,65 @@ def test_member_share_rejects_bad_links():
              tiktok_url="https://www.tiktok.com/@crcmzclan/video/7420000000000000001")
     assert not r["ok"] and "member" in r["error"], r
     assert len(SENT) == before, "nothing is sent when a link is refused"
+
+
+def test_member_video_gets_one_message_per_platform():
+    _member_video("vp-seq", "Mutasif")
+    ig = "https://www.instagram.com/reel/Member00004/"
+    tt = "https://www.tiktok.com/@crcmzclan/video/7420000000000000004"
+    yt = "https://www.youtube.com/shorts/AbCdEfGhIj4"
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-seq", instagram_url=ig, reel_type="member")
+    assert r["announced"] == ["instagram"] and SENT[-1]["mentionAll"] is True, r
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-seq", instagram_url=ig, reel_type="member",
+             tiktok_url=tt)
+    assert r["ok"] and r["announced"] == ["tiktok"], r
+    assert SENT[-1]["message"] == "[Muse] \U0001f3ae *Mutasif*'s video is also on TikTok:\nTikTok: " + tt, SENT[-1]
+    assert SENT[-1]["mentionAll"] is False, "follow-ups don't ping @all"
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-seq", reel_type="member", youtube_url=yt)
+    assert r["announced"] == ["youtube"] and SENT[-1]["message"].endswith("also on YouTube:\nYouTube: " + yt), r
+    before = len(SENT)
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-seq", instagram_url=ig, reel_type="member",
+             tiktok_url=tt, youtube_url=yt)
+    assert r["ok"] and r.get("already_shared") and r["announced"] == [] and len(SENT) == before, r
+
+
+def test_member_video_without_instagram_can_lead_with_tiktok():
+    _member_video("vp-long", "Mutasif")
+    tt = "https://www.tiktok.com/@crcmzclan/video/7420000000000000005"
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-long", reel_type="member", tiktok_url=tt)
+    assert r["ok"] and r["announced"] == ["tiktok"], r
+    assert SENT[-1]["message"] == "[Muse] @all \U0001f3ae *Mutasif*'s video just dropped on TikTok:\n" + tt
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-long", reel_type="member")
+    assert not r["ok"] and "at least one" in r["error"], r
+
+
+def test_video_post_record_and_ig_reel_share_share_one_ledger():
+    _member_video("vp-both", "Mutasif")
+    ig = "https://www.instagram.com/reel/Member00006/"
+    before = len(SENT)
+    r = call("video_post_record", video_post_id="vp-both", platform="instagram", url=ig)
+    assert r["ok"] and r["group_notified"] and len(SENT) == before + 1, r
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-both", instagram_url=ig, reel_type="member")
+    assert r.get("already_shared") and len(SENT) == before + 1, "same post via both tools = one message"
+    tt = "https://www.tiktok.com/@crcmzclan/video/7420000000000000006"
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-both", reel_type="member", tiktok_url=tt)
+    assert r["announced"] == ["tiktok"] and len(SENT) == before + 2, r
+    r = call("video_post_record", video_post_id="vp-both", platform="tiktok", url=tt)
+    assert r["ok"] and not r["group_notified"] and len(SENT) == before + 2, r
+
+
+def test_failed_send_leaves_the_platform_to_retry():
+    _member_video("vp-fail", "Mutasif")
+    ig = "https://www.instagram.com/reel/Member00007/"
+    good = os.environ["WA_BRIDGE_URL"]
+    os.environ["WA_BRIDGE_URL"] = "http://127.0.0.1:9"
+    try:
+        r = call("ig_reel_share", clip_id="", video_post_id="vp-fail", instagram_url=ig, reel_type="member")
+        assert not r["ok"] and r["announced"] == [] and "notify_note" in r, r
+    finally:
+        os.environ["WA_BRIDGE_URL"] = good
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-fail", instagram_url=ig, reel_type="member")
+    assert r["ok"] and r["announced"] == ["instagram"] and SENT[-1]["mentionAll"] is True, r
 
 
 if __name__ == "__main__":

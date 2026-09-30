@@ -110,6 +110,13 @@ def init() -> None:
                 updated_at    REAL NOT NULL,
                 PRIMARY KEY (video_post_id, platform)
             );
+            CREATE TABLE IF NOT EXISTS video_post_announcements (
+                video_post_id TEXT NOT NULL,
+                platform      TEXT NOT NULL,
+                url           TEXT NOT NULL,
+                announced_at  REAL NOT NULL,
+                PRIMARY KEY (video_post_id, platform)
+            );
             CREATE TABLE IF NOT EXISTS upload_sessions (
                 upload_id   TEXT PRIMARY KEY,
                 zitadel_id  TEXT NOT NULL,
@@ -539,6 +546,47 @@ def release_notification(video_post_id: str) -> None:
     with _lock, _conn() as db:
         db.execute("UPDATE video_posts SET notified_at=NULL WHERE video_post_id=?",
                    (video_post_id,))
+        db.commit()
+
+
+def announced(video_post_id: str) -> dict[str, str]:
+    """Platforms already announced to the group for this video -> the link used.
+    A video announced before this ledger existed counts its Instagram post."""
+    with _lock, _conn() as db:
+        out = {r["platform"]: r["url"] for r in db.execute(
+            "SELECT platform, url FROM video_post_announcements WHERE video_post_id=?",
+            (video_post_id,))}
+        row = db.execute("SELECT notified_at FROM video_posts WHERE video_post_id=?",
+                         (video_post_id,)).fetchone()
+    if row and row["notified_at"] and "instagram" not in out:
+        out["instagram"] = ""
+    return out
+
+
+def claim_announcements(video_post_id: str, links: dict[str, str]) -> dict[str, str]:
+    """Atomically claim the platforms in `links` not announced yet; returns those.
+    Each platform is announced at most once per video, whichever tool reports it."""
+    prior = announced(video_post_id)
+    won: dict[str, str] = {}
+    with _lock, _conn() as db:
+        for platform in PLATFORMS:
+            url = links.get(platform)
+            if not url or platform in prior:
+                continue
+            cur = db.execute("INSERT OR IGNORE INTO video_post_announcements"
+                             " (video_post_id, platform, url, announced_at) VALUES (?,?,?,?)",
+                             (video_post_id, platform, url, time.time()))
+            if cur.rowcount == 1:
+                won[platform] = url
+        db.commit()
+    return won
+
+
+def release_announcements(video_post_id: str, platforms: list[str]) -> None:
+    """Undo claims whose message failed to send, so a retry can announce them."""
+    with _lock, _conn() as db:
+        db.executemany("DELETE FROM video_post_announcements WHERE video_post_id=? AND platform=?",
+                       [(video_post_id, p) for p in platforms])
         db.commit()
 
 

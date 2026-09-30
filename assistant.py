@@ -1956,7 +1956,12 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
     "when the watcher knows it more precisely. A clip is shared to the group once; "
     "a retry returns already_shared. If that share went out with a wrong link, call "
     "again with resend_correction=true and the correct permalink: the group gets the "
-    "same fixed message once more, and only once per clip, ever. Rate limit: 30 per hour.",
+    "same fixed message once more, and only once per clip, ever. reel_type=member "
+    "(friend uploads) is per platform instead: pass video_post_id and any of "
+    "instagram_url / tiktok_url / youtube_url; each platform is announced once, the "
+    "first with @all and later ones as short follow-ups, so call again as each post "
+    "goes live. Instagram is optional for member videos (over-90s videos skip it). "
+    "It shares its ledger with video_post_record. Rate limit: 30 per hour.",
     {"type": "object",
      "properties": {
          "clip_id":             {"type": "string",
@@ -1987,8 +1992,9 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
                                                 "with no sender attribution — use this for the daily highlights reel. "
                                                 "'fire' and 'fail' keep the sender's name in the message. "
                                                 "'member' is for friend video uploads: resolves the sender from "
-                                                "pending_video_uploads (pass video_post_id) and sends '@all 🎮 "
-                                                "*<name>*\\'s video just dropped on Instagram'. "
+                                                "pending_video_uploads (pass video_post_id); the first message is "
+                                                "'@all 🎮 *<name>*\\'s video just dropped on <platform>', later "
+                                                "platforms follow up as '🎮 *<name>*\\'s video is also on <platform>'. "
                                                 "Default: 'fire'."},
          "video_post_id":       {"type": "string",
                                  "description": "Required when reel_type is 'member': the video_post_id "
@@ -1997,14 +2003,14 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
                                                 "when using this."},
          "tiktok_url":          {"type": "string",
                                  "description": "Optional, reel_type 'member' only: the live TikTok permalink "
-                                                "(https://www.tiktok.com/@crcmzclan/video/<id>). Adds a "
-                                                "'TikTok: <url>' line to the same group message."},
+                                                "(https://www.tiktok.com/@crcmzclan/video/<id>). Announced once "
+                                                "per video, in this call's message."},
          "youtube_url":         {"type": "string",
                                  "description": "Optional, reel_type 'member' only: the live YouTube permalink "
-                                                "(https://www.youtube.com/shorts/<id> or watch?v=<id>). Adds a "
-                                                "'YouTube: <url>' line to the same group message."},
+                                                "(https://www.youtube.com/shorts/<id> or watch?v=<id>). Announced "
+                                                "once per video, in this call's message."},
      },
-     "required": ["clip_id", "instagram_url"]})
+     "required": ["clip_id"]})
 def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
                    instagram_media_id: str = "", caption: str = "",
                    sender: str = "", reel_type: str = "fire",
@@ -2041,9 +2047,12 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
         if not clip_id:
             return {"ok": False, "error": "clip_id is required"}
 
-    instagram_url, bad = _ig_permalink(instagram_url)
-    if bad:
-        return {"ok": False, "error": f"instagram_url {bad}"}
+    if reel_type == "member" and not (instagram_url or "").strip():
+        instagram_url = ""
+    else:
+        instagram_url, bad = _ig_permalink(instagram_url)
+        if bad:
+            return {"ok": False, "error": f"instagram_url {bad}"}
     instagram_media_id = (instagram_media_id or "").strip()
     if instagram_media_id and not instagram_media_id.isdigit():
         return {"ok": False, "error": "instagram_media_id must be the numeric media ID"}
@@ -2063,10 +2072,40 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
             if bad:
                 return {"ok": False, "error": f"youtube_url {bad}"}
             more_links["youtube"] = clean
+    if reel_type == "member" and not instagram_url and not more_links:
+        return {"ok": False, "error": "give at least one of instagram_url, tiktok_url, youtube_url"}
 
     zid = caller.get("zitadel_id", "")
     if not mcp_oauth.within_rate_limit(zid, "ig_reel_share", 30, 3600):
         return {"ok": False, "error": "rate limit: 30 posts per hour"}
+
+    if reel_type == "member" and not resend_correction:
+        # Keep the Instagram post on record for ig_clips_recent, then announce
+        # whatever is new for this video.
+        post_id = None
+        if instagram_url:
+            ig_mod.init()
+            existing = ig_mod.get_by_clip(clip_id)
+            post_id = existing["post_id"] if existing else ig_mod.claim_for_post(
+                clip_id, psn_user, _zid_for_psn(psn_user) if psn_user else "")
+            ig_mod.submit_post(post_id, instagram_url, instagram_media_id=instagram_media_id,
+                               caption=caption)
+        links = {**({"instagram": instagram_url} if instagram_url else {}), **more_links}
+        announced, note = _announce_member_video(clip_id, links, caller, psn_user)
+        if "instagram" in announced and post_id:
+            ig_mod.claim_notification(post_id)
+        mcp_oauth.audit_write(zid, "ig_reel_share",
+                              json.dumps({"video_post_id": clip_id, "announced": announced}),
+                              "ok" if announced or not note else "error")
+        out = {"ok": not note, "video_post_id": clip_id, "group_notified": bool(announced),
+               "announced": announced, **({"post_id": post_id} if post_id else {})}
+        if not announced and not note:
+            out["already_shared"] = True
+        if note:
+            out["notify_note"] = note
+        return out
+    if reel_type == "member" and not instagram_url:
+        return {"ok": False, "error": "resend_correction corrects the Instagram link; pass instagram_url"}
 
     ig_mod.init()
     if reel_type != "member":
@@ -2241,8 +2280,10 @@ def _notify_upload_live(psn_id: str, links: dict,
     "the others. Idempotent per (video_post_id, platform): the same url again is a "
     "no-op; a different url replaces the stored one (a correction). The video becomes "
     "`posted` (and leaves pending_video_uploads) when all three links are present. "
-    "The first instagram record announces the post to the WhatsApp group once — do "
-    "not share it back separately. Links must be real permalinks: instagram "
+    "Each platform is announced to the WhatsApp group once: the video's first "
+    "announcement leads with @all, later platforms get a short follow-up. This "
+    "shares one ledger with ig_reel_share(reel_type=member), so reporting a post "
+    "through both never double-posts. Links must be real permalinks: instagram "
     "https://www.instagram.com/reel/<shortcode>/ (never built from the numeric media "
     "id), tiktok https://www.tiktok.com/@<user>/video/<id>, youtube "
     "https://www.youtube.com/shorts/<id> or https://www.youtube.com/watch?v=<id>. "
@@ -2296,11 +2337,8 @@ def _video_post_record(caller: dict, video_post_id: str = "", platform: str = ""
                           json.dumps({"video_post_id": vid, "platform": platform}), "ok")
 
     row = vu.get(vid) or {}
-    notified, note = False, None
-    if platform == "instagram" and vu.claim_notification(vid):
-        notified, note = _notify_ig_posted(row.get("psn_id", ""), clean, caller)
-        if not notified:
-            vu.release_notification(vid)
+    announced, note = _announce_member_video(vid, {platform: clean}, caller, row.get("psn_id", ""))
+    notified = bool(announced)
 
     dm_sent, dm_note = False, None
     if res.get("became_posted") and vu.claim_dm_notification(vid):
@@ -2314,7 +2352,7 @@ def _video_post_record(caller: dict, video_post_id: str = "", platform: str = ""
             **({"replaced_url": res["replaced_url"]} if "replaced_url" in res else {}),
             "status": row.get("status"),
             "missing_platforms": [p for p, v in (row.get("platforms") or {}).items() if not v],
-            **({"group_notified": notified} if platform == "instagram" else {}),
+            "group_notified": notified,
             **({"uploader_dm_sent": dm_sent} if res.get("became_posted") else {}),
             **({"notify_note": note or dm_note} if (note or dm_note) else {})}
 
@@ -2758,6 +2796,59 @@ def _coach_report_text(review: dict, limit: int = 1400) -> str:
     if len(body) > limit:
         body = body[:limit].rstrip() + "…"
     return body
+
+
+_PLATFORM_LABEL = {"instagram": "Instagram", "tiktok": "TikTok", "youtube": "YouTube"}
+
+
+def _member_video_text(psn_user: str, links: dict, first: bool, caller: dict | None) -> str:
+    """Fixed template for a member video. The first message for a video leads with
+    @all and the first platform; later ones are short follow-ups with no @all."""
+    label = (caller or {}).get("label", "")
+    tag = f"[{label[:32].strip().title()}] " if label else ""
+    user = _wa_safe(psn_user, 40)
+    order = [p for p in ("instagram", "tiktok", "youtube") if links.get(p)]
+    if first:
+        lead = order[0]
+        return (f"{tag}@all \U0001f3ae *{user}*'s video just dropped on {_PLATFORM_LABEL[lead]}:\n{links[lead]}"
+                + "".join(f"\n{_PLATFORM_LABEL[p]}: {links[p]}" for p in order[1:]))
+    names = " and ".join(_PLATFORM_LABEL[p] for p in order)
+    return (f"{tag}\U0001f3ae *{user}*'s video is also on {names}:"
+            + "".join(f"\n{_PLATFORM_LABEL[p]}: {links[p]}" for p in order))
+
+
+def _announce_member_video(video_post_id: str, links: dict, caller: dict | None,
+                           psn_user: str = "") -> tuple[list[str], str | None]:
+    """Announce each platform of a member video to the group once, ever.
+
+    Shared by video_post_record and ig_reel_share(member) through one ledger, so
+    reporting the same post through both tools never double-posts. Returns the
+    platforms announced by this call ([] when nothing was new) and a note on failure.
+    """
+    import video_uploads as vu
+    vu.init()
+    psn_user = psn_user or (vu.get(video_post_id) or {}).get("psn_id", "")
+    first = not vu.announced(video_post_id)
+    new = vu.claim_announcements(video_post_id, links)
+    if not new:
+        return [], None
+    bridge = os.environ.get("WA_BRIDGE_URL", "")
+    jid = os.environ.get("WA_GOOPERS_JID", "")
+    note = None if bridge and jid else "WhatsApp bridge or WA_GOOPERS_JID not configured"
+    if not note:
+        try:
+            import httpx as _hx
+            r = _hx.post(f"{bridge.rstrip('/')}/send",
+                         json={"message": _member_video_text(psn_user, new, first, caller),
+                               "groupJid": jid, "mentionAll": first},
+                         timeout=30)
+            r.raise_for_status()
+        except Exception as e:  # noqa: BLE001
+            note = f"WhatsApp send failed: {e}"
+    if note:
+        vu.release_announcements(video_post_id, list(new))
+        return [], note
+    return [p for p in ("instagram", "tiktok", "youtube") if p in new], None
 
 
 def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
