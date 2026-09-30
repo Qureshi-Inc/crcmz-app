@@ -1,6 +1,7 @@
 // PS-2 Overview: My reels (CL-07–11), This month / Montage / Clips this month
 // (CL-03–05, DS-CL-MO) and Your uploads (CL-27). Sections fold, and remember it.
 import { useMemo, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { ErrorStrip, SkeletonRows, SlowLoad, StaleMarker, useNow, useStale } from '../../components/states'
 import { toast } from '../../components/toast'
@@ -10,10 +11,10 @@ import {
   fmtAgo, fmtCountdown, fmtDuration, pipeText, PIPE_TONE, PIPELINE_MS, reelFrame, reelSource, useReels, useUploads, whenTs,
   type PipelineStatus, type Reel, type ReelsResponse, type Upload,
 } from '../../lib/clips'
+import { studioHref } from '../../lib/studio'
 import { ClipSheet, ConfirmDialog } from './ClipSheet'
 import { SendVideoCard } from './SendVideo'
 
-const STUDIO_HREF = '/?p=pipeline'
 const PORTAL_HREF = '/portal'
 
 export function Overview({ status, focusUpload, onFocused, onSendVideo }: {
@@ -218,14 +219,13 @@ function ReelSheet({ reel, scope, onClose }: { reel: Reel | null; scope: ReelsRe
           <Badges c={c} />
           {c.message && <p style={{ margin: 0 }}>{c.message}</p>}
           <div className="detail-actions">
-            <a className="btn btn-primary" href={STUDIO_HREF}>Edit in the Studio</a>
+            <Link className="btn btn-primary" to={studioHref(c.clip_id)}>✂️ Edit in the Studio</Link>
             {c.vetoed ? (
               <button type="button" className="btn btn-secondary" onClick={() => veto(false)} aria-busy={busy || undefined}>{busy ? 'Saving…' : 'Lift veto'}</button>
             ) : (
               <button type="button" className="btn btn-secondary" onClick={() => setConfirm(true)} aria-busy={busy || undefined}>{busy ? 'Saving…' : '🛑 Veto'}</button>
             )}
           </div>
-          <p className="meta" style={{ margin: 0 }}>The Studio opens in the classic app, under My reels.</p>
         </div>
       )}
       <ConfirmDialog

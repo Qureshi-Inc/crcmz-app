@@ -5,6 +5,7 @@ import { ApiError } from '../lib/http'
 import { Shell } from './Shell'
 import { SquadPage } from '../features/squad/SquadPage'
 import { ClipsPage } from '../features/clips/ClipsPage'
+import { StudioPage } from '../features/clips/Studio'
 import { Handoff, NotFound } from '../features/handoff/Handoff'
 
 const queryClient = new QueryClient({
@@ -30,6 +31,7 @@ export function App() {
               <Route index element={<SquadPage />} />
               <Route path="squad" element={<SquadPage />} />
               <Route path="clips" element={<ClipsPage />} />
+              <Route path="clips/:id/edit" element={<StudioPage />} />
               <Route path="clips/*" element={<Handoff id="clips" />} />
               <Route path="slap" element={<Handoff id="slap" />} />
               <Route path="whatsapp" element={<Handoff id="whatsapp" />} />

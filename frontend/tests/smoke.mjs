@@ -100,6 +100,18 @@ const CLIP_READS = {
   'GET /api/reels/clips/r0/source': delayed(20_000, (r) => r.fulfill({ status: 404, body: '' })),
 }
 
+// Studio fixtures: a small VP9 test pattern (sized to 1920×1080 by the page) and a frame.
+const STUDIO_VIDEO = readFileSync(resolve(here, 'fixtures/studio-source.webm'))
+const STUDIO_FRAME = readFileSync(resolve(here, 'fixtures/studio-frame.jpg'))
+/** Serve a buffer with Range support, so the video element can seek. */
+const serveRange = (buf, type) => (route) => {
+  const m = /bytes=(\d+)-(\d*)/.exec(route.request().headers().range || '')
+  if (!m) return route.fulfill({ status: 200, contentType: type, headers: { 'accept-ranges': 'bytes' }, body: buf })
+  const a = Number(m[1]); const b = m[2] ? Math.min(Number(m[2]), buf.length - 1) : buf.length - 1
+  return route.fulfill({ status: 206, contentType: type, body: buf.subarray(a, b + 1),
+    headers: { 'accept-ranges': 'bytes', 'content-range': `bytes ${a}-${b}/${buf.length}` } })
+}
+
 async function ready(page, path = '/app/') {
   await page.goto(BASE + path, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => document.fonts.status === 'loaded')
@@ -269,7 +281,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x/edit': '/?p=pipeline', slap: '/?p=slap', whatsapp: '/?p=wa', giveaway: '/?p=giveaway', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai', portal: '/portal', settings: '/' }
+    const classic = { 'clips/x': '/?p=pipeline', slap: '/?p=slap', whatsapp: '/?p=wa', giveaway: '/?p=giveaway', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai', portal: '/portal', settings: '/' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -486,7 +498,7 @@ try {
     await page.click('.reel-card >> nth=0')
     await page.waitForSelector('.sheet-clip video')
     await page.waitForTimeout(300)
-    check('reel sheet has the source video and a Studio link', (await page.getAttribute('.sheet-clip video', 'src')).endsWith('/api/reels/clips/r0/source') && (await page.getAttribute('.sheet-clip a:has-text("Studio")', 'href')) === '/?p=pipeline')
+    check('reel sheet has the source video and a Studio link', (await page.getAttribute('.sheet-clip video', 'src')).endsWith('/api/reels/clips/r0/source') && (await page.getAttribute('.sheet-clip a:has-text("Studio")', 'href')) === '/app/clips/r0/edit')
     await shot(page, 'clips-375-reel-sheet')
     await axe(page, 'Reel sheet 375')
     await page.click('.sheet-clip button:has-text("Veto")')
@@ -689,6 +701,203 @@ try {
     await page.waitForFunction(() => document.querySelector('.toast')?.textContent?.includes('Withdrawn'))
     check('withdraw posts the video id once', withdraws.length === 1 && withdraws[0].video_post_id === 'v9', JSON.stringify(withdraws))
     check('no unmocked writes and no page errors (withdraw)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  // ── 7. The Studio (CL-12–20): render / save / force / veto all mocked ──
+  const srcReady = (page) => page.waitForFunction(() => (document.querySelector('.st-src')?.readyState ?? 0) >= 1, null, { timeout: 15_000 })
+  const at = (page, t) => page.evaluate(async (t) => {
+    const v = document.querySelector('.st-src')
+    v.currentTime = t
+    await new Promise((ok) => v.addEventListener('seeked', ok, { once: true }))
+  }, t)
+
+  {
+    const r0 = REELS[0]
+    const detail = (over = {}) => ({
+      clip: { clip_id: 'r0', sender: 'Goopy', game: 'Rocket League', duration: 20, when: r0.when, message: 'what a save 🔥' },
+      analysis: {
+        primary_start: 4, primary_end: 12, featured_label: 'Goopy', identity_confidence: 'high', caption_draft: 'Clutch save',
+        subtitle_segments: [{ start: 5, end: 7, subtitle_text: 'no way' }],
+      },
+      override: null, vetoed: false, pipeline: { state: 'daily_eligible' }, latest_render: null, ...over,
+    })
+    const renders = [], overrides = [], vetoes = [], forces = []
+    let polls = 0
+    const studioMocks = (d, extra = {}) => ({
+      ...CLIP_READS,
+      'GET /api/admin/check': json(200, { admin: false }),
+      'GET /api/reels/clips/r0': json(200, d),
+      'GET /api/reels/clips/r0/source': serveRange(STUDIO_VIDEO, 'video/webm'),
+      'GET /api/reels/clips/r0/frame': (r) => r.fulfill({ status: 200, contentType: 'image/jpeg', body: STUDIO_FRAME }),
+      'GET /api/reels/renders/rd1': (r) => { polls++; return json(200, { status: polls < 2 ? 'running' : 'done' })(r) },
+      'GET /api/reels/renders/rd1/video': serveRange(STUDIO_VIDEO, 'video/webm'),
+      'GET /api/reels/renders/rd1/trajectory': json(200, { t0: 5, traj: [[0, 400], [3, 900], [6, 650]] }),
+      'POST /api/reels/clips/r0/render': (r) => { renders.push(r.request().postDataJSON()); return json(200, { render_id: 'rd1' })(r) },
+      'POST /api/reels/clips/r0/override': (r) => { overrides.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+      'POST /api/reels/clips/r0/veto': (r) => { vetoes.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+      'POST /api/reels/clips/r0/force-post': (r) => { forces.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+      ...extra,
+    })
+    // Phone: open from the reel sheet, edit, render, save, veto.
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks: studioMocks(detail()) })
+    await ready(page, '/app/clips')
+    await page.waitForSelector('.reel-card')
+    await page.click('.reel-card >> nth=0')
+    await page.click('.sheet-clip a:has-text("Edit in the Studio")')
+    await page.waitForSelector('.studio .st-top')
+    check('Edit in the Studio opens /app/clips/r0/edit in /app', new URL(page.url()).pathname === '/app/clips/r0/edit', page.url())
+    await srcReady(page)
+    check('Studio title is sender · duration', (await page.textContent('.st-title b')) === 'Goopy · 20s')
+    check('pipeline strip explains where the clip is headed', (await page.textContent('.st-pipe')).includes('daily highlights'))
+    check('phone: no tool panel until a tool is picked', (await page.locator('.st-panel').count()) === 0)
+    const cv = await page.$eval('.st-canvas', (e) => { const r = e.getBoundingClientRect(); return [r.width, r.height] })
+    check('Live view is 9:16', Math.abs(cv[0] / cv[1] - 9 / 16) < 0.01, cv.join('×'))
+    check('Live view shows the featured player label', (await page.textContent('.st-label')) === 'Goopy')
+    await shot(page, 'studio-375')
+    await axe(page, 'Studio 375', '.studio')
+    await tapTargets(page, 'Studio 375 top bar')
+
+    await page.click('.st-tab:has-text("Trim")')
+    check('Trim opens its panel over the tool strip', await page.isVisible('.st-panel[aria-label="Trim"]'))
+    check('trim starts on the whole clip', (await page.textContent('.st-kv')).includes('0.0s → 20.0s'))
+    await at(page, 5)
+    await page.click('.st-panel button:has-text("Start here")')
+    await at(page, 13)
+    await page.keyboard.press('o')
+    check('Start here + O key set the trim (5 → 13)', (await page.textContent('.st-kv')).includes('5.0s → 13.0s'), await page.textContent('.st-kv'))
+    await shot(page, 'studio-375-trim')
+    await page.click('.st-tab:has-text("Trim")')
+    check('tapping the active tool closes its panel', (await page.locator('.st-panel').count()) === 0)
+
+    await page.click('.st-top button[aria-label="Close the Studio"]')
+    await page.waitForSelector('.dialog-confirm')
+    check('closing with edits asks first', (await page.textContent('.dialog-confirm')).includes('Leave without saving'))
+    await page.click('.dialog-confirm button:has-text("Cancel")')
+
+    await page.click('.st-top button[aria-label="Render"]')
+    await page.waitForSelector('.st-busy')
+    check('render shows progress over the stage', /Queued|Rendering/.test(await page.textContent('.st-busy')))
+    await page.waitForSelector('.st-view[aria-pressed="true"]:has-text("Render")', { timeout: 10_000 })
+    check('render POSTs once with the trimmed window', renders.length === 1 && renders[0].window_start === 5 && renders[0].window_end === 13 && renders[0].subtitles === null, JSON.stringify(renders))
+    check('when done the Render view shows the exact reel', await page.isVisible('.st-reel'))
+    check('render done toast', (await page.textContent('.toasts')).includes('Rendered'))
+    await shot(page, 'studio-375-rendered')
+
+    await page.click('.st-top button[aria-label="Save and approve"]')
+    await page.waitForSelector('.dialog-confirm')
+    check('save asks first (Muse posts exactly these settings)', overrides.length === 0 && (await page.textContent('.dialog-confirm')).includes('exactly these settings'))
+    await page.click('.dialog-confirm .btn-primary')
+    await page.waitForFunction(() => document.querySelector('.toasts')?.textContent?.includes('Saved & approved'))
+    check('save POSTs the edit once', overrides.length === 1 && overrides[0].window_start === 5 && overrides[0].label === 'Goopy' && overrides[0].caption === 'Clutch save', JSON.stringify(overrides))
+    check('once approved, Force post appears', await page.isVisible('.st-top .st-force'))
+
+    await page.click('.st-top .st-veto')
+    await page.waitForSelector('.dialog-confirm')
+    check('veto asks first (fire, fail and daily highlights)', vetoes.length === 0 && (await page.textContent('.dialog-confirm')).includes('fire, fail or daily'))
+    await page.click('.dialog-confirm .btn-primary')
+    await page.waitForSelector('.st-veto[data-on]')
+    check('veto POSTs once', vetoes.length === 1)
+    await page.click('.st-top button[aria-label="Close the Studio"]')
+    await page.waitForURL(/\/app\/clips$/)
+    check('saved: ✕ closes straight back to Clips', new URL(page.url()).pathname === '/app/clips')
+    check('no unmocked writes and no page errors (Studio phone)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // Desktop: side card, zoom aim, force post; a 409 on save is explained.
+    const overrides = [], forces = []
+    const saved = { window_start: 2, window_end: 10, crop_mode: 'manual', crop_box: { x: 0.2, y: 0, w: 0.3164, h: 1 }, label: 'Goopy', caption: 'x', zooms: [], subtitles: null }
+    const { ctx, page } = await newPage({
+      width: 1440, height: 900,
+      mocks: {
+        ...CLIP_READS,
+        'GET /api/admin/check': json(200, { admin: false }),
+        'GET /api/reels/clips/r0': json(200, {
+          clip: { clip_id: 'r0', sender: 'Goopy', game: 'Rocket League', duration: 20 }, analysis: null, override: saved, vetoed: false,
+          pipeline: { state: 'posted', ig_url: 'https://www.instagram.com/reel/abc/' }, latest_render: null,
+        }),
+        'GET /api/reels/clips/r0/source': serveRange(STUDIO_VIDEO, 'video/webm'),
+        'GET /api/reels/clips/r0/frame': (r) => r.fulfill({ status: 200, contentType: 'image/jpeg', body: STUDIO_FRAME }),
+        'POST /api/reels/clips/r0/override': (r) => {
+          overrides.push(r.request().postDataJSON())
+          return overrides.length === 1 ? json(409, { detail: 'twin' })(r) : json(200, { ok: true })(r)
+        },
+        'POST /api/reels/clips/r0/force-post': (r) => { forces.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+      },
+    })
+    await ready(page, '/app/clips/r0/edit')
+    await page.waitForSelector('.studio .st-side')
+    await srcReady(page)
+    const sw = await page.$eval('.st-side', (e) => e.getBoundingClientRect().width)
+    check('desktop: 400px side card', Math.round(sw) === 400, `${sw}`)
+    check('desktop: Trim is open by default', await page.isVisible('.st-panel[aria-label="Trim"]'))
+    check('saved edit loads its trim', (await page.textContent('.st-kv')).includes('2.0s → 10.0s'))
+    check('no analysis: says so', (await page.textContent('.st-panel')).includes('No AI analysis'))
+    check('posted: Save says it won’t repost', (await page.textContent('.st-actions')).includes('won’t repost'))
+    check('Instagram link is shown for a posted clip', (await page.getAttribute('.st-pipe a', 'href')) === 'https://www.instagram.com/reel/abc/')
+    await page.click('.st-tab:has-text("Crop")')
+    check('saved manual crop reopens in Manual', (await page.getAttribute('.st-seg [aria-checked="true"]', 'role')) === 'radio' && (await page.textContent('.st-seg [aria-checked="true"]')) === 'Manual')
+    await page.click('.st-view:has-text("Frame")')
+    await page.waitForSelector('.st-cbox[data-manual]')
+    await shot(page, 'studio-1440-frame')
+    await page.click('.st-view:has-text("Live")')
+
+    await page.click('.st-tab:has-text("Zoom")')
+    await at(page, 4)
+    await page.click('.st-panel button:has-text("Add zoom here")')
+    const box = await page.$eval('.st-canvas', (e) => { const r = e.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height } })
+    await page.mouse.click(box.x + box.w * 0.25, box.y + box.h * 0.75)
+    await page.waitForFunction(() => document.querySelector('.st-panel')?.textContent?.includes('25% across'))
+    check('tap the preview aims the zoom (25% across, 75% down)', (await page.textContent('.st-panel')).includes('75% down'))
+    check('the zoom shows as a block on the timeline', (await page.locator('.st-blk[data-kind="z"]').count()) === 1)
+    await shot(page, 'studio-1440-zoom')
+    await axe(page, 'Studio 1440', '.studio')
+
+    await page.click('.st-actions .btn-primary')
+    await page.waitForSelector('.dialog-confirm')
+    check('posted: save confirm says it won’t repost', (await page.textContent('.dialog-confirm')).includes('won’t repost'))
+    await page.click('.dialog-confirm .btn-primary')
+    await page.waitForFunction(() => document.querySelector('.toasts')?.textContent?.includes('same post'))
+    check('409 on save is explained in words', overrides.length === 1)
+    check('the zoom rides in the save body', overrides[0].zooms.length === 1 && Math.abs(overrides[0].zooms[0].x - 0.25) < 0.01 && Math.abs(overrides[0].zooms[0].y - 0.75) < 0.01 && overrides[0].crop_mode === 'manual', JSON.stringify(overrides[0]))
+
+    await page.click('.st-actions .st-force')
+    check('Force post with unsaved edits is refused', forces.length === 0 && (await page.textContent('.toasts')).includes('Save your edits first'))
+    await page.click('.st-actions .btn-primary')
+    await page.click('.dialog-confirm .btn-primary')
+    await page.waitForFunction(() => document.querySelector('.toasts')?.textContent?.includes('won’t repost'))
+    await page.click('.st-actions .st-force')
+    await page.waitForSelector('.dialog-confirm')
+    await page.click('.dialog-confirm .btn-primary')
+    await page.waitForSelector('.st-actions .st-force[data-on]')
+    check('force post sends {force:true} once', forces.length === 1 && forces[0].force === true, JSON.stringify(forces))
+    await shot(page, 'studio-1440')
+    check('no unmocked writes and no page errors (Studio desktop)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // A twin can't be saved; a missing clip explains itself.
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        ...CLIP_READS,
+        'GET /api/admin/check': json(200, { admin: false }),
+        'GET /api/reels/clips/r0': json(200, { clip: { clip_id: 'r0', sender: 'Goopy', duration: 20 }, analysis: null, override: null, pipeline: { state: 'twin_of_posted' } }),
+        'GET /api/reels/clips/r0/source': serveRange(STUDIO_VIDEO, 'video/webm'),
+        'GET /api/reels/clips/r0/frame': (r) => r.fulfill({ status: 200, contentType: 'image/jpeg', body: STUDIO_FRAME }),
+        'GET /api/reels/clips/nope': json(404, { detail: 'not found' }),
+      },
+    })
+    await ready(page, '/app/clips/r0/edit')
+    await page.waitForSelector('.st-top')
+    check('twin: Save is marked unavailable', (await page.getAttribute('.st-top button[aria-label="Save and approve"]', 'aria-disabled')) === 'true')
+    await page.click('.st-top button[aria-label="Save and approve"]', { force: true })
+    await page.waitForFunction(() => document.querySelector('.toasts')?.textContent?.includes('same post'))
+    check('twin: save is refused without a request', (await page.locator('.dialog-confirm').count()) === 0 && !page.writes.some((w) => w.includes('override')))
+    await page.goto(`${BASE}/app/clips/nope/edit`)
+    await page.waitForSelector('.st-loading[role=alert]')
+    check('404 says not found or not yours', (await page.textContent('.st-loading')).includes("isn't one of yours"))
+    check('no unmocked writes and no page errors (Studio edge cases)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 } finally {
