@@ -62,6 +62,41 @@ async function newPage({ width, height, mocks = {}, reducedMotion = 'no-preferen
 const json = (status, body, headers = {}) => (route) =>
   route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(body) })
 const delayed = (ms, fn) => async (route) => { await new Promise((r) => setTimeout(r, ms)); return fn(route) }
+const classicStub = (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<h1>classic stub</h1>' })
+
+// ── Clips fixtures (PS-2). Clip reads are session-gated, so they are fixtures too. ──
+const NOW = Math.floor(Date.now() / 1000)
+const REELS = Array.from({ length: 15 }, (_, i) => ({
+  clip_id: `r${i}`, sender: i % 2 ? 'Goopy' : 'Bizzle', game: 'Rocket League', duration: 20 + i,
+  when: new Date((NOW - i * 7200) * 1000).toISOString().slice(0, 19).replace('T', ' '),
+  message: i === 0 ? 'what a save 🔥' : '', analysis_window: [4, 8],
+  pipeline: { state: ['posted', 'daily_eligible', 'fail', 'not_eligible', 'vetoed'][i % 5], reactions: 1, gate: 2, detail: 'too short' },
+  has_analysis: true, has_render: i % 3 === 0, override: null, vetoed: i % 5 === 4,
+}))
+const CLIP_ROWS = Array.from({ length: 50 }, (_, i) => ({
+  message_uid: `m${i}`, sender_online_id: i % 2 ? 'Goopy' : 'Bizzle', psn_created_at: NOW - i * 3600,
+  status: ['delivered', 'archived', 'discovered', 'failed'][i % 4], archive_status: i === 1 ? 'purged' : 'archived',
+  duration_seconds: 30, width: 1920, height: 1080, file_size: 12_000_000, whatsapp_delivered_at: i % 4 === 0 ? NOW - i * 3600 : null,
+  montage_eligible: 1, game_name: 'Rocket League', body: '', last_error: null,
+}))
+const CLIP_READS = {
+  'GET /api/pipeline-status': json(200, {
+    clips_this_month: 142, last_clip_at: NOW - 600, last_clip_sender: 'Goopy', next_build_ts: NOW + 3 * 86400 + 4 * 3600,
+    next_build_label: 'Oct 1, 2026 · 6 AM PT', next_build_month: '2026-09',
+    last_montage: { version: 8, year: 2026, month: 8, clips: 19, duration: 834.3, sent: false },
+    clips: [{ uid: 'm0', sender: 'Goopy', duration: 31, at: NOW - 600, included: true, reason: null },
+      { uid: 'm1', sender: 'Bizzle', duration: 4, at: NOW - 900, included: false, reason: 'too short' }],
+  }),
+  'GET /api/reels': json(200, { me: { psn_id: 'Goopy', display_name: 'Goopy', admin: true }, scope: 'mine', clips: REELS, source: 'reel-review', roster: null, needs_psn_link: false }),
+  'GET /api/video-uploads/mine': json(200, { psn_id: 'Goopy', uploads: [{ video_post_id: 'v1', status: 'posted', caption: 'Montage cut', filename: 'a.mp4', uploaded_at: NOW - 86400, posted_at: NOW - 80000, skip_reason: null, duration_seconds: 42, platforms: { youtube: { url: 'https://example.com/v' } } }], can_upload: true, open_session: null }),
+  'GET /clips': json(200, { clips: CLIP_ROWS, count: 50 }),
+  'GET /clips/m0': json(200, CLIP_ROWS[0]),
+  'GET /clips/m1': json(200, CLIP_ROWS[1]),
+  'GET /clips/m2': json(200, CLIP_ROWS[2]),
+  'GET /api/clips/media': delayed(20_000, (r) => r.fulfill({ status: 404, body: '' })),
+  // Held open so the player stays mounted while the test looks at it.
+  'GET /api/reels/clips/r0/source': delayed(20_000, (r) => r.fulfill({ status: 404, body: '' })),
+}
 
 async function ready(page, path = '/app/') {
   await page.goto(BASE + path, { waitUntil: 'domcontentloaded' })
@@ -224,24 +259,24 @@ try {
 
   // ── 3. Routing: legacy ?p=, handoffs, not found, admin gating ──────────────
   {
-    const { ctx, page } = await newPage({ width: 375, height: 800 })
-    const map = { squad: '/app', pipeline: '/app/clips', upload: '/app/clips?upload', slap: '/app/slap', wa: '/app/whatsapp', giveaway: '/app/giveaway', watch: '/app/watch', huddle: '/app/huddle', coach: '/app/coach', ai: '/app/ask', nope: '/app', '../../etc': '/app' }
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { 'GET /': classicStub, ...CLIP_READS } })
+    const map = { squad: '/app', pipeline: '/app/clips', upload: '/?p=upload', slap: '/app/slap', wa: '/app/whatsapp', giveaway: '/app/giveaway', watch: '/app/watch', huddle: '/app/huddle', coach: '/app/coach', ai: '/app/ask', nope: '/app', '../../etc': '/app' }
     for (const [k, want] of Object.entries(map)) {
       await page.goto(`${BASE}${process.env.LEGACY_PREFIX || "/app/"}?p=${encodeURIComponent(k)}`)
       await page.waitForSelector('h1')
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { clips: '/?p=pipeline', slap: '/?p=slap', whatsapp: '/?p=wa', giveaway: '/?p=giveaway', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai', portal: '/portal', settings: '/' }
+    const classic = { 'clips/x/edit': '/?p=pipeline', slap: '/?p=slap', whatsapp: '/?p=wa', giveaway: '/?p=giveaway', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai', portal: '/portal', settings: '/' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
       const got = await page.getAttribute('.handoff a.btn', 'href')
       check(`/app/${route} hands off to ${href}`, got === href, got)
     }
-    await page.goto(`${BASE}/app/clips?upload`)
-    await page.waitForSelector('.handoff a.btn')
-    check('/app/clips?upload hands off to /?p=upload', (await page.getAttribute('.handoff a.btn', 'href')) === '/?p=upload')
+    await page.goto(`${BASE}/app/clips?upload`).catch(() => {}) // superseded by location.replace
+    await page.waitForFunction(() => location.pathname === '/' && location.search === '?p=upload', null, { timeout: 10_000 }).catch(() => {})
+    check('/app/clips?upload goes straight to the classic upload', page.url() === `${BASE}/?p=upload`, page.url())
     await page.goto(`${BASE}/app/admin`)
     await page.waitForSelector('.handoff-lede')
     check('/app/admin for a non-admin says "Admins only"', (await page.textContent('.handoff-lede')) === 'Admins only')
@@ -403,6 +438,155 @@ try {
     const after = await page.$eval(firstTile, (e) => getComputedStyle(e, '::after').display)
     const aurora = await page.evaluate(() => getComputedStyle(document.body, '::before').animationName)
     check('reduced motion: no sweep on fire, aurora drift stopped', after === 'none' && aurora === 'none', `${after} / ${aurora}`)
+    await ctx.close()
+  }
+
+  // ── 5. Clips (PS-2), fixtures for reads, every write mocked ────────────────
+  {
+    const vetoes = []
+    const syncs = []
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        ...CLIP_READS,
+        'GET /api/admin/check': json(200, { admin: true }),
+        'POST /api/reels/sync': (r) => { syncs.push(1); return json(200, { ok: true })(r) },
+        'POST /api/reels/clips/r0/veto': (r) => { vetoes.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+      },
+    })
+    await ready(page, '/app/clips')
+    await page.waitForSelector('.reel-card', { timeout: 15_000 })
+    check('Clips h1', (await page.textContent('h1')) === 'Clips')
+    const summary = await page.textContent('.clips-summary')
+    check('summary bar: month · 142 clips · build in 3d 4h', /142 clips · build in 3d [34]h/.test(summary), summary)
+    check('first 12 reels shown, then Show more', (await page.locator('.reel-card').count()) === 12 && (await page.isVisible('button:has-text("Show more")')))
+    check('reel chips carry counts', (await page.textContent('.chips button[aria-pressed="true"]')).includes('15'))
+    check('This month numeral in gold', (await page.textContent('.month-num')) === '142')
+    check('Montage line v8 · 19 clips · 13m 54s', (await page.textContent('.montage-line')).replace(/\s+/g, ' ') === 'v8 · 19 clips · 13m 54s', await page.textContent('.montage-line'))
+    check('manifest shows included and excluded with reason', (await page.textContent('.manifest-row[data-included], .manifest-state[data-included="yes"]')) !== null && (await page.textContent('.clips-col-month')).includes('too short'))
+    const order = await page.$$eval('.clips-col', (els) => els.map((e) => [e.className.split(' ')[1], Math.round(e.getBoundingClientRect().top)]))
+    check('mobile order: reels, month, uploads', order[0][1] < order[1][1] && order[1][1] < order[2][1], JSON.stringify(order))
+    const overflow = await page.evaluate(() => [...document.querySelectorAll('.glass')].filter((e) => e.getBoundingClientRect().right > innerWidth + 0.5).length)
+    check('no Clips card overflows 375px', overflow === 0, `${overflow}`)
+    await shot(page, 'clips-375')
+    await shot(page, 'clips-375-full', true)
+    await axe(page, 'Clips overview 375')
+    await tapTargets(page, 'Clips overview 375')
+
+    await page.click('.chips button:has-text("Vetoed")')
+    check('Vetoed filter narrows the reels', (await page.locator('.reel-card').count()) === 3)
+    await page.click('.chips button:has-text("All")')
+
+    await page.click('button:has-text("↻ Sync")')
+    await page.waitForFunction(() => !document.querySelector('.reel-tools [aria-busy]'))
+    check('Sync posts once (mocked)', syncs.length === 1, `${syncs.length}`)
+
+    await page.click('.reel-card >> nth=0')
+    await page.waitForSelector('.sheet-clip video')
+    await page.waitForTimeout(300)
+    check('reel sheet has the source video and a Studio link', (await page.getAttribute('.sheet-clip video', 'src')).endsWith('/api/reels/clips/r0/source') && (await page.getAttribute('.sheet-clip a:has-text("Studio")', 'href')) === '/?p=pipeline')
+    await shot(page, 'clips-375-reel-sheet')
+    await axe(page, 'Reel sheet 375')
+    await page.click('.sheet-clip button:has-text("Veto")')
+    await page.waitForSelector('[role=alertdialog]')
+    check('veto asks first', (await page.textContent('[role=alertdialog]')).includes("It won't be included in the montage"))
+    check('no veto posted before confirming', vetoes.length === 0)
+    await page.click('[role=alertdialog] button:has-text("Veto")')
+    await page.waitForFunction(() => !document.querySelector('.sheet-clip [aria-busy]'))
+    check('veto posts once after confirm (mocked)', vetoes.length === 1, JSON.stringify(vetoes))
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.sheet-clip', { state: 'detached' })
+
+    // Fold state persists
+    await page.click('.fold:has(.section-h2:text("Your uploads")) > summary')
+    await page.waitForFunction(() => localStorage.getItem('clips.fold.uploads') === 'false')
+    await page.reload()
+    await page.waitForSelector('.reel-card')
+    check('a folded section stays folded after reload', !(await page.$eval('.fold:has(.section-h2:text("Your uploads"))', (e) => e.open)), await page.evaluate(() => localStorage.getItem('clips.fold.uploads')))
+    check('no unmocked writes and no page errors (Clips overview)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // All clips + admin re-send (mocked): confirm first, one request, 410 disables.
+    const resends = []
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        ...CLIP_READS,
+        'GET /api/admin/check': json(200, { admin: true }),
+        'POST /api/clips/m0/resend': delayed(400, (r) => { resends.push(1); return json(200, { status: 'sent', caption: 'x', wa: {} })(r) }),
+        'POST /api/clips/m2/resend': (r) => { resends.push(2); return json(410, { detail: 'archived file missing' })(r) },
+      },
+    })
+    await ready(page, '/app/clips')
+    await page.click('[role=tab]:has-text("All clips")')
+    await page.waitForSelector('.clip-row')
+    check('All clips sets view=all in the URL', new URL(page.url()).searchParams.get('view') === 'all')
+    check('catalogue shows 50 rows and Load more', (await page.locator('.clip-row').count()) === 50 && (await page.isVisible('button:has-text("Load more")')))
+    await page.selectOption('.cat-filter select >> nth=2', 'failed')
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('status') === 'failed')
+    check('a filter lands in the URL', true)
+    await shot(page, 'clips-375-all')
+    await axe(page, 'All clips 375')
+    await tapTargets(page, 'All clips 375')
+    await page.goto(`${BASE}/app/clips?view=all`)
+    await page.waitForSelector('.clip-row')
+
+    await page.click('.clip-row >> nth=1')
+    await page.waitForSelector('.sheet-clip .player-gone')
+    check('purged clip says the media was cleared', (await page.textContent('.sheet-clip .player-gone')).includes('14-day retention'))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    await page.click('.clip-row >> nth=0')
+    await page.waitForSelector('.sheet-clip button:has-text("Re-send to WhatsApp")')
+    check('player points at the session-cookie media URL', (await page.getAttribute('.sheet-clip video', 'src')) === '/api/clips/media?uid=m0')
+    await page.click('.sheet-clip button:has-text("Re-send to WhatsApp")')
+    await page.waitForSelector('[role=alertdialog]')
+    check('re-send asks first and names the group', (await page.textContent('[role=alertdialog]')).includes('to the Goopers group'))
+    check('nothing sent before confirming', resends.length === 0)
+    await page.waitForTimeout(450)
+    await shot(page, 'clips-375-resend-confirm')
+    await page.click('[role=alertdialog] button:has-text("Re-send")')
+    await page.waitForSelector('.resend button[aria-busy="true"]')
+    await page.click('.resend button', { force: true })
+    await page.waitForSelector('.resend button:has-text("Sent ✓")', { timeout: 5000 })
+    check('re-send: one request, then Sent ✓', resends.length === 1, `${resends}`)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    await page.click('.clip-row >> nth=2')
+    await page.click('.sheet-clip button:has-text("Re-send to WhatsApp")')
+    await page.click('[role=alertdialog] button:has-text("Re-send")')
+    await page.waitForSelector('.resend-msg:has-text("gone from storage")')
+    check('410 disables re-send with the storage message', (await page.getAttribute('.resend button', 'aria-disabled')) === 'true')
+    check('no unmocked writes and no page errors (All clips)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // A member sees no re-send control.
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { ...CLIP_READS, 'GET /api/admin/check': json(200, { admin: false }) } })
+    await ready(page, '/app/clips?view=all')
+    await page.click('.clip-row >> nth=0')
+    await page.waitForSelector('.sheet-clip .meta-list')
+    check('members get no Re-send control', (await page.locator('.sheet-clip .resend').count()) === 0)
+    await ctx.close()
+  }
+  {
+    const { ctx, page } = await newPage({ width: 1440, height: 900, mocks: { ...CLIP_READS, 'GET /api/admin/check': json(200, { admin: true }) } })
+    await ready(page, '/app/clips')
+    await page.waitForSelector('.reel-card')
+    const cols = await page.$$eval('.clips-col', (els) => Object.fromEntries(els.map((e) => [e.className.split(' ')[1], Math.round(e.getBoundingClientRect().left)])))
+    check('desktop: uploads · reels · month columns', cols['clips-col-uploads'] < cols['clips-col-reels'] && cols['clips-col-reels'] < cols['clips-col-month'], JSON.stringify(cols))
+    check('desktop shows 15 of 15 reels (24 per page)', (await page.locator('.reel-card').count()) === 15)
+    await shot(page, 'clips-1440')
+    await axe(page, 'Clips 1440')
+    await page.click('.reel-card >> nth=0')
+    await page.waitForSelector('.dialog-wide video')
+    const w = await page.$eval('.dialog-wide', (e) => e.getBoundingClientRect().width)
+    check('desktop clip dialog is 760px', Math.round(w) === 760, `${w}`)
+    await shot(page, 'clips-1440-reel-dialog')
+    check('no unmocked writes and no page errors (Clips desktop)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 } finally {

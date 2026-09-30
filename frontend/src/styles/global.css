@@ -612,3 +612,137 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 .handoff { padding: var(--space-6) var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); align-items: flex-start; }
 .handoff p { margin: 0; max-width: 60ch; }
 .handoff-lede { font-size: var(--text-lg); font-weight: 700; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Clips (PS-2)
+   ════════════════════════════════════════════════════════════════════════════ */
+.clips-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.clips-summary { margin: var(--space-2) 0 0; font-weight: 600; min-height: 1.45em; }
+.clips-summary b { color: var(--text); }
+.gold { color: var(--gold-text); }
+.live { color: var(--live-text); font-weight: 700; }
+.clips-tabs { display: flex; flex-direction: column; gap: var(--space-4); }
+.clips-seg { max-width: 420px; }
+
+.clips-overview { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); align-items: start; }
+.clips-col { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+/* Mobile order: reels, month, uploads (DOM order). Desktop: uploads · reels · month. */
+@media (min-width: 1024px) {
+  .clips-overview { grid-template-columns: minmax(0, .9fr) minmax(0, 1.6fr) minmax(0, 1fr); }
+  .clips-col-uploads { order: -1; }
+}
+
+/* Folding section (CL-02) */
+.fold > summary { list-style: none; cursor: pointer; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold-head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); min-height: 52px; }
+.fold[open] > .fold-head { border-bottom: 1px solid var(--border-decorative); }
+.fold-head:focus-visible { box-shadow: var(--focus-ring); border-radius: var(--radius-lg); outline: none; }
+.fold-count { font: 700 var(--text-sm) / 1 var(--font-display); color: var(--text-dim); }
+.fold-chev { margin-left: auto; width: 10px; height: 10px; border-right: 2px solid var(--text-dim); border-bottom: 2px solid var(--text-dim); transform: rotate(45deg); transition: transform var(--dur-std) var(--ease-out); }
+.fold[open] .fold-chev { transform: rotate(-135deg); }
+.fold-body { padding-bottom: var(--space-3); }
+.show-more { margin: var(--space-3) var(--space-4) 0; }
+
+/* Reels (CL-07–11) */
+.reel-tools { display: flex; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-3) var(--space-4) 0; }
+.chips { display: flex; gap: var(--space-2); overflow-x: auto; padding: var(--space-3) var(--space-4); scrollbar-width: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--tap-min); padding: 0 var(--space-3);
+  border-radius: var(--radius-pill); border: 1px solid var(--border-control); background: rgba(6, 4, 18, .35);
+  color: var(--text); font: 700 var(--text-sm) / 1 var(--font-body); white-space: nowrap; flex: none;
+}
+.chip[aria-pressed="true"] { border-color: var(--interactive-text); background: rgba(34, 230, 255, .12); color: var(--interactive-text); }
+.chip-n { color: var(--text-dim); }
+.reel-grid { list-style: none; margin: 0; padding: 0 var(--space-4); display: grid; gap: var(--space-3); grid-template-columns: minmax(0, 1fr); container-type: inline-size; }
+@media (min-width: 560px) { .reel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.reel-card {
+  width: 100%; display: flex; gap: var(--space-3); align-items: stretch; text-align: left; padding: var(--space-2);
+  border-radius: var(--c-clip-radius); border: 1px solid var(--border-control); background: rgba(6, 4, 18, .35); color: var(--text);
+}
+@media (hover: hover) { .reel-card:hover { border-color: var(--interactive-text); } }
+.reel-thumb { position: relative; flex: none; width: 128px; aspect-ratio: var(--c-clip-thumb-ratio); border-radius: var(--radius-sm); overflow: hidden; background: rgba(141, 120, 196, .2); }
+.reel-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.reel-dur { position: absolute; right: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px; background: rgba(3, 1, 10, .8); font: 700 var(--text-xs) / 1.3 var(--font-body); }
+.reel-info { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; flex: 1; }
+.reel-t { font: 700 var(--text-base) / 1.25 var(--font-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reel-info .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badges { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+.badge {
+  display: inline-flex; align-items: center; padding: 2px var(--space-2); border-radius: var(--radius-pill);
+  font: 700 var(--text-xs) / 1.3 var(--font-body); border: 1px solid currentColor; white-space: nowrap; color: var(--text-dim); flex: none;
+}
+.badge[data-tone="live"] { color: var(--live-text); }
+.badge[data-tone="accent"] { color: var(--accent-text); }
+.badge[data-tone="gold"] { color: var(--gold-text); }
+.badge[data-tone="cyan"] { color: var(--interactive-text); }
+.badge[data-tone="warn"] { color: var(--warning); }
+
+/* This month · Montage (DS-CL-MO) */
+.month-body { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.month-kpi { display: flex; align-items: baseline; gap: var(--space-3); }
+.month-num { font: 800 var(--c-stat-numeral-sz) / 1.1 var(--font-display); color: var(--achievement-text); }
+.month-build { margin: 0; font-weight: 700; }
+.montage-line { margin: 0; font-size: var(--text-lg); }
+.montage-line b { font-family: var(--font-display); }
+
+/* Manifest */
+.manifest-row { display: flex; align-items: center; gap: var(--space-3); min-height: var(--tap-min); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border-decorative); }
+.manifest-row:last-child { border-bottom: 0; }
+.initial { width: 28px; height: 28px; flex: none; border-radius: 50%; display: grid; place-items: center; background: rgba(141, 120, 196, .25); font: 700 var(--text-xs) / 1 var(--font-display); }
+.manifest-who { flex: 1; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.manifest-state { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-xs); font-weight: 600; color: var(--text-dim); max-width: 45%; }
+.manifest-state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-dot-offline); flex: none; }
+.manifest-state[data-included="yes"] { color: var(--live-text); }
+.manifest-state[data-included="yes"] .dot { background: var(--c-dot-live); }
+
+/* Uploads (CL-27) */
+.upload-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border-decorative); }
+.upload-row:last-child { border-bottom: 0; }
+.upload-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.upload-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-links { display: flex; gap: var(--space-3); flex-wrap: wrap; font-size: var(--text-sm); font-weight: 700; }
+.upload-links a { color: var(--interactive-text); min-height: var(--tap-min); display: inline-flex; align-items: center; }
+
+/* Catalogue (CL-14–17) */
+.cat-filters {
+  position: sticky; top: calc(var(--topbar-h-condensed) + env(safe-area-inset-top)); z-index: 1; display: grid; gap: var(--space-2);
+  grid-template-columns: repeat(3, minmax(0, 1fr)); padding: var(--space-3) var(--space-4);
+  background: var(--sheet); border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: 1px solid var(--border-decorative);
+}
+@media (min-width: 1024px) { .cat-filters { top: 0; } }
+.cat-filter { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cat-filter .input { padding-right: var(--space-2); }
+.clip-row {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); text-align: left;
+  min-height: 56px; padding: var(--space-2) var(--space-4); border: 0; border-bottom: 1px solid var(--border-decorative); background: none; color: var(--text);
+}
+.rows li:last-child .clip-row { border-bottom: 0; }
+@media (hover: hover) { .clip-row:hover { background: rgba(34, 230, 255, .05); } }
+.clip-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.clip-row-t { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Clip sheet / dialog (CL-18) */
+.dialog-wide { width: min(calc(100vw - 2 * var(--gutter)), var(--reading-w)); padding-top: var(--space-3); }
+.sheet-clip { max-height: 88dvh; padding: 0 var(--gutter) var(--space-4); overflow-y: auto; }
+.clip-sheet-title { font-size: var(--text-base); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.clip-detail { display: flex; flex-direction: column; gap: var(--space-3); }
+.player { width: 100%; max-height: 56dvh; border-radius: var(--radius-md); background: #000; display: block; }
+.player-gone { aspect-ratio: 16 / 9; display: grid; place-items: center; text-align: center; padding: var(--space-4); border-radius: var(--radius-md); background: rgba(141, 120, 196, .12); color: var(--text-dim); font-weight: 600; }
+.detail-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.meta-list { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-1) var(--space-4); margin: 0; font-size: var(--text-sm); }
+.meta-list dt { color: var(--text-dim); font-weight: 600; }
+.meta-list dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.resend { display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; border-top: 1px solid var(--border-decorative); padding-top: var(--space-3); }
+.resend-msg { margin: 0; min-height: 1.2em; }
+.resend-msg[data-tone="error"] { color: var(--error); }
+.badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.show-more { white-space: normal; text-align: left; line-height: 1.2; }
+/* Two reel columns get narrow on desktop: stack the thumbnail over the text. */
+@media (min-width: 1024px) {
+  .reel-card { flex-direction: column; }
+  .reel-thumb { width: 100%; }
+}
+/* A confirm opened from a clip sheet sits above it, with its own scrim. */
+.scrim-top { z-index: calc(var(--z-sheet) + 1); }
+.dialog-confirm { z-index: calc(var(--z-sheet) + 2); background: #0c081c; }

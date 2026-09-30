@@ -59,7 +59,7 @@ type RequestOpts = {
   timeoutMs?: number
   signal?: AbortSignal
   body?: unknown
-  method?: 'GET' | 'POST'
+  method?: 'GET' | 'POST' | 'DELETE'
   /** A 401 here is an answer, not an expired session (the account probe). */
   quiet401?: boolean
 }

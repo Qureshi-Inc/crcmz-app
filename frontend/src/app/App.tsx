@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ApiError } from '../lib/http'
 import { Shell } from './Shell'
 import { SquadPage } from '../features/squad/SquadPage'
+import { ClipsPage } from '../features/clips/ClipsPage'
 import { Handoff, NotFound } from '../features/handoff/Handoff'
 
 const queryClient = new QueryClient({
@@ -28,6 +29,7 @@ export function App() {
             <Route element={<Shell />}>
               <Route index element={<SquadPage />} />
               <Route path="squad" element={<SquadPage />} />
+              <Route path="clips" element={<ClipsPage />} />
               <Route path="clips/*" element={<Handoff id="clips" />} />
               <Route path="slap" element={<Handoff id="slap" />} />
               <Route path="whatsapp" element={<Handoff id="whatsapp" />} />

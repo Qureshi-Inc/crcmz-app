@@ -107,7 +107,7 @@ def test_tool_leaks_no_credentials():
 
 
 def test_tool_does_not_overclaim_range_support():
-    """This Starlette's FileResponse ignores Range, so the tool must not promise it."""
+    """Range is served from local disk only (not S3), so the tool must not promise it."""
     import clips
     clips.init()
     rows = [r for r in clips.list_clips(limit=200)
@@ -155,6 +155,86 @@ def test_media_endpoint_401s_without_bearer():
     r = c.get("/api/clips/media", params={"uid": "whatever"},
               headers={"Authorization": "Bearer wrong-token"})
     assert r.status_code == 401, "a bad bearer must 401, got %s" % r.status_code
+
+
+def _session_cookie(sub="member-1"):
+    import server
+    return {server._SESSION_COOKIE: server._signer().dumps({"sub": sub, "email": ""})}
+
+
+def test_media_endpoint_accepts_a_session_cookie():
+    """B-1: the /app player sends the session cookie, not a bearer."""
+    from fastapi.testclient import TestClient
+    import server
+    c = TestClient(server.app, cookies=_session_cookie())
+    r = c.get("/api/clips/media", params={"uid": "no-such-clip"})
+    assert r.status_code == 404, "a signed-in member + unknown clip must 404, got %s" % r.status_code
+    c = TestClient(server.app, cookies={server._SESSION_COOKIE: "forged"})
+    r = c.get("/api/clips/media", params={"uid": "no-such-clip"})
+    assert r.status_code == 401, "a bad cookie must 401, got %s" % r.status_code
+
+
+def test_ranged_file_serves_byte_ranges():
+    import server
+    from fastapi.testclient import TestClient
+    from fastapi import FastAPI, Request
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "c.mp4"
+        p.write_bytes(bytes(range(256)) * 4)          # 1024 bytes
+        mini = FastAPI()
+
+        @mini.get("/f")
+        def f(request: Request):
+            return server._ranged_file(p, request.headers.get("range"), {"Content-Disposition": "inline"})
+
+        c = TestClient(mini)
+        r = c.get("/f")
+        assert r.status_code == 200 and len(r.content) == 1024
+        assert r.headers["accept-ranges"] == "bytes"
+        r = c.get("/f", headers={"Range": "bytes=10-19"})
+        assert r.status_code == 206, r.status_code
+        assert r.content == (bytes(range(256)) * 4)[10:20]
+        assert r.headers["content-range"] == "bytes 10-19/1024"
+        r = c.get("/f", headers={"Range": "bytes=1000-"})
+        assert r.status_code == 206 and len(r.content) == 24
+        r = c.get("/f", headers={"Range": "bytes=-4"})
+        assert r.status_code == 206 and r.content == (bytes(range(256)) * 4)[-4:]
+        r = c.get("/f", headers={"Range": "bytes=5000-"})
+        assert r.status_code == 416 and r.headers["content-range"] == "bytes */1024"
+
+
+def test_resend_is_admin_only():
+    """B-3: re-send posts to the real WhatsApp group, so members get 403 first."""
+    from fastapi.testclient import TestClient
+    import server
+    orig = server._is_iam_admin
+
+    async def never(_sub):
+        return False
+    server._is_iam_admin = never
+    try:
+        r = TestClient(server.app).post("/api/clips/some-uid/resend")
+        assert r.status_code in (401, 403), "no session must not reach the send, got %s" % r.status_code
+        r = TestClient(server.app, cookies=_session_cookie()).post("/api/clips/some-uid/resend")
+        assert r.status_code == 403, "a non-admin must 403, got %s" % r.status_code
+    finally:
+        server._is_iam_admin = orig
+
+
+def test_resend_admin_reaches_the_handler():
+    """An admin gets past the gate; an unknown clip then 404s without sending anything."""
+    from fastapi.testclient import TestClient
+    import server
+    orig = server._is_iam_admin
+
+    async def always(_sub):
+        return True
+    server._is_iam_admin = always
+    try:
+        r = TestClient(server.app, cookies=_session_cookie()).post("/api/clips/no-such-clip/resend")
+        assert r.status_code == 404, "admin + unknown clip must 404, got %s" % r.status_code
+    finally:
+        server._is_iam_admin = orig
 
 
 def test_media_endpoint_404s_unknown_clip_with_valid_bearer():

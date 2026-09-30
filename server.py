@@ -3448,13 +3448,58 @@ async def api_coaching_feedback(request: Request):
     return {"ok": True, "feedback_id": fid}
 
 
+_RANGE_RE = _re.compile(r"^bytes=(\d*)-(\d*)$")
+
+
+def _ranged_file(path, range_header: str | None, headers: dict, media_type: str = "video/mp4"):
+    """Serve a local file, honouring one `bytes=` range so `<video>` can seek.
+
+    Starlette 0.38's FileResponse ignores Range, and Safari will not play an MP4
+    whose server answers a range request with the whole body. Multi-range requests
+    are rare for video and get the whole file, which the spec allows.
+    """
+    from fastapi.responses import StreamingResponse
+    size = path.stat().st_size
+    base = {**headers, "Accept-Ranges": "bytes"}
+    m = _RANGE_RE.match((range_header or "").strip())
+    if not m or not (m.group(1) or m.group(2)):
+        start, end, status = 0, size - 1, 200
+    elif m.group(1):
+        start = int(m.group(1))
+        end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+        status = 206
+    else:  # suffix range: the last N bytes
+        start, end, status = max(0, size - int(m.group(2))), size - 1, 206
+    if status == 206 and (start >= size or start > end):
+        return Response(status_code=416, headers={**base, "Content-Range": f"bytes */{size}"})
+    length = end - start + 1 if size else 0
+    if status == 206:
+        base["Content-Range"] = f"bytes {start}-{end}/{size}"
+    base["Content-Length"] = str(length)
+
+    def body(chunk: int = 1024 * 256):
+        with path.open("rb") as fh:
+            fh.seek(start)
+            left = length
+            while left > 0:
+                data = fh.read(min(chunk, left))
+                if not data:
+                    break
+                left -= len(data)
+                yield data
+
+    return StreamingResponse(body(), status_code=status, media_type=media_type, headers=base)
+
+
 @app.get("/api/clips/media")
 def api_clip_media(uid: str, request: Request):
-    """Stream one archived clip's MP4 to a bearer-authenticated machine client.
+    """Stream one archived clip's MP4 to a machine client or a signed-in member.
 
     In `_OPEN_PATHS` because a machine sends a bearer token and never a cookie, so
     this does its own auth — the same two paths `/mcp` accepts, so one token works
-    for both the metadata tools and the bytes.
+    for both the metadata tools and the bytes. A valid session cookie is accepted
+    too (B-1), so the /app player can use this as a `<video>` src; any member can
+    already read the catalogue at `/clips`, so this exposes nothing new.
 
     `uid` is a query parameter, not a path segment, for two reasons: `_OPEN_PATHS`
     matches paths exactly, so a path parameter would force a new open *prefix* into
@@ -3465,11 +3510,14 @@ def api_clip_media(uid: str, request: Request):
     request, so a caller cannot steer it at an arbitrary file.
     """
     message_uid = uid
-    from fastapi.responses import FileResponse, StreamingResponse
+    from fastapi.responses import StreamingResponse
 
     auth_header = request.headers.get("authorization", "")
     caller = None
-    if not _mcp.authorised(auth_header):
+    session = None if auth_header else _get_session(request)
+    if session and session.get("sub"):
+        caller = {"zitadel_id": session["sub"]}
+    elif not _mcp.authorised(auth_header):
         caller = (_mcp.resolve_caller(auth_header)
                   or _mcp.resolve_service(auth_header))
         if caller is None:
@@ -3501,14 +3549,13 @@ def api_clip_media(uid: str, request: Request):
     logger.info("clip media served uid=%s key=%s caller=%s", message_uid, key, who)
 
     filename = _re.sub(r"[^a-zA-Z0-9_.-]", "_", message_uid) + ".mp4"
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    # A browser player gets `inline` so opening the URL plays rather than downloads.
+    disposition = "inline" if session else "attachment"
+    headers = {"Content-Disposition": f'{disposition}; filename="{filename}"'}
 
     path = _cstore.local_file(key)
     if path:
-        # Whole-body send. Starlette 0.38's FileResponse has no Range handling, so
-        # this is not resumable — fine for a one-shot fetch, but do not advertise
-        # range support to clients on the back of it.
-        return FileResponse(path, media_type="video/mp4", filename=filename)
+        return _ranged_file(path, request.headers.get("range"), headers)
     if not _cstore.available():
         raise HTTPException(status_code=503, detail="clip storage unavailable")
     size = row.get("file_size")
@@ -3678,7 +3725,10 @@ def api_video_upload_media(id: str, request: Request):  # noqa: A002
 
     auth_header = request.headers.get("authorization", "")
     caller = None
-    if not _mcp.authorised(auth_header):
+    session = None if auth_header else _get_session(request)
+    if session and session.get("sub"):
+        caller = {"zitadel_id": session["sub"]}
+    elif not _mcp.authorised(auth_header):
         caller = (_mcp.resolve_caller(auth_header)
                   or _mcp.resolve_service(auth_header))
         if caller is None:
@@ -7179,8 +7229,20 @@ def api_clip_detail(message_uid: str):
 
 
 @app.post("/api/clips/{message_uid:path}/resend")
-def api_clip_resend(message_uid: str):
-    """Force-resend a delivered clip to WhatsApp with a new idempotency key."""
+async def api_clip_resend(message_uid: str, request: Request):
+    """Force-resend a delivered clip to WhatsApp with a new idempotency key.
+
+    Admins only (B-3): it posts to the real Goopers group, and a new key means
+    WhatsApp shows it again even if it was delivered before.
+    """
+    session = _get_session(request)
+    if not session or not await _is_iam_admin(session.get("sub", "")):
+        raise HTTPException(status_code=403, detail="admins only")
+    logger.info("clip resend uid=%s by=%s", message_uid, session.get("sub"))
+    return await asyncio.to_thread(_clip_resend, message_uid)
+
+
+def _clip_resend(message_uid: str) -> dict:
     import base64 as _b64, time as _t
     job = _clips.get(message_uid)
     if not job:

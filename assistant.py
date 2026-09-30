@@ -790,8 +790,8 @@ def _clip_media(clip_id: str, row: dict | None) -> dict:
         "duration_seconds": row.get("duration_seconds"),
         "sender": row.get("sender_online_id"),
         "message": (row.get("body") or "") or None,
-        # Whole-body download only; the server does not implement Range on this
-        # route, so a client must not plan on resuming a partial fetch.
+        # Range works when clips are on local disk but not from S3, so a client
+        # must not plan on resuming a partial fetch.
         "supports_range": False,
     }
 
