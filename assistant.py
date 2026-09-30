@@ -1995,13 +1995,22 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
                                                 "from pending_video_uploads. Used instead of clip_id to "
                                                 "resolve the uploader's name. Pass clip_id as empty string "
                                                 "when using this."},
+         "tiktok_url":          {"type": "string",
+                                 "description": "Optional, reel_type 'member' only: the live TikTok permalink "
+                                                "(https://www.tiktok.com/@crcmzclan/video/<id>). Adds a "
+                                                "'TikTok: <url>' line to the same group message."},
+         "youtube_url":         {"type": "string",
+                                 "description": "Optional, reel_type 'member' only: the live YouTube permalink "
+                                                "(https://www.youtube.com/shorts/<id> or watch?v=<id>). Adds a "
+                                                "'YouTube: <url>' line to the same group message."},
      },
      "required": ["clip_id", "instagram_url"]})
 def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
                    instagram_media_id: str = "", caption: str = "",
                    sender: str = "", reel_type: str = "fire",
                    resend_correction: bool = False,
-                   video_post_id: str = "") -> dict:
+                   video_post_id: str = "", tiktok_url: str = "",
+                   youtube_url: str = "") -> dict:
     """Ingest an IG post result and fan out to WhatsApp. The platform composes the message."""
     import clips as clips_mod
     import ig_posts as ig_mod
@@ -2038,6 +2047,22 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     instagram_media_id = (instagram_media_id or "").strip()
     if instagram_media_id and not instagram_media_id.isdigit():
         return {"ok": False, "error": "instagram_media_id must be the numeric media ID"}
+    more_links = {}
+    if (tiktok_url or "").strip() or (youtube_url or "").strip():
+        import video_uploads as vu
+        if reel_type != "member":
+            return {"ok": False, "error": "tiktok_url and youtube_url are only for reel_type 'member'"}
+        if (tiktok_url or "").strip():
+            clean, bad = vu.normalise_tiktok(tiktok_url)
+            if bad or "/@crcmzclan/video/" not in clean.lower():
+                return {"ok": False, "error": "tiktok_url must be a @crcmzclan video permalink: "
+                                              "https://www.tiktok.com/@crcmzclan/video/<id>"}
+            more_links["tiktok"] = clean
+        if (youtube_url or "").strip():
+            clean, bad = vu.normalise_youtube(youtube_url)
+            if bad:
+                return {"ok": False, "error": f"youtube_url {bad}"}
+            more_links["youtube"] = clean
 
     zid = caller.get("zitadel_id", "")
     if not mcp_oauth.within_rate_limit(zid, "ig_reel_share", 30, 3600):
@@ -2073,7 +2098,8 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
             return {"ok": False, "error": "resend_correction needs a clip that was already shared"}
         if not ig_mod.claim_reshare(post_id):
             return {"ok": False, "error": "this clip's corrected re-share was already used"}
-        sent, note = _notify_ig_posted(psn_user, instagram_url, caller, post, reel_type=reel_type)
+        sent, note = _notify_ig_posted(psn_user, instagram_url, caller, post, reel_type=reel_type,
+                                       more_links=more_links)
         if not sent:
             ig_mod.release_reshare(post_id)
         mcp_oauth.audit_write(zid, "ig_reel_share",
@@ -2091,7 +2117,8 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     note = None
     if ig_mod.claim_notification(post_id):
         notified, note = _notify_ig_posted(psn_user, instagram_url, caller,
-                                           ig_mod.get(post_id), reel_type=reel_type)
+                                           ig_mod.get(post_id), reel_type=reel_type,
+                                           more_links=more_links)
         if not notified:
             ig_mod.release_notification(post_id)
 
@@ -2735,7 +2762,8 @@ def _coach_report_text(review: dict, limit: int = 1400) -> str:
 
 def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
                       post: dict | None = None,
-                      reel_type: str = "fire") -> tuple[bool, str | None]:
+                      reel_type: str = "fire",
+                      more_links: dict | None = None) -> tuple[bool, str | None]:
     """Announce an Instagram post to the WhatsApp group.
 
     The IG URL comes from Muse's service call (validated https://), not from user
@@ -2760,6 +2788,10 @@ def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
         tag = f"[{label[:32].strip().title()}] " if label else ""
         safe_user = _wa_safe(psn_user, 40)
         text = f"{tag}@all \U0001f3ae *{safe_user}*'s video just dropped on Instagram:\n{ig_url}"
+        # Validated permalinks only (checked in ig_reel_share), in a fixed order.
+        for label, key in (("TikTok", "tiktok"), ("YouTube", "youtube")):
+            if (more_links or {}).get(key):
+                text += f"\n{label}: {more_links[key]}"
     else:
         label = (caller or {}).get("label", "")
         tag = f"[{label[:32].strip().title()}] " if label else ""

@@ -15,6 +15,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _tmp = tempfile.mkdtemp()
 os.environ["IG_POSTS_DB"] = os.path.join(_tmp, "ig_posts.db")
+os.environ["VIDEO_UPLOADS_DB"] = os.path.join(_tmp, "video_uploads.db")
+os.environ["VIDEO_UPLOADS_STAGING"] = os.path.join(_tmp, "staging")
 os.environ.setdefault("SESSION_SECRET", "test-secret")
 
 SENT = []
@@ -171,6 +173,59 @@ def test_eligible_clips_pages_through_everything():
     assert seen[0] == "15#1", "newest first"
     raw = assistant.call_tool("eligible_clips", {"limit": 20})[0]
     assert "truncated" not in raw and len(raw) < assistant.MAX_TOOL_CHARS, len(raw)
+
+
+def _member_video(vid, psn):
+    import sqlite3
+    import video_uploads as vu
+    vu.init()
+    with sqlite3.connect(os.environ["VIDEO_UPLOADS_DB"]) as db:
+        db.execute("INSERT INTO video_posts (video_post_id, zitadel_id, psn_id, filename, content_type,"
+                   " storage_key, sha256, file_size_bytes, duration_seconds, status, uploaded_at)"
+                   " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                   (vid, "zid-" + vid, psn, "v.mp4", "video/mp4", "k", vid.ljust(64, "0"), 1, 30.0, "queued", 1.0))
+
+
+def test_member_share_carries_tiktok_and_youtube_links():
+    _member_video("vp-all3", "Mutasif")
+    ig = "https://www.instagram.com/reel/Member00001/"
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-all3", instagram_url=ig, reel_type="member",
+             tiktok_url="https://www.tiktok.com/@crcmzclan/video/7420000000000000001",
+             youtube_url="https://youtu.be/AbCdEfGhIjK")
+    assert r["ok"] and r["group_notified"], r
+    msg = SENT[-1]["message"]
+    assert "*Mutasif*'s video just dropped on Instagram:\n" + ig in msg, msg
+    assert msg.endswith("\nTikTok: https://www.tiktok.com/@crcmzclan/video/7420000000000000001"
+                        "\nYouTube: https://www.youtube.com/watch?v=AbCdEfGhIjK"), msg
+    before = len(SENT)
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-all3", instagram_url=ig, reel_type="member",
+             tiktok_url="https://www.tiktok.com/@crcmzclan/video/7420000000000000001")
+    assert r.get("already_shared") and len(SENT) == before, "one message per video"
+
+
+def test_member_share_without_extra_links_is_unchanged():
+    _member_video("vp-igonly", "Mutasif")
+    ig = "https://www.instagram.com/reel/Member00002/"
+    r = call("ig_reel_share", clip_id="", video_post_id="vp-igonly", instagram_url=ig, reel_type="member")
+    assert r["ok"] and r["group_notified"], r
+    assert SENT[-1]["message"] == "[Muse] @all \U0001f3ae *Mutasif*'s video just dropped on Instagram:\n" + ig, \
+        SENT[-1]["message"]
+
+
+def test_member_share_rejects_bad_links():
+    _member_video("vp-bad", "Mutasif")
+    ig = "https://www.instagram.com/reel/Member00003/"
+    before = len(SENT)
+    for extra in ({"tiktok_url": "https://www.tiktok.com/@someoneelse/video/7420000000000000001"},
+                  {"tiktok_url": "https://vm.tiktok.com/ZMabc/"},
+                  {"youtube_url": "https://vimeo.com/123"}):
+        r = call("ig_reel_share", clip_id="", video_post_id="vp-bad", instagram_url=ig,
+                 reel_type="member", **extra)
+        assert not r["ok"], (extra, r)
+    r = call("ig_reel_share", clip_id="c-fire-x", instagram_url=ig, reel_type="fire",
+             tiktok_url="https://www.tiktok.com/@crcmzclan/video/7420000000000000001")
+    assert not r["ok"] and "member" in r["error"], r
+    assert len(SENT) == before, "nothing is sent when a link is refused"
 
 
 if __name__ == "__main__":
