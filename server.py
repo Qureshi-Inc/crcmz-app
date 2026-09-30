@@ -3557,7 +3557,7 @@ def api_video_uploads_mine(request: Request):
             "can_upload": not any(r["status"] == "queued" for r in rows),
             # An unfinished upload the page can offer to resume.
             "open_session": _vu.open_session(sub),
-            "limits": {"max_bytes": 0, "max_seconds": _vu.MAX_SECONDS,
+            "limits": {"max_bytes": _vu.MAX_BYTES, "max_seconds": _vu.MAX_SECONDS,
                        "min_seconds": _vu.MIN_SECONDS, "max_caption": _vu.MAX_CAPTION,
                        "formats": ["mp4", "mov"]}}
 
@@ -11109,19 +11109,19 @@ function upRender(){
   const d = upData, el = $('upload-inner');
   const L = d.limits;
   const form = d.can_upload
-    ? '<input type="file" id="upFile" class="up-file" accept="video/mp4,video/quicktime,.mp4,.mov"'+
-      ' onchange="if(this.files&&this.files[0])upSend()">'+
+    ? '<input type="file" id="upFile" class="up-file" accept="video/mp4,video/quicktime,.mp4,.mov" onchange="if(this.files&&this.files[0])upSend()">'+
       '<input type="text" id="upCap" class="up-in" maxlength="'+L.max_caption+'" placeholder="Caption (optional)">'+
       (d.open_session && d.open_session.received
         ? '<div class="up-msg">Unfinished upload: <b>'+esc(d.open_session.filename)+'</b> ('+
           Math.round(100*d.open_session.received/d.open_session.size)+'%). Pick the same file '+
-          'and it will continue where it stopped.</div>' : '')+
-      '<div class="up-bar" id="upBar" style="display:none"><i id="upFill"></i></div>'
-    : '<div class="up-msg">Your previous video hasn\'t been posted yet. You can upload another once it\'s posted or skipped.</div>';
+          'and tap Upload to continue where it stopped.</div>' : '')+
+      '<button class="up-btn" id="upGo" onclick="upSend()">Upload</button>'+
+      '<div class="up-bar" id="upBar"><i id="upFill"></i></div>'
+    : '<div class="up-msg">Your previous video hasn’t been posted yet. You can upload another once it’s posted or skipped.</div>';
   el.innerHTML =
     '<div class="up-card"><h3>📤 Send a video to @crcmzclan</h3>'+
     '<p class="up-sub">Muse posts it to Instagram, TikTok and YouTube, credited to <b>'+esc(d.psn_id)+'</b>. '+
-    'MP4 or MOV, up to '+Math.round(L.max_seconds/60)+' minutes. '+
+    'MP4 or MOV, up to '+Math.round(L.max_seconds/60)+' minutes long. '+
     'One video in the queue at a time.</p>'+ form +
     '<div class="up-msg" id="upMsg"></div></div>'+
     '<div class="up-card"><h3>Your uploads</h3>'+
@@ -11183,10 +11183,8 @@ async function upSend(){
   if(upBusy) return;
   const f = ($('upFile')||{}).files && $('upFile').files[0];
   if(!f){ upSay('Pick a video first.', 'err'); return; }
-  const L = upData && upData.limits;
-  if(!L){ upSay('Page not ready — reload and try again.', 'err'); return; }
-  const upBar = $('upBar');
-  upBusy = true; if(upBar) upBar.style.display = 'block';
+  const L = upData.limits;
+  upBusy = true; $('upGo').disabled = true; $('upBar').style.display = 'block';
   const H = {'Content-Type':'application/json'};
   const pct = function(n){ return Math.round(100*n/f.size); };
   const show = function(n){ $('upFill').style.width = pct(n)+'%'; };
@@ -11196,7 +11194,7 @@ async function upSend(){
     const key = await upFileKey(f);
     const begin = async function(){
       return upJson(await fetch('/api/video-uploads/start', {method:'POST', headers:H,
-        body: JSON.stringify({filename:f.name, size:f.size, caption:($('upCap')||{}).value||'', file_key:key})}));
+        body: JSON.stringify({filename:f.name, size:f.size, caption:$('upCap').value, file_key:key})}));
     };
     let s = await begin();
     off = s.received || 0;
@@ -11229,17 +11227,19 @@ async function upSend(){
     upSay('Queued ✓ — Muse will post it soon.', 'ok');
   }catch(e){
     upBusy = false;
+    const go = $('upGo'); if(go){ go.disabled = false; go.textContent = 'Resume upload'; }
     if(e.paused){
-      upSay('Upload paused at '+pct(off)+'% — the connection keeps dropping. '+
-            'Pick the same video again to resume. Kept for 24 hours.', 'err');
+      upSay('Upload paused at '+pct(off)+'% — the connection keeps dropping. Tap Resume upload '+
+            'when you are back online (if you reload, pick the same file). Kept for 24 hours.', 'err');
       return;
     }
-    if(upBar) upBar.style.display = 'none';
+    const bar = $('upBar'); if(bar) bar.style.display = 'none';
+    if(go) go.textContent = 'Upload';
     upSay(e.message || String(e), 'err');
   }
 }
 async function upWithdraw(id){
-  if(!confirm('Withdraw this video? It won\'t be posted.')) return;
+  if(!confirm('Withdraw this video? It won’t be posted.')) return;
   try{
     await upJson(await fetch('/api/video-uploads/withdraw', {method:'POST',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({video_post_id:id})}));
@@ -11620,7 +11620,7 @@ setInterval(loadPipeline, 30000);
     const el = root(); if (!el) return;
     const head = `<div class="rr-head"><p class="pip-title" style="margin:0">${title()}</p>
       <div class="rr-head-actions">
-        ${S.me && S.me.admin ? `<button class="rr-btn rr-small" data-act="scope">${S.all ? 'Only mine' : 'Everyone's'}</button>` : ''}
+        ${S.me && S.me.admin ? `<button class="rr-btn rr-small" data-act="scope">${S.all ? 'Only mine' : 'Everyone’s'}</button>` : ''}
         ${S.needsLink ? '' : '<button class="rr-btn rr-small" data-act="sync">↻ Sync clips</button>'}
       </div></div>`;
     if (S.needsLink) {
@@ -12025,8 +12025,8 @@ setInterval(loadPipeline, 30000);
     const link = p.ig_url && /^https:\/\/www\.instagram\.com\//.test(p.ig_url)
       ? ` <a href="${esc(p.ig_url)}" target="_blank" rel="noopener">View on Instagram ↗</a>` : '';
     const msg = {
-      posted: `✅ Already posted on @crcmzclan.${link} Saving an edit won't repost it — Force post does.`,
-      twin_of_posted: `👯 This is a duplicate of a clip that's already posted, so it can't be posted.${link}`,
+      posted: `✅ Already posted on @crcmzclan.${link} Saving an edit won’t repost it — Force post does.`,
+      twin_of_posted: `👯 This is a duplicate of a clip that’s already posted, so it can’t be posted.${link}`,
       vetoed: `🛑 Vetoed — kept out of highlights${p.detail ? ' (' + esc(p.detail) + ')' : ''}.`,
       fire: '🔥 Headed for the Fire reel.',
       fail: `😂 Headed for the Fail reel · ${p.reactions || 0}/${p.gate || 2} WhatsApp reactions${(p.reactions || 0) >= (p.gate || 2) ? ' — ready' : ''}.`,
@@ -12039,7 +12039,7 @@ setInterval(loadPipeline, 30000);
     const twin = p.state === 'twin_of_posted';
     qa('[data-a=save]', E.el).forEach(b => {
       b.disabled = twin;
-      if (!b.classList.contains('rrs-mob')) b.textContent = p.state === 'posted' ? '💾 Save edit (won\'t repost)' : '✅ Save & approve';
+      if (!b.classList.contains('rrs-mob')) b.textContent = p.state === 'posted' ? '💾 Save edit (won’t repost)' : '✅ Save & approve';
     });
   }
   function syncTop() {
@@ -12405,10 +12405,10 @@ setInterval(loadPipeline, 30000);
   }
 
   async function save() {
-    if (E.pipe && E.pipe.state === 'twin_of_posted') return status('This clip is a duplicate of one already posted, so it can't be posted.');
+    if (E.pipe && E.pipe.state === 'twin_of_posted') return status('This clip is a duplicate of one already posted, so it can’t be posted.');
     const bad = validate(); if (bad) return status(bad);
     const posted = E.pipe && E.pipe.state === 'posted';
-    if (!confirm(posted ? 'Save this edit? This clip is already posted, so saving won\'t repost it — use Force post for that.'
+    if (!confirm(posted ? 'Save this edit? This clip is already posted, so saving won’t repost it — use Force post for that.'
                         : 'Save these edits and approve this clip for Instagram? Muse will post it with exactly these settings.')) return;
     const body = editBody();
     try {
@@ -12435,7 +12435,7 @@ setInterval(loadPipeline, 30000);
 
   async function toggleVeto() {
     const was = E.vetoed;
-    if (!was && !confirm('Keep this clip out of highlights? It won\'t be used in the fire, fail or daily reels.')) return;
+    if (!was && !confirm('Keep this clip out of highlights? It won’t be used in the fire, fail or daily reels.')) return;
     try {
       await api('/clips/' + enc(E.id) + '/veto', was ? { method: 'DELETE' } : { method: 'POST', body: '{}' });
       E.vetoed = !was;
