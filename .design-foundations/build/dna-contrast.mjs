@@ -178,6 +178,57 @@ gate("non-text 3.0", "online dot lime #8cff2b", 3.0, () => hex("#8cff2b"), { "gl
 // 5. Informational: the pinned decorative card hairline (not a UI-component boundary; 1.4.11 N/A).
 gate("info", "pinned card border rgba(255,60,200,.22) vs its own card", null, (bg) => over(T.cardBorderPin, bg), { "glass card": S["glass card"] });
 
+// ────────────────────────────────────────────────────────────────────────────
+// 6. Phase 6: Chart mark fills — non-text graphical objects (WCAG 1.4.11, ≥3:1).
+//    Each neon fill used as a bar/mark colour is checked against the glass card
+//    surface (worst-case = stacked aurora).  The sheet/panel host is also checked.
+//    These are opaque fills drawn over the card; the backdrop only matters for the
+//    card surface they sit on (contrast is fill vs card-surface, not fill vs aurora).
+// ────────────────────────────────────────────────────────────────────────────
+const chartHost = { "glass card": S["glass card"], "sheet/panel": S["sheet/panel"] };
+const chartMarks = {
+  "neon-cyan bar fill #22e6ff":     "#22e6ff",
+  "neon-lime bar fill #8cff2b":     "#8cff2b",
+  "neon-gold bar fill #ffd24a":     "#ffd24a",
+  "neon-magenta bar fill #ff2fd6":  "#ff2fd6",
+  "neon-violet bar fill #9d5cff":   "#9d5cff",
+  "border-control gridline #8d78c4": "#8d78c4",
+};
+for (const [label, fillHex] of Object.entries(chartMarks))
+  gate("chart mark 3.0", label, 3.0, () => hex(fillHex), chartHost);
+
+// ────────────────────────────────────────────────────────────────────────────
+// 7. Phase 6: Heatmap ramp steps — single-hue alpha ramps over the glass card
+//    surface (worst-case = stacked aurora).  Two ramps are used:
+//      • Cyan  (#22e6ff) for the WhatsApp heatmap (WA-08)
+//      • Lime  (#8cff2b) for the Slap heatmap    (SL-13)
+//    Only the three non-empty alpha stops are gated (the zero-count cell IS the
+//    card surface; there is no fill to measure).  Adjacent stops that fall below
+//    3:1 against each other are noted as INFO — those cells carry tap-to-inspect
+//    count values (DW-6.2 "or the cells must carry value labels").
+// ────────────────────────────────────────────────────────────────────────────
+const hmRamps = [
+  { name: "cyan",  rgb: [34, 230, 255], stops: [0.55, 0.75, 1.0] },
+  { name: "lime",  rgb: [140, 255, 43], stops: [0.50, 0.75, 1.0] },
+];
+for (const ramp of hmRamps) {
+  for (const alpha of ramp.stops) {
+    const label = `heatmap ${ramp.name} α=${alpha} vs glass card (non-text)`;
+    gate("heatmap ramp 3.0", label, 3.0,
+      (bg) => over([...ramp.rgb, alpha], bg),
+      { "glass card": S["glass card"] });
+  }
+  // Informational: adjacent stop distinguishability (fill-vs-fill, not vs card).
+  for (let i = 0; i < ramp.stops.length - 1; i++) {
+    const a1 = ramp.stops[i], a2 = ramp.stops[i + 1];
+    // Compare the two alpha-composited fills over glass-on-flat (fixed backdrop).
+    const bg = over(T.glass, base);
+    const f1 = over([...ramp.rgb, a1], bg), f2 = over([...ramp.rgb, a2], bg);
+    const r = ratio(f1, f2);
+    rows.push({ group: "info", pair: `heatmap ${ramp.name} α=${a1}→α=${a2} adjacent-step contrast (INFO; cells carry value labels)`, ratio: +r.toFixed(2), worstAt: "glass/flat", target: null, pass: null });
+  }
+}
+
 const gated = rows.filter((r) => r.pass !== null);
 const fails = gated.filter((r) => !r.pass);
 if (process.argv.includes("--json")) {

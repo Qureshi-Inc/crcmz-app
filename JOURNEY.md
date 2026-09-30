@@ -1494,6 +1494,725 @@ The inline 3-step flow is gone (ST-06 moved).
 
 ---
 
+## §Data specs
+
+**Added in Phase 6.** Chart and table specs for every data surface in `/app`. Each entry names the question it answers, the data fields consumed (from the live endpoint contract), the chart type and rationale, the mobile encoding, the desktop encoding, the accessible table alternative (always reachable without hover), the empty/sparse-data behaviour, and the colour mapping (all from the locked DESIGN.md palette). No new colours are introduced.
+
+**Colour mapping summary (non-text, all ≥3:1 on glass card — verified dna-contrast.mjs 131/131 PASS):**
+- `--neon-cyan #22e6ff` — interactive/activity data (WA timeline, WA heatmap ramp): 9.42:1
+- `--neon-lime #8cff2b` — live/submitted data (WA words, Slap heatmap ramp): 11.2:1
+- `--neon-gold #ffd24a` — achievement/speed data (WA response times, ranks): 9.92:1
+- `--neon-magenta #ff2fd6` — primary-action data (Slap timeline, hype fire level): 4.51:1
+- `--neon-violet #9d5cff` — categorical 5th (platform breakdown): 3.68:1
+
+---
+
+### DS-HY: Hype meter (PS-1, SQ-02)
+
+**Question:** How lively is the squad's chat today?
+**Endpoint:** `GET /api/hype`
+**Data fields:** `count` (int, 0–150), `pct` (0–100), `label` (string), `level` (`dead`|`cold`|`warm`|`hot`|`fire`|`overload`)
+**Scale:** 0 → dead/cold → 15 → warm → 40 → hot → 80 → fire → 120 → overload → 150 = 100%
+
+**Chart type:** Horizontal segmented progress bar with tick marks.
+- Rationale: position on a common scale (Munzner, *Visualization Analysis & Design*, 2014) is the most accurate magnitude encoding. Radial gauges use angle, which is less accurate (Cleveland & McGill, 1984). The bar allows threshold ticks to sit directly on the scale, communicating both position and boundary at once.
+
+**Mobile encoding (375px, compact strip ≤64px):**
+- Hero numeral `count` in `--text-4xl` (42px) Orbitron 900, coloured by level role (see colour mapping below). Left-aligned.
+- Level label below the numeral in `--text-xs` `--text-dim`.
+- An 8px-tall bar spanning the full strip width. The fill colour changes with level. Six threshold tick marks below the bar at 0/15/40/80/120/150 with labels "0", "15", "40", "80", "120", "150". "/ 150 max" label at the right end.
+- `role="img"` `aria-label="Hype: [count] of 150, [label]"` on the bar wrapper.
+
+**Desktop encoding (full compact strip row):** Numeral left, label + bar right spanning remaining width. Ticks visible as before.
+
+**Colour mapping (level → fill of the bar; hue + count + label = three independent encodings):**
+| Level | Bar fill | Token |
+|---|---|---|
+| dead / cold | `--text-dim` | `#9d8fc4` |
+| warm | `--neon-gold` | `#ffd24a` |
+| hot | `--neon-magenta` | `#ff2fd6` |
+| fire | `--neon-lime` | `#8cff2b` |
+| overload | `--neon-lime` | `#8cff2b` (+ `--glow-lime` on the bar) |
+
+**Table alternative:** The `count`, `pct`, and `label` are always-visible text alongside the bar. The bar is redundant visual encoding only.
+
+**Empty/sparse:** `count=0` → level="dead", bar empty, numeral "0". Hype errors appear as cold (B-7); no separate error state is detectable.
+
+---
+
+### DS-ST: Trophy / stat tiles (PS-1, SQ-03)
+
+**Question:** What are the squad's lifetime PlayStation trophy highlights?
+**Endpoint:** `GET /api/squad` (derived)
+**Data fields per member:** `platinum`, `gold`, `silver`, `bronze`, `trophy_level`, `game`
+**Derived:** Total platinums across all linked members; highest `trophy_level`; most frequent `game` (by occurrence in squad array).
+
+**Chart type:** Three KPI stat tiles.
+- Rationale: three independent single-value metrics. No comparison, ranking, or distribution — the right encoding is a prominently labelled number (Few, *Information Dashboard Design*, 2006: lead with the most important metric, largest and most visible).
+
+**Mobile encoding:** Three unboxed chip columns in the compact strip. Each: numeral in `--text-3xl` (35px) Orbitron 800 `--c-stat-numeral-sz`, label in `--text-xs` `--text-dim`.
+- Plats: `--gold-text` numeral
+- Top Level: `--gold-text` numeral
+- Fav Game: `--lime-text` name (≤12 chars, truncated with "…"). Game name uses `--font-body` (Rajdhani) at `--text-base` rather than Orbitron — a game title is text content, not a numeric KPI, so the display font does not apply. Mock intentionally uses body font for this value.
+
+**Desktop encoding:** Three full stat tiles (glass card, `--text-3xl` numeral, `--c-stat-label-sz` label). Plats and Top Level are `--achievement-text` (gold); Fav Game is `--live-text` (lime).
+
+**Table alternative:** The numeral and label are always visible — no separate "table" needed; the tile IS the accessible display.
+
+**Empty/sparse:** `has_stats: false` for all members → numeral "—". Game absent → tile hidden.
+
+---
+
+### DS-WA-STATS: WhatsApp totals (PS-4, WA-02)
+
+**Question:** How big is this group's message history?
+**Endpoint:** `GET /api/whatsapp/stats`
+**Data fields:** `total_messages`, `total_members`, `total_videos`, `total_photos`, `total_media`, `conversation_days`
+
+**Chart type:** Six KPI stat tiles in a 2×3 grid (mobile) / 6-up row (desktop).
+
+**Mobile encoding:** 2 columns × 3 rows of glass cards. Numeral `--text-3xl`, label `--text-xs`.
+- total_messages: `--cyan-text`
+- total_members: `--cyan-text`
+- conversation_days: `--gold-text`
+- total_videos + total_photos + total_media: `--lime-text`
+
+**Desktop encoding:** One row, 6 tiles side by side.
+
+**Table alternative:** Always-visible as stat tiles. No chart to decode.
+
+**Empty/sparse:** `total_messages=0` → the WA-15 empty state (Phase 5 microcopy) replaces the tiles. A range with no data → each tile shows "0".
+
+---
+
+### DS-WA-TL: WhatsApp activity timeline (PS-4, WA-04)
+
+**Question:** When did the group message the most? How has activity changed over time?
+**Endpoint:** `GET /api/whatsapp/activity`
+**Data fields:** `daily[]{date: "YYYY-MM-DD", count: int}`, `monthly[]{month: "YYYY-MM", count: int}`
+
+**Data relationship:** Time series (discrete daily or monthly counts).
+
+**Chart type:** Vertical bar chart, toggled between daily and monthly views.
+- Rationale: discrete counts per time bucket → bars (each bar represents "how many in this bucket", not a continuous measurement). Lines imply continuity between data points, which would be misleading for count data (Cairo, *How Charts Lie*, 2019). Data-ink editing (Tufte, *VDQI*, 1983): no chartbox border, 3 y-axis gridlines only, bars directly on the baseline.
+
+**Mobile encoding (375px):**
+- Bars fill, x-axis scrolls. Daily view: label every 7th day. Monthly view: all month labels.
+- Bar fill: `--neon-cyan` (`#22e6ff`, 9.42:1 on glass — PASS ≥3:1).
+- Selected/tapped bar: `--cyan-fill` fill + count label above (`--text-xs` `--text` colour).
+- Tap any bar to inspect the count (not hover-only).
+- Two y-axis gridlines at 25% and 75% of max, colour `--border-control #8d78c4` (3.82:1 on glass — PASS ≥3:1).
+- Range toggle buttons (Daily / Monthly) above the chart.
+- "Show as table" `<details>` disclosure below: date | count in `--c-table-*` styles.
+
+**Desktop encoding:** Same chart, spans both grid columns (per JOURNEY.md §PS-4). x-axis: all date labels fit without scrolling at ≥1280px.
+
+**Colour:** Single series, `--neon-cyan`.
+
+**Table alternative:** "Show as table" `<details>` → date | count table.
+
+**Empty/sparse:** `daily[]` or `monthly[]` empty → "Nothing in this range" (Phase 5 microcopy). Single data point → one bar (valid; baseline zero is always shown).
+
+---
+
+### DS-WA-HM: WhatsApp hour × day heatmap (PS-4, WA-08)
+
+**Question:** Which combination of day and hour produces the most messages?
+**Endpoint:** `GET /api/whatsapp/heatmap`
+**Data fields:** `cells[]{dow: 0–6, hour: 0–23, count: int}`, `max_count: int`
+**Note:** `dow=0` = Monday (follows Python `weekday()`).
+
+**Data relationship:** Two categorical dimensions (7 days × 24 hours) with a quantitative intensity value.
+
+**Chart type:** 7 × 24 heatmap grid.
+- Rationale: two categorical dimensions and one quantitative intensity → heatmap (Munzner: area mark with single-hue sequential colour encoding). Alternatives (grouped bars, small multiples) would produce 168 bars, illegible at any mobile width.
+
+**Mobile encoding (375px):**
+- 7 rows (Mon–Sun fixed left) × 24 columns (hours, scrollable). Cell size ≈ 14×28px.
+- Single-hue sequential ramp from card surface (empty/0) to `--neon-cyan`:
+  - empty (count=0): card background (no fill)
+  - low (count ≤ max×0.33): `rgba(34,230,255,0.55)` over glass → 3.78:1 on glass card PASS
+  - mid (count ≤ max×0.67): `rgba(34,230,255,0.75)` over glass → 5.86:1 PASS
+  - high (count > max×0.67): `#22e6ff` (α=1) → 9.42:1 PASS
+- Adjacent ramp steps are 1.70:1 against each other → cells carry tap-to-inspect count (accessible without hover).
+- Tap cell: shows "Mon 14h: 23 messages" in a small popover.
+- Hour axis: labels at 0, 6, 12, 18 only (4 ticks, no crowding).
+- Day axis: Mon/Tue/Wed/Thu/Fri/Sat/Sun.
+- "Show as table" `<details>` disclosure.
+
+**Desktop encoding:** Full 7×24 grid (no scroll). Larger cells (≥20×32px). All 24 hour labels visible. Same ramp.
+
+**Colour:** `--neon-cyan` ramp (3 active alpha stops; all ≥3:1 on glass card PASS per dna-contrast.mjs 131/131).
+
+**Table alternative:** "Show as table" `<details>` → day | hour | count table (168 rows, paginated by day).
+
+**Empty/sparse:** `cells=[]` or `max_count=0` → "No activity data for this range."
+
+---
+
+### DS-WA-MB: WhatsApp member table (PS-4, WA-09)
+
+**Question:** Who sends the most, writes the most words, shares the most media?
+**Endpoint:** `GET /api/whatsapp/members`
+**Data fields:** `members[]{name, messages, total_words, total_chars, avg_words_per_msg, photos, videos, audios, media_omitted, first_ts, last_ts}`
+
+**Chart type:** Sortable data table.
+- Rationale: cross-member comparison across seven independent metrics. Separate bar charts per metric would require seven charts; a table allows scanning any metric for any member in one view (Few, *Information Dashboard Design*, 2006: cross-dimensional tables beat small multiples when the reader's question is "show me all dimensions for all people").
+
+**Mobile encoding (375px):** One card per member (Phase 4 sortable table spec, mobile fallback). Card: name in `--text-base`, then a 3-chip row (Messages · Words · Avg words/msg). "Sort by" `<select>` above: Messages · Words · Avg words/msg · Media · Last seen. ↑/↓ toggle.
+
+**Desktop encoding:** Sticky-header table, Member column frozen. Columns: Member · Messages · Words · Avg words/msg · Chars · Photos · Videos · Audio · Media omitted · First seen · Last seen. Header `<button aria-sort>` on each column. Top-emoji and top-words per member in an expandable row (no hover).
+
+**Colour:** Header active sort: `--interactive-text` (cyan). Row borders: `--border-decorative`. No data-encoding colour needed in the table body (rankings are encoded by sort order + numeral).
+
+**Table alternative:** The table IS the accessible display.
+
+**Empty/sparse:** `members=[]` → empty state with range change prompt.
+
+---
+
+### DS-WA-WC: WhatsApp word counts (PS-4, WA-11)
+
+**Question:** What words does the group use most?
+**Endpoint:** `GET /api/whatsapp/words`
+**Data fields:** `top_words[]{word: string, count: int}` (top 15 from endpoint; desktop shows top 20 — production code plan to increase limit or paginate)
+
+**Data relationship:** Ranking.
+
+**Chart type:** Horizontal bar chart.
+- Rationale: ranked categories → horizontal bars. Category labels fit left-aligned without text rotation (Knaflic, *Storytelling with Data*, 2015: never rotate axis labels). Word clouds encode magnitude by font size, the least accurate positional encoding (Tufte: chartjunk); they are rejected here. NOT a treemap.
+
+**Mobile encoding (375px):**
+- 15 rows. Category (word) label left, bar extends right, count at bar tip.
+- Bar fill: `--neon-lime` (`#8cff2b`, 11.2:1 on glass — PASS ≥3:1). Words = live communication.
+- No y-axis line. 2 x-axis tick marks (0 and max).
+- "Show as table" `<details>`: word | count.
+
+**Desktop encoding:** Same, wider. Top 20 words. Count labels always visible at bar tips.
+
+**Colour:** `--neon-lime` (single series).
+
+**Table alternative:** "Show as table" `<details>`.
+
+**Empty/sparse:** `top_words=[]` → "No text messages in this range."
+
+---
+
+### DS-WA-RT: WhatsApp response times (PS-4, WA-12)
+
+**Question:** How quickly does this group reply, and who replies fastest?
+**Endpoint:** `GET /api/whatsapp/response-times`
+**Data fields:** `distribution[]{label: "0-5m"|"5-10m"|…, count: int}`, `member_avg_minutes[]{name, avg_minutes, count}`, `fastest_responder`
+
+**Data relationship:** Distribution (5 response-time buckets) + comparison (per-member averages).
+
+**Chart type:** Two vertical bar charts (one per dataset), stacked vertically.
+1. **Distribution:** 5-bucket histogram. Buckets on x-axis, count on y-axis.
+2. **Member averages:** horizontal bar chart, ranked by avg_minutes ascending (fastest at top).
+
+**Mobile encoding:** Distribution histogram (5 bars), then member average horizontal bars below (one row per member, label left, bar right, minutes at tip).
+
+**Desktop encoding:** Distribution and member averages side by side (two columns).
+
+**Colour:** `--neon-gold` (`#ffd24a`, 9.92:1 on glass — PASS ≥3:1). Response speed = achievement.
+
+**Table alternative:** "Show as table" `<details>` on each chart.
+
+**Empty/sparse:** `distribution=[]` or fewer than 10 events → "Not enough data for response times (need ≥10 reply events)."
+
+---
+
+### DS-SL-TL: Slap timeline (PS-3, SL-11)
+
+**Question:** When did the squad add tracks over time?
+**Endpoint:** `SLAP GET /timeline`
+**Data fields:** `entries[]{date: "YYYY-MM-DD", count: int}` (confirmed live 2026-09-30)
+
+**Data relationship:** Time series (discrete daily submission counts).
+
+**Chart type:** Vertical bar chart (same rationale as WA timeline; discrete counts per bucket).
+
+**Mobile encoding (375px):**
+- Bars, scrollable x-axis. Date labels every 14 days.
+- Bar fill: `--neon-magenta` (`#ff2fd6`, 4.51:1 on glass — PASS ≥3:1). Music submissions = primary action on Slap.
+- Tap to inspect count.
+- "Show as table" `<details>`.
+
+**Desktop encoding:** Wider, all dates visible.
+
+**Colour:** `--neon-magenta` (single series).
+
+**Table alternative:** "Show as table" `<details>`.
+
+**Empty/sparse:** `entries=[]` → "No submissions yet."
+
+---
+
+### DS-SL-PL: Slap platform breakdown (PS-3, SL-12)
+
+**Question:** What platforms does the squad use to submit music?
+**Endpoint:** `SLAP GET /genres`
+**Data fields:** `genres[]{name: string, count: int, percentage: float}` (confirmed live: endpoint name is `/genres` but returns platform/source breakdown, e.g. "Spotify Finds")
+
+**Note:** Despite the endpoint name, this data is a platform-source breakdown, not a genre breakdown. The page labels it "Platforms".
+
+**Data relationship:** Part-to-whole, categorical (≤5 platforms in practice).
+
+**Chart type:** Horizontal bar chart showing percentage and count per platform.
+- Rationale: bars > pie/donut for part-to-whole when comparison across categories is needed (Cleveland & McGill, 1984: position encoding more accurate than angle/area). With ≤5 platforms, each gets its own neon colour from the locked palette; colour + bar length + percentage label = three independent encodings (DESIGN.md §Never: "hue is never the only cue").
+
+**Mobile encoding:** Horizontal bars, platform label left, percentage right. Bar shows % of total.
+
+**Desktop encoding:** Same, wider.
+
+**Colour mapping (categorical; ≤5 platforms; all ≥3:1 on glass card):**
+| Platform pattern | Color | Hex | Ratio |
+|---|---|---|---|
+| Spotify / primary source | `--neon-magenta` | `#ff2fd6` | 4.51:1 |
+| YouTube | `--neon-cyan` | `#22e6ff` | 9.42:1 |
+| Apple Music | `--neon-gold` | `#ffd24a` | 9.92:1 |
+| TikTok | `--neon-lime` | `#8cff2b` | 11.2:1 |
+| Other / fallback | `--neon-violet` | `#9d5cff` | 3.68:1 |
+
+Assignment is by rank order in `genres[]` (first = magenta, second = cyan, etc.). If a category cannot be matched to a known platform pattern, it takes the next available colour in rank order.
+
+**Table alternative:** "Show as table" `<details>`.
+
+**Empty/sparse:** `genres=[]` → "No submission data."
+
+---
+
+### DS-SL-HM: Slap submission heatmap (PS-3, SL-13)
+
+**Question:** What days and hours does the squad submit music most?
+**Endpoint:** `SLAP GET /heatmap`
+**Data fields:** `cells[]{day: 0–6, hour: 0–23, count: int}`, `max_count: int` (confirmed live 2026-09-30; `day=0` = Mon)
+
+**Data relationship:** Two categorical (7 × 24) with quantitative intensity.
+
+**Chart type:** 7 × 24 heatmap grid (same encoding as WA heatmap DS-WA-HM).
+
+**Mobile encoding (375px):**
+- 7 rows (Mon–Sun) × 24 columns (scrollable). Same grid layout as WA heatmap.
+- Single-hue sequential ramp from card surface (0) to `--neon-lime`:
+  - empty (0): card background
+  - low (≤ max×0.33): `rgba(140,255,43,0.50)` over glass → 3.77:1 PASS
+  - mid (≤ max×0.67): `rgba(140,255,43,0.75)` over glass → 6.83:1 PASS
+  - high (> max×0.67): `#8cff2b` (α=1) → 11.2:1 PASS
+- Adjacent ramp steps are 2.02:1 and 1.77:1 → cells carry tap-to-inspect values.
+- Tap cell → "Mon 14h: 5 submissions" popover.
+- "Show as table" `<details>`.
+
+**Desktop encoding:** Full grid (no scroll). Larger cells. All 24 hour labels.
+
+**Colour:** `--neon-lime` ramp (distinct from WA's cyan ramp; lime = Slap's live/active role; 3 active stops all ≥3:1 per dna-contrast.mjs).
+
+**Table alternative:** "Show as table" `<details>`.
+
+**Empty/sparse:** `cells=[]` or `max_count=0` → "No submission data for this period."
+
+---
+
+### DS-CL-MO: Clips month + montage summary (PS-2, CL-01, CL-03, CL-04, CL-05)
+
+**Question:** How many clips this month, when does the montage build, and what did the last montage contain?
+**Endpoint:** `GET /api/pipeline-status` (30 s poll)
+**Data fields:** `clips_this_month` (int), `next_build_label` (string), `next_build_ts` (epoch), `last_montage{version, year, month, clips, duration, sent}`, `clips[]{uid, sender, duration, at, included, reason}`
+
+**Data relationship:** Not a chart — three KPI surfaces plus a mini manifest table.
+
+**Surface 1 — This month tile:**
+- `clips_this_month` numeral in `--text-3xl` Orbitron 800 `--gold-text`. Label "clips this month" in `--text-xs` `--text-dim`.
+- Below: countdown to next build. "Build in **3d 4h**" — bold countdown in `--gold-text`, countdown label in `--text-dim`.
+
+**Surface 2 — Montage summary card:**
+- Last montage: "v2 · 14 clips · 3m 12s · Sent to WhatsApp ✓"
+- `sent=true` → `--live-text` "✓ Sent". `sent=false` → `--text-dim` "Pending".
+- Numerals `--text-xl` Orbitron 800 `--achievement-text`.
+
+**Surface 3 — Clip manifest mini-table:**
+- Rows: sender, duration, included status (lime dot = included, text-dim dot + reason = excluded).
+- "Show as table" is the default presentation (this is a list, not a chart).
+- Mobile: compact rows (avatar initial, sender, duration, status chip). Desktop: full table.
+
+**Colour:** included = `--live-text` (lime), excluded = `--text-dim`, countdown = `--achievement-text` (gold).
+
+**Table alternative:** The manifest IS a table. No chart to provide an alternative for.
+
+**Empty/sparse:** `clips_this_month=0` → tile shows "0", "No clips yet this month." `last_montage=null` → the montage card shows "No montage yet — build scheduled for [next_build_label]."
+
+---
+
+### DS-WA-AW: WhatsApp awards (PS-4, WA-03)
+
+**Question:** Who earned which squad award this analysis period?
+**Endpoint:** `GET /api/whatsapp/awards` (delegates to `_wa.awards()`)
+**Data fields:** ~15 named award fields, each returning a member name string: `certified_yapper`, `night_owl`, `early_bird`, `video_king`, `fastest_responder`, `ghost_of_month`, etc.
+
+**Chart type:** Award card grid — not a quantitative chart.
+- Rationale: each award is a labelled winner, not a magnitude. No bar chart or ranking is meaningful here; the natural encoding is a card showing the award icon, award title, and winner name (Few: KPIs with a single value are better as stat tiles than charts).
+
+**Mobile encoding (375px):** 2-column card grid. Each card: emoji icon (large), award title in `--text-sm --text-dim`, winner name in `--text-base --gold-text`. Card background: `--glass`.
+
+**Desktop encoding:** 3–5 column card grid (depending on the award count; wraps at the container width).
+
+**Colour:** Winner name in `--achievement-text` (gold). No data-encoding colour needed (each card is self-labelled by title).
+
+**Table alternative:** The card grid IS the accessible display. Each award has a title (label) and winner (value) — no separate table needed.
+
+**Empty/sparse:** If an award field is null → card not rendered. If all null → empty state "No awards computed for this range."
+
+---
+
+### DS-WA-EM: WhatsApp top emoji (PS-4, WA-EM)
+
+**Question:** What emoji does the squad use most, and what are each member's favourite emoji?
+**Endpoint:** `GET /api/whatsapp/emojis` (query params: `range`, `start`, `end` — same signature as other WA endpoints; handler calls `whatsapp_analytics.emojis()`)
+**Data fields:** `top_emoji[]{emoji, count, pct}` (top 20), `total_emoji: int`, `member_top_emoji: {"<name>": [{emoji, count}] (top 8 per member)}`
+
+**Data relationship:** Ranked frequency (top-N emoji by usage count; per-member top-N).
+
+**Chart type:**
+- Top-20 section: ranked emoji frequency list. Emoji glyph is the primary visual mark (≥24px); position encodes rank. Pct bar (narrow, `--neon-cyan` fill) beside each row gives magnitude context. Rationale: emoji glyphs carry intrinsic meaning — position on a common scale (Cleveland & McGill) is the correct encoding. No separate bar chart needed; the ranked list IS the chart.
+- Per-member section: compact grid — member name + top-3 emoji chips (mobile) / top-4 (desktop).
+
+**Mobile encoding (375px):**
+- Top section: rank number + emoji glyph + count + pct text. Top 10 rows visible; all 20 accessible via "Show as table" `<details>`.
+- Per-member section: rows of `[Name] [emoji1] [emoji2] [emoji3]` chips.
+- "Show as table" `<details>` (top emoji): Emoji | Count | % columns.
+
+**Desktop encoding:**
+- Two-column layout: top-20 list left, per-member grid right (4 emoji chips per member row).
+
+**Colour:**
+- Pct bar fill: `--neon-cyan` (`#22e6ff`, 9.42:1 on glass PASS) — WA activity data colour.
+- Count text: `--cyan-text`.
+- Emoji glyphs: native system colour (user data — not palette hues; these are content, not chrome).
+
+**Table alternative:** "Show as table" `<details>` with Emoji | Count | % columns.
+
+**Empty/sparse:** `total_emoji=0` → "No emoji in this chat yet."
+
+---
+
+### DS-SL-01: Slap stat tiles (PS-3, SL-01)
+
+**Question:** How big is the Slapshare library, and who is the most active contributor?
+**Endpoint:** `SLAP GET /stats`
+**Data fields (confirmed live 2026-09-30):** `total_songs`, `total_contributors`, `this_week_additions`, `top_artist`, `total_artists`, `most_active_day`, `peak_hour`, `longest_streak_user`, `longest_streak_days`
+
+**Chart type:** Four KPI stat tiles in a 2×2 grid (mobile) / single row (desktop).
+- `total_songs` — `--magenta-text` (primary Slap metric)
+- `total_contributors` — `--cyan-text`
+- `top_artist` — text tile, name in `--text-xl` `--magenta-text` (truncated to 2 lines)
+- `this_week_additions` — `--cyan-text`
+
+**Mobile encoding:** 2×2 grid of glass stat tiles. Numerals `--text-3xl` Orbitron 800.
+
+**Desktop encoding:** 4-tile row.
+
+**Table alternative:** Always-visible numerals and labels — no separate table needed.
+
+**Empty/sparse:** `total_songs=0` → tiles show "0".
+
+---
+
+### DS-SL-04: On Repeat IRL — scrobble display (PS-3, SL-04)
+
+**Question:** What artists and tracks is the squad listening to most right now (last 7 days)?
+**Endpoint:** `SLAP GET /listening`
+**Data fields (confirmed live 2026-09-30):** `{enabled: bool, top_artists[], top_tracks[], total_scrobbles: int, period_days: int}` — arrays empty today (scrobbles not active).
+
+**Surface type:** Two ranked lists — top artists (position + name) and top tracks (position + title + artist). Not a chart; a ranked list display.
+
+**Mobile encoding:** Hidden when `enabled=false` or `top_artists=[]` and `top_tracks=[]` (per Phase 5 microcopy: panel hidden, not empty-stated). When populated: two compact lists side by side (artist / track), rank number + name.
+
+**Desktop encoding:** Same, wider panel.
+
+**Colour:** Rank numbers `--gold-text`. Names `--text`.
+
+**Table alternative:** The lists ARE the accessible display.
+
+**Empty/sparse:** Panel hidden when `enabled=false` or both arrays empty (per SL-04 Phase 5 microcopy).
+
+---
+
+### DS-SL-05: The Throne (PS-3, SL-05)
+
+**Question:** Who currently holds the top contributor position?
+**Endpoint:** `SLAP GET /leaderboard` → `entries[0]`
+**Data fields (confirmed live 2026-09-30):** `{rank:1, username, song_count, color, latest_addition}`
+
+**Surface type:** Highlighted stat card (single KPI).
+- `song_count` numeral in `--text-3xl` `--gold-text` Orbitron 800
+- `username` in `--text-lg` `--magenta-text`
+- "👑 The Throne" label + "Latest: [date]" in `--text-xs --text-dim`
+
+**Mobile encoding:** Full-width glass card with a `--neon-gold` left border.
+
+**Desktop encoding:** Same. No chart needed — single value.
+
+**Table alternative:** Card is the accessible display.
+
+**Empty/sparse:** `entries=[]` → card hidden with message "No leaderboard data yet."
+
+---
+
+### DS-SL-06: Hot Right Now (PS-3, SL-06)
+
+**Question:** What tracks has the squad added in the last 24 h?
+**Endpoint:** `SLAP GET /hot`
+**Data fields (confirmed live 2026-09-30):** `{tracks:[], period_hours:24}` — empty today.
+
+**Surface type:** Ranked track list. Not a chart (no magnitude to encode; it is a recency-ordered list).
+
+**Mobile encoding:** Numbered list (1–N). Each row: track title + artist, `--text-sm`. The period_hours value "Last 24 h" shown as a subheader.
+
+**Desktop encoding:** Same.
+
+**Colour:** Track titles `--text`. Period label `--text-dim`.
+
+**Table alternative:** The list IS the accessible display.
+
+**Empty/sparse:** `tracks=[]` → "Nothing new in the last 24 h." (per Phase 5 microcopy).
+
+---
+
+### DS-SL-07: Leaderboard bars (PS-3, SL-07)
+
+**Question:** How do contributors rank by total tracks added?
+**Endpoint:** `SLAP GET /leaderboard`
+**Data fields (confirmed live 2026-09-30):** `entries[]{rank, username, song_count, color, latest_addition}`
+
+**Data relationship:** Ranking (comparison of ordered values).
+
+**Chart type:** Horizontal bar chart, sorted descending by `song_count`.
+- Rationale: ranked categories → horizontal bars (Knaflic: category labels fit left-aligned, no rotation). Bars + position + count label = three encodings.
+
+**Mobile encoding (375px):**
+- One row per contributor. Username label left (with small colour dot from the Slap API, decorative only — not the bar fill), bar extends right, song_count at tip.
+- Bar fill: `--neon-gold` (`#ffd24a`, 9.92:1 on glass PASS). The bar value IS a ranked achievement count — who added the most tracks. Per §Chart data-colour rule: "gold means rank/achievement where the bar length encodes a rank or achievement value." Both DS-SL-07 and DS-SL-14 are ranked-count leaderboards → both gold.
+- Per-user `color` from the API: rendered as a 10px decorative dot beside the username only (decoration, not data-ink; per-user colours are not gated, not from the locked palette).
+- "Show as table" `<details>`: rank | username | song count | latest addition.
+
+**Desktop encoding:** Wider chart, same encoding.
+
+**Colour:** `--neon-gold` (single series; ranked-achievement count — number of tracks contributed, sorted by rank). Per-user colours from API: decoration only.
+
+**Table alternative:** "Show as table" `<details>`.
+
+**Empty/sparse:** `entries=[]` → "No leaderboard data yet."
+
+---
+
+### DS-SL-08: Streak tracker (PS-3, SL-08)
+
+**Question:** Who has the longest streak of consecutive days with submissions?
+**Endpoint:** `SLAP GET /streaks`
+**Data fields (confirmed live 2026-09-30):** `entries[]{username, color, current_streak, longest_streak, is_active}`
+
+**Data relationship:** Ranking (comparison of `longest_streak` values across contributors).
+
+**Chart type:** Horizontal bar chart, sorted descending by `longest_streak`. A second smaller bar or chip shows `current_streak`.
+- Rationale: streak length is a duration/count comparison → horizontal bars (ranked).
+
+**Mobile encoding:**
+- One row per contributor. Username label left, longest_streak bar right, count at tip.
+- Bar fill: `--neon-gold` (`#ffd24a`, 9.92:1 on glass PASS). A `longest_streak` is an accumulated achievement — consecutive days of daily submissions represent earned discipline. Per §Chart data-colour rule: "any bar where the encoded value IS a rank-position or accumulated achievement." A streak IS an accumulated achievement.
+- Active streak: `is_active=true` → `--live-text` badge "Active" beside the username.
+- Current streak shown as a chip: "Current: N days".
+- "Show as table" `<details>`: username | longest streak | current streak | active.
+
+**Desktop encoding:** Wider, same encoding.
+
+**Colour:** `--neon-gold` (single series; streak length = accumulated achievement).
+
+**Table alternative:** "Show as table" `<details>`.
+
+**Empty/sparse:** `entries=[]` or all streaks 0 → "No streak data yet — start submitting!"
+
+---
+
+### DS-SL-09: Head-to-head + Taste DNA (PS-3, SL-09)
+
+**Question:** How do two contributors compare — total songs, artist breadth, platform mix — and how compatible is their taste?
+**Endpoints (both required, fetched in parallel):**
+- `SLAP GET /head-to-head/{u1}/{u2}` (confirmed live 2026-09-30 at `/api/v1/dashboard`)
+- `SLAP GET /taste-dna/{u1}/{u2}` (confirmed live 2026-09-30 at `/api/v1/dashboard`)
+
+**Data fields — /head-to-head:**
+`user1, user2, user1_color, user2_color, user1_songs, user2_songs, user1_artists, user2_artists, user1_platforms:{platform:count}, user2_platforms:{platform:count}, shared_artists:[], user1_unique_artists:[], user2_unique_artists:[]`
+
+**Data fields — /taste-dna:**
+`user1, user2, analysis (AI text), compatibility_score (float 0-1), shared_artists:[], unique_to_user1:[], unique_to_user2:[], vibe_user1 (string), vibe_user2 (string)`
+
+**Data relationship:** Two-series comparison (songs, artists, platforms per user) + text output (AI analysis, compatibility score).
+
+**Chart type:** Diverging / split bar (two-sided horizontal bars sharing a centre axis).
+- Songs: user1 bar extends left; user2 bar extends right. Centre label = metric name.
+- Artists: same layout.
+- Rationale: split bars make the per-user asymmetry immediately visible (Munzner: position on common scale; centre axis = shared reference point). Alternative (two grouped bars side-by-side) is acceptable on narrow widths.
+- Compatibility score: shown as a numeric badge + text label, not a bar (Cairo: single values are better as stat tiles than as a bar).
+- Shared artists: bulleted list below the bars.
+- AI analysis text: shown verbatim below the compatibility badge.
+
+**Interactive:** Two `<select>` dropdowns (user 1 / user 2) pre-populated from the leaderboard usernames. [Compare] button fires the fetch.
+
+**Mobile encoding (375px):**
+- User selects stacked. [Compare] full-width button.
+- Split bars below, scrollable if more than 3 metrics.
+- Compatibility badge: `compatibility_score * 100`% numeral in `--text-2xl` `--gold-text` Orbitron 800 (it IS an achievement/rank-type score).
+- AI analysis text: `--text-sm` `--text-dim`.
+- Shared artists: compact comma-separated list.
+
+**Desktop encoding:** Selects side-by-side. Split bars wider. AI analysis in a full-width panel below.
+
+**Colour (two-series categorical):**
+| Series | Token | Hex | Contrast |
+|---|---|---|---|
+| user1 | `--neon-magenta` | `#ff2fd6` | 4.51:1 on glass PASS |
+| user2 | `--neon-cyan` | `#22e6ff` | 9.42:1 on glass PASS |
+Both series are labeled directly (username above each bar side). Colour + label = dual encoding.
+
+**Table alternative:** "Show as table" `<details>` → user | songs | artists | platforms.
+
+**Empty/sparse:** Before a pick → "Pick two people to compare." Insufficient data for one user → "Not enough data for [username]."
+
+---
+
+### DS-SL-14: Top artists (PS-3, SL-14)
+
+**Question:** Which artists does the squad submit most?
+**Endpoint:** `SLAP GET /artists?limit=10` (confirmed live 2026-09-30 at `/api/v1/dashboard`)
+**Data fields:** `{artists:[{name: string, count: int, latest_album: string}]}`
+
+**Data relationship:** Ranking (top-10 artists by submission count).
+
+**Chart type:** Horizontal bar chart, sorted descending by `count`.
+- Rationale: ranked categories → horizontal bars (category labels fit left-aligned without rotation; Knaflic). Top artists IS a ranked leaderboard.
+
+**Mobile encoding (375px):**
+- One row per artist. Name label left (ellipsis if >24 chars), bar right, count at tip.
+- Bar fill: `--neon-gold` (`#ffd24a`, 9.92:1 on glass PASS). Top artists = ranked achievement list.
+- Sub-label: `latest_album` in `--text-xs --text-dim` below artist name.
+- "Show as table" `<details>`.
+
+**Desktop encoding:** Wider chart. `latest_album` visible on the same row.
+
+**Colour:** `--neon-gold` (single series; ranked leaderboard value per §Chart data-colour rule: "where the bar length encodes a rank or achievement value").
+
+**Table alternative:** "Show as table" `<details>`: rank | artist | submissions | latest album.
+
+**Empty/sparse:** `artists=[]` → "No artist data yet."
+
+---
+
+### DS-SL-15: Achievements (PS-3, SL-15)
+
+**Question:** Which squad achievements have been unlocked?
+**Endpoint:** `SLAP GET /achievements`
+**Data fields (confirmed live 2026-09-30):** `achievements[]{id, name, emoji, description, unlocked: bool, unlocked_by: string[]}`
+
+**Surface type:** Achievement card grid — not a quantitative chart.
+- `unlocked=true` cards shown in full colour; `unlocked=false` shown dimmed with a 🔒 overlay.
+- Each card: emoji, name, description, unlocked_by usernames.
+
+**Mobile encoding:** 2-column card grid. Active cards: `--glass` background, `--lime-text` "Unlocked" label. Locked cards: dimmed background, `--text-dim` text.
+
+**Desktop encoding:** 3–4 column grid.
+
+**Colour:** Unlocked: `--live-text` (lime) status label. Locked: `--text-dim`. No bar encoding needed.
+
+**Table alternative:** Cards are self-labelled (name + description always visible).
+
+**Empty/sparse:** `achievements=[]` → "No achievements configured."
+
+---
+
+### DS-SL-16: Hipster index (PS-3, SL-16)
+
+**Question:** Who has the most unique/obscure music taste in the squad?
+**Endpoint:** `SLAP GET /hipster`
+**Data fields (confirmed live 2026-09-30):** `entries[]{username, color, unique_artists, hipster_score}`
+
+**Data relationship:** Ranking (comparison of `hipster_score` across contributors; lower score = more mainstream, higher = more obscure per the endpoint's semantics).
+
+**Chart type:** Horizontal bar chart, sorted descending by `hipster_score`.
+
+**Mobile encoding:**
+- One row per contributor. Username left, bar right, score at tip (2 decimal places).
+- Bar fill: `--neon-violet` (`#9d5cff`, 3.68:1 on glass PASS). `hipster_score` is a float diversity ratio (not a rank position); per §Chart data-colour rule, gold is reserved for rank/achievement values only. Violet = ambient/analytical score.
+- `unique_artists` count shown as a sub-label "N unique artists".
+- "Show as table" `<details>`: username | hipster score | unique artists.
+
+**Desktop encoding:** Wider, same encoding. Score label fits on bar.
+
+**Colour:** `--neon-violet` (single series; analytical/diversity domain — not a rank).
+
+**Table alternative:** "Show as table" `<details>`.
+
+**Empty/sparse:** `entries=[]` → "Not enough data for hipster scoring."
+
+---
+
+### DS-SL-17: Personality cards (PS-3, SL-17)
+
+**Question:** What music personality does each contributor have?
+**Endpoint:** `SLAP GET /personalities`
+**Data fields (confirmed live 2026-09-30):** `cards[]{username, color, personality, description, dominant_platform, song_count}`
+
+**Surface type:** Profile card grid — not a quantitative chart. The `song_count` numeric is a secondary stat on each card, not encoded as a bar.
+
+**Mobile encoding:** 2-column card grid. Each card: username (top), personality title in `--text-base --magenta-text`, description in `--text-xs --text-dim`, dominant platform chip, song count in `--text-sm --gold-text`. Per-user `color` from API: decorative card accent border (not data-ink).
+
+**Desktop encoding:** 3-column grid.
+
+**Colour:** Personality title: `--magenta-text`. Song count: `--gold-text`. Per-user colors: decorative border only.
+
+**Table alternative:** Cards are self-labelled. A "Show all as table" disclosure reveals username | personality | platform | song count.
+
+**Empty/sparse:** `cards=[]` → "No personality profiles yet."
+
+---
+
+### DS-SL-18: Hall of fame (PS-3, SL-18)
+
+**Question:** What milestones has the Slapshare library hit?
+**Endpoint:** `SLAP GET /hall-of-fame`
+**Data fields (confirmed live 2026-09-30):** `entries[]{title, description, value, emoji}`
+
+**Surface type:** Milestone card list — not a quantitative chart. Each entry is a narrative achievement.
+
+**Mobile encoding:** Vertical list of milestone cards. Each card: emoji icon, title in `--text-base --gold-text`, description in `--text-xs --text-dim`, value (the specific milestone) in `--text-sm --text`.
+
+**Desktop encoding:** 2-column card grid.
+
+**Colour:** Title in `--achievement-text` (gold). No bar encoding needed.
+
+**Table alternative:** Cards are self-labelled (title + description + value always visible).
+
+**Empty/sparse:** `entries=[]` → "No milestones recorded yet."
+
+---
+
+### Slap: non-chart surfaces
+
+The following SL inventory rows are display-only surfaces (AI text, activity feeds, or server-side mappings) — they do not require a chart or quantitative data spec. They are rendered as text/list components following Phase 2 page spec patterns.
+
+| Row | Name | Endpoint | Confirmed (2026-09-30) | Why not a chart |
+|---|---|---|---|---|
+| SL-02 | AI vibe check | `SLAP GET /ai/vibe-check` | 200: `{vibe, mood_emoji, description}` | AI-generated text card — no quantitative dimension to encode |
+| SL-03 | Weekly digest | `SLAP GET /ai/digest` | 200: `{digest, highlights, vibe_shift}` | AI digest text — no quantitative encoding; narrative summary |
+| SL-10 | AI recommendations | `SLAP GET /ai/recommendations/{username}` | 200: `{username, recommendations[], reasoning}` | AI text list of track recommendations — no magnitude |
+| SL-19 | Recent activity feed | `SLAP GET /recent?limit=30` | 200: `{items[]{title, artist, album, username, color, created_at, source_platform, url}}` | Chronological activity list — recency-ordered, not quantitative |
+| SL-20 | Username → display name map | none (hard-coded server-side) | N/A | No rendered data surface; pure server-side mapping |
+
+### Slap: excluded surfaces
+
+No SL rows are excluded as of Revision 2 (2026-09-30). All 19 inventory rows have confirmed HTTP 200 shapes. SL-09 and SL-14 were incorrectly excluded in the initial pass due to wrong probe paths (`/head-to-head` without required user-path params, and `/top-artists` instead of `/artists`). Both confirmed live at the correct paths (see DS-SL-09 and DS-SL-14). SL-20 (username map) has no rendered data surface.
+
+---
+
 ## §Voice
 
 **Added in Phase 5. This is the design contract for all copy in `/app`.**

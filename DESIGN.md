@@ -1142,3 +1142,45 @@ Persistent control bar shown during an active Watch Party or Huddle call. Distin
 - Auto-muted state: mic button shows `--error` border + colour; `aria-pressed="true"`.
 - Banner above controls (`role="status" aria-live="polite"`): "Muted by Huddle — you joined while someone was speaking". Background: `rgba(--error / .12)`, border `--error`.
 
+---
+
+## §Chart data-colour rule
+
+**Added in Phase 6 (2026-09-30). Owner-confirmed tightening 2026-09-30 (Revision 2).**
+
+The locked colour roles in §Owner confirmation — "one job per colour: magenta = brand/main action, cyan = tappable, lime = live, gold = ranks/prizes, violet = ambient/AI" — apply everywhere in the app. A limited, tightly bounded exception is granted for chart plot areas (see Scope below).
+
+### Scope boundary (owner decision)
+
+The exception applies **only inside chart plot areas** — the bounded region containing bars, heatmap cells, or line marks. Outside chart plot areas (axis labels, chart titles, section headers, interactive controls on the chart such as the "Daily / Monthly" toggle) one job per colour stands without exception.
+
+A **chart mark** is data-ink (a bar, heatmap cell, line segment) inside that bounded region. Chart marks are not interactive tap targets; the interactive affordances of a chart are the "Show as table" disclosure and tap-to-inspect on the chart container. A cyan bar inside a chart plot area does not mean "tap this to navigate" in the same way a cyan `<a>` link does. **However: the cyan focus ring still appears on tappable chart elements** (tap-to-inspect bars, heatmap cells with `tabindex`) on `:focus-visible`, honoring the "cyan = tappable" role in the interaction layer even when the bar fill is a different colour.
+
+`viz-principles.md §Colorblind safety` (doctrine): "Chart color palettes and brand color palettes serve different functions." The locked neons are a single-hue set (no red-green encoding), so they satisfy colorblind safety for the chart contexts below.
+
+### Chart mark colour assignments (all from the locked neon set; no new hues)
+
+| Data domain | Token | Hex | Rationale |
+|---|---|---|---|
+| Communication / activity (WA messages, hype bar fill) | `--neon-cyan` | `#22e6ff` | Activity data; shared hue with interactive/tappable — reinforces "this data drives squad action." Inside plot area only. |
+| Content creation / output (WA word counts, Slap heatmap) | `--neon-lime` | `#8cff2b` | Lime = live production. Words and music added are the squad's output. |
+| Rank / achievement **where the bar length encodes a rank or achievement value** (contributor leaderboard by tracks added, top-artist counts as a ranked leaderboard, streak length as accumulated achievement, any bar where the encoded value IS a rank-position or accumulated achievement) | `--neon-gold` | `#ffd24a` | Gold = ranks, prizes — exclusively where the encoded value is a rank or achievement metric, not just any numeric comparison. |
+| Primary single-series Slap chart (Slap timeline) | `--neon-magenta` | `#ff2fd6` | Magenta = Slap's primary action. One-series Slap charts take the page's primary colour. |
+| Ambient / analytical / computed scores **that are not ranks** (hipster score, algorithmic compatibility, AI-derived metrics) | `--neon-violet` | `#9d5cff` | Violet = ambient/AI. Computed scores that rank people indirectly but whose bar-encoded value is a score, not a rank ordinal. |
+
+**Gold disambiguation (owner rule, verbatim):** "Gold means rank/achievement everywhere, including in charts. So the hipster index must not be gold unless its value is a rank." The `hipster_score` is a float (diversity ratio) not a rank position — it uses `--neon-violet`. Top artists by count (`/artists`) is a ranked leaderboard — it uses `--neon-gold`.
+
+**Multi-series categorical charts** (platform breakdown, head-to-head user comparison) use the neon set with direct bar labels. Colour + label = dual encoding. Hue is never the only encoding.
+
+**Per-user colours from the Slap API** (`entries[].color`, `user1_color`, `user2_color`) are decoration only — rendered as a small dot beside the member label, not as the chart bar fill. Bar fills follow the domain rule above. (Per JOURNEY.md PS-3: "Per-user `color` is decoration only.")
+
+### What this rule does NOT change
+
+- No token value changes. All five neon hexes remain exactly as locked in §Tokens.
+- Outside chart plot areas: one job per colour, no exceptions.
+- Contrast: all chart mark fills gated in `dna-contrast.mjs` Section 6 (131/131 PASS). This rule change replaces `--neon-gold` with `--neon-violet` for the hipster chart only; both are already gated.
+
+### Conflict resolution
+
+If a future chart cannot map to any of the five neons without an ambiguous signal, use a neutral `--text-dim` or `--border-control` fill, not a new hue. New hues require a plan amendment.
+

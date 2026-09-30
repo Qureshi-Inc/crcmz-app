@@ -1,0 +1,196 @@
+{
+  "detector": "detect.mjs",
+  "version": 1,
+  "attribution": "Rule subset ported from Impeccable (pbakaus/impeccable), Apache-2.0, with modifications — see file header. Catalog: references/visual/ai-tells.md.",
+  "status": "ran",
+  "sources": [
+    "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html"
+  ],
+  "rules": 16,
+  "findings": [
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"hype-bar-fill\"> is a card inside a card ancestor",
+      "line": 538
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 621
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"chart-toggle active\"> is a card inside a card ancestor",
+      "line": 624
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<button class=\"chart-toggle\"> is a card inside a card ancestor",
+      "line": 625
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 648
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 665
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<select> is a card inside a card ancestor",
+      "line": 668
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 681
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 694
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 751
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 769
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 787
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 804
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 817
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<select> is a card inside a card ancestor",
+      "line": 819
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<select> is a card inside a card ancestor",
+      "line": 823
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div> is a card inside a card ancestor",
+      "line": 831
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 850
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 863
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "nested-cards",
+      "category": "layout",
+      "severity": "high",
+      "evidence": "<div class=\"card-label\"> is a card inside a card ancestor",
+      "line": 899
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "purple-triplet",
+      "category": "signature",
+      "severity": "high",
+      "evidence": "AI-default accent #8b5cf6",
+      "line": 1319
+    },
+    {
+      "source": "/home/opti3/services/streamdeck/crcmz-app/.claude/worktrees/crcmz-app-design/.design-foundations/build/data.html",
+      "rule": "numbered-section-markers",
+      "category": "copy",
+      "severity": "advisory",
+      "evidence": "decorative sequence: 03, 05, 07, 09, 10, 11",
+      "line": null
+    }
+  ],
+  "counts": {
+    "total": 22,
+    "byRule": {
+      "nested-cards": 20,
+      "purple-triplet": 1,
+      "numbered-section-markers": 1
+    }
+  }
+}
