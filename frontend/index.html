@@ -1,15 +1,21 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#08060f" />
+    <meta name="theme-color" content="#05030f" />
     <link rel="icon" type="image/png" href="/favicon.png" />
-    <title>CRCMZ</title>
+    <!-- Fonts load exactly as the design mocks load them (DESIGN.md §Type). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <title>CRCMZ APP</title>
   </head>
   <body>
-    <!-- Sized to the shell so there is no jump when React takes over. -->
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

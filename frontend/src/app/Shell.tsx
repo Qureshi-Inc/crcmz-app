@@ -1,363 +1,286 @@
-import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { ROUTES, routeFor, to } from './routes'
-import { useSession } from './session'
-import { RouteErrorBoundary } from './ErrorBoundary'
-import { Badge, Button, cx } from '@/components/ui'
-import { Drawer } from '@/components/ui/overlay'
-import { ChatBoard } from '@/features/soundboard/ChatBoard'
+// PS-0 · App shell: top bar + tab bar + More sheet below 1024 px, sidebar at and
+// above it. Owns the session probe, the shared squad store (badge) and the toast region.
+import { useEffect, useRef, useState } from 'react'
+import { Link, Outlet, useLocation } from 'react-router-dom'
+import * as Dialog from '@radix-ui/react-dialog'
+import * as Menu from '@radix-ui/react-dropdown-menu'
+import { Icon } from '../components/Icon'
+import { Toaster } from '../components/toast'
+import { useStale } from '../components/states'
+import { useAccount, useAdminCheck, useSquad, SQUAD_MS, type Member } from '../lib/api'
+import { ApiError } from '../lib/http'
+import { useDesktop } from '../lib/media'
+import { loginUrl, redirectToLogin, useSignedOut } from '../lib/session'
+import { useSwipeDown } from '../lib/gestures'
+import { usePanelCollapsed } from '../features/chat/panelState'
+import { DESTS, MORE_ACCOUNT, MORE_SQUAD, SIDEBAR_FOOT, SIDEBAR_MAIN, TAB_IDS, destForPath, type DestId } from './nav'
 
-/**
- * The application frame: sidebar on desktop, compact bar on mobile.
- *
- * Two things the legacy dashboard did that this deliberately does not:
- *
- *   - It constrained every screen to 760px, which left roughly half of a 1440px
- *     window empty. Width is now a per-screen decision (`--content-width` for most,
- *     `-read` for conversations, `-wide` for media grids).
- *   - It kept the Chat Board permanently expanded at the bottom of every screen,
- *     roughly 350px of it, on top of the Ask AI composer. It is now a launcher plus a
- *     drawer, so it is available everywhere and in the way nowhere.
- */
+const MASCOT = '/footer-avatar.png'
 
 export function Shell() {
+  const desktop = useDesktop()
   const location = useLocation()
-  const session = useSession()
-  const [moreOpen, setMoreOpen] = useState(false)
-  const [boardOpen, setBoardOpen] = useState(false)
+  const current = destForPath(location.pathname)
+  const admin = useAdminCheck()
+  const isAdmin = admin.data?.admin === true // fail closed: errors and loading are non-admin
+  const signedOut = useSignedOut()
+  const collapsed = usePanelCollapsed()
 
-  const current = routeFor(location.pathname)
-  const visible = ROUTES.filter(r => r.placement !== 'hidden' && (!r.adminOnly || session.isAdmin))
-  const primary = visible.filter(r => r.placement === 'primary')
-  const more = visible.filter(r => r.placement === 'more')
-
-  // Close the transient surfaces on navigation. Leaving a sheet open across a route
-  // change is how you end up with a drawer covering a screen the user just asked for.
+  // Boot probe: a 401 before the app ever had a session answer means the cookie is
+  // gone. Send them to sign in and come straight back here.
+  const probed = useRef(false)
   useEffect(() => {
-    setMoreOpen(false)
+    if (probed.current) return
+    if (admin.isSuccess) probed.current = true
+    else if (admin.error instanceof ApiError && admin.error.status === 401) {
+      probed.current = true
+      redirectToLogin()
+    }
+  }, [admin.isSuccess, admin.error])
+
+  // Move focus to the new page's heading on in-app navigation (not on first load).
+  // Tracks the previous path, not a "first run" flag: StrictMode runs effects twice.
+  const prevPath = useRef(location.pathname)
+  useEffect(() => {
+    if (prevPath.current === location.pathname) return
+    prevPath.current = location.pathname
+    const h = document.querySelector<HTMLElement>('#main h1')
+    h?.focus({ preventScroll: true })
+    window.scrollTo(0, 0)
   }, [location.pathname])
 
-  // Move focus to the new screen's heading on navigation, and announce it. Without
-  // this a keyboard user's focus stays on the nav link and a screen-reader user is
-  // never told the page changed — the standard client-routing regression.
-  useEffect(() => {
-    const main = document.getElementById('app-main')
-    if (main) main.focus({ preventScroll: true })
-  }, [location.pathname])
+  const chatMode = current === 'squad' ? (desktop ? (collapsed ? 'rail' : 'panel') : 'mobile') : undefined
 
   return (
-    <div className="min-h-dvh md:flex">
-      <a href="#app-main" className="skip-link">
-        Skip to content
-      </a>
-
-      <Sidebar primary={primary} more={more} onOpenBoard={() => setBoardOpen(true)} />
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <MobileHeader onOpenBoard={() => setBoardOpen(true)} />
-
-        {session.expired && <SessionExpiredBanner onSignIn={session.signIn} />}
-
-        <main
-          id="app-main"
-          // tabIndex -1 so it can receive focus programmatically without entering the
-          // tab order itself.
-          tabIndex={-1}
-          aria-label={current?.label ?? 'CRCMZ'}
-          className={cx(
-            'min-w-0 flex-1 outline-none',
-            'px-4 pt-4 sm:px-6 lg:px-8',
-            // Room for the mobile nav bar and the safe area; on desktop, room for the
-            // floating board launcher, which is 48px tall and sits 20px from the bottom.
-            // md:pb-10 was not enough and it covered the last row of a long table.
-            'pb-[calc(var(--mobile-nav-height)+var(--safe-bottom)+1.5rem)] md:pb-24',
-          )}
-        >
-          <RouteErrorBoundary resetKey={location.pathname} what={current?.label}>
-            <Outlet />
-          </RouteErrorBoundary>
-        </main>
-      </div>
-
-      <MobileNav primary={primary} onOpenMore={() => setMoreOpen(true)} />
-
-      {/* More: the rest of the app, spelled out. Never a hidden gesture. */}
-      <Drawer
-        open={moreOpen}
-        onOpenChange={setMoreOpen}
-        title="Everything else"
-        description="The rest of CRCMZ"
-      >
-        <nav aria-label="More destinations" className="overflow-y-auto p-3">
-          <ul className="flex flex-col gap-1">
-            {more.map(r => (
-              <li key={r.path}>
-                <NavLink
-                  to={to(r.path)}
-                  className={({ isActive }) =>
-                    cx(
-                      'flex min-h-[var(--tap-target)] items-center gap-3 rounded-[var(--radius-md)] px-3',
-                      'text-base font-semibold',
-                      isActive
-                        ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-text)]'
-                        : 'text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]',
-                    )
-                  }
-                >
-                  <span aria-hidden="true" className="text-lg">
-                    {r.icon}
-                  </span>
-                  <span className="flex-1">{r.label}</span>
-                  {r.legacyHandoff && <Badge tone="neutral">Classic</Badge>}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      </Drawer>
-
-      {/* The Chat Board, on demand, from anywhere. */}
-      <Drawer
-        open={boardOpen}
-        onOpenChange={setBoardOpen}
-        title="Chat Board"
-        description="Fire a line at the squad"
-      >
-        <ChatBoard />
-      </Drawer>
-
-      <BoardLauncher onClick={() => setBoardOpen(true)} />
-    </div>
+    <>
+      <a className="skip-link" href="#main">Skip to content</a>
+      {desktop ? <Sidebar current={current} isAdmin={isAdmin} /> : <TopBar />}
+      <main id="main" className="app-main" data-chat={chatMode} tabIndex={-1} style={{ outline: 'none' }}>
+        {signedOut && (
+          <div className="banner" role="status" style={{ marginBottom: 'var(--space-5)' }}>
+            <span style={{ fontWeight: 700 }}>Sign in to keep up</span>
+            <a className="btn btn-secondary" href={loginUrl()}>Sign in</a>
+          </div>
+        )}
+        <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
+      </main>
+      {!desktop && <TabBar current={current} isAdmin={isAdmin} />}
+      <Toaster />
+    </>
   )
 }
 
-function Sidebar({
-  primary,
-  more,
-  onOpenBoard,
-}: {
-  primary: readonly {
-    path: string
-    label: string
-    shortLabel?: string
-    icon: string
-    legacyHandoff?: boolean
-  }[]
-  more: readonly {
-    path: string
-    label: string
-    shortLabel?: string
-    icon: string
-    legacyHandoff?: boolean
-  }[]
-  onOpenBoard: () => void
-}) {
+export type ShellContext = { isAdmin: boolean; adminKnown: boolean }
+
+/** G-05: the live count on the Squad nav item. Hidden when 0, on error, or while stale. */
+function useLiveBadge(): number {
+  const q = useSquad()
+  const { stale } = useStale(q, SQUAD_MS)
+  if (!q.data || q.isError || stale) return 0
+  return q.data.squad.filter((m) => m.playing).length
+}
+
+// ── Mobile top bar ───────────────────────────────────────────────────────────
+function TopBar() {
+  const [condensed, setCondensed] = useState(false)
+  const sentinel = useRef<HTMLDivElement>(null)
+  // A 1 px sentinel at the condense threshold (DESIGN.md §Navigation: mobile top bar).
+  // No scroll listener, no layout reads on scroll.
+  useEffect(() => {
+    const el = sentinel.current
+    if (!el) return
+    const io = new IntersectionObserver(([e]) => setCondensed(!(e?.isIntersecting ?? true)))
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
   return (
-    <div
-      className={cx(
-        'hidden shrink-0 md:flex md:flex-col',
-        'w-[var(--sidebar-width)] border-r border-[var(--color-border)] bg-[var(--color-surface-1)]',
-        'sticky top-0 h-dvh',
-      )}
-    >
-      <div className="flex items-center gap-2.5 px-4 py-4">
-        {/* shrink-0 on the mark and min-w-0 + truncate on the text: without them the
-            tagline wrapped onto three lines and shoved the logo out of alignment. */}
-        <img
-          src="/crcmz-logo.png"
-          alt=""
-          width={34}
-          height={34}
-          className="size-[34px] shrink-0 rounded-[var(--radius-md)] object-contain"
-        />
-        <div className="min-w-0">
-          <p className="wordmark truncate text-lg leading-tight">CRCMZ</p>
-          {/* Not uppercase + wide tracking: at 11px in the ~185px the sidebar leaves,
-              that rendered as "YES. WE HAVE O…". */}
-          <p className="truncate text-xs text-[var(--color-fg-subtle)]">
-            Yes. We have one.
-          </p>
+    <>
+      <div ref={sentinel} className="topbar-sentinel" aria-hidden="true" />
+      <header className={`topbar chrome${condensed ? ' condensed' : ''}`} data-condensed={condensed}>
+        <div className="topbar-row">
+          <Link to="/" className="topbar-brand" aria-label="CRCMZ APP, go to Squad">
+            <img className="mascot" src={MASCOT} alt="" width={64} height={64} decoding="async" />
+            <span className="topbar-words">
+              <span className="wordmark-wrap"><span className="wordmark-text">CRCMZ APP</span></span>
+              <span className="tagline topbar-tagline" aria-hidden={condensed}>YES. WE HAVE ONE.</span>
+            </span>
+          </Link>
+          <span className="topbar-spacer" />
+          <AccountControl />
         </div>
-      </div>
-
-      <nav aria-label="Main" className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        <SidebarGroup items={primary} />
-        <hr className="my-3 border-[var(--color-border)]" />
-        <SidebarGroup items={more} />
-      </nav>
-
-      <div className="border-t border-[var(--color-border)] p-3">
-        <Button variant="secondary" size="md" className="w-full" onClick={onOpenBoard}>
-          <span aria-hidden="true">💬</span> Chat Board
-        </Button>
-      </div>
-    </div>
+      </header>
+    </>
   )
 }
 
-function SidebarGroup({
-  items,
-}: {
-  items: readonly {
-    path: string
-    label: string
-    shortLabel?: string
-    icon: string
-    legacyHandoff?: boolean
-  }[]
-}) {
-  return (
-    <ul className="flex flex-col gap-0.5">
-      {items.map(r => (
-        <li key={r.path}>
-          <NavLink
-            to={to(r.path)}
-            // `end` on the index route only, or '/app' would stay active everywhere.
-            end={r.path === ''}
-            className={({ isActive }) =>
-              cx(
-                'flex min-h-10 items-center gap-2.5 rounded-[var(--radius-md)] px-3',
-                'text-sm font-semibold',
-                'transition-colors duration-[var(--dur-fast)]',
-                isActive
-                  ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent-text)]'
-                  : 'text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]',
-              )
-            }
-          >
-            <span aria-hidden="true" className="w-5 shrink-0 text-center">
-              {r.icon}
-            </span>
-            {/* shortLabel here: "Watch Party" plus the classic tag does not fit 244px and
-                truncated to "Watch Pa…". The full name is still the accessible name. */}
-            <span className="min-w-0 flex-1 truncate">{r.shortLabel ?? r.label}</span>
-            {r.legacyHandoff && (
-              <span className="shrink-0 rounded-[var(--radius-sm)] bg-[var(--color-surface-3)] px-1.5 py-px text-2xs font-semibold text-[var(--color-fg-subtle)]">
-                classic
-              </span>
-            )}
-          </NavLink>
-        </li>
-      ))}
-    </ul>
-  )
+// ── Account (G-04) ───────────────────────────────────────────────────────────
+function useMe(): { name: string | null; avatar: string | null; signedIn: boolean | null; linked: boolean } {
+  const acct = useAccount()
+  const squad = useSquad()
+  const a = acct.data
+  if (!a || a.state === 'unknown') return { name: null, avatar: null, signedIn: null, linked: false }
+  if (a.state === 'signed-out') return { name: null, avatar: null, signedIn: false, linked: false }
+  const me: Member | undefined = a.onlineId
+    ? squad.data?.squad.find((m) => (m.online_id || '').toLowerCase() === a.onlineId!.toLowerCase())
+    : undefined
+  return { name: a.onlineId, avatar: me?.avatar || null, signedIn: true, linked: a.linked }
 }
 
-function MobileHeader({ onOpenBoard }: { onOpenBoard: () => void }) {
-  return (
-    <header
-      className={cx(
-        'sticky top-0 z-30 flex items-center gap-3 md:hidden',
-        'border-b border-[var(--color-border)] bg-[var(--color-surface-base)]/92 backdrop-blur',
-        'px-4 pb-2.5 pt-[calc(var(--safe-top)+0.625rem)]',
-      )}
-    >
-      <img src="/crcmz-logo.png" alt="" width={28} height={28} className="rounded-[var(--radius-sm)]" />
-      <p className="wordmark flex-1 text-base">CRCMZ</p>
-      <button
-        type="button"
-        onClick={onOpenBoard}
-        aria-label="Open the Chat Board"
-        className="grid size-10 place-items-center rounded-[var(--radius-md)] text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-2)]"
-      >
-        <span aria-hidden="true">💬</span>
-      </button>
-    </header>
-  )
+function AvatarFace({ name, avatar }: { name: string | null; avatar: string | null }) {
+  if (avatar) return <img src={avatar} alt="" referrerPolicy="no-referrer" />
+  if (name) return <span aria-hidden="true">{name.slice(0, 2).toUpperCase()}</span>
+  return <Icon name="user" />
 }
 
-function MobileNav({
-  primary,
-  onOpenMore,
-}: {
-  primary: readonly { path: string; label: string; shortLabel?: string; icon: string }[]
-  onOpenMore: () => void
-}) {
+function AccountControl({ variant = 'topbar' }: { variant?: 'topbar' | 'sidebar' }) {
+  const me = useMe()
+  if (me.signedIn === false) {
+    return <a className="btn btn-secondary signin-link" href={loginUrl()}>Sign in</a>
+  }
+  const label = me.name ? `Account: ${me.name}` : 'Account'
   return (
-    <nav
-      aria-label="Main"
-      className={cx(
-        'fixed inset-x-0 bottom-0 z-40 md:hidden',
-        'border-t border-[var(--color-border)] bg-[var(--color-surface-1)]/97 backdrop-blur',
-        'pb-[var(--safe-bottom)]',
-      )}
-    >
-      <ul className="flex">
-        {primary.map(r => (
-          <li key={r.path} className="flex-1">
-            <NavLink
-              to={to(r.path)}
-              end={r.path === ''}
-              className={({ isActive }) =>
-                cx(
-                  'flex h-[var(--mobile-nav-height)] flex-col items-center justify-center gap-0.5',
-                  'text-2xs font-semibold',
-                  isActive ? 'text-[var(--color-accent-text)]' : 'text-[var(--color-fg-subtle)]',
-                )
-              }
-            >
-              <span aria-hidden="true" className="text-lg leading-none">
-                {r.icon}
-              </span>
-              <span>{r.shortLabel ?? r.label}</span>
-            </NavLink>
-          </li>
-        ))}
-        <li className="flex-1">
-          <button
-            type="button"
-            onClick={onOpenMore}
-            className={cx(
-              'flex h-[var(--mobile-nav-height)] w-full flex-col items-center justify-center gap-0.5',
-              'text-2xs font-semibold text-[var(--color-fg-subtle)]',
-            )}
-          >
-            <span aria-hidden="true" className="text-lg leading-none">
-              ⋯
-            </span>
-            <span>More</span>
+    <Menu.Root>
+      <Menu.Trigger asChild>
+        {variant === 'sidebar' ? (
+          <button type="button" className="account-trigger" aria-label={label}>
+            <span className="avatar-btn"><AvatarFace name={me.name} avatar={me.avatar} /></span>
+            <span className="account-name">{me.name || 'Account'}</span>
           </button>
+        ) : (
+          <button type="button" className="avatar-btn" aria-label={label}>
+            <AvatarFace name={me.name} avatar={me.avatar} />
+          </button>
+        )}
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Content className="menu-content" sideOffset={8} align={variant === 'sidebar' ? 'start' : 'end'} side={variant === 'sidebar' ? 'top' : 'bottom'}>
+          {me.name && <Menu.Label className="menu-label meta">Signed in as {me.name}</Menu.Label>}
+          <Menu.Item asChild>
+            <Link className="menu-item" to="/settings"><Icon name="settings" />Settings</Link>
+          </Menu.Item>
+          {me.signedIn && !me.linked && (
+            <Menu.Item asChild>
+              <Link className="menu-item" to="/portal"><Icon name="link" />Link PSN</Link>
+            </Menu.Item>
+          )}
+          <Menu.Item asChild>
+            <a className="menu-item" href="/auth/logout"><Icon name="signout" />Sign out</a>
+          </Menu.Item>
+        </Menu.Content>
+      </Menu.Portal>
+    </Menu.Root>
+  )
+}
+
+// ── Mobile tab bar + More sheet ──────────────────────────────────────────────
+function TabBar({ current, isAdmin }: { current: DestId | null; isAdmin: boolean }) {
+  const [moreOpen, setMoreOpen] = useState(false)
+  const badge = useLiveBadge()
+  const location = useLocation()
+  useEffect(() => { setMoreOpen(false) }, [location.pathname])
+  const moreActive = current !== null && !TAB_IDS.includes(current)
+  return (
+    <nav className="tabbar chrome" aria-label="Tab bar">
+      <ul>
+        {TAB_IDS.map((id) => {
+          const d = DESTS[id]
+          const active = current === id
+          return (
+            <li key={id}>
+              <Link className="tab" to={d.path} data-active={active} aria-current={active ? 'page' : undefined}>
+                <Icon name={d.icon} />
+                {d.label}
+                {id === 'squad' && badge > 0 && (
+                  <><span className="tab-badge" aria-hidden="true">{badge}</span><span className="sr-only">, {badge} in a game</span></>
+                )}
+              </Link>
+            </li>
+          )
+        })}
+        <li>
+          <Dialog.Root open={moreOpen} onOpenChange={setMoreOpen}>
+            <Dialog.Trigger asChild>
+              <button type="button" className="tab" data-active={moreActive} aria-label={moreActive && current ? `More, current: ${DESTS[current].label}` : 'More'}>
+                <Icon name="more" />
+                More
+              </button>
+            </Dialog.Trigger>
+            <MoreSheet current={current} isAdmin={isAdmin} onClose={() => setMoreOpen(false)} />
+          </Dialog.Root>
         </li>
       </ul>
     </nav>
   )
 }
 
-/**
- * Desktop-only floating launcher for the board. On mobile the header button does the
- * job, and a floating button there would sit on top of the nav bar.
- */
-function BoardLauncher({ onClick }: { onClick: () => void }) {
+function MoreSheet({ current, isAdmin, onClose }: { current: DestId | null; isAdmin: boolean; onClose: () => void }) {
+  const swipe = useSwipeDown(onClose)
+  const group = (ids: DestId[]) =>
+    ids.filter((id) => !DESTS[id].adminOnly || isAdmin).map((id) => {
+      const d = DESTS[id]
+      return (
+        <li key={id}>
+          <Link className="more-row" to={d.path} aria-current={current === id ? 'page' : undefined} onClick={onClose}>
+            <Icon name={d.icon} />{d.label}
+          </Link>
+        </li>
+      )
+    })
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cx(
-        'fixed bottom-5 right-5 z-30 hidden md:inline-flex',
-        'min-h-12 items-center gap-2 rounded-[var(--radius-full)] px-5',
-        'bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-semibold',
-        'shadow-[var(--shadow-lg)] hover:bg-[var(--color-accent-hover)]',
-      )}
-    >
-      <span aria-hidden="true">💬</span> Chat Board
-    </button>
+    <Dialog.Portal>
+      <Dialog.Overlay className="scrim" />
+      <Dialog.Content className="sheet sheet-more" aria-describedby={undefined}>
+        <div className="sheet-knob-row" {...swipe}><span className="sheet-knob" /></div>
+        <div className="sheet-title-row">
+          <Dialog.Title className="sheet-title">More</Dialog.Title>
+          <Dialog.Close asChild>
+            <button type="button" className="icon-btn" aria-label="Close More"><Icon name="close" /></button>
+          </Dialog.Close>
+        </div>
+        <nav aria-label="More">
+          <h3 className="eyebrow more-group-label" id="more-squad">Squad</h3>
+          <ul className="more-list" aria-labelledby="more-squad">{group(MORE_SQUAD)}</ul>
+          <h3 className="eyebrow more-group-label" id="more-account">Account</h3>
+          <ul className="more-list" aria-labelledby="more-account">{group(MORE_ACCOUNT)}</ul>
+        </nav>
+      </Dialog.Content>
+    </Dialog.Portal>
   )
 }
 
-function SessionExpiredBanner({ onSignIn }: { onSignIn: () => void }) {
+// ── Desktop sidebar ──────────────────────────────────────────────────────────
+function Sidebar({ current, isAdmin }: { current: DestId | null; isAdmin: boolean }) {
+  const badge = useLiveBadge()
+  const row = (id: DestId) => {
+    const d = DESTS[id]
+    if (d.adminOnly && !isAdmin) return null
+    return (
+      <li key={id}>
+        <Link className="nav-row" to={d.path} aria-current={current === id ? 'page' : undefined}>
+          <Icon name={d.icon} />
+          {d.label}
+          {id === 'squad' && badge > 0 && <><span className="nav-badge" aria-hidden="true">{badge}</span><span className="sr-only">, {badge} in a game</span></>}
+        </Link>
+      </li>
+    )
+  }
   return (
-    <div
-      role="alert"
-      className={cx(
-        'flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 sm:px-6 lg:px-8',
-        'border-b border-[var(--color-warn)]/40 bg-[var(--color-warn)]/12',
-        'text-sm text-[var(--color-warn-text)]',
-      )}
-    >
-      <span>Your session expired. Anything you typed is still here — sign in to send it.</span>
-      <Button variant="secondary" size="sm" onClick={onSignIn}>
-        Sign in
-      </Button>
-    </div>
+    <aside className="sidebar chrome" aria-label="Sidebar">
+      <Link to="/" className="sidebar-brand" aria-label="CRCMZ APP, go to Squad">
+        <img className="mascot" src={MASCOT} alt="" width={64} height={64} decoding="async" />
+        <span className="topbar-words">
+          <span className="wordmark-wrap"><span className="wordmark-text">CRCMZ APP</span></span>
+          <span className="tagline">YES. WE HAVE ONE.</span>
+        </span>
+      </Link>
+      <nav aria-label="Primary" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+        <ul className="sidebar-group">{SIDEBAR_MAIN.map(row)}</ul>
+        <div className="sidebar-spacer" />
+        <ul className="sidebar-group">{SIDEBAR_FOOT.map(row)}</ul>
+      </nav>
+      <div className="sidebar-account">
+        <AccountControl variant="sidebar" />
+      </div>
+    </aside>
   )
 }
