@@ -14,3 +14,5 @@ tests/__pycache__
 psn_tokens.json
 psn_tokens.backup.json
 .env
+# Slice screenshots are review evidence, not docs for the memory index (it reads *.md only).
+docs/app/**/*.png

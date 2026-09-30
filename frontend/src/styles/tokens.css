@@ -1,133 +1,369 @@
-/*
- * CRCMZ design tokens.
- *
- * The legacy dashboard reached for full-saturation neon (#ff2fd6, #22e6ff) as
- * *surface* colour: gradient text, glowing borders, six accent colours competing on
- * one screen. It reads as a splash page rather than somewhere to sit and look at a
- * table of who is online.
- *
- * So: neutral dark surfaces carry the layout, one accent (magenta) carries action,
- * and the rest of the palette is reserved for meaning — success, warning, danger,
- * live. The neon is kept, but spent deliberately: the wordmark, the live indicator,
- * the primary button. Nothing else glows.
- *
- * Contrast: every text pair is at or above 4.5:1 against its surface, and every UI
- * boundary or indicator at or above 3:1. Run `node tests/browser/contrast.mjs` to
- * re-measure — it reads this file, so the numbers cannot drift from the tokens, and it
- * fails the check rather than trusting a comment. Two of these pairs were wrong when
- * first written by hand; that is what the script is for.
- */
-
-@theme {
-  /* ── Surfaces ──────────────────────────────────────────────────────────────
-     A four-step ramp. Anything that needs to sit "above" something else moves one
-     step up, rather than inventing a new colour or adding a glow. */
-  --color-surface-base: #08060f;    /* the page */
-  --color-surface-1: #100c1c;       /* cards, the sidebar */
-  --color-surface-2: #181327;       /* raised: inputs, hovered rows */
-  --color-surface-3: #221a35;       /* popovers, dialogs, active states */
-
-  /* ── Text ─────────────────────────────────────────────────────────────────── */
-  --color-fg: #f4f1fb;              /* 18.0:1 on base — body and headings */
-  --color-fg-muted: #b3abc8;        /* 9.2:1 on base — secondary text */
-  --color-fg-subtle: #8a82a3;       /* 5.6:1 on base — labels, timestamps */
-  /* Deliberately the lowest usable step. Anything quieter than this is decoration
-     and must not be the only carrier of information. */
-
-  /* ── Borders ─────────────────────────────────────────────────────────────── */
-  --color-border: #2a2340;
-  --color-border-strong: #3d3358;
-
-  /* ── Accent: one primary, used for the action you are most likely to want ───
-     Two magentas, not one, because the same hue cannot do both jobs:
-
-       --color-accent      a *filled* surface, so its label sits on top of it
-       --color-accent-text accent-coloured *text*, so it sits on a dark surface
-
-     The first started at the brand's #e838bd, which measures 3.66:1 against white —
-     below the 4.5:1 that 1.4.3 asks for, and axe flagged it on every screen with a
-     primary button. Darkened until white passes. Hover goes darker still rather than
-     brighter, which is the only direction that improves contrast here.
-
-     Every number below is measured by tests/browser/contrast.mjs, not estimated. */
-  --color-accent: #cf2aa8;          /* white on this: 4.62:1 */
-  --color-accent-hover: #b8218f;    /* white on this: 5.79:1 */
-  --color-accent-fg: #ffffff;
-  --color-accent-subtle: #2a1029;   /* tinted surface for selected nav, chips */
-  --color-accent-text: #ff9ce6;     /* 10.7:1 on base — accent-coloured *text* */
-
-  /* ── Meaningful state. Not decoration: each one means one thing. ─────────── */
-  --color-live: #34d399;            /* online / connected */
-  --color-live-text: #6ee7b7;
-  --color-warn: #fbbf24;
-  --color-warn-text: #fcd34d;
-  --color-danger: #f0503c;
-  --color-danger-text: #ff9182;
-  --color-info-text: #7dd3fc;
-
-  /* ── Typography ───────────────────────────────────────────────────────────
-     System stack: nothing to download, correct on every platform, and the legacy
-     build already depended on it for body text. Orbitron survives only as the
-     display face for the wordmark and for numerals in stat tiles, where its fixed
-     width actually helps. */
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji',
-    'Segoe UI Emoji', 'Noto Color Emoji';
-  --font-display: 'Orbitron', var(--font-sans);
-  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-
-  /* A modest scale. 16px body, 14px secondary — as specified, and large enough that
-     the 200% zoom requirement does not immediately break the layout. */
-  --text-2xs: 0.6875rem;   /* 11px — badge text only */
-  --text-xs: 0.75rem;      /* 12px — timestamps, captions */
-  --text-sm: 0.875rem;     /* 14px — secondary */
-  --text-base: 1rem;       /* 16px — body */
-  --text-lg: 1.125rem;     /* 18px */
-  --text-xl: 1.375rem;     /* 22px — section heading */
-  --text-2xl: 1.75rem;     /* 28px — page title */
-  --text-3xl: 2.25rem;     /* 36px — stat numerals */
-
-  /* ── Radii ───────────────────────────────────────────────────────────────── */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
-  --radius-full: 999px;
-
-  /* ── Elevation. Shadow only; no glow in the default state. ───────────────── */
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 4px 14px rgb(0 0 0 / 0.45);
-  --shadow-lg: 0 18px 48px rgb(0 0 0 / 0.55);
-
-  /* ── Motion. Short enough to feel like a response, not an animation. ─────── */
-  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --dur-fast: 120ms;
-  --dur-base: 180ms;
-  --dur-slow: 260ms;
-}
+/* Design tokens, copied verbatim from DESIGN.md (locked 2026-09-30).
+   Change a value in DESIGN.md first; this file follows it. */
 
 :root {
-  /* ── Layout constants ──────────────────────────────────────────────────────
-     The legacy build constrained every screen to 760px, which wasted roughly half a
-     1440px window. Ordinary pages get 1120–1280px; conversations and forms get a
-     narrower measure because long lines are hard to read, not because of the frame. */
-  --content-width: 1200px;
-  --content-width-wide: 1440px;   /* media grids */
-  --content-width-read: 760px;    /* conversation, forms */
-  --sidebar-width: 244px;
-  --mobile-nav-height: 60px;
-  --dock-height: 56px;
-
-  /* Safe areas, resolved once. Every fixed element adds these rather than guessing,
-     which is what keeps a composer or a Leave button off the home indicator. */
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
-  --safe-left: env(safe-area-inset-left, 0px);
-  --safe-right: env(safe-area-inset-right, 0px);
-
-  /* Product comfort target for touch targets. Not a WCAG AA minimum — AA asks for
-     24px (2.5.8); 44px is what actually feels right on a phone. */
-  --tap-target: 44px;
-
   color-scheme: dark;
+  /* --- pinned brand primitives --- */
+  --bg: #05030f;
+  --neon-magenta: #ff2fd6;
+  --neon-cyan: #22e6ff;
+  --neon-lime: #8cff2b;
+  --neon-violet: #9d5cff;
+  --neon-gold: #ffd24a;
+  --aurora-magenta: rgba(255, 47, 214, .32);  /* legacy .34 · owner 2026-09-30 */
+  --aurora-cyan: rgba(34, 230, 255, .30);     /* legacy .30 */
+  --aurora-violet: rgba(157, 92, 255, .28);   /* legacy .28 (ceiling) */
+  --grid-cyan: rgba(34, 230, 255, .035);
+  --grid-magenta: rgba(255, 47, 214, .03);
+  --grid-opacity: .5;
+  --glass: rgba(18, 10, 38, .66);
+  --glass-border: rgba(255, 60, 200, .22);    /* decorative container edge, see Space/shape */
+  --sheet: rgba(12, 8, 28, .92);
+  --chrome: rgba(8, 5, 20, .86);
+  --input-fill: rgba(6, 4, 18, .8);
+  --ink: #0b0616;                             /* label on neon fills */
+  --wordmark-gradient: linear-gradient(90deg, #22e6ff, #ff2fd6);
+  --wordmark-glow: 0 0 18px rgba(255, 47, 214, .35);
+
+  /* --- text roles --- */
+  --text: #f3ecff;            /* any surface incl. bare aurora */
+  --text-dim: #9d8fc4;        /* glass / sheet / chrome only; also placeholders */
+  --magenta-text: #ff5ce0;
+  --cyan-text: #22e6ff;
+  --lime-text: #8cff2b;
+  --gold-text: #ffd24a;
+  --violet-text: #c1a5ff;
+
+  /* --- fill roles (opaque; label colour fixed per fill) --- */
+  --magenta-fill: #ff2fd6;   --on-magenta-fill: var(--ink);
+  --cyan-fill: #22e6ff;      --on-cyan-fill: var(--ink);
+  --lime-fill: #8cff2b;      --on-lime-fill: var(--ink);
+  --gold-fill: #ffd24a;      --on-gold-fill: var(--ink);
+  --violet-fill-deep: #7a3cf0; --on-violet-fill: #ffffff;
+
+  /* --- semantic (Phase 4 extends; these names are the seam) --- */
+  --background: var(--bg);
+  --surface: var(--glass);
+  --surface-raised: var(--sheet);
+  --accent-solid: var(--magenta-fill);
+  --accent-on-solid: var(--on-magenta-fill);
+  --accent-text: var(--magenta-text);
+  --interactive: var(--cyan-text);
+  --live: var(--lime-text);
+  --achievement: var(--gold-text);
+  --ambient: var(--violet-text);
+  --border-control: #8d78c4;  /* inputs, outline buttons, tappable cards: ≥3:1 */
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--neon-cyan);
+
+  /* --- soundboard tiles c1–c5 (fill tint over host, solid edge, tinted label) --- */
+  --tile-c1-rgb: 34 230 255;  --tile-c1-edge: #22e6ff; --tile-c1-label: #c8fbff; /* cyan */
+  --tile-c2-rgb: 255 47 214;  --tile-c2-edge: #ff5ce0; --tile-c2-label: #ffd6f6; /* magenta */
+  --tile-c3-rgb: 157 92 255;  --tile-c3-edge: #b18cff; --tile-c3-label: #e4d4ff; /* violet */
+  --tile-c4-rgb: 140 255 43;  --tile-c4-edge: #8cff2b; --tile-c4-label: #e0ffc0; /* lime */
+  --tile-c5-rgb: 255 210 74;  --tile-c5-edge: #ffd24a; --tile-c5-label: #fff0c0; /* gold */
+  --tile-fill-hi: .20;  --tile-fill-lo: .05;   /* 135deg gradient alpha */
+
+  /* --- glow (budgeted: wordmark, primary CTA, active nav, fired tile; + soft resting glow on Chat Board tiles only) --- */
+  --glow-tile-rest-blur: 10px; --glow-tile-rest-alpha: .22;   /* composed per tile as --glow-tile-rest */
+  --glow-tile-fire-blur: 18px; --glow-tile-fire-alpha: .55;   /* composed per tile as --glow-tile-fire */
+  --glow-magenta: 0 0 18px rgba(255, 47, 214, .45);
+  --glow-cyan: 0 0 16px rgba(34, 230, 255, .40);
+  --glow-lime: 0 0 16px rgba(140, 255, 43, .45);
+
+  /* --- type --- */
+  --font-display: "Orbitron", "Eurostile", "Arial Black", sans-serif;
+  --font-body: "Rajdhani", "Barlow Semi Condensed", "Arial Narrow", sans-serif;
+  --text-xs: 0.8125rem;                                  /* 13 */
+  --text-sm: 0.9375rem;                                  /* 15 */
+  --text-base: 1.0625rem;                                /* 17 */
+  --text-lg: 1.25rem;                                    /* 20 */
+  --text-xl: clamp(1.5rem, 1.412rem + 0.376vw, 1.75rem);      /* 24 → 28 */
+  --text-2xl: clamp(1.8125rem, 1.658rem + 0.657vw, 2.25rem);  /* 29 → 36 */
+  --text-3xl: clamp(2.1875rem, 1.967rem + 0.939vw, 2.8125rem);/* 35 → 45 */
+  --text-4xl: clamp(2.625rem, 2.317rem + 1.315vw, 3.5rem);    /* 42 → 56 */
+  --leading-body: 1.45;
+  --leading-snug: 1.25;
+  --leading-display: 1.1;
+  --tracking-caps: 0.06em;
+  --weight-body: 500;         /* floor for running text */
+
+  /* --- space (4px base) --- */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+  --space-12: 48px; --space-16: 64px;
+  --gutter: var(--space-4);   /* 16 mobile; 24 at ≥1024 */
+
+  /* --- shape --- */
+  --radius-sm: 8px;    /* chips' inner parts, avatars' squircle */
+  --radius-md: 12px;   /* buttons, inputs, tiles */
+  --radius-lg: 16px;   /* cards */
+  --radius-xl: 22px;   /* sheet top corners */
+  --radius-pill: 999px;
+
+  /* --- sizing (mobile first) --- */
+  --tap-min: 44px;
+  --tile-min: 64px;
+  --brand-mark: 64px;             /* footer-avatar.png mascot, top bar rest + sidebar */
+  --topbar-h: 72px;               /* rest height — holds the 64px mascot */
+  --topbar-h-condensed: 48px;     /* condensed height on scroll (Phase 4 decision) */
+  --brand-mark-condensed: 40px;   /* mascot in condensed state */
+  --topbar-condense-threshold: 8px; /* scroll distance to trigger condense */
+  --tabbar-h: 56px;
+  --handle-h: 40px;           /* Squad bottom chrome = 96px = 12% of 800 */
+  --sidebar-w: 240px;
+  --panel-w: 360px;
+  --reading-w: 760px;
+
+  /* --- depth (hue-shifted, never pure black) --- */
+  --shadow-card: 0 8px 24px rgba(4, 2, 14, .45);
+  --shadow-sheet: 0 -12px 40px rgba(4, 2, 14, .65);
+  --scrim: rgba(3, 1, 10, .62);
+
+  /* --- motion --- */
+  --dur-micro: 100ms;
+  --dur-std: 240ms;
+  --dur-large: 400ms;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-in: cubic-bezier(.7, 0, .84, 0);
+  --ease-inout: cubic-bezier(.65, 0, .35, 1);
+  --aurora-dur: 22s;
+}
+@media (min-width: 1024px) { :root { --gutter: var(--space-6); } }
+@media (prefers-reduced-transparency: reduce) { :root { --glass: rgba(18, 10, 38, .9); --chrome: rgba(8, 5, 20, .97); } }
+
+/* Generated primitive tier (palette.mjs, verbatim) */
+[data-theme="dark"] {
+  --gen-neutral-1: #131313;
+  --gen-neutral-2: #19191a;
+  --gen-neutral-3: #222224;
+  --gen-neutral-4: #2a292d;
+  --gen-neutral-5: #333136;
+  --gen-neutral-6: #3c3b41;
+  --gen-neutral-7: #4a484f;
+  --gen-neutral-8: #615f68;
+  --gen-neutral-9: #706d78;
+  --gen-neutral-10: #817e89;
+  --gen-neutral-11: #b8b6be;
+  --gen-neutral-12: #e8e7ec;
+  --gen-accent-1: #131119;
+  --gen-accent-2: #1b1724;
+  --gen-accent-3: #261b3a;
+  --gen-accent-4: #301f4d;
+  --gen-accent-5: #3b2064;
+  --gen-accent-6: #47207c;
+  --gen-accent-7: #57249a;
+  --gen-accent-8: #7332c6;
+  --gen-accent-9: #862cee;
+  --gen-accent-10: #964bfd;
+  --gen-accent-11: #c1a5ff;
+  --gen-accent-12: #eae3ff;
+  --gen-accent-on-solid: #fbf9ff;
+  --gen-orange-3: #391612;
+  --gen-orange-9: #ff0719;
+  --gen-orange-11: #ff9689;
+  --gen-orange-on-solid: #150a09;
+  --gen-lime-3: #20250a;
+  --gen-lime-9: #afc500;
+  --gen-lime-11: #b1c264;
+  --gen-lime-on-solid: #0c0e05;
+  --gen-cyan-3: #0d262a;
+  --gen-cyan-9: #00cee3;
+  --gen-cyan-11: #6ec7d4;
+  --gen-cyan-on-solid: #031012;
+  --gen-error-3: #391614;
+  --gen-error-9: #ff002b;
+  --gen-error-11: #ff958d;
+  --gen-success-3: #0e2910;
+  --gen-success-9: #00dd3e;
+  --gen-success-11: #71d176;
+  --gen-warning-3: #2a210b;
+  --gen-warning-9: #e6ad00;
+  --gen-warning-11: #d6b267;
+  --gen-info-3: #112432;
+  --gen-info-9: #0eafff;
+  --gen-info-11: #7bc0f0;
+  --gen-background: var(--gen-neutral-1);
+  --gen-surface: var(--gen-neutral-2);
+  --gen-surface-hover: var(--gen-neutral-3);
+  --gen-surface-active: var(--gen-neutral-4);
+  --gen-border-subtle: var(--gen-neutral-6);
+  --gen-border: var(--gen-neutral-7);
+  --gen-border-strong: var(--gen-neutral-8);
+  --gen-text-secondary: var(--gen-neutral-11);
+  --gen-text: var(--gen-neutral-12);
+  --gen-accent-bg-subtle: var(--gen-accent-3);
+  --gen-accent-solid: var(--gen-accent-9);
+  --gen-accent-solid-hover: var(--gen-accent-10);
+  --gen-accent-text: var(--gen-accent-11);
+}
+
+/* Semantic / alias tier */
+:root {
+  /* Surfaces */
+  --background:       var(--bg);
+  --surface:          var(--glass);
+  --surface-raised:   var(--sheet);
+  --chrome-surface:   var(--chrome);
+
+  /* Text */
+  --text-primary:     var(--text);          /* body, headings, labels */
+  --text-secondary:   var(--text-dim);      /* timestamps, meta, placeholders */
+  --text-on-fill:     var(--ink);           /* label on magenta/cyan/lime/gold fill */
+
+  /* Accent (magenta = brand + primary action) */
+  --accent-solid:     var(--magenta-fill);
+  --accent-on-solid:  var(--on-magenta-fill);
+  --accent-text:      var(--magenta-text);
+
+  /* Role text — maps each neon hue to its semantic job */
+  --interactive-text: var(--cyan-text);     /* links, focus, selected */
+  --live-text:        var(--lime-text);     /* online, Sent */
+  --achievement-text: var(--gold-text);     /* ranks, trophies */
+  --ambient-text:     var(--violet-text);   /* AI surfaces, ambient tags */
+
+  /* Functional / status (alias tier → generated primitive tier) */
+  --error:            var(--gen-error-11);  /* #ff958d — text on dark surfaces */
+  --error-surface:    var(--gen-error-3);   /* #391614 — tinted bg for error strip */
+  --success:          var(--gen-success-11);/* #71d176 */
+  --success-surface:  var(--gen-success-3); /* #0e2910 */
+  --warning:          var(--gen-warning-11);/* #d6b267 — distinct from --neon-gold */
+  --warning-surface:  var(--gen-warning-3); /* #2a210b */
+  --info:             var(--gen-info-11);   /* #7bc0f0 */
+  --info-surface:     var(--gen-info-3);    /* #112432 */
+
+  /* Borders */
+  --border-decorative: var(--glass-border); /* non-interactive container edges */
+  --border-interactive: var(--border-control); /* inputs, outline buttons, tappable cards */
+
+  /* Interaction */
+  --focus:            var(--focus-ring);
+  --scrim:            rgba(3, 1, 10, .62);  /* sheet/dialog backdrop */
+
+  /* Layering (z-index scale) */
+  --z-content: 0;
+  --z-chrome: 10;
+  --z-minibar: 20;
+  --z-scrim: 30;
+  --z-sheet: 40;
+  --z-toast: 50;
+}
+
+/* Component / scope tier */
+:root {
+  /* ── Navigation ── */
+  --c-nav-bg:           var(--chrome-surface);
+  --c-nav-text:         var(--text-secondary);
+  --c-nav-active-text:  var(--accent-text);           /* magenta */
+  --c-nav-active-mark:  var(--accent-solid);           /* 2px left edge or dot */
+  --c-nav-row-h:        var(--tap-min);                /* 44px floor */
+  --c-topbar-h:         var(--topbar-h);               /* 72px */
+  --c-tabbar-h:         var(--tabbar-h);               /* 56px */
+  --c-sidebar-w:        var(--sidebar-w);              /* 240px */
+
+  /* ── Bottom sheet / side-sheet / centred dialog ── */
+  --c-sheet-bg:         var(--surface-raised);
+  --c-sheet-radius:     var(--radius-xl);              /* top corners 22px */
+  --c-sheet-handle-bg:  var(--border-interactive);
+  --c-sheet-shadow:     var(--shadow-sheet);
+  --c-scrim:            var(--scrim);
+
+  /* ── Chat Board (desktop panel + mobile sheet) ── */
+  --c-chat-bg:          var(--surface-raised);         /* panel and sheet share the same fill */
+  --c-chat-handle-h:    var(--handle-h);               /* 40px */
+  --c-chat-panel-w:     var(--panel-w);                /* 360px desktop */
+
+  /* ── Soundboard tile ── */
+  --c-tile-size:        var(--tile-min);               /* 64px min */
+  --c-tile-radius:      var(--radius-md);              /* 12px */
+  --c-tile-fill-hi:     var(--tile-fill-hi);           /* .20 gradient hi stop */
+  --c-tile-fill-lo:     var(--tile-fill-lo);           /* .05 gradient lo stop */
+  /* c1–c5 edge, label and rgb are defined in the global tile block */
+
+  /* ── Presence row ── */
+  --c-presence-h:       56px;                          /* tap-min + 12px vertical pad */
+  --c-avatar-size:      36px;
+  --c-dot-size:         10px;
+  --c-dot-live:         var(--lime-fill);
+  --c-dot-offline:      var(--border-interactive);
+
+  /* ── Stat tile / chip ── */
+  --c-stat-label-sz:    var(--text-xs);
+  --c-stat-numeral-sz:  var(--text-3xl);               /* 35→45px */
+  --c-stat-chip-pad:    var(--space-2) var(--space-3);
+
+  /* ── Clip card ── */
+  --c-clip-radius:      var(--radius-lg);              /* 16px */
+  --c-clip-thumb-ratio: 16/9;
+
+  /* ── Buttons ── */
+  --c-btn-radius:       var(--radius-md);              /* 12px */
+  --c-btn-h:            var(--tap-min);                /* 44px */
+  --c-btn-pad:          0 var(--space-4);
+  --c-btn-font:         var(--text-base);
+  --c-btn-weight:       700;                           /* Rajdhani 700 per Type spec */
+  --c-btn-primary-bg:   var(--accent-solid);
+  --c-btn-primary-text: var(--accent-on-solid);
+  --c-btn-secondary-bd: var(--border-interactive);
+  --c-btn-secondary-text: var(--interactive-text);
+  --c-btn-disabled-opacity: 0.38;
+
+  /* ── Input ── */
+  --c-input-bg:         var(--input-fill);
+  --c-input-border:     var(--border-interactive);
+  --c-input-radius:     var(--radius-md);
+  --c-input-h:          var(--tap-min);
+  --c-input-font:       var(--text-base);
+
+  /* ── Toast ── */
+  --c-toast-bg:         var(--surface-raised);
+  --c-toast-radius:     var(--radius-md);
+  --c-toast-shadow:     var(--shadow-card);
+  --c-toast-min-show:   2000ms;                        /* ≥2s; 4s for errors */
+
+  /* ── Dialog ── */
+  --c-dialog-bg:        var(--surface-raised);
+  --c-dialog-radius:    var(--radius-xl);
+  --c-dialog-shadow:    var(--shadow-sheet);
+  --c-dialog-max-w:     480px;                         /* desktop centred */
+
+  /* ── Call mini-bar ── */
+  --c-minibar-bg:       var(--chrome-surface);
+  --c-minibar-row-h:    48px;
+  --c-minibar-font:     var(--text-sm);
+
+  /* ── Send-state button ── */
+  --c-send-sending-text: var(--text-secondary);
+  --c-send-sent-text:    var(--live-text);
+  --c-send-notsent-text: var(--error);
+  --c-send-unknown-text: var(--text-secondary);
+  --c-send-countdown-text: var(--achievement-text);
+
+  /* ── Stale marker ── */
+  --c-stale-color:      var(--warning);
+  --c-stale-surface:    var(--warning-surface);
+
+  /* ── Stepper ── */
+  --c-step-active-text: var(--accent-text);
+  --c-step-done-text:   var(--live-text);
+  --c-step-idle-text:   var(--text-secondary);
+  --c-step-line:        var(--border-decorative);
+
+  /* ── Per-panel error strip ── */
+  --c-panel-error-bg:   var(--error-surface);
+  --c-panel-error-text: var(--error);
+  --c-panel-error-radius: var(--radius-sm);
+
+  /* ── Sortable table ── */
+  --c-table-header-text: var(--text-secondary);
+  --c-table-sort-active: var(--interactive-text);
+  --c-table-row-border:  var(--border-decorative);
+
+  /* ── Lifecycle strip (Giveaway) ── */
+  --c-lifecycle-active-bg:   var(--accent-solid);
+  --c-lifecycle-active-text: var(--accent-on-solid);
+  --c-lifecycle-done-bg:     var(--live-text);         /* lime for completed */
+  --c-lifecycle-done-text:   var(--ink);
+  --c-lifecycle-idle-bg:     var(--surface-raised);
+  --c-lifecycle-idle-text:   var(--text-secondary);
+  --c-lifecycle-step-h:      32px;
 }
