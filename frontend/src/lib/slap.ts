@@ -38,7 +38,10 @@ export type Room = {
   members: { name: string; since: number }[]
 }
 
-export const streamUrl = (id: string) => `/api/slap/stream/${id}`
+// A replaced track keeps its id: a version stops this device replaying the cached old audio.
+const streamV = new Map<string, number>()
+export const streamUrl = (id: string) => `/api/slap/stream/${id}${streamV.has(id) ? `?v=${streamV.get(id)}` : ''}`
+export const bumpStream = (id: string) => { streamV.set(id, Date.now()) }
 // Art is cached for a day; bump ART_V when cached copies may be bad (they were once,
 // while the library was unreachable), so every device fetches them again.
 const ART_V = 2
@@ -178,4 +181,24 @@ export function fmtTime(s: number | null | undefined): string {
   const sec = Math.floor(s % 60)
   if (m >= 60) return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
   return `${m}:${String(sec).padStart(2, '0')}`
+}
+
+// ── Reroll: the wrong song was downloaded; find and swap in the right one ────
+export type Source = { url: string; title: string; channel: string; duration_seconds: number | null; view_count: number | null; score: number }
+export type Sources = { query: string; track: { title: string; artist: string; duration: number }; candidates: Source[] }
+// A YouTube search takes a while: give it the server's full minute and a half.
+export const findSources = (id: string, q = '', signal?: AbortSignal) =>
+  request<Sources>(`/api/slap/tracks/${id}/sources${q ? `?q=${encodeURIComponent(q)}` : ''}`, { signal, timeoutMs: 100_000 })
+export const replaceTrack = (id: string, url: string) => request<{ job: string }>(`/api/slap/tracks/${id}/replace`, { body: { url } })
+export type Reroll = { tid: string; state: 'working' | 'done' | 'failed'; error: string; duration: number }
+export const rerollStatus = (job: string) => getJSON<Reroll>(`/api/slap/rerolls/${job}`)
+/** A pasted YouTube or SoundCloud page link, or null. */
+export function sourceLink(text: string): string | null {
+  try {
+    const u = new URL(text.trim())
+    const h = u.hostname.toLowerCase().replace(/^(www|m|music)\./, '')
+    return (u.protocol === 'https:' || u.protocol === 'http:') && ['youtube.com', 'youtu.be', 'soundcloud.com'].includes(h) ? u.href : null
+  } catch {
+    return null
+  }
 }

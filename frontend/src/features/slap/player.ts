@@ -9,7 +9,7 @@ import { toast } from '../../components/toast'
 import { ApiError } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
 import * as lockScreen from '../../lib/mediaSession'
-import { artUrl, reportListen, streamUrl, together, type QueueItem, type Room, type TogetherOp, type Track } from '../../lib/slap'
+import { artUrl, bumpStream, reportListen, streamUrl, together, type QueueItem, type Room, type TogetherOp, type Track } from '../../lib/slap'
 
 export type Repeat = 'off' | 'all' | 'one'
 export type Link = 'off' | 'connecting' | 'live' | 'retrying'
@@ -363,6 +363,18 @@ export function clearUpcoming() {
   if (state.mode === 'together') return cmd('clear')
   const cur = state.queue[state.index]
   set({ queue: cur ? [cur] : [], index: cur ? 0 : -1 })
+}
+
+/** The file behind `id` was replaced: fetch it fresh, and restart it if it's on now. */
+export function reloadTrack(id: string, duration = 0) {
+  bumpStream(id)
+  if (duration > 0 && state.mode === 'solo') set({ queue: state.queue.map((q) => (q.id === id ? { ...q, duration } : q)) })
+  const item = current()
+  if (!item || item.id !== id || loaded !== item.qid) return
+  const wasPlaying = state.playing && !!audio && !audio.paused
+  loaded = null
+  load(item, 0)
+  if (wasPlaying) void start()
 }
 
 /** Stop and put the player away: no sound, no queue, no mini-player. */

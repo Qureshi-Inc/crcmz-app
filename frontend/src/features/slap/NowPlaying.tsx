@@ -1,7 +1,8 @@
 // The persistent mini-player (above the tab bar on a phone, above the account row
 // in the sidebar) and the full player sheet it opens.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import * as Menu from '@radix-ui/react-dropdown-menu'
 import { useQueryClient } from '@tanstack/react-query'
 import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
@@ -10,11 +11,11 @@ import { useDesktop } from '../../lib/media'
 import { useSwipeDown } from '../../lib/gestures'
 import { CommentBox, CommentThread } from './Comments'
 import {
-  artUrl, fmtTime, names, sendComment, slapName, slapNames, sendThumb, setFavorite, useSlapMe, useTrackComments, useTrackSocial,
-  type Library, type QueueItem, type TrackSocial,
+  artUrl, findSources, fmtTime, names, replaceTrack, rerollStatus, sendComment, sourceLink, slapName, slapNames, sendThumb, setFavorite, useSlapMe, useTrackComments, useTrackSocial,
+  type Library, type QueueItem, type Source, type TrackSocial,
 } from '../../lib/slap'
 import {
-  clearUpcoming, closePlayer, current, cycleRepeat, jump, leaveTogether, move, next, prev, remove, seek, setExpanded,
+  clearUpcoming, closePlayer, current, cycleRepeat, jump, leaveTogether, move, next, prev, reloadTrack, remove, seek, setExpanded,
   toggle, toggleShuffle, useClock, usePlayer, type PlayerState,
 } from './player'
 
@@ -77,6 +78,8 @@ export function PlayerSheet() {
   const s = usePlayer()
   const desktop = useDesktop()
   const swipe = useSwipeDown(() => setExpanded(false))
+  const item = current(s)
+  const [reroll, setReroll] = useState<QueueItem | null>(null)
   return (
     <Dialog.Root open={s.expanded} onOpenChange={setExpanded}>
       <Dialog.Portal>
@@ -85,11 +88,177 @@ export function PlayerSheet() {
           {!desktop && <div className="sheet-knob-row" {...swipe}><span className="sheet-knob" /></div>}
           <div className="sheet-title-row">
             <Dialog.Title className="sheet-title">{s.mode === 'together' ? 'Listen Together' : 'Now playing'}</Dialog.Title>
-            <Dialog.Close asChild>
-              <button type="button" className="icon-btn" aria-label="Close player"><Icon name="close" /></button>
-            </Dialog.Close>
+            <div className="player-head-tools">
+              {item && (
+                <Menu.Root>
+                  <Menu.Trigger asChild>
+                    <button type="button" className="icon-btn" aria-label={`More for ${item.title}`}><Icon name="more" /></button>
+                  </Menu.Trigger>
+                  <Menu.Portal>
+                    <Menu.Content className="menu-content" sideOffset={4} align="end">
+                      <Menu.Item className="menu-item" onSelect={() => setReroll(item)}>Wrong song? Find the right one</Menu.Item>
+                    </Menu.Content>
+                  </Menu.Portal>
+                </Menu.Root>
+              )}
+              <Dialog.Close asChild>
+                <button type="button" className="icon-btn" aria-label="Close player"><Icon name="close" /></button>
+              </Dialog.Close>
+            </div>
           </div>
           <PlayerBody s={s} />
+          {reroll && <RerollDialog item={reroll} onClose={() => setReroll(null)} />}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
+// ── Reroll: the import grabbed the wrong song; search again and swap in the right one ──
+const errText = (e: unknown, fallback: string) => (e instanceof ApiError && e.detail ? e.detail : fallback)
+
+/** Follow a replace in the background, so closing the dialog doesn't lose it. */
+function watchReroll(job: string, item: QueueItem, done: () => void) {
+  let tries = 0
+  const tick = async () => {
+    tries += 1
+    try {
+      const r = await rerollStatus(job)
+      if (r.state === 'done') {
+        reloadTrack(item.id, r.duration)
+        done()
+        toast(`${item.title} is fixed for everyone`, 'success')
+        return
+      }
+      if (r.state === 'failed') { toast(r.error || "That download didn't work", 'error'); return }
+    } catch (e) {
+      // The job can outlive a blip, but not a missing job.
+      if (e instanceof ApiError && e.status === 404) { toast('Lost track of that download; check back in a minute', 'error'); return }
+    }
+    if (tries < 160) window.setTimeout(() => void tick(), 3000)
+  }
+  window.setTimeout(() => void tick(), 3000)
+}
+
+function lengthHint(c: Source, want: number) {
+  if (!c.duration_seconds || !want) return ''
+  const d = Math.round(c.duration_seconds - want)
+  if (Math.abs(d) <= 3) return 'Same length'
+  return `${fmtTime(Math.abs(d))} ${d > 0 ? 'longer' : 'shorter'}`
+}
+
+function RerollDialog({ item, onClose }: { item: QueueItem; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [q, setQ] = useState('')
+  const [asked, setAsked] = useState('')
+  const [found, setFound] = useState<Source[] | null>(null)
+  const [want, setWant] = useState(item.duration || 0)
+  const [error, setError] = useState('')
+  const [pick, setPick] = useState<Source | null>(null)
+  const [busy, setBusy] = useState(false)
+  const ctrl = useRef<AbortController | null>(null)
+
+  async function search(text: string) {
+    ctrl.current?.abort()
+    const c = new AbortController()
+    ctrl.current = c
+    setFound(null); setError(''); setAsked(text)
+    try {
+      const r = await findSources(item.id, text, c.signal)
+      if (c.signal.aborted) return
+      setFound(r.candidates)
+      if (r.track.duration) setWant(r.track.duration)
+    } catch (e) {
+      if (!c.signal.aborted) { setError(errText(e, "YouTube didn't answer. Try again.")); setFound([]) }
+    }
+  }
+  useEffect(() => { void search(''); return () => ctrl.current?.abort() }, [item.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    const text = q.trim()
+    const link = sourceLink(text)
+    if (link) { setPick({ url: link, title: 'The link you pasted', channel: new URL(link).hostname.replace(/^www\./, ''), duration_seconds: null, view_count: null, score: 0 }); return }
+    void search(text)
+  }
+
+  async function replace() {
+    if (!pick || busy) return
+    setBusy(true)
+    try {
+      const { job } = await replaceTrack(item.id, pick.url)
+      watchReroll(job, item, () => void qc.invalidateQueries({ queryKey: ['slap', 'library'] }))
+      toast(`Downloading the new ${item.title}. It swaps in when it's ready.`, 'info')
+      onClose()
+    } catch (e) {
+      setError(errText(e, "Slap didn't take that"))
+      setPick(null)
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Dialog.Root open onOpenChange={(v) => { if (!v) onClose() }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="scrim scrim-top" />
+        <Dialog.Content className="dialog dialog-wide reroll-dialog" aria-describedby="reroll-desc">
+          <div className="sheet-title-row">
+            <Dialog.Title className="dialog-title" style={{ margin: 0 }}>{pick ? 'Replace this song?' : 'Find the right song'}</Dialog.Title>
+            <Dialog.Close asChild>
+              <button type="button" className="icon-btn" aria-label="Close"><Icon name="close" /></button>
+            </Dialog.Close>
+          </div>
+          <p id="reroll-desc" className="dim reroll-now">
+            <b>{item.title}</b> · {item.artist}{want ? ` · ${fmtTime(want)}` : ''}
+          </p>
+          {pick ? (
+            <>
+              <p>
+                Slap will download <b>{pick.title}</b>{pick.channel ? ` (${pick.channel})` : ''} and put it in place of the current file.
+                It keeps the title, album and cover, and it changes the song for everyone. The old file is kept, so it can be put back.
+              </p>
+              <div className="dialog-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setPick(null)} disabled={busy}>Back</button>
+                <button type="button" className="btn btn-primary" onClick={() => void replace()} disabled={busy}>{busy ? 'Starting…' : 'Replace for everyone'}</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <form className="reroll-search" onSubmit={submit} role="search">
+                <label className="sr-only" htmlFor="reroll-q">Search YouTube, or paste a YouTube or SoundCloud link</label>
+                <input
+                  id="reroll-q" className="input" value={q} onChange={(e) => setQ(e.target.value)} maxLength={300}
+                  placeholder="Search, or paste a YouTube link"
+                />
+                <button type="submit" className="btn btn-secondary" disabled={!q.trim() || found === null}>{sourceLink(q) ? 'Use link' : 'Search'}</button>
+              </form>
+              {error && <p className="error-strip" role="alert">{error}</p>}
+              {found === null ? (
+                <p className="reroll-wait" role="status"><span className="spinner" aria-hidden="true" />Searching YouTube{asked ? ` for “${asked}”` : ''}… this can take half a minute.</p>
+              ) : found.length === 0 ? (
+                !error && <p className="dim" role="status">Nothing came back. Try other words, or paste a link.</p>
+              ) : (
+                <ul className="rows reroll-list" aria-label="Candidates">
+                  {found.map((c, i) => {
+                    const hint = lengthHint(c, want)
+                    return (
+                      <li key={c.url} className="reroll-row">
+                        <span className="reroll-text">
+                          <span className="reroll-title">{c.title}</span>
+                          <span className="meta">
+                            {[c.channel, c.duration_seconds ? fmtTime(c.duration_seconds) : ''].filter(Boolean).join(' · ')}
+                            {!asked && i === 0 && c.score > 0 && <span className="reroll-tag">Best match</span>}
+                            {hint && <span className="reroll-hint" data-same={hint === 'Same length'}>{hint}</span>}
+                          </span>
+                        </span>
+                        <a className="btn btn-ghost" href={c.url} target="_blank" rel="noreferrer" aria-label={`Preview ${c.title} on YouTube`}>Preview</a>
+                        <button type="button" className="btn btn-secondary" onClick={() => setPick(c)} aria-label={`Use ${c.title}`}>Use this</button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </>
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

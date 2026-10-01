@@ -26,6 +26,7 @@ USERS = [{"Name": "moiz", "Id": "a" * 32}, {"Name": "shahraiz", "Id": "b" * 32},
 # "<name>'s picks" contents, and playlists only the who-added test turns on.
 PLAYLIST_ITEMS = {"4" * 32: ["1" * 32], "5" * 32: ["1" * 32], "6" * 32: ["1" * 32, "3" * 32]}
 EXTRA_PLAYLISTS: list[dict] = []
+IMPORTER_LOG: list[tuple] = []
 SSO = "505ce9d1-d916-42fa-86ca-673ef241d7df"
 # Made by Zitadel sign-ins to Jellyfin; the plugin stores the GUID with dashes.
 LINKS = {"moiz": "a" * 32, "mazino": "dddddddd-dddd-dddd-dddd-dddddddddddd",
@@ -59,6 +60,17 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         body = self._body() if method in ("POST", "PUT") else None
+        if self.server.kind == "importer":
+            IMPORTER_LOG.append((u.path, body, self.headers.get("Authorization")))
+            if u.path.endswith("/tracks/research"):
+                return self._send(200, {"query": "alt-J Breezeblocks", "candidates": [
+                    {"url": "https://www.youtube.com/watch?v=ok", "title": "Breezeblocks", "channel": "alt-J",
+                     "duration_seconds": 246, "view_count": 1, "score": 0.9, "secret": "x"},
+                    {"url": "https://evil.example/x", "title": "nope", "channel": "", "duration_seconds": 1,
+                     "view_count": 0, "score": 0.1}]})
+            if body and "fail" in body.get("url", ""):
+                return self._send(502, {"detail": "Couldn't download that link"})
+            return self._send(200, {"path": body["path"], "backup": "/app/data/replaced/x", "duration_seconds": 246.4})
         if self.server.kind == "social":
             SOCIAL_LOG.append((method, u.path, body))
             return self._send(200, {"ok": True, "path": u.path, "q": q})
@@ -96,7 +108,8 @@ class Handler(BaseHTTPRequestHandler):
             names = {"4" * 32: "moiz's picks", "5" * 32: "shahraiz's picks"}
             if iid in names:
                 return self._send(200, {"Id": iid, "Name": names[iid], "Type": "Playlist"})
-            return self._send(200, {"Id": iid, "Name": "Breezeblocks", "Type": "Audio", "Artists": ["alt-J"]})
+            return self._send(200, {"Id": iid, "Name": "Breezeblocks", "Type": "Audio", "Artists": ["alt-J"],
+                                    "RunTimeTicks": 2457120000, "Path": "/media/music/alt-J/An Awesome Wave/Breezeblocks.mp3"})
         if p.startswith("/Audio/"):
             return self._send(206, raw=b"ID3abc", headers={
                 "Content-Type": "audio/mpeg", "Content-Range": "bytes 0-5/100", "Accept-Ranges": "bytes"})
@@ -125,6 +138,8 @@ def serve(kind):
 os.environ["JELLYFIN_URL"] = serve("jf")
 os.environ["JELLYFIN_TOKEN"] = "jf-key"
 os.environ["SLAP_API_URL"] = serve("social")
+os.environ["SLAP_INTERNAL_URL"] = serve("importer") + "/api/v1"
+os.environ["SLAP_ADMIN_TOKEN"] = "importer-key"
 os.environ["SLAP_PLAYLISTS_FILE"] = os.path.join(tempfile.mkdtemp(), "slap_playlists.json")
 os.environ["SLAP_THUMBS_DB"] = os.path.join(tempfile.mkdtemp(), "slap_thumbs.db")
 os.environ.setdefault("SESSION_SECRET", "test-secret")
@@ -314,6 +329,69 @@ def t_playlist_perms():
 def t_track_info_admin():
     as_("100")
     assert client.post(f"/api/slap/tracks/{'1' * 32}/info", json={"title": "x"}).status_code == 403
+
+
+# ── reroll ───────────────────────────────────────────────────────────────────
+def t_source_link():
+    assert slap.source_link(" https://youtu.be/abc ") == "https://youtu.be/abc"
+    assert slap.source_link("https://music.youtube.com/watch?v=1")
+    assert slap.source_link("https://soundcloud.com/a/b")
+    for bad in ("file:///etc/passwd", "https://youtube.com.evil.com/x", "javascript:alert(1)",
+                "http://169.254.169.254/", "", "https://www.youtube.com/" + "x" * 2100):
+        assert slap.source_link(bad) is None, bad
+
+
+def t_library_rel():
+    assert slap.library_rel("/media/music/A/B/Song.mp3") == "A/B/Song.mp3"
+    for bad in ("/secret/path.mp3", "/media/music/A/../../etc/x.mp3", "/media/music/A/cover.jpg"):
+        assert slap.library_rel(bad) is None, bad
+
+
+def t_reroll_sources():
+    as_("100")
+    IMPORTER_LOG.clear()
+    r = client.get(f"/api/slap/tracks/{'1' * 32}/sources")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["track"] == {"title": "Breezeblocks", "artist": "alt-J", "duration": 246}, d["track"]
+    # Only YouTube/SoundCloud links, only the known fields.
+    assert [c["url"] for c in d["candidates"]] == ["https://www.youtube.com/watch?v=ok"]
+    assert "secret" not in d["candidates"][0]
+    path, body, auth = IMPORTER_LOG[-1]
+    assert path == "/api/v1/tracks/research" and auth == "Bearer importer-key"
+    assert body["title"] == "Breezeblocks" and body["duration_seconds"] == 245.7 and body["query"] == ""
+    client.get(f"/api/slap/tracks/{'1' * 32}/sources", params={"q": "breezeblocks live"})
+    assert IMPORTER_LOG[-1][1]["query"] == "breezeblocks live"
+    as_(None)
+    assert client.get(f"/api/slap/tracks/{'1' * 32}/sources").status_code == 401
+
+
+def t_reroll_replace():
+    import time as _t
+    as_("100")
+    IMPORTER_LOG.clear()
+    tid = "1" * 32
+    assert client.post(f"/api/slap/tracks/{tid}/replace", json={"url": "https://evil.example/x"}).status_code == 400
+    assert not IMPORTER_LOG
+    # A persistent event loop, so the background swap runs to the end.
+    with TestClient(app) as c:
+        def run(url):
+            r = c.post(f"/api/slap/tracks/{tid}/replace", json={"url": url})
+            assert r.status_code == 200, r.text
+            job = r.json()["job"]
+            for _ in range(50):
+                st = c.get(f"/api/slap/rerolls/{job}").json()
+                if st["state"] != "working":
+                    return st
+                _t.sleep(0.05)
+            raise AssertionError("never finished")
+        st = run("https://www.youtube.com/watch?v=ok")
+        assert st["state"] == "done" and st["duration"] == 246, st
+        assert IMPORTER_LOG[-1][1] == {"path": "alt-J/An Awesome Wave/Breezeblocks.mp3", "url": "https://www.youtube.com/watch?v=ok"}
+        assert any(m == "POST" and p == f"/Items/{tid}/Refresh" for m, p, *_ in JF_LOG), "jellyfin refreshed"
+        st = run("https://youtu.be/fail")
+        assert st["state"] == "failed" and st["error"] == "Couldn't download that link", st
+        assert c.get("/api/slap/rerolls/nope").status_code == 404
 
 
 # ── social ───────────────────────────────────────────────────────────────────

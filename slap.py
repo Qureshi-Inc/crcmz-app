@@ -66,6 +66,11 @@ _STREAM_HEADERS = ("content-type", "content-length", "content-range", "accept-ra
                    "last-modified", "etag")
 _TICKS = 10_000_000
 
+# The importer's admin API (rerolling a wrong download), reached inside the Docker network.
+SLAP_INTERNAL_URL = os.environ.get("SLAP_INTERNAL_URL", "http://music-importer:8080/api/v1").rstrip("/")
+SLAP_ADMIN_TOKEN = os.environ.get("SLAP_ADMIN_TOKEN", "")
+_MUSIC_ROOT = "/media/music/"   # where Jellyfin sees the importer's library
+
 _client = httpx.AsyncClient(base_url=JELLYFIN_URL, timeout=httpx.Timeout(20.0, read=60.0))
 _social = httpx.AsyncClient(base_url=SLAP_API_URL, timeout=20.0)
 
@@ -660,6 +665,63 @@ async def _social_write(method: str, path: str, body: dict) -> Any:
     return r.json() if r.content else {"ok": True}
 
 
+# ── Reroll: swap a wrong download for the right one ─────────────────────────
+# The importer auto-picks a YouTube upload and sometimes picks the wrong song.
+# From the player anyone signed in can search again and replace the file; the
+# importer keeps the old file, so a bad swap can be put back by hand.
+_SOURCE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be",
+                 "soundcloud.com", "www.soundcloud.com", "m.soundcloud.com"}
+_rerolls: dict[str, dict] = {}   # job id -> {tid, state, error, by, at}
+_REROLL_KEEP_S = 3600
+_reroll_tasks: set[asyncio.Task] = set()   # held so a running swap isn't garbage-collected
+
+
+def source_link(url: str) -> str | None:
+    """The link if it is an http(s) YouTube or SoundCloud page."""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse((url or "").strip())
+    except ValueError:
+        return None
+    if u.scheme in ("http", "https") and (u.hostname or "").lower() in _SOURCE_HOSTS and len(url) <= 2048:
+        return u.geturl()
+    return None
+
+
+def library_rel(path: str) -> str | None:
+    """A Jellyfin item path as the importer's library-relative MP3 path."""
+    if not path.startswith(_MUSIC_ROOT) or not path.lower().endswith(".mp3") or "/../" in path:
+        return None
+    return path[len(_MUSIC_ROOT):]
+
+
+async def _importer(path: str, body: dict, timeout: float) -> dict:
+    if not SLAP_ADMIN_TOKEN:
+        raise HTTPException(503, "rerolling songs isn't set up yet")
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(f"{SLAP_INTERNAL_URL}{path}", json=body,
+                             headers={"Authorization": f"Bearer {SLAP_ADMIN_TOKEN}"})
+    except httpx.HTTPError as e:
+        logger.warning("slap: importer %s failed: %s", path, e)
+        raise HTTPException(502, "the music importer is unreachable")
+    if r.status_code >= 400:
+        try:
+            detail = str(r.json().get("detail") or "")[:200]
+        except ValueError:
+            detail = ""
+        raise HTTPException(409 if r.status_code == 409 else 502 if r.status_code >= 500 else 400,
+                            detail or "the music importer didn't take that")
+    return r.json()
+
+
+def reroll_job(jid: str) -> dict | None:
+    now = time.time()
+    for k in [k for k, v in _rerolls.items() if now - v["at"] > _REROLL_KEEP_S]:
+        _rerolls.pop(k, None)
+    return _rerolls.get(jid)
+
+
 # ── @mentions ────────────────────────────────────────────────────────────────
 # A comment tags someone with @<handle>. The handle the composer suggests is the
 # person's Jellyfin name (what slaptastic keys them by, so its own app agrees);
@@ -880,6 +942,79 @@ def build_router(get_session, is_admin) -> APIRouter:
         _ok(await _jf("POST", f"/Items/{tid}", json=item))
         _forget("lib:")
         return {"ok": True}
+
+    async def audio_item(me: dict, tid: str) -> dict:
+        item = _ok(await _jf("GET", f"/Items/{check_id(tid)}", params={"userId": me["jf"]["id"], "fields": "Path"})) or {}
+        if item.get("Type") != "Audio":
+            raise HTTPException(404, "not found")
+        return item
+
+    @router.get("/tracks/{tid}/sources")
+    async def track_sources(tid: str, request: Request, q: str = ""):
+        """Search again for a track: YouTube uploads, best match first."""
+        me = await caller(request)
+        item = await audio_item(me, tid)
+        artist = ", ".join(item.get("Artists") or []) or item.get("AlbumArtist") or ""
+        ticks = item.get("RunTimeTicks") or 0
+        found = await _importer("/tracks/research", {
+            "title": _s(item.get("Name"), 300), "artist": _s(artist, 300),
+            "duration_seconds": round(ticks / _TICKS, 1) if ticks else None,
+            "query": _s(q, 300).strip(), "limit": 8,
+        }, timeout=100)
+        return {
+            "query": found.get("query", ""),
+            "track": {"title": item.get("Name") or "", "artist": artist, "duration": round(ticks / _TICKS) if ticks else 0},
+            "candidates": [
+                {k: c.get(k) for k in ("url", "title", "channel", "duration_seconds", "view_count", "score")}
+                for c in found.get("candidates") or [] if source_link(str(c.get("url") or ""))
+            ],
+        }
+
+    @router.post("/tracks/{tid}/replace")
+    async def track_replace(tid: str, request: Request):
+        """Download a YouTube/SoundCloud link in place of this track (for everyone)."""
+        me = await caller(request)
+        b = await body_of(request)
+        url = source_link(_s(b.get("url"), 2048))
+        if not url:
+            raise HTTPException(400, "use a YouTube or SoundCloud link")
+        item = await audio_item(me, tid)
+        rel = library_rel(item.get("Path") or "")
+        if not rel:
+            raise HTTPException(400, "that track can't be replaced from here")
+        if any(j["tid"] == tid and j["state"] == "working" for j in _rerolls.values()):
+            raise HTTPException(409, "this song is already being replaced")
+        jid = secrets.token_urlsafe(9)
+        job = _rerolls[jid] = {"tid": tid, "state": "working", "error": "", "by": me["name"], "at": time.time(), "duration": 0}
+
+        async def run() -> None:
+            try:
+                done = await _importer("/tracks/replace", {"path": rel, "url": url}, timeout=330)
+                # Re-read the file so the new length and audio show up.
+                await _jf("POST", f"/Items/{tid}/Refresh", params={
+                    "Recursive": "false", "MetadataRefreshMode": "Default", "ImageRefreshMode": "None",
+                    "ReplaceAllMetadata": "false", "ReplaceAllImages": "false"})
+                job.update(state="done", duration=round(float(done.get("duration_seconds") or 0)))
+                _forget("lib:")
+                logger.info("slap: %s replaced %s (%s) with %s", me["sub"], tid, item.get("Name"), url)
+            except HTTPException as e:
+                job.update(state="failed", error=str(e.detail))
+            except Exception as e:  # noqa: BLE001 - the job must always finish
+                logger.warning("slap: reroll of %s failed: %s", tid, e)
+                job.update(state="failed", error="the replacement failed")
+
+        task = asyncio.get_running_loop().create_task(run())
+        _reroll_tasks.add(task)
+        task.add_done_callback(_reroll_tasks.discard)
+        return {"job": jid}
+
+    @router.get("/rerolls/{jid}")
+    async def reroll_status(jid: str, request: Request):
+        await caller(request)
+        job = reroll_job(jid)
+        if not job:
+            raise HTTPException(404, "not found")
+        return {k: job[k] for k in ("tid", "state", "error", "duration")}
 
     async def stream(path: str, request: Request, params: dict | None = None,
                      cache: str = "private, max-age=3600") -> StreamingResponse:

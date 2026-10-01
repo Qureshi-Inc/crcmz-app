@@ -69,6 +69,7 @@ const SECTIONS: Section[] = [
           <li><b>Listen Together:</b> on the Together tab, tap <b>Start a room</b> or <b>Join them</b>. Everyone hears the same song; anyone can add, skip or pause.</li>
           <li><b>Stats:</b> rankings, charts and who listens to what.</li>
           <li><b>In the player:</b> it shows who added the song. Thumbs up or down and emoji reactions show who pressed them, and stay pressed on every device. Reactions also appear in the comments.</li>
+          <li><b>Wrong song?</b> In the player, tap <b>⋯</b> then <b>Wrong song? Find the right one</b>. Pick the right upload, or paste a YouTube link, and it is swapped in for everyone.</li>
         </ul>
         <p><b>Jellyfin app or browser:</b></p>
         <ol>
