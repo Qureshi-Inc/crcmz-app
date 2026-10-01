@@ -736,7 +736,16 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/oauth/register",
                # Mattermost OAuth callback — arrives from Mattermost, no session yet.
                # The signed state parameter carries the user identity.
-               "/settings/mattermost/callback"}
+               "/settings/mattermost/callback",
+               # Brand images. The sign-in page shows them before there is a
+               # session, and the VIP invite email loads the logo from here.
+               "/favicon.png", "/crcmz-logo.png", "/footer-avatar.png",
+               # VIP invite: the emailed link lands here signed out, and the
+               # code in it is the credential (see vip_invites.py).
+               "/invite",
+               # Called by the Stripe bot, not a browser. The handler requires
+               # VIP_INVITE_SECRET, CRCMZ_MACHINE_TOKEN or an admin session.
+               "/api/invites/vip"}
 
 
 # Session cookies used to fall back to the literal string "dev-insecure" when
@@ -1615,6 +1624,167 @@ async def settings_change_password(request: Request):
     except Exception as e:
         logger.error("settings/password error: %s", e)
         return JSONResponse({"error": "service unavailable"}, status_code=503)
+
+
+# ── VIP invites ─────────────────────────────────────────────────────────────
+# A paid VIP Clan Member (Stripe checkout via bot.crcmz.me/vip) gets an account and
+# a branded email; vip_invites.py owns the Zitadel calls, the email and the log.
+VIP_INVITE_SECRET = os.environ.get("VIP_INVITE_SECRET", "")
+
+
+@app.post("/api/invites/vip")
+async def vip_invite(request: Request):
+    secret = (request.headers.get("x-invite-secret") or "").strip()
+    allowed = bool(VIP_INVITE_SECRET and secret
+                   and _hmac.compare_digest(secret, VIP_INVITE_SECRET))
+    if not allowed and not _machine_authorised(request):
+        session = _get_session(request)
+        if not session:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        if not await _is_iam_admin(session.get("sub", "")):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "JSON body required"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "JSON object required"}, status_code=400)
+    s = lambda k: str(body.get(k) or "").strip()  # noqa: E731
+    try:
+        result = await asyncio.to_thread(
+            _vip.invite_vip, s("email"), name=s("name"), source=s("source") or "api",
+            stripe_session_id=s("stripeSessionId"), discord_username=s("discordUsername"),
+            gamer_tag=s("gamerTag"), platform=s("platform"))
+    except _vip.InviteError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    return JSONResponse(result)
+
+
+@app.get("/api/invites/vip")
+async def vip_invite_list(request: Request, limit: int = 50):
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not await _is_iam_admin(session.get("sub", "")):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse({"invites": _vip.recent(limit)})
+
+
+def _invite_page(user_id: str, code: str, error: str = "") -> str:
+    e = _html.escape
+    err_html = f'<div class="msg err">⚠️ {e(error)}</div>' if error else ""
+    return f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" type="image/png" href="/favicon.png">
+<title>Set up your account · CRCMZ APP</title>
+<style>
+  :root {{ color-scheme:dark; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; }}
+  body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:#f3ecff; min-height:100dvh; display:flex; align-items:center;
+    justify-content:center; padding:24px 16px; background:#05030f; }}
+  body::before {{ content:""; position:fixed; inset:-30% -10%; z-index:-1;
+    background:
+      radial-gradient(38% 40% at 18% 12%, rgba(255,47,214,.32), transparent 60%),
+      radial-gradient(40% 40% at 84% 18%, rgba(34,230,255,.30), transparent 60%),
+      radial-gradient(46% 42% at 55% 96%, rgba(157,92,255,.28), transparent 62%);
+    filter:blur(34px); }}
+  .card {{ width:100%; max-width:400px; background:rgba(18,10,38,.76);
+    border:1px solid rgba(255,60,200,.24); border-radius:24px; padding:32px 28px 28px;
+    box-shadow:0 30px 80px rgba(0,0,0,.6); backdrop-filter:blur(22px);
+    -webkit-backdrop-filter:blur(22px); }}
+  .badge {{ display:inline-block; padding:5px 12px; border-radius:999px; background:#ffd24a;
+    color:#0b0616; font-size:11px; font-weight:800; letter-spacing:1.5px;
+    text-transform:uppercase; }}
+  h1 {{ font-size:22px; margin:14px 0 6px; font-weight:800; }}
+  p {{ color:#9d8fc4; font-size:14px; line-height:1.5; margin:0; }}
+  label {{ display:block; font-size:11.5px; color:#9d8fc4; margin:18px 0 7px;
+    font-weight:700; letter-spacing:.4px; text-transform:uppercase; }}
+  input {{ width:100%; padding:14px; border-radius:13px; border:1px solid #8d78c4;
+    background:rgba(6,4,18,.7); color:#f3ecff; font-size:16px; }}
+  input:focus {{ outline:none; border-color:#22e6ff; box-shadow:0 0 0 3px rgba(34,230,255,.18); }}
+  .btn {{ width:100%; margin-top:24px; padding:15px; border-radius:14px; border:none;
+    font-size:15.5px; font-weight:800; cursor:pointer; background:#ff2fd6; color:#0b0616; }}
+  .btn:disabled {{ opacity:.55; }}
+  .msg {{ padding:13px 15px; border-radius:13px; font-size:13.5px; margin-top:16px; line-height:1.45; }}
+  .err {{ background:rgba(255,107,139,.12); border:1px solid rgba(255,107,139,.4); color:#ffc0cd; }}
+</style></head>
+<body><div class="card">
+  <span class="badge">VIP Clan Member</span>
+  <h1>Welcome to the CRCMZ App</h1>
+  <p>Pick a password and you're in. You can add a passkey in Settings afterwards.</p>
+  {err_html}
+  <form method="post" action="/invite" id="f">
+    <input type="hidden" name="userId" value="{e(user_id)}">
+    <input type="hidden" name="code" value="{e(code)}">
+    <label for="pw">New password</label>
+    <input type="password" name="pw" id="pw" required minlength="8" autocomplete="new-password">
+    <label for="pw2">Confirm password</label>
+    <input type="password" name="pw2" id="pw2" required minlength="8" autocomplete="new-password">
+    <p style="margin-top:10px;font-size:12.5px">{e(_vip.PASSWORD_RULES)}</p>
+    <button type="submit" class="btn" id="btn">Create my account →</button>
+  </form>
+</div>
+<script>
+  document.getElementById('f').addEventListener('submit', () => {{
+    const b = document.getElementById('btn'); b.disabled = true; b.textContent = 'Setting up…';
+  }});
+</script>
+</body></html>"""
+
+
+@app.get("/invite")
+async def invite_page(userId: str = "", code: str = ""):
+    if not userId.isdigit() or not code:
+        return HTMLResponse(_invite_page("", "", "This invite link is incomplete. "
+                                         "Open it straight from the email."), status_code=400)
+    return HTMLResponse(_invite_page(userId, code),
+                        headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
+
+
+@app.post("/invite")
+async def invite_accept(request: Request):
+    form = await request.form()
+    user_id = str(form.get("userId") or "").strip()
+    code = str(form.get("code") or "").strip()
+    pw = str(form.get("pw") or "")
+    if not user_id.isdigit() or not code:
+        return HTMLResponse(_invite_page("", "", "This invite link is incomplete."), status_code=400)
+    if pw != str(form.get("pw2") or ""):
+        return HTMLResponse(_invite_page(user_id, code, "The two passwords don't match."), status_code=400)
+    try:
+        await asyncio.to_thread(_vip.accept, user_id, code, pw)
+    except _vip.InviteError as e:
+        return HTMLResponse(_invite_page(user_id, code, str(e)), status_code=400)
+    except Exception as e:  # noqa: BLE001
+        logger.error("invite: accept error: %s", e)
+        return HTMLResponse(_invite_page(user_id, code, "Auth service unavailable, try again."),
+                            status_code=503)
+
+    # Sign them straight in with the password they just chose.
+    import httpx as _hx
+    try:
+        async with _hx.AsyncClient(timeout=15) as c:
+            headers = {"Authorization": f"Bearer {ZITADEL_SERVICE_TOKEN}"}
+            r = await c.post(f"{ZITADEL_ISSUER}/v2/sessions", headers=headers, json={
+                "checks": {"user": {"userId": user_id}, "password": {"password": pw}}})
+            r.raise_for_status()
+            sr = await c.get(f"{ZITADEL_ISSUER}/v2/sessions/{r.json().get('sessionId', '')}",
+                             headers=headers)
+        user_f = sr.json().get("session", {}).get("factors", {}).get("user", {})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("invite: sign-in after accept failed for %s: %s", user_id, e)
+        return RedirectResponse(url="/auth/login?next=/app", status_code=302)
+    session = _make_session(user_f.get("id") or user_id, user_f.get("loginName", ""),
+                            name=user_f.get("displayName", ""),
+                            preferred_username=user_f.get("loginName", ""))
+    resp = RedirectResponse(url="/app", status_code=302)
+    resp.set_cookie(_SESSION_COOKIE, _signer().dumps(session), httponly=True,
+                    samesite="lax", secure=True, max_age=_SESSION_MAX_AGE, path="/")
+    return resp
 
 
 @app.get("/api/admin/check")
@@ -6136,9 +6306,11 @@ if WA_BRIDGE_URL:
             pass
 
 import clips as _clips
+import vip_invites as _vip
 import clip_store as _cstore
 from psn_messaging import ClipNotReady, ClipUnauthorized, ClipRateLimited, ClipError, ClipDownload
 _clips.init()
+_vip.init()
 import reels as _reels
 app.include_router(_reels.build_router(_get_session, _is_iam_admin))
 import slap as _slap

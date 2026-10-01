@@ -41,6 +41,7 @@ STORES: dict[str, list[str] | None] = {
                           "person_profile"],
     "/data/clips.db": ["recent_clips", "person_profile"],
     "/data/giveaway.db": ["giveaway_status"],
+    "/data/vip_invites.db": ["vip_invites_recent"],
     "/data/assistant_facts.db": ["squad_facts", "person_profile"],
     "/data/soundboard.json": ["soundboard_buttons"],
     "/data/soundboard_personal.json": ["soundboard_buttons", "person_profile"],

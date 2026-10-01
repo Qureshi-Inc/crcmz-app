@@ -64,9 +64,35 @@ JSON for small config. See the table below.
 | `/data/assistant_chat.db` | Bot's own conversation history | — not exposed |
 | `/data/psn_tokens.json` | Live PSN access/refresh tokens | — never exposed |
 | `/data/video_jobs.db` | Clip forwarding work queue | — internal |
+| `/data/vip_invites.db` | VIP Clan Member invites sent to app.crcmz.me (emails stay out of the tool) | `vip_invites_recent` |
 
 **Rule:** every new data store needs an `@tool()` in `assistant.py` and an entry in
 `tests/test_mcp_coverage.py`. Run `python3 tests/test_mcp_coverage.py` to enforce this.
+
+---
+
+## VIP invites
+
+A paid VIP Clan Member gets a CRCMZ App account and a branded email (`vip_invites.py`).
+The Stripe bot (`discord-stripe-bot`, on `checkout.session.completed`) calls:
+
+```
+POST /api/invites/vip
+X-Invite-Secret: <VIP_INVITE_SECRET>
+{"email": "...", "gamerTag": "...", "platform": "...", "discordUsername": "...",
+ "stripeSessionId": "cs_...", "source": "stripe"}
+```
+
+New email → Zitadel user (email verified) + a 72-hour invite code, emailed as a link to
+`/invite`, where they set a password and are signed straight in. Existing account that
+can already sign in → a "you're VIP" email; its password is never touched. The Stripe
+session id makes webhook retries send once. Admins can also call it with their session
+and list sends with `GET /api/invites/vip`.
+
+Env: `VIP_INVITE_SECRET`, `SMTP_USER`, `SMTP_PASS` (required), and optionally `SMTP_HOST`
+(`smtp.gmail.com`), `SMTP_PORT` (587), `EMAIL_FROM_ADDRESS` (`auth@crcmz.me`),
+`EMAIL_FROM_NAME` (`CRCMZ`), `EMAIL_REPLY_TO` (`admin@crcmz.me`). The defaults match the
+SMTP provider Zitadel itself uses on auth.crcmz.me.
 
 ---
 

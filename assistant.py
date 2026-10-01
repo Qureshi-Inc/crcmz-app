@@ -482,6 +482,21 @@ def _slap_people() -> Any:
     }
 
 
+@tool("vip_invites_recent",
+      "Recent VIP Clan Members (paid $2/month on crcmz.me) and their CRCMZ App invite: "
+      "gamer tag, platform, Discord name, whether the invite email went out, and whether "
+      "they have finished setting up their account (status 'accepted'). "
+      "kind 'welcome' means they already had an account. Emails are not included.",
+      {"type": "object", "properties": {
+          "limit": {"type": "integer", "description": "1-50, default 10."}}, "required": []})
+def _vip_invites_recent(limit: int = 10) -> Any:
+    import vip_invites
+    rows = vip_invites.recent(max(1, min(int(limit or 10), 50)))
+    keep = ("gamer_tag", "platform", "discord_username", "kind", "status", "source",
+            "created_at", "accepted_at", "zitadel_id")
+    return {"invites": [{k: r.get(k) for k in keep} for r in rows]}
+
+
 @tool("giveaway_status",
       "The squad giveaway: whether one is running, its prize, who is entered, "
       "and where the win rotation stands.",
