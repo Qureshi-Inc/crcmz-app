@@ -15,12 +15,14 @@ import {
 } from './player'
 
 export function Art({ id, size = 96, className = 'slap-art' }: { id: string | null | undefined; size?: 96 | 300 | 600; className?: string }) {
-  const [broken, setBroken] = useState(false)
-  const src = artUrl(id, size)
-  useEffect(() => setBroken(false), [src])
+  // 0 = as cached, 1 = refetched once past the cache, 2 = give up and show the icon.
+  const [tries, setTries] = useState(0)
+  const base = artUrl(id, size)
+  useEffect(() => setTries(0), [base])
+  const src = base && tries === 1 ? `${base}&r=${Date.now()}` : base
   return (
     <span className={className} aria-hidden="true">
-      {src && !broken ? <img src={src} alt="" loading="lazy" decoding="async" onError={() => setBroken(true)} /> : <Icon name="slap" />}
+      {src && tries < 2 ? <img src={src} alt="" loading="lazy" decoding="async" onError={() => setTries((n) => n + 1)} /> : <Icon name="slap" />}
     </span>
   )
 }

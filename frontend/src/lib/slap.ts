@@ -39,7 +39,10 @@ export type Room = {
 }
 
 export const streamUrl = (id: string) => `/api/slap/stream/${id}`
-export const artUrl = (id: string | null | undefined, size: 96 | 300 | 600 = 96) => (id ? `/api/slap/art/${id}?size=${size}` : null)
+// Art is cached for a day; bump ART_V when cached copies may be bad (they were once,
+// while the library was unreachable), so every device fetches them again.
+const ART_V = 2
+export const artUrl = (id: string | null | undefined, size: 96 | 300 | 600 = 96) => (id ? `/api/slap/art/${id}?size=${size}&v=${ART_V}` : null)
 
 export function useSlapMe(enabled = true) {
   return useQuery({
