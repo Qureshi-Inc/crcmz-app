@@ -198,6 +198,7 @@ const SECTIONS: Section[] = [
         <li><b>Mattermost:</b> connect so the AI can post for you.</li>
         <li><b>MCP:</b> use the squad's data in Claude (see below).</li>
         <li><b>Watch:</b> where the camera bubbles sit on this device.</li>
+        <li><b>App → Tab bar:</b> pick the three pages on the bar at the bottom of your phone. Ask AI stays in the middle.</li>
       </ul>
     ),
   },

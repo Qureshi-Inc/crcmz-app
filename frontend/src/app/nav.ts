@@ -49,10 +49,14 @@ export const DESTS: Record<DestId, Dest> = {
   },
 }
 
-/** Mobile tab bar (< 1024 px). */
-export const TAB_IDS: DestId[] = ['squad', 'watch', 'clips']
-/** More sheet groups, research order (JOURNEY.md §IA → Mobile More sheet). */
-export const MORE_SQUAD: DestId[] = ['slap', 'whatsapp', 'giveaway', 'huddle', 'coach', 'ask']
+/**
+ * Mobile tab bar (< 1024 px): three slots the user picks (app/tabs.ts), Ask AI raised
+ * in the middle, then More. These are the pages a slot can hold, in sidebar order.
+ */
+export const TAB_CHOICES: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach']
+export const DEFAULT_TABS: DestId[] = ['squad', 'slap', 'watch']
+/** More sheet, Squad group: every slot choice that isn't in the bar right now. */
+export const moreSquad = (tabs: DestId[]): DestId[] => TAB_CHOICES.filter((id) => !tabs.includes(id))
 export const MORE_ACCOUNT: DestId[] = ['notifications', 'portal', 'settings', 'help', 'admin']
 /** Desktop sidebar (≥ 1024 px). */
 export const SIDEBAR_MAIN: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'ask']

@@ -1,7 +1,7 @@
 // PS-10 · Settings: sign-in methods, PSN status and connected apps. Each tab is a
 // sub-route (/app/settings/<tab>), so tabs deep-link and Back works.
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTitle } from '../../app/title'
@@ -21,6 +21,8 @@ import {
   savePushPrefs, sendTestPush, useInstall,
 } from '../../lib/pwa'
 import { HelpLink } from '../../components/HelpLink'
+import { DESTS, TAB_CHOICES } from '../../app/nav'
+import { isDefaultTabs, resetTabs, setTab, useTabs } from '../../app/tabs'
 
 const TABS = [
   { id: 'passkeys', label: 'Passkeys' },
@@ -399,9 +401,71 @@ function WatchTab() {
 function AppTab() {
   return (
     <>
+      <TabBarCard />
       <InstallCard />
       <NotificationsCard />
     </>
+  )
+}
+
+// ── Tab bar: the three pages in the phone's bottom bar ───────────────────────
+const SLOT_NAMES = ['first', 'second', 'fourth'] as const
+function TabBarCard() {
+  const tabs = useTabs()
+  const [slot, setSlot] = useState(0)
+  const { hash } = useLocation()
+  const card = useRef<HTMLElement>(null)
+  // "Change the tab bar" in the More sheet lands here.
+  useEffect(() => { if (hash === '#tabbar') card.current?.scrollIntoView({ block: 'start' }) }, [hash])
+  const picked = tabs[slot]!
+  const slotBtn = (i: number) => {
+    const d = DESTS[tabs[i]!]
+    return (
+      <button
+        key={i} type="button" className="tb-prev-slot" aria-pressed={slot === i} onClick={() => setSlot(i)}
+        aria-label={`Change the ${SLOT_NAMES[i]} button, now ${d.label}`}
+      >
+        <Icon name={d.icon} /><span>{d.label}</span>
+      </button>
+    )
+  }
+  return (
+    <section className="glass settings-card tb-card" id="tabbar" ref={card} aria-labelledby="st-tabbar-h">
+      <div className="settings-card-head">
+        <h2 className="section-h2" id="st-tabbar-h">Tab bar</h2>
+        {!isDefaultTabs(tabs) && <button type="button" className="btn btn-ghost" onClick={() => { resetTabs(); setSlot(0) }}>Reset</button>}
+      </div>
+      <p className="dim">Pick the three pages you use most for the bar at the bottom of your phone. Ask AI stays in the middle, and everything else is under More. Saved on this device.</p>
+      <div className="tb-prev" role="group" aria-label="Your tab bar">
+        {slotBtn(0)}
+        {slotBtn(1)}
+        <span className="tb-prev-ask" aria-hidden="true"><span className="tab-ask-orb"><Icon name="aiChat" /></span><span>Ask AI</span></span>
+        {slotBtn(2)}
+        <span className="tb-prev-more" aria-hidden="true"><Icon name="more" /><span>More</span></span>
+      </div>
+      <p className="tb-step" id="tb-pick-h">Tap a button above, then pick what goes there:</p>
+      <ul className="tb-choices" aria-labelledby="tb-pick-h">
+        {TAB_CHOICES.map((id) => {
+          const d = DESTS[id]
+          const at = tabs.indexOf(id)
+          return (
+            <li key={id}>
+              <button
+                type="button" className="tb-choice" aria-pressed={id === picked}
+                onClick={() => setTab(slot, id)}
+              >
+                <Icon name={d.icon} />
+                <span className="tb-choice-text">
+                  {d.label}
+                  {at >= 0 && at !== slot && <span className="tb-choice-note">In the bar</span>}
+                </span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+      <p className="meta">Picking a page that's already in the bar swaps the two.</p>
+    </section>
   )
 }
 

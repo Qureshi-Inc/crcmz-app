@@ -1,6 +1,6 @@
 // PS-0 · App shell: top bar + tab bar + More sheet below 1024 px, sidebar at and
 // above it. Owns the session probe, the shared squad store (badge) and the toast region.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Menu from '@radix-ui/react-dropdown-menu'
@@ -11,7 +11,7 @@ import { onWorkerNavigate } from '../lib/pwa'
 import { useStale } from '../components/states'
 import { useAccount, useAdminCheck, useSquad, SQUAD_MS, type Member } from '../lib/api'
 import { ApiError } from '../lib/http'
-import { useDesktop } from '../lib/media'
+import { useDesktop, useReducedMotion } from '../lib/media'
 import { useUnread } from '../lib/notifications'
 import { loginUrl, redirectToLogin, useSignedOut } from '../lib/session'
 import { useSwipeDown } from '../lib/gestures'
@@ -21,7 +21,8 @@ import { current as nowPlaying, usePlayer } from '../features/slap/player'
 import { WatchPage } from '../features/watch/WatchPage'
 import { CallBar, useHuddleBar, useWatchBar } from '../features/watch/WatchBar'
 import { useWatchSelect } from '../features/watch/session'
-import { DESTS, MORE_ACCOUNT, MORE_SQUAD, SIDEBAR_FOOT, SIDEBAR_MAIN, TAB_IDS, destForPath, type DestId } from './nav'
+import { DESTS, MORE_ACCOUNT, SIDEBAR_FOOT, SIDEBAR_MAIN, destForPath, moreSquad, type DestId } from './nav'
+import { useTabs } from './tabs'
 
 const MASCOT = '/footer-avatar.png'
 
@@ -227,39 +228,45 @@ function AccountControl({ variant = 'topbar' }: { variant?: 'topbar' | 'sidebar'
 }
 
 // ── Mobile tab bar + More sheet ──────────────────────────────────────────────
+// [slot] [slot] (Ask AI) [slot] [More]: the slots are the user's pick (Settings → App).
 function TabBar({ current, isAdmin }: { current: DestId | null; isAdmin: boolean }) {
   const [moreOpen, setMoreOpen] = useState(false)
   const badge = useLiveBadge()
   const location = useLocation()
+  const tabs = useTabs()
   useEffect(() => { setMoreOpen(false) }, [location.pathname])
-  const moreActive = current !== null && !TAB_IDS.includes(current)
+  const moreActive = current !== null && current !== 'ask' && !tabs.includes(current)
+  const tab = (id: DestId) => {
+    const d = DESTS[id]
+    const active = current === id
+    return (
+      <li key={id}>
+        <Link className="tab" to={d.path} data-active={active} aria-current={active ? 'page' : undefined}>
+          <Icon name={d.icon} />
+          <span className="tab-label">{d.label}</span>
+          {id === 'squad' && badge > 0 && (
+            <><span className="tab-badge" aria-hidden="true">{badge}</span><span className="sr-only">, {badge} in a game</span></>
+          )}
+        </Link>
+      </li>
+    )
+  }
   return (
     <nav className="tabbar chrome" aria-label="Tab bar">
       <ul>
-        {TAB_IDS.map((id) => {
-          const d = DESTS[id]
-          const active = current === id
-          return (
-            <li key={id}>
-              <Link className="tab" to={d.path} data-active={active} aria-current={active ? 'page' : undefined}>
-                <Icon name={d.icon} />
-                {d.label}
-                {id === 'squad' && badge > 0 && (
-                  <><span className="tab-badge" aria-hidden="true">{badge}</span><span className="sr-only">, {badge} in a game</span></>
-                )}
-              </Link>
-            </li>
-          )
-        })}
+        {tab(tabs[0]!)}
+        {tab(tabs[1]!)}
+        <AskTab active={current === 'ask'} />
+        {tab(tabs[2]!)}
         <li>
           <Dialog.Root open={moreOpen} onOpenChange={setMoreOpen}>
             <Dialog.Trigger asChild>
               <button type="button" className="tab" data-active={moreActive} aria-label={moreActive && current ? `More, current: ${DESTS[current].label}` : 'More'}>
                 <Icon name="more" />
-                More
+                <span className="tab-label">More</span>
               </button>
             </Dialog.Trigger>
-            <MoreSheet current={current} isAdmin={isAdmin} onClose={() => setMoreOpen(false)} />
+            <MoreSheet current={current} isAdmin={isAdmin} tabs={tabs} onClose={() => setMoreOpen(false)} />
           </Dialog.Root>
         </li>
       </ul>
@@ -267,7 +274,66 @@ function TabBar({ current, isAdmin }: { current: DestId | null; isAdmin: boolean
   )
 }
 
-function MoreSheet({ current, isAdmin, onClose }: { current: DestId | null; isAdmin: boolean; onClose: () => void }) {
+/**
+ * Ask AI: a raised orb in the middle of the bar. Tapping it launches the orb up into
+ * the middle of the screen, where it zooms until it fills the screen and opens the chat.
+ */
+function AskTab({ active }: { active: boolean }) {
+  const navigate = useNavigate()
+  const reduced = useReducedMotion()
+  const orb = useRef<HTMLSpanElement>(null)
+  const [flying, setFlying] = useState(false)
+  function go(e: MouseEvent<HTMLAnchorElement>) {
+    // Already there, a new-tab click, or reduced motion: a plain link.
+    if (active || reduced || flying || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+    const el = orb.current
+    if (!el || typeof el.animate !== 'function') return
+    e.preventDefault()
+    setFlying(true)
+    launch(el, () => navigate('/ask'), () => setFlying(false))
+  }
+  return (
+    <li className="tab-ask-slot">
+      <Link className="tab tab-ask" to="/ask" data-active={active} data-flying={flying} aria-current={active ? 'page' : undefined} onClick={go}>
+        <span className="tab-ask-orb" ref={orb}><Icon name="aiChat" /></span>
+        <span className="tab-label">Ask AI</span>
+      </Link>
+    </li>
+  )
+}
+
+/** The flight: a copy of the orb rises to the screen centre, spins, then zooms past the edges and fades over the chat. */
+function launch(from: HTMLElement, arrive: () => void, done: () => void) {
+  const r = from.getBoundingClientRect()
+  const fly = document.createElement('div')
+  fly.className = 'ask-fly'
+  fly.setAttribute('aria-hidden', 'true')
+  fly.innerHTML = from.innerHTML
+  Object.assign(fly.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` })
+  document.body.appendChild(fly)
+  const dx = window.innerWidth / 2 - (r.left + r.width / 2)
+  const dy = window.innerHeight * 0.42 - (r.top + r.height / 2)
+  // Big enough that the circle covers the corners from the centre.
+  const cover = (Math.hypot(window.innerWidth, window.innerHeight) / r.width) * 1.15
+  const icon = fly.firstElementChild as HTMLElement | null
+  const flight = fly.animate([
+    { transform: 'translate(0, 0) scale(1) rotate(0deg)', offset: 0 },
+    { transform: `translate(0, 8px) scale(.86) rotate(0deg)`, offset: 0.1 },
+    { transform: `translate(${dx}px, ${dy}px) scale(1.9) rotate(-14deg)`, offset: 0.48, easing: 'cubic-bezier(.5, 0, .2, 1)' },
+    { transform: `translate(${dx}px, ${dy}px) scale(1.7) rotate(4deg)`, offset: 0.6, easing: 'cubic-bezier(.7, 0, .9, .4)' },
+    { transform: `translate(${dx}px, ${dy}px) scale(${cover}) rotate(0deg)`, offset: 1 },
+  ], { duration: 820, easing: 'cubic-bezier(.3, .7, .4, 1)', fill: 'forwards' })
+  icon?.animate([{ opacity: 1 }, { opacity: 1, offset: 0.6 }, { opacity: 0 }], { duration: 820, fill: 'forwards' })
+  flight.finished.then(() => {
+    arrive()
+    done()
+    // The chat is underneath now: let it show through.
+    fly.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 320, easing: 'ease-out', fill: 'forwards' }).finished
+      .finally(() => fly.remove())
+  }, () => { fly.remove(); done() })
+}
+
+function MoreSheet({ current, isAdmin, tabs, onClose }: { current: DestId | null; isAdmin: boolean; tabs: DestId[]; onClose: () => void }) {
   const swipe = useSwipeDown(onClose)
   const group = (ids: DestId[]) =>
     ids.filter((id) => !DESTS[id].adminOnly || isAdmin).map((id) => {
@@ -293,10 +359,11 @@ function MoreSheet({ current, isAdmin, onClose }: { current: DestId | null; isAd
         </div>
         <nav aria-label="More">
           <h3 className="eyebrow more-group-label" id="more-squad">Squad</h3>
-          <ul className="more-list" aria-labelledby="more-squad">{group(MORE_SQUAD)}</ul>
+          <ul className="more-list" aria-labelledby="more-squad">{group(moreSquad(tabs))}</ul>
           <h3 className="eyebrow more-group-label" id="more-account">Account</h3>
           <ul className="more-list" aria-labelledby="more-account">{group(MORE_ACCOUNT)}</ul>
         </nav>
+        <Link className="btn btn-ghost more-edit" to="/settings/app#tabbar" onClick={onClose}><Icon name="edit" />Change the tab bar</Link>
       </Dialog.Content>
     </Dialog.Portal>
   )
