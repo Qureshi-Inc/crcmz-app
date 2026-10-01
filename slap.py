@@ -657,7 +657,8 @@ def build_router(get_session, is_admin) -> APIRouter:
                      cache: str = "private, max-age=3600") -> StreamingResponse:
         if not configured():
             raise HTTPException(503, "the music library is not configured")
-        headers = _jf_headers()
+        # Through Cloudflare the upstream may gzip; ask for the bytes as they are.
+        headers = {**_jf_headers(), "Accept-Encoding": "identity"}
         if rng := request.headers.get("range"):
             headers["Range"] = rng
         try:
@@ -670,7 +671,12 @@ def build_router(get_session, is_admin) -> APIRouter:
             raise HTTPException(404 if up.status_code == 404 else 502, "unavailable")
         out = {k: v for k in _STREAM_HEADERS if (v := up.headers.get(k))}
         out["Cache-Control"] = cache
-        return StreamingResponse(up.aiter_raw(), status_code=up.status_code, headers=out,
+        # Still encoded anyway: decode it here, so the length no longer applies.
+        encoded = up.headers.get("content-encoding", "identity").lower() != "identity"
+        if encoded:
+            out.pop("content-length", None)
+        body = up.aiter_bytes() if encoded else up.aiter_raw()
+        return StreamingResponse(body, status_code=up.status_code, headers=out,
                                  background=BackgroundTask(up.aclose))
 
     @router.get("/stream/{tid}")

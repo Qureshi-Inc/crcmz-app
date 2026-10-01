@@ -58,6 +58,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("X-Emby-Token") != "jf-key":
             return self._send(401, {})
         p = u.path
+        if p.startswith("/Items/") and p.endswith("/Images/Primary"):
+            # Like Cloudflare: gzip even an image, whatever the client asked for.
+            import gzip
+            return self._send(200, raw=gzip.compress(b"\xff\xd8\xffJPEG"), headers={
+                "Content-Type": "image/jpeg", "Content-Encoding": "gzip"})
         if p == "/Users" and method == "GET":
             return self._send(200, USERS)
         if p == "/Users/New":
@@ -222,6 +227,15 @@ def t_stream_range():
     assert r.status_code == 206 and r.content == b"ID3abc" and r.headers["content-range"] == "bytes 0-5/100"
     assert JF_LOG[-1][4].get("Range") == "bytes=0-5"
     assert "jf-key" not in json.dumps(dict(r.headers))
+
+
+def t_art_decoded():
+    as_("100")
+    JF_LOG.clear()
+    r = client.get(f"/api/slap/art/{'1' * 32}?size=96")
+    assert r.status_code == 200 and r.content == b"\xff\xd8\xffJPEG", r.content[:8]
+    assert r.headers["content-type"] == "image/jpeg" and "content-encoding" not in r.headers
+    assert JF_LOG[-1][4].get("Accept-Encoding") == "identity"
 
 
 def t_bad_ids():
