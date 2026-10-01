@@ -100,6 +100,10 @@ const FIXTURES = {
     { id: 'u1', email: 'moiz@example.com', display_name: 'moiz', state: 'USER_STATE_ACTIVE' },
     { id: 'u2', email: 'noor@example.com', display_name: 'Noor', state: 'USER_STATE_INITIAL' },
   ] },
+  '/api/invites/vip': { invites: [
+    { id: 1, email: 'noor@example.com', kind: 'invite', status: 'sent', error: '', source: 'admin',
+      gamer_tag: 'Noor', mm_username: '', created_at: '2026-09-30T10:00:00+00:00', accepted_at: null },
+  ] },
 }
 
 const SCREENS = [

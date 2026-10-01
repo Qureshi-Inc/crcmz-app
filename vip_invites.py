@@ -74,6 +74,11 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_RULES = "At least 8 characters with an uppercase letter, a lowercase letter, a number and a symbol."
 
 
+USERNAME_RULES = "3-22 characters: lowercase letters, numbers, dot, dash or underscore, starting with a letter."
+_USERNAME_RE = re.compile(r"^[a-z][a-z0-9._-]{2,21}$")
+_RESERVED = {"all", "channel", "here", "matterbot", "admin", "system", "slapper", "slaptastic"}
+
+
 class InviteError(Exception):
     """Something the caller should see, with a message safe to show."""
 
@@ -153,6 +158,16 @@ def recent(limit: int = 20) -> list[dict]:
 def password_ok(pw: str) -> bool:
     return (len(pw) >= 8 and any(ch.isupper() for ch in pw) and any(ch.islower() for ch in pw)
             and any(ch.isdigit() for ch in pw) and any(not ch.isalnum() for ch in pw))
+
+
+def clean_username(raw: str) -> str:
+    """Best-effort Mattermost-legal form of a name, for suggestions."""
+    u = re.sub(r"[^a-z0-9._-]", "", (raw or "").lower())
+    return re.sub(r"^[^a-z]+", "", u)[:22].rstrip("._-")
+
+
+def username_ok(name: str) -> bool:
+    return bool(_USERNAME_RE.match(name or "")) and name not in _RESERVED
 
 
 # ── Zitadel ─────────────────────────────────────────────────────────────────
@@ -238,11 +253,57 @@ def _get_tag(client: httpx.Client, user_id: str, key: str) -> str:
         return ""
 
 
-def accept(user_id: str, code: str, password: str) -> None:
-    """Spend the invite code and set the first password. Raises InviteError."""
+def username_taken(client: httpx.Client, name: str, user_id: str, email: str) -> bool:
+    """True when `name` belongs to someone else: a Mattermost account with another
+    email, or another person's chosen_username / mm_username tag."""
+    if mattermost_configured():
+        r = client.get(f"{MATTERMOST_URL}/api/v4/users/username/{name}",
+                       headers={"Authorization": f"Bearer {MATTERMOST_TOKEN}"})
+        if r.status_code == 200 and (r.json().get("email") or "").lower() != (email or "").lower():
+            return True
+        if r.status_code not in (200, 404):
+            raise InviteError("Could not check that username right now, try again.")
+    import crcmz_identity
+    for p in crcmz_identity.people():
+        if p["zitadel_id"] != user_id and name in (p["tags"].get("chosen_username"),
+                                                   p["tags"].get("mm_username")):
+            return True
+    return False
+
+
+def invite_context(user_id: str) -> dict:
+    """What the invite page shows: a suggested username and whether they are a VIP."""
+    out = {"suggested": "", "vip": False}
+    if not (ZITADEL_SERVICE_TOKEN and user_id.isdigit()):
+        return out
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+            r = client.get(f"{ZITADEL_ISSUER}/v2/users/{user_id}", headers=_headers())
+            human = ((r.json().get("user") or {}).get("human") or {}) if r.status_code == 200 else {}
+            out["suggested"] = (_get_tag(client, user_id, "chosen_username")
+                                or clean_username((human.get("profile") or {}).get("displayName", ""))
+                                or clean_username(((human.get("email") or {}).get("email", "")).split("@")[0]))
+            out["vip"] = bool(_get_tag(client, user_id, "vip"))
+    except httpx.HTTPError:
+        pass
+    if len(out["suggested"]) < 3:
+        out["suggested"] = ""
+    return out
+
+
+def accept(user_id: str, code: str, password: str, username: str = "") -> None:
+    """Check the username, spend the invite code, set the first password, then save
+    the username as `chosen_username` (Mattermost's @name, via Authentik) and
+    `mm_username` (identity graph). Raises InviteError."""
+    username = (username or "").strip().lower()
+    if username and not username_ok(username):
+        raise InviteError(USERNAME_RULES)
     if not password_ok(password):
         raise InviteError(PASSWORD_RULES)
     with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+        # Everything that can be wrong with the form is checked before the code is spent.
+        if username and username_taken(client, username, user_id, user_email(user_id)):
+            raise InviteError(f"@{username} is taken. Pick another username.")
         r = client.post(f"{ZITADEL_ISSUER}/v2/users/{user_id}/invite_code/verify",
                         headers=_headers(), json={"verificationCode": code})
         if r.status_code not in (200, 201):
@@ -254,6 +315,9 @@ def accept(user_id: str, code: str, password: str) -> None:
         if r.status_code not in (200, 201):
             logger.warning("vip: set password for %s answered %s %s", user_id, r.status_code, _zerr(r))
             raise InviteError(_zerr(r) or "Could not set that password.")
+        if username:
+            _set_tag(client, user_id, "chosen_username", username)
+            _set_tag(client, user_id, "mm_username", username)
     mark_accepted(user_id)
 
 
@@ -360,6 +424,12 @@ def known_mm_username(user_id: str, email: str) -> str:
     """Their `mm_username` tag, else their Mattermost account found by email (and
     then linked). '' when they have never signed in to Mattermost."""
     name = mm_username_for(user_id)
+    if not name and ZITADEL_SERVICE_TOKEN and user_id.isdigit():
+        try:
+            with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+                name = _get_tag(client, user_id, "chosen_username")
+        except httpx.HTTPError:
+            name = ""
     if name or not (email and mattermost_configured()):
         return name
     try:
@@ -375,9 +445,13 @@ def invite_url(user_id: str, code: str) -> str:
     return f"https://{PUBLIC_HOST}/invite?" + urlencode({"userId": user_id, "code": code})
 
 
-def _layout(title: str, body_html: str, cta_label: str, cta_url: str, footnote: str) -> str:
+def _layout(title: str, body_html: str, cta_label: str, cta_url: str, footnote: str,
+            vip: bool = True) -> str:
     """Neon-arcade shell (DESIGN.md tokens), table layout and inline styles for mail clients."""
     logo = f"https://{PUBLIC_HOST}/footer-avatar.png"
+    badge = ('<div style="display:inline-block;padding:5px 12px;border-radius:999px;background:#ffd24a;'
+             'color:#0b0616;font-size:11px;font-weight:800;letter-spacing:1.5px;'
+             'text-transform:uppercase;">VIP Clan Member</div>') if vip else ""
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark"><title>{html.escape(title)}</title></head>
@@ -390,7 +464,7 @@ def _layout(title: str, body_html: str, cta_label: str, cta_url: str, footnote: 
       <img src="{logo}" width="84" height="84" alt="CRCMZ" style="display:block;border:0;">
     </td></tr>
     <tr><td align="center" style="padding:10px 28px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
-      <div style="display:inline-block;padding:5px 12px;border-radius:999px;background:#ffd24a;color:#0b0616;font-size:11px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;">VIP Clan Member</div>
+      {badge}
       <h1 style="margin:18px 0 0;font-size:26px;line-height:1.2;font-weight:800;color:#f3ecff;">{html.escape(title)}</h1>
     </td></tr>
     <tr><td style="padding:16px 32px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;font-size:15px;line-height:1.6;color:#d9cff5;">
@@ -408,36 +482,40 @@ def _layout(title: str, body_html: str, cta_label: str, cta_url: str, footnote: 
 </body></html>"""
 
 
-def render_invite(name: str, email: str, url: str) -> tuple[str, str, str]:
+def render_invite(name: str, email: str, url: str, vip: bool = True) -> tuple[str, str, str]:
     """(subject, html, text) for a brand-new member."""
     hi = html.escape(name or "there")
     subject = "You're in — set up your CRCMZ App account"
+    why = "Thanks for going VIP. You now have" if vip else "You've been invited to the squad. You now have"
     body = (f"<p style=\"margin:0 0 12px;\">Hey {hi},</p>"
-            "<p style=\"margin:0 0 12px;\">Thanks for going VIP. You now have an account on "
+            f"<p style=\"margin:0 0 12px;\">{why} an account on "
             "<b style=\"color:#22e6ff;\">app.crcmz.me</b>, the squad's own app: chat into the PSN group, "
             "clips, watch parties, huddles and giveaways.</p>"
             f"<p style=\"margin:0;\">Your sign-in is <b style=\"color:#f3ecff;\">{html.escape(email)}</b>. "
-            "Pick a password to finish:</p>")
+            "Pick your username and a password to finish:</p>")
     foot = ("This link works once and expires in 3 days. After you're in, add a passkey under "
             "Settings so you can skip the password next time.<br><br>"
             f"Button not working? Paste this into your browser:<br>"
             f"<a href=\"{html.escape(url)}\" style=\"color:#22e6ff;word-break:break-all;\">{html.escape(url)}</a>")
-    text = (f"Hey {name or 'there'},\n\nThanks for going VIP. You now have an account on app.crcmz.me.\n"
-            f"Your sign-in is {email}. Set your password here (works once, expires in 3 days):\n\n{url}\n\n— CRCMZ\n")
-    return subject, _layout("Welcome to the CRCMZ App", body, "Set my password →", url, foot), text
+    text = (f"Hey {name or 'there'},\n\n{why} an account on app.crcmz.me.\n"
+            f"Your sign-in is {email}. Pick your username and password here (works once, expires in 3 days):"
+            f"\n\n{url}\n\n— CRCMZ\n")
+    return subject, _layout("Welcome to the CRCMZ App", body, "Set up my account →", url, foot, vip), text
 
 
-def render_welcome(name: str, email: str) -> tuple[str, str, str]:
+def render_welcome(name: str, email: str, vip: bool = True) -> tuple[str, str, str]:
     """(subject, html, text) for someone who already has a working account."""
     url = f"https://{PUBLIC_HOST}/app"
     hi = html.escape(name or "there")
-    subject = "You're a CRCMZ VIP"
+    subject = "You're a CRCMZ VIP" if vip else "Your CRCMZ App account is ready"
+    why = "Thanks for going VIP." if vip else "You've been invited to the squad."
     body = (f"<p style=\"margin:0 0 12px;\">Hey {hi},</p>"
-            "<p style=\"margin:0;\">Thanks for going VIP. Your CRCMZ App account "
+            f"<p style=\"margin:0;\">{why} Your CRCMZ App account "
             f"(<b style=\"color:#f3ecff;\">{html.escape(email)}</b>) is all set — sign in the usual way.</p>")
     foot = "Forgot your password? Reply to this email and we'll sort it out."
-    text = f"Hey {name or 'there'},\n\nThanks for going VIP. Sign in to the CRCMZ App: {url}\n\n— CRCMZ\n"
-    return subject, _layout("You're a VIP", body, "Open the app →", url, foot), text
+    text = f"Hey {name or 'there'},\n\n{why} Sign in to the CRCMZ App: {url}\n\n— CRCMZ\n"
+    return subject, _layout("You're a VIP" if vip else "You're in", body, "Open the app →", url, foot,
+                            vip), text
 
 
 def _with_mattermost(html_body: str, text_body: str, mm_username: str,
@@ -491,8 +569,10 @@ def send_email(to: str, subject: str, html_body: str, text_body: str) -> None:
 # ── The whole flow ──────────────────────────────────────────────────────────
 
 def invite_vip(email: str, *, name: str = "", source: str = "", stripe_session_id: str = "",
-               discord_username: str = "", gamer_tag: str = "", platform: str = "") -> dict:
-    """Make sure `email` has an account and send the right email. Blocking (SMTP)."""
+               discord_username: str = "", gamer_tag: str = "", platform: str = "",
+               vip: bool = True) -> dict:
+    """Make sure `email` has an account and send the right email. Blocking (SMTP).
+    `vip=False` is a plain member invite from an admin: no VIP tag or badge."""
     email = (email or "").strip().lower()
     if not _EMAIL_RE.match(email):
         raise InviteError("a valid email is required")
@@ -516,12 +596,13 @@ def invite_vip(email: str, *, name: str = "", source: str = "", stripe_session_i
                 name = ((user.get("human") or {}).get("profile") or {}).get("displayName", "")
             if not created and _can_sign_in(client, user_id):
                 kind = "welcome"
-                subject, html_body, text_body = render_welcome(name, email)
+                subject, html_body, text_body = render_welcome(name, email, vip)
             else:
                 kind = "invite"
-                subject, html_body, text_body = render_invite(name, email,
-                                                              invite_url(user_id, _invite_code(client, user_id)))
-            _tag_vip(client, user_id)
+                subject, html_body, text_body = render_invite(
+                    name, email, invite_url(user_id, _invite_code(client, user_id)), vip)
+            if vip:
+                _tag_vip(client, user_id)
         mm_username, join_url = "", ""
         if mattermost_configured():
             # Best effort: a Mattermost hiccup must not cost them the app invite.

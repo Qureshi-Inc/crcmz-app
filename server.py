@@ -371,7 +371,7 @@ import portal as portal_mod
 
 def _portal_page(error: str = "", ok: str = "", known_mm: str = "") -> str:
     """Render the single-page portal wizard (only reached once unlocked)."""
-    from portal import NPSSO_TOKEN_URL, PSN_LOGIN_URL, mattermost_usernames
+    from portal import NPSSO_TOKEN_URL, PSN_LOGIN_URL
 
     # On success we replace the whole wizard with a celebration screen.
     if ok:
@@ -438,22 +438,15 @@ def _portal_page(error: str = "", ok: str = "", known_mm: str = "") -> str:
     # "Who are you?" dropdown of Mattermost users, so each link ties to a person
     # (like the Apple Music re-link page). Falls back to a text field if the
     # user list can't be fetched.
-    # A signed-in person whose Mattermost name is already known (their mm_username
-    # tag, written when the account was provisioned) skips the picker entirely.
-    names = [] if known_mm else mattermost_usernames()
+    # Who is linking comes from their CRCMZ sign-in, so nobody picks a name here.
+    # known_mm is the name to show (see _known_mm_username); the text field is
+    # only for an unauthenticated local-network visitor.
     if known_mm:
         who_input = (f'<input type="hidden" name="mm_username" value="{_html.escape(known_mm)}">'
                      f'<div class="known-mm">Linking as <b>@{_html.escape(known_mm)}</b></div>')
-    elif names:
-        opts = '<option value="" disabled selected>Select your name…</option>' + "".join(
-            f'<option value="{n}">{n}</option>' for n in names
-        )
-        who_input = f'<select name="mm_username" id="mm" required>{opts}</select>'
     else:
-        who_input = (
-            '<input name="mm_username" id="mm" '
-            'placeholder="your mattermost username" required>'
-        )
+        who_input = '<input name="mm_username" id="mm" placeholder="your username" required>'
+    who_label = "" if known_mm else '<label for="mm">Who are you?</label>'
 
     return f"""<!doctype html>
 <html lang="en"><head>
@@ -636,10 +629,9 @@ def _portal_page(error: str = "", ok: str = "", known_mm: str = "") -> str:
         <div class="step-head">
           <span class="badge">3</span>
           <div><h2>Paste &amp; link</h2>
-            <p>Tell us who you are, paste the token, and you're done.</p></div>
+            <p>Paste the token and you're done.</p></div>
         </div>
-        <label>Who are you?</label>
-        {who_input}
+        {who_label}{who_input}
         <label>Your token</label>
         <textarea name="npsso" id="npsso" oninput="mark(3)"
           placeholder='{{"npsso":"…"}} — paste the whole thing, we sort it out'></textarea>
@@ -1661,7 +1653,8 @@ async def vip_invite(request: Request):
         result = await asyncio.to_thread(
             _vip.invite_vip, s("email"), name=s("name"), source=s("source") or "api",
             stripe_session_id=s("stripeSessionId"), discord_username=s("discordUsername"),
-            gamer_tag=s("gamerTag"), platform=s("platform"))
+            gamer_tag=s("gamerTag"), platform=s("platform"),
+            vip=body.get("vip", True) is not False)
     except _vip.InviteError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
     return JSONResponse(result)
@@ -1693,9 +1686,11 @@ async def vip_invite_list(request: Request, limit: int = 50):
     return JSONResponse({"invites": _vip.recent(limit)})
 
 
-def _invite_page(user_id: str, code: str, error: str = "") -> str:
+def _invite_page(user_id: str, code: str, error: str = "", username: str = "",
+                 vip: bool = False) -> str:
     e = _html.escape
     err_html = f'<div class="msg err">⚠️ {e(error)}</div>' if error else ""
+    badge = '<span class="badge">VIP Clan Member</span>' if vip else ""
     return f"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -1736,13 +1731,19 @@ def _invite_page(user_id: str, code: str, error: str = "") -> str:
   .err {{ background:rgba(255,107,139,.12); border:1px solid rgba(255,107,139,.4); color:#ffc0cd; }}
 </style></head>
 <body><div class="card">
-  <span class="badge">VIP Clan Member</span>
+  {badge}
   <h1>Welcome to the CRCMZ App</h1>
-  <p>Pick a password and you're in. You can add a passkey in Settings afterwards.</p>
+  <p>Pick your username and a password and you're in. You can add a passkey in Settings afterwards.</p>
   {err_html}
   <form method="post" action="/invite" id="f">
     <input type="hidden" name="userId" value="{e(user_id)}">
     <input type="hidden" name="code" value="{e(code)}">
+    <input type="hidden" name="vip" value="{'1' if vip else ''}">
+    <label for="un">Username</label>
+    <input name="username" id="un" required minlength="3" maxlength="22" value="{e(username)}"
+      pattern="[a-z][a-z0-9._\\-]{{2,21}}" autocapitalize="none" autocorrect="off" spellcheck="false"
+      autocomplete="username" oninput="this.value=this.value.toLowerCase()">
+    <p style="margin-top:8px;font-size:12.5px">Your @name in squad chat (Mattermost) and on the app. {e(_vip.USERNAME_RULES)}</p>
     <label for="pw">New password</label>
     <input type="password" name="pw" id="pw" required minlength="8" autocomplete="new-password">
     <label for="pw2">Confirm password</label>
@@ -1764,7 +1765,8 @@ async def invite_page(userId: str = "", code: str = ""):
     if not userId.isdigit() or not code:
         return HTMLResponse(_invite_page("", "", "This invite link is incomplete. "
                                          "Open it straight from the email."), status_code=400)
-    return HTMLResponse(_invite_page(userId, code),
+    ctx = await asyncio.to_thread(_vip.invite_context, userId)
+    return HTMLResponse(_invite_page(userId, code, username=ctx["suggested"], vip=ctx["vip"]),
                         headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
 
 
@@ -1774,18 +1776,22 @@ async def invite_accept(request: Request):
     user_id = str(form.get("userId") or "").strip()
     code = str(form.get("code") or "").strip()
     pw = str(form.get("pw") or "")
+    username = str(form.get("username") or "").strip().lower()
+    vip = bool(form.get("vip"))
+    page = lambda msg: _invite_page(user_id, code, msg, username, vip)  # noqa: E731
     if not user_id.isdigit() or not code:
         return HTMLResponse(_invite_page("", "", "This invite link is incomplete."), status_code=400)
+    if not _vip.username_ok(username):
+        return HTMLResponse(page(_vip.USERNAME_RULES), status_code=400)
     if pw != str(form.get("pw2") or ""):
-        return HTMLResponse(_invite_page(user_id, code, "The two passwords don't match."), status_code=400)
+        return HTMLResponse(page("The two passwords don't match."), status_code=400)
     try:
-        await asyncio.to_thread(_vip.accept, user_id, code, pw)
+        await asyncio.to_thread(_vip.accept, user_id, code, pw, username)
     except _vip.InviteError as e:
-        return HTMLResponse(_invite_page(user_id, code, str(e)), status_code=400)
+        return HTMLResponse(page(str(e)), status_code=400)
     except Exception as e:  # noqa: BLE001
         logger.error("invite: accept error: %s", e)
-        return HTMLResponse(_invite_page(user_id, code, "Auth service unavailable, try again."),
-                            status_code=503)
+        return HTMLResponse(page("Auth service unavailable, try again."), status_code=503)
 
     # Sign them straight in with the password they just chose.
     import httpx as _hx
@@ -6205,9 +6211,11 @@ def _known_mm_username(request: Request) -> str:
     sub = session.get("sub", "")
     if not sub:
         return ""
+    email = session.get("email", "")
     existing = portal_mod.find_by_zitadel_id(sub) or {}
     return ((existing.get("mm_username") or "").strip()
-            or _vip.known_mm_username(sub, session.get("email", "")))
+            or _vip.known_mm_username(sub, email)
+            or _vip.clean_username(email.split("@")[0]))
 
 
 @app.get("/portal", response_class=HTMLResponse)

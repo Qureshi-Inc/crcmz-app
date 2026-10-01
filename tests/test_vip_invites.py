@@ -8,6 +8,7 @@ Plain asserts, no pytest — run inside the app image where the deps live:
 Zitadel is a fake httpx transport and SMTP is replaced, so nothing leaves the box.
 """
 
+import base64
 import json
 import os
 import sys
@@ -25,7 +26,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import httpx  # noqa: E402
 
+import crcmz_identity  # noqa: E402
 import vip_invites  # noqa: E402
+
+crcmz_identity.people = lambda: []
 
 FAILED: list[str] = []
 PASSED = 0
@@ -101,6 +105,10 @@ class FakeMattermost:
             return httpx.Response(200, json={"id": "T1", "invite_id": "INV"})
         if path.startswith("/api/v4/users/email/"):
             u = self.users.get(path.rsplit("/", 1)[1])
+            return httpx.Response(200, json=u) if u else httpx.Response(404, json={})
+        if path.startswith("/api/v4/users/username/"):
+            name = path.rsplit("/", 1)[1]
+            u = next(({**v, "email": e} for e, v in self.users.items() if v["username"] == name), None)
             return httpx.Response(200, json=u) if u else httpx.Response(404, json={})
         if path.startswith("/api/v4/teams/T1/members/"):
             return httpx.Response(200 if path.rsplit("/", 1)[1] in self.members else 404, json={})
@@ -295,7 +303,53 @@ def flow_tests():
         out = vip_invites.invite_vip("n@b.co")
         assert out["kind"] == "invite" and out["mm_username"] == "" and len(sent) == 1
 
-    for fn in (vip_without_mattermost_gets_join_link, existing_mattermost_user_linked_and_named,
+    def tags(fake, uid):
+        return {c[1].rsplit("/", 1)[1]: base64.b64decode(c[2]["value"]).decode()
+                for c in fake.calls if c[0] == "POST" and f"/users/{uid}/metadata/" in c[1]}
+
+    def accept_saves_chosen_username():
+        fresh_db()
+        z = FakeZitadel()
+        install(Both(z, FakeMattermost()))
+        uid = vip_invites.invite_vip("n@b.co")["zitadel_id"]
+        vip_invites.accept(uid, f"CODE{uid}", "Str0ng!pass", "BabyBottle")
+        t = tags(z, uid)
+        assert t.get("chosen_username") == "babybottle" and t.get("mm_username") == "babybottle", t
+
+    def bad_or_taken_username_keeps_the_code():
+        fresh_db()
+        z = FakeZitadel()
+        install(Both(z, FakeMattermost(users={"other@b.co": {"id": "u9", "username": "taken"}})))
+        uid = vip_invites.invite_vip("n@b.co")["zitadel_id"]
+        crcmz_identity.people = lambda: [{"zitadel_id": "555", "email": "x@b.co",
+                                          "tags": {"chosen_username": "claimed"}}]
+        try:
+            for bad in ("x", "1abc", "admin", "taken", "claimed"):
+                try:
+                    vip_invites.accept(uid, f"CODE{uid}", "Str0ng!pass", bad)
+                except vip_invites.InviteError:
+                    continue
+                raise AssertionError(f"accepted {bad!r}")
+        finally:
+            crcmz_identity.people = lambda: []
+        assert not any(c[1].endswith("/verify") for c in z.calls), "spent the code on a bad username"
+
+    def username_suggestion():
+        assert vip_invites.clean_username("Baby Bottle Pop!") == "babybottlepop"
+        assert vip_invites.username_ok("faze.capz_2") and not vip_invites.username_ok("ab")
+
+    def non_vip_invite_has_no_badge_or_tag():
+        fresh_db()
+        z = FakeZitadel()
+        sent = install(z)
+        vip_invites.invite_vip("m@b.co", name="Mo", vip=False, source="admin")
+        assert not any("/metadata/vip" in c[1] for c in z.calls), "tagged a non-VIP as vip"
+        assert "VIP Clan Member" not in sent[0]["html"] and "going VIP" not in sent[0]["text"]
+        assert "username" in sent[0]["text"].lower()
+
+    for fn in (accept_saves_chosen_username, bad_or_taken_username_keeps_the_code,
+               username_suggestion, non_vip_invite_has_no_badge_or_tag,
+               vip_without_mattermost_gets_join_link, existing_mattermost_user_linked_and_named,
                sweep_links_after_first_sso_login, mattermost_failure_still_sends_app_invite,
                new_member_gets_account_and_invite_link, stripe_retry_sends_once,
                existing_account_gets_welcome_and_no_code, existing_account_without_password_gets_invite,
@@ -341,9 +395,38 @@ def http_tests():
         assert "<script>x</script>" not in r.text
 
     def mismatched_passwords():
-        r = client.post("/invite", data={"userId": "123", "code": "ABC", "pw": "Str0ng!pass",
-                                         "pw2": "other"})
+        r = client.post("/invite", data={"userId": "123", "code": "ABC", "username": "someone",
+                                         "pw": "Str0ng!pass", "pw2": "other"})
         assert r.status_code == 400 and "match" in r.text
+
+    def invite_page_has_username_field():
+        server._vip.invite_context = lambda uid: {"suggested": "babybottle", "vip": True}
+        r = client.get("/invite?userId=123&code=ABC")
+        assert 'name="username"' in r.text and 'value="babybottle"' in r.text and "VIP Clan Member" in r.text
+        server._vip.invite_context = lambda uid: {"suggested": "", "vip": False}
+        assert "VIP Clan Member" not in client.get("/invite?userId=123&code=ABC").text
+
+    def invite_post_checks_username_first():
+        spent = []
+        server._vip.accept = lambda *a: spent.append(a)
+        r = client.post("/invite", data={"userId": "123", "code": "ABC", "username": "x!",
+                                         "pw": "Str0ng!pass", "pw2": "Str0ng!pass"})
+        assert r.status_code == 400 and not spent, (r.status_code, spent)
+
+    def admin_invite_vip_flag():
+        r = client.post("/api/invites/vip", headers={"X-Invite-Secret": "vip-secret-for-tests"},
+                        json={"email": "a@b.co", "vip": False, "source": "admin"})
+        assert r.status_code == 200 and calls[-1][1]["vip"] is False
+        client.post("/api/invites/vip", headers={"X-Invite-Secret": "vip-secret-for-tests"},
+                    json={"email": "a@b.co"})
+        assert calls[-1][1]["vip"] is True
+
+    def portal_never_shows_a_picker():
+        server._vip.known_mm_username = lambda sub, email: ""
+        server.portal_mod.find_by_zitadel_id = lambda sub: None
+        cookie = server._signer().dumps(server._make_session("394", "Jo.Doe@b.co"))
+        r = client.get("/portal", cookies={server._SESSION_COOKIE: cookie})
+        assert '<select' not in r.text and 'value="jo.doe"' in r.text, r.text[-3000:]
 
     def logo_is_public():
         r = client.get("/footer-avatar.png")
@@ -371,7 +454,9 @@ def http_tests():
 
     for fn in (portal_skips_picker_when_name_known, portal_link_uses_known_name_over_form,
                invite_api_needs_a_credential, invite_api_with_secret, invite_page_is_public,
-               invite_page_escapes_code, mismatched_passwords, logo_is_public):
+               invite_page_escapes_code, mismatched_passwords, logo_is_public,
+               invite_page_has_username_field, invite_post_checks_username_first,
+               admin_invite_vip_flag, portal_never_shows_a_picker):
         check(fn.__name__, fn)
 
 

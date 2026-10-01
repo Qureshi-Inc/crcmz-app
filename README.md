@@ -71,31 +71,43 @@ JSON for small config. See the table below.
 
 ---
 
-## VIP invites
+## Member invites
 
-A paid VIP Clan Member gets a CRCMZ App account and a branded email (`vip_invites.py`).
-The Stripe bot (`discord-stripe-bot`, on `checkout.session.completed`) calls:
+Everyone joins through one pipeline (`vip_invites.py`), started one of two ways:
+
+* **Self-service (VIP):** a Stripe checkout completes, and the Stripe bot
+  (`discord-stripe-bot`, on `checkout.session.completed`) calls the endpoint below.
+* **Manual:** an admin opens **/app/admin → Invites → Invite member** (email, optional
+  name/gamer tag, optional VIP). It calls the same endpoint with their session.
 
 ```
 POST /api/invites/vip
-X-Invite-Secret: <VIP_INVITE_SECRET>
-{"email": "...", "gamerTag": "...", "platform": "...", "discordUsername": "...",
- "stripeSessionId": "cs_...", "source": "stripe"}
+X-Invite-Secret: <VIP_INVITE_SECRET>          (or an admin session)
+{"email": "...", "name": "...", "gamerTag": "...", "platform": "...", "discordUsername": "...",
+ "stripeSessionId": "cs_...", "source": "stripe" | "admin", "vip": true}
 ```
 
-New email → Zitadel user (email verified) + a 72-hour invite code, emailed as a link to
-`/invite`, where they set a password and are signed straight in. Existing account that
-can already sign in → a "you're VIP" email; its password is never touched. The Stripe
-session id makes webhook retries send once. Admins can also call it with their session
-and list sends with `GET /api/invites/vip`.
+A new email gets a Zitadel user (email verified) and a 72-hour invite code, sent as a link to
+`/invite`. On that page the member **picks their username** (suggested from their gamer tag)
+and a password, then is signed straight in. The username is checked (format, Mattermost, other
+people's tags) *before* the code is spent, then saved as the `chosen_username` and
+`mm_username` tags. An existing account that can already sign in gets a "you're in" email
+instead, and its password is never touched. `vip` (default true) controls the `vip` tag
+and the VIP copy. The Stripe session id makes webhook retries send only once.
+`GET /api/invites/vip` lists the sends.
 
-Mattermost (mm.qureshi.io) signs in through Authentik → Zitadel, so a VIP uses this same
-CRCMZ account there. The app never creates Mattermost accounts: the bot token can only make
-password accounts, and those clash with the SSO login (Authentik sends the email as the
-OpenID subject). Instead, the invite email carries the crcmz team's join link. Once the
-member has signed in, a background sweep (every 2 minutes) puts them on the team and writes
-their `mm_username` tag. The PSN portal does the same lookup by email, so a signed-in member
-is never asked to pick their name.
+The username follows them without being asked for again:
+
+* **Mattermost** (mm.qureshi.io) signs in through Authentik → Zitadel. The Authentik
+  Zitadel source requests the `urn:zitadel:iam:user:metadata` scope, and the mapping
+  `zitadel-chosen-username` stores `chosen_username` on the Authentik user at first
+  enrollment. The Mattermost provider's `mattermost-profile` scope mapping sends it as
+  `preferred_username`, and Mattermost has `UsePreferredUsername` on. The app never creates
+  Mattermost accounts, because bot-made password accounts clash with SSO. The invite email
+  carries the team join link, and a 2-minute background sweep adds the member to the
+  `crcmz` team once they have signed in.
+* **PSN link** (`/portal`): there is no name picker. A signed-in member is linked under their
+  portal record, their `chosen_username`/`mm_username` tag, or else their email prefix.
 
 Env: `VIP_INVITE_SECRET`, `SMTP_USER`, `SMTP_PASS` (required), and optionally `SMTP_HOST`
 (`smtp.gmail.com`), `SMTP_PORT` (587), `EMAIL_FROM_ADDRESS` (`auth@crcmz.me`),
@@ -139,6 +151,7 @@ Zitadel user metadata tags are the single source of truth for cross-platform ide
 | `wa_phone` | WhatsApp phone number |
 | `wa_names` | Known display names in WhatsApp messages |
 | `mm_username` | Mattermost username |
+| `chosen_username` | The username picked on the invite page; Mattermost's @name via Authentik |
 
 `psn_id` falls back to the portal's PSN link when the tag is unset.
 `wa_jid` falls back to the most recent `sender_jid` in `whatsapp_messages` by `wa_names`.

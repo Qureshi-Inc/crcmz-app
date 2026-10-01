@@ -11,7 +11,7 @@ import { ErrorStrip, SkeletonRows, StaleMarker, useStale } from '../../component
 import { toast } from '../../components/toast'
 import { ApiError, getJSON } from '../../lib/http'
 import {
-  fmtDate, resetUserPassword, tokenState, type AdminUser, type OpsStatus, type PipelineHealth, type PsnAccount, type PsnStatus,
+  fmtDate, inviteMember, resetUserPassword, type Invite, tokenState, type AdminUser, type OpsStatus, type PipelineHealth, type PsnAccount, type PsnStatus,
   type VideoJobs,
 } from '../../lib/account'
 
@@ -39,6 +39,7 @@ export function AdminPage() {
       <div className="admin-lists">
         <PsnAccounts />
         <Users q={users} />
+        <Invites />
       </div>
       <section className="glass admin-card" aria-labelledby="ad-sc">
         <h2 className="section-h2" id="ad-sc">Shortcuts</h2>
@@ -280,6 +281,95 @@ function ResetDialog({ user, onClose }: { user: AdminUser | null; onClose: () =>
             <div className="dialog-actions">
               <Dialog.Close asChild><button type="button" className="btn btn-secondary">Cancel</button></Dialog.Close>
               <button type="submit" className="btn btn-primary" disabled={busy || !pw || !conf}>{busy ? 'Resetting…' : `Reset ${name}'s password`}</button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
+function Invites() {
+  const [open, setOpen] = useState(false)
+  const q = useQuery({
+    queryKey: ['admin', 'invites'],
+    queryFn: ({ signal }) => getJSON<{ invites: Invite[] }>('/api/invites/vip?limit=15', signal),
+  })
+  const list = q.data?.invites ?? []
+  return (
+    <section className="glass admin-card" aria-labelledby="ad-inv">
+      <div className="settings-card-head">
+        <h2 className="section-h2" id="ad-inv">Invites</h2>
+        <button type="button" className="btn btn-primary" onClick={() => setOpen(true)}><Icon name="plus" />Invite member</button>
+      </div>
+      <p className="dim">They get an email, pick their username and password, and that name follows them into Mattermost and the PSN link.</p>
+      {q.data === undefined && q.isError ? <ErrorStrip text="Couldn't load invites" onRetry={() => q.refetch()} />
+        : q.data === undefined ? <SkeletonRows n={3} height={40} />
+        : list.length === 0 ? <p className="meta">No invites sent yet.</p>
+        : (
+          <ul className="rows acct-rows">
+            {list.map((v) => (
+              <li key={v.id} className="acct-row">
+                <span className="acct-row-text">
+                  <span className="acct-row-title">{v.gamer_tag || v.email}{v.mm_username ? <span className="meta"> · @{v.mm_username}</span> : null}</span>
+                  <span className="meta">{v.email} · {v.status === 'failed' ? `failed: ${v.error}` : v.status === 'accepted' ? 'joined' : v.kind === 'welcome' ? 'already had an account' : 'waiting'} · {v.source || 'api'} · {fmtDate(Date.parse(v.created_at) / 1000)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      <InviteDialog open={open} onClose={() => { setOpen(false); q.refetch() }} />
+    </section>
+  )
+}
+
+function InviteDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
+  const [vip, setVip] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const valid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())
+
+  function close() { setEmail(''); setName(''); setVip(false); setErr(''); onClose() }
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (!valid) { setErr('Enter a valid email.'); return }
+    setBusy(true)
+    setErr('')
+    try {
+      const r = await inviteMember({ email: email.trim(), name: name.trim(), vip })
+      toast(r.duplicate ? 'Already invited' : r.kind === 'welcome' ? `${email.trim()} already had an account; sent a heads-up` : `Invite sent to ${email.trim()}`, 'success')
+      close()
+    } catch (e2) {
+      setErr(e2 instanceof ApiError && e2.status === 403 ? 'Admins only.' : e2 instanceof ApiError && e2.detail ? e2.detail : "Couldn't send it. Try again.")
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(v) => { if (!v) close() }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="scrim" />
+        <Dialog.Content className="dialog" aria-describedby="inv-desc">
+          <Dialog.Title className="dialog-title">Invite a member</Dialog.Title>
+          <p id="inv-desc" className="dim">Creates their account and emails a link. They choose their username there.</p>
+          <form className="form-stack" onSubmit={submit} noValidate>
+            <div>
+              <label className="field-label" htmlFor="inv-email">Email</label>
+              <input id="inv-email" className="input" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="inv-name">Name or gamer tag</label>
+              <input id="inv-name" className="input" autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} aria-describedby="inv-name-hint" />
+              <p className="field-hint" id="inv-name-hint">Optional. Used in the email and to suggest a username.</p>
+            </div>
+            <label className="check-row">
+              <input type="checkbox" checked={vip} onChange={(e) => setVip(e.target.checked)} /> VIP Clan Member
+            </label>
+            {err && <p className="field-err" role="alert">{err}</p>}
+            <div className="dialog-actions">
+              <Dialog.Close asChild><button type="button" className="btn btn-secondary">Cancel</button></Dialog.Close>
+              <button type="submit" className="btn btn-primary" disabled={busy || !email}>{busy ? 'Sending…' : 'Send invite'}</button>
             </div>
           </form>
         </Dialog.Content>

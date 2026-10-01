@@ -101,5 +101,14 @@ export const revokeMcp = () => request<{ ok: boolean }>('/auth/settings/mcp/revo
 export const resetUserPassword = (id: string, newPassword: string) =>
   request<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/reset-password`, { body: { newPassword } })
 
+export type Invite = {
+  id: number; email: string; kind: string; status: string; error: string; source: string
+  gamer_tag: string; mm_username: string; created_at: string; accepted_at: string | null
+}
+export type InviteResult = { ok: boolean; kind: string; zitadel_id: string; mm_username?: string; duplicate?: boolean }
+/** Account + branded email; the member picks their username on the invite page. SMTP can be slow. */
+export const inviteMember = (body: { email: string; name: string; vip: boolean }) =>
+  request<InviteResult>('/api/invites/vip', { body: { ...body, source: 'admin' }, timeoutMs: 45_000 })
+
 export const MCP_URL = 'https://app.crcmz.me/mcp'
 export const MCP_CONFIG = JSON.stringify({ mcpServers: { crcmz: { type: 'http', url: MCP_URL } } }, null, 2)
