@@ -247,7 +247,16 @@ def route_tests():
             notifications.wa_send = old
         assert out["dms"]["whatsapp"] == 0 and len(MM) == 1
 
-    for fn in (a_mention_goes_to_inbox_push_whatsapp_and_mattermost, mattermost_gets_the_email_to_fall_back_on, a_broadcast_never_dms,
+    def a_test_dm_ignores_the_quiet_window_and_reports_each_channel():
+        reset()
+        notifications.route("mentions", "x", only=["u-moiz"], exclude="u-zub", tag="t")
+        out = notifications.test_dm("u-moiz")
+        assert out == {"whatsapp": True, "mattermost": True} and len(WA) == 2 and len(MM) == 2, (out, WA, MM)
+        assert notifications.test_dm("u-zed") == {"whatsapp": None, "mattermost": None}, "no contacts, nothing sent"
+        notifications.save_channels("u-moiz", {"whatsapp": False})
+        assert notifications.test_dm("u-moiz")["whatsapp"] is None
+
+    for fn in (a_test_dm_ignores_the_quiet_window_and_reports_each_channel, a_mention_goes_to_inbox_push_whatsapp_and_mattermost, mattermost_gets_the_email_to_fall_back_on, a_broadcast_never_dms,
                switched_off_channels_are_respected, a_burst_of_mentions_dms_once,
                nobody_is_dmed_about_their_own_mention_or_without_a_contact, whatsapp_targets,
                a_failing_sender_does_not_stop_the_rest):

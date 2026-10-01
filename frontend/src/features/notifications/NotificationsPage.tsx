@@ -8,7 +8,7 @@ import { HelpLink } from '../../components/HelpLink'
 import { Icon, type IconName } from '../../components/Icon'
 import { ErrorStrip, SkeletonRows, useNow } from '../../components/states'
 import { toast } from '../../components/toast'
-import { ago, markRead, saveChannels, useChannels, useInbox, type Notice } from '../../lib/notifications'
+import { ago, markRead, saveChannels, testDm, useChannels, useInbox, type Notice } from '../../lib/notifications'
 
 const FILTERS: { id: string; label: string }[] = [
   { id: '', label: 'All' },
@@ -97,6 +97,18 @@ export function NotificationsPage() {
 function Delivery() {
   const ch = useChannels()
   const qc = useQueryClient()
+  const [testing, setTesting] = useState(false)
+  async function test() {
+    setTesting(true)
+    try {
+      const r = await testDm()
+      const sent = Object.entries(r).filter(([, v]) => v === true).map(([k]) => (k === 'whatsapp' ? 'WhatsApp' : 'Mattermost'))
+      const failed = Object.entries(r).filter(([, v]) => v === false).map(([k]) => (k === 'whatsapp' ? 'WhatsApp' : 'Mattermost'))
+      if (failed.length) toast(`${failed.join(' and ')} didn't go through${sent.length ? `; ${sent.join(' and ')} did` : ''}`, 'error')
+      else if (sent.length) toast(`Sent. Check ${sent.join(' and ')}.`, 'success')
+      else toast('Nothing to send to: both are off or not linked', 'info')
+    } catch { toast("Couldn't send a test", 'error') } finally { setTesting(false) }
+  }
   async function set(id: string, on: boolean) {
     qc.setQueryData(['notifications', 'channels'], (d: typeof ch.data) => (d ? { ...d, prefs: { ...d.prefs, [id]: on } } : d))
     try { await saveChannels({ [id]: on }) } catch {
@@ -126,7 +138,12 @@ function Delivery() {
             ))}
           </fieldset>
         )}
-      <div><Link className="btn btn-ghost" to="/settings/app">Phone and desktop pop-ups</Link></div>
+      <div className="notif-delivery-acts">
+        <button type="button" className="btn btn-secondary" onClick={() => { void test() }} disabled={testing || ch.isPending}>
+          {testing ? 'Sending…' : 'Send me a test DM'}
+        </button>
+        <Link className="btn btn-ghost" to="/settings/app">Phone and desktop pop-ups</Link>
+      </div>
     </section>
   )
 }

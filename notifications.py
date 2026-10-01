@@ -151,7 +151,9 @@ def route_in_background(*args, **kwargs) -> None:
     """route() on a daemon thread: callers are request handlers and pollers."""
     def run():
         try:
-            route(*args, **kwargs)
+            out = route(*args, **kwargs)
+            logger.info("notifications: %s -> inbox %s, push %s, dms %s", out["category"], out["inbox"],
+                        (out.get("push") or {}).get("delivered"), out.get("dms"))
         except Exception:  # noqa: BLE001
             logger.exception("notifications: route failed")
     threading.Thread(target=run, name="notify", daemon=True).start()
@@ -179,18 +181,58 @@ def _direct(subs: list[str], exclude: str, text: str, url: str, tag: str) -> dic
             continue
         ch = get_channels(sub)
         msg = f"{text}\n{link}"
+        who = p.get("username") or sub
         if ch["whatsapp"] and wa_send and (jid := wa_jid_for(p)):
             try:
-                sent["whatsapp"] += bool(wa_send(jid, msg))
-            except Exception:  # noqa: BLE001
-                logger.warning("notifications: WhatsApp DM failed")
+                ok = bool(wa_send(jid, msg))
+            except Exception as e:  # noqa: BLE001
+                ok = False
+                logger.warning("notifications: WhatsApp DM to %s failed: %s", who, e)
+            sent["whatsapp"] += ok
+            logger.info("notifications: WhatsApp DM to %s %s", who, "sent" if ok else "not sent")
         # The tag first; the email finds them when the tag is missing or wrong.
         if ch["mattermost"] and mm_dm and (p.get("mm_username") or p.get("email")):
             try:
-                sent["mattermost"] += bool(mm_dm(p.get("mm_username") or "", msg, email=p.get("email") or ""))
-            except Exception:  # noqa: BLE001
-                logger.warning("notifications: Mattermost DM failed")
+                ok = bool(mm_dm(p.get("mm_username") or "", msg, email=p.get("email") or ""))
+            except Exception as e:  # noqa: BLE001
+                ok = False
+                logger.warning("notifications: Mattermost DM to %s failed: %s", who, e)
+            sent["mattermost"] += ok
+            logger.info("notifications: Mattermost DM to %s %s", who, "sent" if ok else "not sent")
     return sent
+
+
+def reachable(person: dict) -> dict[str, bool]:
+    """Which DM channels can find this person at all (for settings and the test button)."""
+    return {"whatsapp": bool(wa_jid_for(person)), "mattermost": bool(person.get("mm_username") or person.get("email"))}
+
+
+def test_dm(sub: str) -> dict:
+    """Send the caller a test DM on each channel they have switched on. Bypasses the quiet window."""
+    import crcmz_identity
+    p = crcmz_identity.by_zitadel_id().get(sub)
+    if not p:
+        return {"whatsapp": None, "mattermost": None}
+    ch = get_channels(sub)
+    msg = f"🔔 Test from CRCMZ: this is how @mentions reach you.\n{PUBLIC_URL}/app/notifications"
+    out: dict[str, bool | None] = {}
+    if not ch["whatsapp"] or not wa_send or not (jid := wa_jid_for(p)):
+        out["whatsapp"] = None
+    else:
+        try:
+            out["whatsapp"] = bool(wa_send(jid, msg))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("notifications: test WhatsApp DM failed: %s", e)
+            out["whatsapp"] = False
+    if not ch["mattermost"] or not mm_dm or not (p.get("mm_username") or p.get("email")):
+        out["mattermost"] = None
+    else:
+        try:
+            out["mattermost"] = bool(mm_dm(p.get("mm_username") or "", msg, email=p.get("email") or ""))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("notifications: test Mattermost DM failed: %s", e)
+            out["mattermost"] = False
+    return out
 
 
 # ── Reading (the inbox) ──────────────────────────────────────────────────────

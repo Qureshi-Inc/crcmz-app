@@ -2411,6 +2411,7 @@ textarea.ask-input { flex: 1; min-width: 0; resize: none; min-height: var(--tap-
 .notif-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--lime-fill); }
 .notif-empty { margin: 0; padding: var(--space-5) 0; }
 .notif-delivery { margin-top: var(--space-3); }
+.notif-delivery-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
 /* ── Slap comments + @mentions ───────────────────────────────────────────── */
 .mention-wrap { position: relative; flex: 1; min-width: 0; }

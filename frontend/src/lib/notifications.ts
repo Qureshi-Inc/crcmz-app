@@ -87,6 +87,10 @@ export function useChannels(enabled = true) {
 export const saveChannels = (changes: Record<string, boolean>) =>
   request<{ prefs: Record<string, boolean> }>('/api/notifications/channels', { body: changes })
 
+/** DM yourself on each switched-on channel: true sent, false failed, null off or not linked. */
+export const testDm = () =>
+  request<Record<'whatsapp' | 'mattermost', boolean | null>>('/api/notifications/test-dm', { body: {} })
+
 /** "2m", "3h", "Mon", "12 Sep": short enough for a row. */
 export function ago(at: number, now = Date.now()): string {
   const s = Math.max(0, Math.round((now - at) / 1000))

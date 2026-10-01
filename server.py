@@ -6163,8 +6163,17 @@ async def notifications_channels(request: Request):
         "channels": [{"id": k, "label": v} for k, v in _notify.CHANNELS.items()],
         "prefs": await asyncio.to_thread(_notify.get_channels, sub),
         "reachable": {"whatsapp": bool(_notify.wa_jid_for(person)) and bool(WA_BRIDGE_URL),
-                      "mattermost": bool(person.get("mm_username") or person.get("email")) and mm_client.available()},
+                      "mattermost": _notify.reachable(person)["mattermost"] and mm_client.available()},
     }, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/notifications/test-dm")
+async def notifications_test_dm(request: Request):
+    """DM the caller on WhatsApp and Mattermost, to prove @mentions can reach them."""
+    sub = _push_sub(request)
+    await _push_body(request)
+    _rate_limit("push_test", sub)
+    return JSONResponse(await asyncio.to_thread(_notify.test_dm, sub), headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/notifications/channels")
@@ -6668,6 +6677,8 @@ def _notify_wa_send(jid: str, text: str) -> bool:
         return False
     import httpx as _hx
     r = _hx.post(f"{WA_BRIDGE_URL}/send", json={"message": text, "groupJid": jid}, timeout=20)
+    if r.status_code >= 300:
+        logger.warning("notify: WhatsApp bridge answered %s: %s", r.status_code, r.text[:200])
     return r.status_code < 300
 
 
