@@ -37,6 +37,7 @@ from typing import Any
 import httpx
 from fastapi import HTTPException
 
+import crcmz_identity
 import slap
 
 logger = logging.getLogger(__name__)
@@ -324,8 +325,17 @@ async def _importer_get(path: str) -> dict:
     return r.json()
 
 
-async def download(sub: str, name: str, apple_id: str, week: str | None = None) -> dict:
-    """Queue one find for the library, credited to ``name`` (their picks playlist)."""
+def picks_name(person: dict) -> str:
+    """Whose picks a person's songs go in: their Mattermost tag in the identity chart.
+
+    That's the name their picks playlist has always had. Their live Mattermost
+    name can drift (Moose's is mutasif now; the playlist is themoosecompany's).
+    """
+    return re.sub(r"[^\w.-]", "", person.get("mm_username") or "") or slap.handle_of(person)
+
+
+async def download(sub: str, name: str, apple_id: str, week: str | None = None, picks: str = "") -> dict:
+    """Queue one find for the library, credited to ``name``, filed in ``picks``'s playlist."""
     week = week or week_of()
     f = _find(week, apple_id)
     if not f:
@@ -344,7 +354,7 @@ async def download(sub: str, name: str, apple_id: str, week: str | None = None) 
     now = time.time()
     with _lock, _conn() as db:
         db.execute("INSERT OR REPLACE INTO credits(job_id, sub, name, title, artist, ts) VALUES (?,?,?,?,?,?)",
-                   (jid, sub, name, f["title"], f["artist"], now))
+                   (jid, sub, picks or name, f["title"], f["artist"], now))
     _update(week, apple_id, status="queued", job_id=jid, by_sub=sub, by_name=name, at=now, error="")
     logger.info("discover: %s downloading %s - %s (job %s)", name, f["artist"], f["title"], jid)
     return public(_find(week, apple_id) or f)
@@ -383,8 +393,11 @@ async def follow_downloads(*, force: bool = False) -> int:
             hit = index.find(job.get("title") or f["title"], job.get("artist") or f["artist"]) \
                 or index.find(f["title"], f["artist"])
             _update(f["week"], f["apple_id"], status="done", track_id=hit["id"] if hit else "", error="")
-            if hit and f["by_name"]:
-                await file_into_picks({f["by_name"]: [hit["id"]]})
+            with _conn() as db:
+                cr = db.execute("SELECT name FROM credits WHERE job_id=?", (f["job_id"],)).fetchone()
+            owner = (cr["name"] if cr else "") or f["by_name"]
+            if hit and owner:
+                await file_into_picks({owner: [hit["id"]]})
                 with _lock, _conn() as db:
                     db.execute("INSERT OR REPLACE INTO synced(job_id, track_id, tries, ts) VALUES (?,?,0,?)",
                                (f["job_id"], hit["id"], time.time()))
@@ -470,16 +483,60 @@ async def _completed_jobs() -> list[dict]:
 
 
 def _mm_names(ids: list[str]) -> dict[str, str]:
-    """Mattermost user id -> username (the name the importer uses for picks)."""
+    """Mattermost user id -> whose picks: the chart's name for them, else their username.
+
+    The importer files by live Mattermost username; the chart matches the account by
+    its email first (the SSO link), then by the hand-set mm_username tag.
+    """
     import mattermost
     if not ids or not mattermost.available():
         return {}
     try:
         r = httpx.post(f"{mattermost._BASE}/api/v4/users/ids", headers=mattermost._headers(), json=ids, timeout=20)
-        return {u["id"]: u["username"] for u in r.json()} if r.status_code == 200 else {}
+        users = r.json() if r.status_code == 200 else []
+        people = crcmz_identity.people()
+        by_email = {p["email"].casefold(): p for p in people if p.get("email")}
+        by_tag = {p["mm_username"].casefold(): p for p in people if p.get("mm_username")}
+        out = {}
+        for u in users:
+            p = by_email.get((u.get("email") or "").casefold()) or by_tag.get(u["username"].casefold())
+            out[u["id"]] = (picks_name(p) if p else "") or u["username"]
+            if out[u["id"]].casefold() != u["username"].casefold():
+                _DRIFTED[u["username"].casefold()] = out[u["id"]]
+        return out
     except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.warning("discover: mattermost names failed: %s", e)
         return {}
+
+
+# Live Mattermost username -> the chart's picks name, where they differ.
+_DRIFTED: dict[str, str] = {}
+
+
+async def fold_drifted() -> int:
+    """Move "<live mm name>'s picks" into the chart's playlist, then drop the empty copy.
+
+    The importer makes those itself whenever someone's Mattermost name has drifted.
+    """
+    uid = await _admin_uid()
+    if not uid or not _DRIFTED:
+        return 0
+    lists = await _picks_playlists(uid)
+    moved = 0
+    for live, name in list(_DRIFTED.items()):
+        stray = lists.get(live)
+        if not stray or live == name.casefold():
+            continue
+        moved += await file_into_picks({name: sorted(stray["items"])})
+        target = (await _picks_playlists(uid)).get(name.casefold())
+        if target and stray["items"] <= target["items"]:
+            try:
+                slap._ok(await slap._jf("DELETE", f"/Items/{stray['id']}", params={"userId": uid}))
+            except HTTPException:
+                continue
+            logger.info("discover: folded %s into %s's picks", stray["name"], name)
+            slap._forget("picks")
+    return moved
 
 
 async def sync_picks() -> dict:
@@ -488,12 +545,14 @@ async def sync_picks() -> dict:
         done = {r["job_id"] for r in db.execute(
             "SELECT job_id FROM synced WHERE track_id != '' OR tries >= ?", (SYNC_TRIES,))}
         credits = {r["job_id"]: r["name"] for r in db.execute("SELECT job_id, name FROM credits")}
-    jobs = [j for j in await _completed_jobs() if str(j.get("id")) not in done]
-    if not jobs:
-        return {"checked": 0, "filed": 0}
-    people = await asyncio.to_thread(_mm_names, sorted({j["requester_user_id"] for j in jobs
+    every = await _completed_jobs()
+    # Everyone's names, every time: that's also how a drifted name gets noticed.
+    people = await asyncio.to_thread(_mm_names, sorted({j["requester_user_id"] for j in every
                                                          if j.get("requester_user_id")
                                                          and j["requester_user_id"] not in _BOT_IDS}))
+    jobs = [j for j in every if str(j.get("id")) not in done]
+    if not jobs:
+        return {"checked": 0, "filed": await fold_drifted()}
     index = await library_index(refresh=True)
     wanted: dict[str, list[str]] = {}
     outcome: list[tuple[str, str, bool]] = []   # job id, track id, settled
@@ -507,6 +566,7 @@ async def sync_picks() -> dict:
         else:
             outcome.append((jid, "", False))
     filed = await file_into_picks(wanted)
+    filed += await fold_drifted()
     now = time.time()
     with _lock, _conn() as db:
         for jid, tid, settled in outcome:

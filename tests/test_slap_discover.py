@@ -86,6 +86,9 @@ class FakeJF:
             assert params["userId"] == "u" * 32
             self.playlists[path.split("/")[2]]["items"] += params["ids"].split(",")
             return self.r(None, 204)
+        if method == "DELETE" and path.startswith("/Items/"):
+            del self.playlists[path.split("/")[2]]
+            return self.r(None, 204)
         raise AssertionError(f"unexpected jellyfin call {method} {path}")
 
     @staticmethod
@@ -161,6 +164,7 @@ slap._social = FakeSocial()
 d._importer_get = fake_importer_get
 REAL_ITUNES = d.itunes_find
 d.itunes_find = fake_itunes
+REAL_MM_NAMES = d._mm_names
 d._mm_names = lambda ids: {"mm-moiz": "moiz", "mm-noor": "nooramin40"}
 
 
@@ -168,6 +172,7 @@ def reset():
     with d._conn() as db:
         db.executescript("DELETE FROM finds; DELETE FROM weeks; DELETE FROM credits; DELETE FROM synced;")
     slap._cache.clear()
+    d._DRIFTED.clear()
     IMPORTER.clear(); JOBS.clear()
     d._last_poll = 0.0
     JF.__init__()
@@ -369,7 +374,48 @@ def picks_tests():
         run(d.sync_picks())
         assert JF.picks("zubair221b") == ["a" * 32]
 
-    for fn in (every_import_lands_in_its_requesters_picks, a_discover_credit_beats_the_importers_requester):
+    def a_drifted_mattermost_name_folds_into_the_charts_picks():
+        reset()
+        JF.playlists["m" * 32] = {"Name": "themoosecompany's picks", "items": ["a" * 32]}
+        JF.playlists["n" * 32] = {"Name": "mutasif's picks", "items": ["a" * 32, "b" * 32]}
+        d._DRIFTED["mutasif"] = "themoosecompany"
+        assert run(d.fold_drifted()) == 1
+        assert JF.picks("themoosecompany") == ["a" * 32, "b" * 32] and JF.picks("mutasif") is None, JF.playlists
+
+    def the_chart_names_whose_picks_an_account_fills():
+        import mattermost
+        old = (d._mm_names, httpx.post, mattermost.available, d.crcmz_identity.people)
+        users = [{"id": "mm-1", "username": "mutasif", "email": "Moose@x.co"},
+                 {"id": "mm-2", "username": "nooramin40", "email": "other@x.co"},
+                 {"id": "mm-3", "username": "shahraiz", "email": ""}]
+        people = [{"email": "moose@x.co", "mm_username": "themoosecompany", "jellyfin_user": "mutasif"},
+                  {"email": "noor@x.co", "mm_username": "nooramin40", "jellyfin_user": "noor"}]
+        try:
+            d._mm_names = REAL_MM_NAMES
+            httpx.post = lambda *a, **k: httpx.Response(200, json=users)
+            mattermost.available = lambda: True
+            d.crcmz_identity.people = lambda **k: people
+            got = d._mm_names(["mm-1", "mm-2", "mm-3"])
+        finally:
+            d._mm_names, httpx.post, mattermost.available, d.crcmz_identity.people = old
+        # By email, then by tag; nobody in the chart keeps their Mattermost name.
+        assert got == {"mm-1": "themoosecompany", "mm-2": "nooramin40", "mm-3": "shahraiz"}, got
+        assert d._DRIFTED == {"mutasif": "themoosecompany"}
+        assert d.picks_name({"mm_username": "", "jellyfin_user": "noor"}) == "noor"
+
+    def a_download_lands_in_the_chart_picks_not_the_login():
+        reset()
+        run(d.generate())
+        f = run(d.download("u-noor", "noor", "1001", picks="nooramin40"))
+        assert f["by"] == "noor"
+        JOBS["job-1"].update(status="complete", title="Not Like Us", artist="Kendrick Lamar")
+        JF.tracks.append({"Id": "c" * 32, "Name": "Not Like Us", "Artists": ["Kendrick Lamar"]})
+        run(d.follow_downloads(force=True))
+        assert JF.picks("nooramin40") == ["c" * 32] and JF.picks("noor") is None, JF.playlists
+
+    for fn in (every_import_lands_in_its_requesters_picks, a_discover_credit_beats_the_importers_requester,
+               a_drifted_mattermost_name_folds_into_the_charts_picks, the_chart_names_whose_picks_an_account_fills,
+               a_download_lands_in_the_chart_picks_not_the_login):
         check(fn.__name__, fn)
 
 
