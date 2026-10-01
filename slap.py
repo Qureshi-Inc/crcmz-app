@@ -731,7 +731,18 @@ _MENTION = re.compile(r"(?<![\w@])@([\w.-]{2,64})")
 
 
 def handle_of(person: dict) -> str:
-    return re.sub(r"[^\w.-]", "", person.get("jellyfin_user") or person.get("username") or "")
+    # Never the login when it is an email: the composer shows handles to everyone.
+    login = person.get("username") or ""
+    tags = person.get("tags") or {}
+    return re.sub(r"[^\w.-]", "", person.get("jellyfin_user") or tags.get("chosen_username")
+                  or person.get("mm_username") or ("" if "@" in login else login))
+
+
+def _names(v: object) -> list[str]:
+    """A comma-separated tag, or the list crcmz_identity already split it into."""
+    if isinstance(v, (list, tuple)):
+        return [str(x) for x in v]
+    return re.split(r"[,;]", v) if isinstance(v, str) else []
 
 
 def _active(p: dict) -> bool:
@@ -748,8 +759,7 @@ def aliases(person: dict, public: bool = False) -> list[str]:
                                (person.get("email") or "").split("@")[0] if "@" in (person.get("email") or "") else ""]
     raw = [handle_of(person), *login, person.get("mm_username"), person.get("jellyfin_user"),
            person.get("psn_id"), tags.get("chosen_username"), person.get("display_name"),
-           *re.split(r"[,;]", tags.get("nicknames") or ""),
-           *re.split(r"[,;]", person.get("wa_names") or tags.get("wa_names") or "")]
+           *_names(tags.get("nicknames")), *_names(person.get("wa_names") or tags.get("wa_names"))]
     out: list[str] = []
     for r in raw:
         k = re.sub(r"[^\w.-]", "", r or "").casefold()
@@ -769,7 +779,7 @@ def mention_index(people: list[dict]) -> dict[str, dict]:
             if p not in exact.setdefault(k, []):
                 exact[k].append(p)
         tags = p.get("tags") or {}
-        for name in (p.get("display_name") or "", *re.split(r"[,;]", p.get("wa_names") or tags.get("wa_names") or "")):
+        for name in (p.get("display_name") or "", *_names(p.get("wa_names") or tags.get("wa_names"))):
             if name.split():
                 f = re.sub(r"[^\w.-]", "", name.split()[0]).casefold()
                 if f and p not in firsts.setdefault(f, []):

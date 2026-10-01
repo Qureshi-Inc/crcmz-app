@@ -61,7 +61,11 @@ PEOPLE = [
     # The real chart: Zitadel login, a wrong mm tag, Jellyfin/PSN/WhatsApp names all differ.
     {"zitadel_id": "u-moose", "display_name": "themoosecompany thegoopcompany", "username": "themoosecompany",
      "state": "USER_STATE_ACTIVE", "mm_username": "themoosecompany", "wa_jid": "", "wa_phone": "",
-     "jellyfin_user": "mutasif", "psn_id": "mutasif", "wa_names": "Mutasif", "email": "goop@example.com"},
+     "jellyfin_user": "mutasif", "psn_id": "mutasif", "wa_names": ["Mutasif"], "email": "goop@example.com"},
+    # crcmz_identity hands wa_names over as a list; the raw tag is a string.
+    {"zitadel_id": "u-sam", "display_name": "asamad89 asamad89", "username": "asamad89", "state": "USER_STATE_ACTIVE",
+     "mm_username": "asamad89", "wa_jid": "", "wa_phone": "", "jellyfin_user": "Samad", "email": "",
+     "tags": {"wa_names": "Abdul Samad,AbdulSamad Bawany"}},
     {"zitadel_id": "u-gone", "display_name": "Old Account", "username": "old", "state": "USER_STATE_INACTIVE",
      "mm_username": "old", "wa_jid": "", "wa_phone": "", "jellyfin_user": "", "email": ""},
 ]
@@ -270,6 +274,7 @@ def mention_tests():
             got = slap.mentioned(f"yo @{word} listen", PEOPLE)
             assert [p["zitadel_id"] for p in got] == ["u-moose"], (word, got)
         # A fragment two people share is nobody, not a guess.
+        assert [p["zitadel_id"] for p in slap.mentioned("@abdulsamad @Bawany", PEOPLE)] == ["u-sam"]
         assert slap.mentioned("@ubai", PEOPLE) == []
         assert slap.mentioned("@mo", PEOPLE) == [], "too short to guess from"
 
@@ -281,6 +286,9 @@ def mention_tests():
         moose = next(p for p in people if p["handle"] == "mutasif")
         assert "themoosecompany" in moose["aka"]
         assert not any("goop@" in a or a == "goop" for p in people for a in p["aka"]), "no email in the list"
+        invited = {"zitadel_id": "u-inv", "username": "ray@example.com", "display_name": "Mazino", "state": "USER_STATE_ACTIVE",
+                   "mm_username": "mazino", "tags": {"chosen_username": "mazino"}}
+        assert slap.handle_of(invited) == "mazino" and "example" not in str(slap.mentionable([invited]))
         assert "old" not in {p["handle"] for p in people}
         handles = {p["handle"] for p in people}
         assert all(slap.mentioned(f"@{h}", PEOPLE) for h in handles), "every suggested handle resolves"
