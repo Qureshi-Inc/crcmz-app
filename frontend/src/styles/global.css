@@ -407,6 +407,60 @@ img { max-width: 100%; }
   .scrim, .sheet, .dialog { animation: fade-in var(--dur-micro) linear; }
 }
 
+/* ── Section drawers (app/drawer.tsx) ──────────────────────────────────────── */
+/* Chrome sits in its own transition layers, so it stays put while the page moves. */
+.topbar { view-transition-name: topbar; }
+.tabbar { view-transition-name: tabbar; }
+.miniplayer-bar { view-transition-name: minibar; }
+.watchbar-bar { view-transition-name: callbar; }
+.sidebar { view-transition-name: sidebar; }
+::view-transition-group(topbar), ::view-transition-group(tabbar), ::view-transition-group(minibar),
+::view-transition-group(callbar), ::view-transition-group(sidebar) { animation: none; z-index: 2; }
+::view-transition-old(topbar), ::view-transition-old(tabbar), ::view-transition-old(minibar),
+::view-transition-old(callbar), ::view-transition-old(sidebar) { display: none; }
+::view-transition-new(topbar), ::view-transition-new(tabbar), ::view-transition-new(minibar),
+::view-transition-new(callbar), ::view-transition-new(sidebar) { animation: none; }
+
+/* Rise: the new section slides up as a sheet; the last one sinks back and dims. */
+html[data-vt="rise"]::view-transition-old(root) {
+  animation: drawer-sink var(--dur-large) var(--ease-out) both;
+  transform-origin: 50% 0;
+}
+html[data-vt="rise"]::view-transition-new(root) {
+  animation: drawer-rise var(--dur-large) var(--ease-out) both;
+  filter: drop-shadow(0 -12px 40px rgba(4, 2, 14, .65));
+}
+/* Return: the dragged-away section is already gone; the one below lifts back up. */
+html[data-vt="return"]::view-transition-old(root) { animation: none; opacity: 0; }
+html[data-vt="return"]::view-transition-new(root) {
+  animation: drawer-lift var(--dur-std) var(--ease-out) both;
+  transform-origin: 50% 0;
+}
+html[data-vt="fade"]::view-transition-old(root),
+html[data-vt="fade"]::view-transition-new(root) { animation-duration: var(--dur-std); }
+@keyframes drawer-rise {
+  from { transform: translateY(100%); clip-path: inset(0 round var(--radius-xl) var(--radius-xl) 0 0); }
+  to { transform: none; clip-path: inset(0 round 0); }
+}
+@keyframes drawer-sink { to { transform: scale(.93); filter: brightness(.5); opacity: .9; } }
+@keyframes drawer-lift { from { transform: scale(.93); filter: brightness(.5); } }
+@media (prefers-reduced-motion: reduce) {
+  html[data-vt]::view-transition-old(root), html[data-vt]::view-transition-new(root) {
+    animation: fade-in var(--dur-micro) linear both; transform: none; filter: none;
+  }
+}
+
+.drawer-grip-row { display: flex; justify-content: center; margin: calc(-1 * var(--space-4)) 0 var(--space-2); }
+.drawer-grip {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 96px; min-height: var(--tap-min); padding: var(--space-2) var(--space-4) var(--space-1);
+  background: none; border: 0; border-radius: var(--radius-pill); color: var(--text-dim);
+  touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none;
+}
+.drawer-grip:active { cursor: grabbing; }
+.drawer-grip-label { display: inline-flex; align-items: center; gap: 2px; font-size: var(--text-xs); font-weight: 700; }
+.drawer-grip-label svg { width: 14px; height: 14px; }
+
 /* ── Forms ─────────────────────────────────────────────────────────────────── */
 .field-label { display: block; font-weight: 700; font-size: var(--text-sm); margin-bottom: var(--space-1); }
 .input {

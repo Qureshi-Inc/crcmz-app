@@ -23,6 +23,7 @@ import { CallBar, useHuddleBar, useWatchBar } from '../features/watch/WatchBar'
 import { useWatchSelect } from '../features/watch/session'
 import { DESTS, MORE_ACCOUNT, SIDEBAR_FOOT, SIDEBAR_MAIN, destForPath, moreSquad, type DestId } from './nav'
 import { useTabs } from './tabs'
+import { DrawerGrip, useDrawerNav } from './drawer'
 
 const MASCOT = '/footer-avatar.png'
 
@@ -35,6 +36,8 @@ export function Shell() {
   const signedOut = useSignedOut()
   const collapsed = usePanelCollapsed()
   const navigate = useNavigate()
+  const reducedMotion = useReducedMotion()
+  useDrawerNav(desktop, reducedMotion)
   // A tapped notification while the app is open routes here, so calls and music keep going.
   useEffect(() => onWorkerNavigate((path) => navigate(path)), [navigate])
 
@@ -91,6 +94,7 @@ export function Shell() {
       <a className="skip-link" href="#main">Skip to content</a>
       {desktop ? <Sidebar current={current} isAdmin={isAdmin} watchBar={watchBar} huddleBar={huddleBar} /> : <TopBar />}
       <main id="main" className="app-main" data-chat={chatMode} tabIndex={-1} style={{ outline: 'none' }}>
+        {!desktop && <DrawerGrip />}
         {signedOut && (
           <div className="banner" role="status" style={{ marginBottom: 'var(--space-5)' }}>
             <span style={{ fontWeight: 700 }}>Sign in to keep up</span>

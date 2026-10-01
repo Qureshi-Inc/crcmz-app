@@ -22,6 +22,7 @@ const SECTIONS: Section[] = [
           <li>Go to <Link to="/portal">Link PSN</Link> so you show up on Squad and your clips are credited to you.</li>
           <li>Add a passkey in <Link to="/settings/passkeys">Settings → Passkeys</Link> to sign in with Face ID or a fingerprint next time.</li>
         </ol>
+        <p>On a phone, each section you open slides up from the bottom. To go back to where you were, pull the bar at the top of the page down, or tap it.</p>
       </>
     ),
   },
