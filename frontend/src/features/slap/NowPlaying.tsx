@@ -10,7 +10,7 @@ import { useDesktop } from '../../lib/media'
 import { useSwipeDown } from '../../lib/gestures'
 import { artUrl, fmtTime, sendComment, sendThumb, setFavorite, type Library, type QueueItem } from '../../lib/slap'
 import {
-  clearUpcoming, current, cycleRepeat, jump, leaveTogether, move, next, prev, remove, seek, setExpanded,
+  clearUpcoming, closePlayer, current, cycleRepeat, jump, leaveTogether, move, next, prev, remove, seek, setExpanded,
   toggle, toggleShuffle, useClock, usePlayer, type PlayerState,
 } from './player'
 
@@ -55,11 +55,11 @@ export function MiniPlayer({ variant }: { variant: 'bar' | 'sidebar' }) {
             </span>
           </span>
         </button>
-        {variant === 'bar' && <button type="button" className="icon-btn" onClick={prev} aria-label="Previous"><Icon name="prev" /></button>}
         {s.blocked
           ? <button type="button" className="btn btn-primary miniplayer-unblock" onClick={toggle}>Tap to listen</button>
           : <PlayButton s={s} />}
         <button type="button" className="icon-btn" onClick={next} aria-label="Next"><Icon name="next" /></button>
+        <button type="button" className="icon-btn miniplayer-close" onClick={closePlayer} aria-label={s.mode === 'together' ? 'Leave Listen Together and close the player' : 'Stop and close the player'}><Icon name="close" /></button>
       </div>
       <span className="sr-only" aria-live="polite">{s.blocked ? 'Playback is waiting for a tap' : ''}</span>
     </section>
@@ -117,6 +117,9 @@ function PlayerBody({ s }: { s: PlayerState }) {
         </div>
         {s.blocked && <button type="button" className="btn btn-primary" onClick={toggle}>Tap to listen with everyone</button>}
         {item && <TrackActions item={item} />}
+        <button type="button" className="btn btn-ghost player-close" onClick={closePlayer}>
+          <Icon name="close" />{s.mode === 'together' ? 'Leave and close player' : 'Stop and close player'}
+        </button>
       </div>
       <QueueList queue={queue} index={index} together={s.mode === 'together'} />
     </div>

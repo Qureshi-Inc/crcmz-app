@@ -363,6 +363,16 @@ export function clearUpcoming() {
   set({ queue: cur ? [cur] : [], index: cur ? 0 : -1 })
 }
 
+/** Stop and put the player away: no sound, no queue, no mini-player. */
+export function closePlayer() {
+  leaveTogether()
+  unload()
+  unshuffled = null
+  soloPos = 0
+  set({ queue: [], index: -1, playing: false, blocked: false, expanded: false })
+  if ('mediaSession' in navigator) navigator.mediaSession.metadata = null
+}
+
 export function setExpanded(expanded: boolean) { set({ expanded }) }
 
 // ── Listen Together ─────────────────────────────────────────────────────────

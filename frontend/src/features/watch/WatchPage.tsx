@@ -18,7 +18,7 @@ import { Orbs } from './Orbs'
 import { Chat, PresencePill, ReactionsTray, Roster } from './Social'
 import { Stage, usePlayerKeys } from './Stage'
 import {
-  attachLayout, canCall, changeName, clearVideo, exitFs, flipCam, joinCall, leaveCall, rally, rejoin, setMic, setOrbPos, setSpeaker,
+  attachLayout, canCall, changeName, clearVideo, exitFs, flipCam, joinCall, leave, leaveCall, rally, rejoin, setMic, setOrbPos, setSpeaker,
   setTitle, setVideo, start, toggleMute, toggleVideo, useWatch, videoLabel, type OrbPos, type WatchState,
 } from './session'
 
@@ -40,6 +40,9 @@ export function WatchPage({ visible }: { visible: boolean }) {
         <h1 className="page-h1" tabIndex={-1}>Watch</h1>
         <PresencePill s={s} />
         <Roster s={s} max={desktop ? 8 : 4} />
+        {s.active && s.status !== 'idle' && (
+          <button type="button" className="btn btn-secondary wp-leave" onClick={leave}><Icon name="signout" />Leave party</button>
+        )}
       </div>
       <StatusBanner s={s} />
       <div className="wp-layout">

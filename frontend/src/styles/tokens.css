@@ -129,6 +129,13 @@
   --aurora-dur: 22s;
 }
 @media (min-width: 1024px) { :root { --gutter: var(--space-6); } }
+/* Phone density (owner, 2026-10-01): the first cut read as zoomed in. Text steps down a
+   notch (rem base 15px: body 16, sm 14, xs 12), the top bar slims, and gutters tighten.
+   Tap targets stay 44px — they are px, not rem. */
+@media (max-width: 1023px) {
+  html { font-size: 93.75%; }
+  :root { --topbar-h: 60px; --brand-mark: 48px; --brand-mark-condensed: 36px; --topbar-h-condensed: 46px; --gutter: 14px; }
+}
 @media (prefers-reduced-transparency: reduce) { :root { --glass: rgba(18, 10, 38, .9); --chrome: rgba(8, 5, 20, .97); } }
 
 /* Generated primitive tier (palette.mjs, verbatim) */

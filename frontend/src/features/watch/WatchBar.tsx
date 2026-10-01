@@ -43,7 +43,7 @@ function WatchRow() {
           <Icon name={s.call.muted ? 'micOff' : 'mic'} />
         </button>
       )}
-      <button type="button" className="icon-btn" aria-label="Leave the watch party" onClick={leave}><Icon name="close" /></button>
+      <button type="button" className="btn btn-ghost callbar-leave" aria-label="Leave the watch party" onClick={leave}>Leave</button>
     </div>
   )
 }
@@ -64,7 +64,7 @@ function HuddleRow() {
       <button type="button" className="icon-btn" aria-pressed={s.mic} aria-label={s.mic ? 'Huddle mic live. Mute' : 'Huddle mic muted. Unmute'} onClick={() => void toggleMic()}>
         <Icon name={s.mic ? 'mic' : 'micOff'} />
       </button>
-      <button type="button" className="icon-btn" aria-label="Leave the huddle" onClick={() => void leaveHuddle()}><Icon name="close" /></button>
+      <button type="button" className="btn btn-ghost callbar-leave" aria-label="Leave the huddle" onClick={() => void leaveHuddle()}>Leave</button>
     </div>
   )
 }

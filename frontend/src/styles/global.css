@@ -61,6 +61,7 @@ img { max-width: 100%; }
   font: 800 var(--text-2xl) / var(--leading-display) var(--font-display);
   text-transform: uppercase; letter-spacing: .02em; margin: 0; color: var(--text);
 }
+@media (max-width: 1023px) { .page-h1 { font-size: var(--text-xl); } .section-h2 { font-size: var(--text-base); } }
 .page-h1:focus, .page-h1:focus-visible { outline: none; box-shadow: none; } /* programmatic focus target on navigation, not a control */
 .section-h2 {
   font: 700 var(--text-lg) / var(--leading-snug) var(--font-display);
@@ -169,7 +170,7 @@ img { max-width: 100%; }
 .topbar-spacer { flex: 1; }
 .topbar.condensed .topbar-row { height: var(--topbar-h-condensed); }
 .topbar.condensed .mascot { width: var(--brand-mark-condensed); height: var(--brand-mark-condensed); }
-.topbar.condensed .topbar-tagline { opacity: 0; pointer-events: none; position: absolute; }
+.topbar.condensed .topbar-tagline { opacity: 0; pointer-events: none; position: absolute; transition: none; } /* out at once: absolute + fading would sit on the wordmark */
 @media (prefers-reduced-motion: reduce) {
   .topbar-row, .topbar .mascot, .topbar-tagline { transition: none; }
 }
@@ -2165,3 +2166,5 @@ textarea.ask-input { flex: 1; min-width: 0; resize: none; min-height: var(--tap-
   .ask-send-t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 .ask-chips .chip:disabled { opacity: .55; cursor: not-allowed; }
+.player-close { align-self: center; color: var(--text-dim); }
+.callbar-leave { flex: none; min-height: var(--tap-min); padding-inline: var(--space-3); color: var(--error); }

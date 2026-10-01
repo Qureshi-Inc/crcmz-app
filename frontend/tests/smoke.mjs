@@ -395,7 +395,7 @@ try {
     check('fonts loaded before capture (Orbitron + Rajdhani)', f.orbitron && f.rajdhani, f.loaded.join(', '))
     const bar = await page.$eval('.topbar-row', (e) => e.getBoundingClientRect().height)
     const mascot = await page.$eval('.topbar .mascot', (e) => e.getBoundingClientRect().width)
-    check('top bar at rest is 72px with a 64px mascot', Math.round(bar) === 72 && Math.round(mascot) === 64, `${bar} / ${mascot}`)
+    check('top bar at rest is 60px with a 48px mascot', Math.round(bar) === 60 && Math.round(mascot) === 48, `${bar} / ${mascot}`)
     check('tagline visible at rest', await page.isVisible('.topbar-tagline'))
     const overflow = await page.evaluate(() => [...document.querySelectorAll('.glass')].filter((e) => e.getBoundingClientRect().right > innerWidth + 0.5).length)
     check('no card overflows the 375px viewport', overflow === 0, `${overflow} overflowing`)
@@ -410,7 +410,7 @@ try {
     const barC = await page.$eval('.topbar-row', (e) => e.getBoundingClientRect().height)
     const mascotC = await page.$eval('.topbar .mascot', (e) => e.getBoundingClientRect().width)
     const tagOpacity = await page.$eval('.topbar-tagline', (e) => getComputedStyle(e).opacity)
-    check('top bar condenses to 48px, mascot 40px, tagline hidden', Math.round(barC) === 48 && Math.round(mascotC) === 40 && tagOpacity === '0', `${barC} / ${mascotC} / opacity ${tagOpacity}`)
+    check('top bar condenses to 46px, mascot 36px, tagline hidden', Math.round(barC) === 46 && Math.round(mascotC) === 36 && tagOpacity === '0', `${barC} / ${mascotC} / opacity ${tagOpacity}`)
     await shot(page, 'squad-375-condensed')
     await page.mouse.wheel(0, -2000)
     await page.waitForTimeout(400)
@@ -1185,6 +1185,11 @@ try {
     await page.click('.seg-tab:has-text("Together")')
     await page.waitForSelector('.together-who')
     check('Together peek shows who is in the room', (await page.textContent('.together-who')).includes('2 listening'))
+    // ✕ on the mini-player stops and puts the player away, for good.
+    await page.click('.miniplayer-bar .miniplayer-close')
+    await page.waitForSelector('.miniplayer-bar', { state: 'detached' })
+    check('closing the player hides the mini-player', !(await page.evaluate(() => 'player' in document.documentElement.dataset)))
+    check('closing the player clears the saved queue', await page.evaluate(() => (JSON.parse(localStorage.getItem('slap.player.v1') || '{}').queue ?? []).length === 0))
     check('no unmocked writes and no page errors (Slap Listen)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
@@ -1864,6 +1869,10 @@ try {
     await d.page.click('.wp-actions button:has-text("Leave call")')
     await d.page.waitForSelector('.wp-orb', { state: 'detached' })
     check('watch 1440: leaving the call removes your orb', true)
+    // Leave party from the page itself: the session ends and nothing shows as live.
+    await d.page.click('.wp-head .wp-leave')
+    await d.page.waitForSelector('.banner:has-text("You left the watch party.")')
+    check('watch 1440: Leave party ends the session', (await d.page.locator('.wp-leave').count()) === 0 && (await d.page.locator('.wp-pill[data-tone="live"]').count()) === 0)
     check('no unmocked writes and no page errors (Watch 1440)', d.page.violations.length === 0, d.page.violations.join(', '))
     await d.ctx.close()
 
