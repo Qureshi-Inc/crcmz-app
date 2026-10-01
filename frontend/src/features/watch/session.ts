@@ -270,6 +270,8 @@ export function attachVideo(el: HTMLVideoElement | null) {
 }
 export function attachYt(el: HTMLElement | null) { if (el) ytBox = el }
 export function attachLayout(el: HTMLElement | null) { if (el) layout = el }
+/** Where menus and dialogs must portal while fullscreen, or they open behind it. */
+export const fsRoot = (): HTMLElement | undefined => (state.fs && layout) || undefined
 
 // ── Player ──────────────────────────────────────────────────────────────────
 function play() {

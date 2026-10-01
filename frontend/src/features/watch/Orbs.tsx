@@ -8,7 +8,7 @@ import { Icon } from '../../components/Icon'
 import { ConfirmDialog } from '../clips/ClipSheet'
 import { CAN_VOL, initials, tint } from '../../lib/watch'
 import {
-  flipCam, joinCall, kick, leaveCall, localMedia, nameOf, peerPref, peerView, setPeerPref, toggleMute, toggleVideo, useWatch, type WatchState,
+  flipCam, fsRoot, joinCall, kick, leaveCall, localMedia, nameOf, peerPref, peerView, setPeerPref, toggleMute, toggleVideo, useWatch, type WatchState,
 } from './session'
 
 type Tile = { id: string; me: boolean; name: string; stream: MediaStream | null; video: boolean; badge: string; mod: boolean }
@@ -81,7 +81,7 @@ function Orb({ t, s, big, setBig }: { t: Tile; s: WatchState; big: boolean; setB
             <span className="wp-orb-name">{t.me ? 'You' : t.name}</span>
           </button>
         </Menu.Trigger>
-        <Menu.Portal>
+        <Menu.Portal container={fsRoot()}>
           <Menu.Content className="menu-content wp-orb-menu" sideOffset={6} align="start" collisionPadding={8}>
             <Menu.Label className="menu-label meta">{t.me ? 'You' : t.name}</Menu.Label>
             {t.me ? (
@@ -115,7 +115,7 @@ function Orb({ t, s, big, setBig }: { t: Tile; s: WatchState; big: boolean; setB
         <ConfirmDialog
           open={kickOpen} onOpenChange={setKickOpen} title="Remove from party?" action="Remove"
           body={<p>Remove this {t.name} session from the watch party? Their other devices stay, and they can rejoin by reloading.</p>}
-          onConfirm={() => kick(t.id, t.name)}
+          onConfirm={() => kick(t.id, t.name)} container={fsRoot()}
         />
       )}
     </>
@@ -125,7 +125,7 @@ function Orb({ t, s, big, setBig }: { t: Tile; s: WatchState; big: boolean; setB
 function GridDialog({ open, onOpenChange, tiles, s }: { open: boolean; onOpenChange: (v: boolean) => void; tiles: Tile[]; s: WatchState }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
+      <Dialog.Portal container={fsRoot()}>
         <Dialog.Overlay className="scrim" />
         <Dialog.Content className="wp-grid-dialog" aria-describedby={undefined}>
           <div className="sheet-title-row">

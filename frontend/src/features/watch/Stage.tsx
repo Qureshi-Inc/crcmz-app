@@ -1,23 +1,26 @@
 // The player: a 16:9 stage with a YouTube-style overlay. Centre: back 10 s,
 // play/pause, forward 10 s. Bottom: the seek bar, then play, volume, time, and the
-// call, reactions and fullscreen controls. It hides itself while playing; a tap
-// (or a mouse move) brings it back, and it never hides while you're using it.
-import { useEffect, useRef, useState, type ChangeEvent, type PointerEvent as RPointerEvent, type ReactNode } from 'react'
+// call, reactions, ⚙ settings and fullscreen controls. It hides itself while playing;
+// a tap (or a mouse move) brings it back, and it never hides while you're using it.
+// The call controls and ⚙ show even with nothing playing.
+import { createPortal } from 'react-dom'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react'
 import { Icon, type IconName } from '../../components/Icon'
 import { useReducedMotion } from '../../lib/media'
 import { CAN_VOL, fmtTime, REACTIONS } from '../../lib/watch'
 import {
-  attachVideo, attachYt, clearVideo, forceSync, getWatch, joinCall, nameOf as nameMap, onChat, onReaction, react, setCamVol, setPlayerVol,
+  attachVideo, attachYt, clearVideo, forceSync, getWatch, joinCall, leaveCall, nameOf as nameMap, onChat, onReaction, react, sendChat, setCamVol, setPlayerVol,
   skip, toggleCamsMute, toggleFs, toggleMute, togglePlay, togglePlayerMute, toggleVideo, unblock, userSeek, useWatch, useWatchClock,
   videoLabel, type ChatMsg, type RxEvent, type WatchState,
 } from './session'
+import { PlayerSettings } from './Settings'
 
 const HIDE_AFTER_POKE = 2600
 const HIDE_AFTER_TAP = 3500
 const DOUBLE_TAP = 250
 const CLICK_DELAY = 220
 
-export function Stage({ over, rxOpen, setRxOpen }: { over?: ReactNode; rxOpen: boolean; setRxOpen: (v: boolean) => void }) {
+export function Stage({ over, rxOpen, setRxOpen, slot }: { over?: ReactNode; rxOpen: boolean; setRxOpen: (v: boolean) => void; slot?: HTMLElement | null }) {
   const s = useWatch()
   const stage = useRef<HTMLDivElement>(null)
   const [shown, setShown] = useState(true)
@@ -33,7 +36,9 @@ export function Stage({ over, rxOpen, setRxOpen }: { over?: ReactNode; rxOpen: b
   useEffect(() => { if (s.playing) poke() }, [s.playing])
   const holdOn = () => setHold((n) => n + 1)
   const holdOff = () => { setHold((n) => Math.max(0, n - 1)); poke() }
-  const chrome = shown || hold > 0 || !s.playing || !s.video || rxOpen
+  const [setOpen, setSetOpen] = useState(false)
+  const closeSettings = () => { setSetOpen(false); document.getElementById('wp-set-btn')?.focus({ preventScroll: true }) }
+  const chrome = shown || hold > 0 || !s.playing || !s.video || rxOpen || setOpen
 
   const [ripple, setRipple] = useState<{ side: 'l' | 'r'; n: number } | null>(null)
   const rippleT = useRef(0)
@@ -99,8 +104,8 @@ export function Stage({ over, rxOpen, setRxOpen }: { over?: ReactNode; rxOpen: b
         <div className="wp-tap" data-pass={s.kind === 'yt' && s.ytFresh} onPointerUp={onTap} aria-hidden="true" />
       )}
       {ripple && <div className="wp-ripple" data-side={ripple.side} aria-hidden="true"><Icon name={ripple.side === 'l' ? 'back10' : 'fwd10'} /><span>{ripple.n} seconds</span></div>}
-      {s.kind && !s.mediaError && (
-        <Overlay s={s} label={label} holdOn={holdOn} holdOff={holdOff} rxOpen={rxOpen} setRxOpen={setRxOpen} />
+      {!s.mediaError && (
+        <Overlay s={s} label={label} holdOn={holdOn} holdOff={holdOff} rxOpen={rxOpen} setRxOpen={setRxOpen} setOpen={setOpen} toggleSettings={() => (setOpen ? closeSettings() : setSetOpen(true))} />
       )}
       {s.unblock && (
         <button type="button" className="btn btn-primary wp-unblock" onClick={unblock}>
@@ -110,6 +115,9 @@ export function Stage({ over, rxOpen, setRxOpen }: { over?: ReactNode; rxOpen: b
       <RxLayer />
       {s.fs && <FsChat />}
       {over}
+      {setOpen && (slot && !s.fs
+        ? createPortal(<PlayerSettings s={s} onClose={closeSettings} inline />, slot)
+        : <PlayerSettings s={s} onClose={closeSettings} />)}
     </div>
   )
 }
@@ -125,49 +133,67 @@ function EmptyStage({ s }: { s: WatchState }) {
   )
 }
 
-function Ctl({ icon, label, onClick, pressed, big, disabled, className = '' }: { icon: IconName; label: string; onClick: () => void; pressed?: boolean; big?: boolean; disabled?: boolean; className?: string }) {
+function Ctl({ icon, label, onClick, pressed, expanded, big, disabled, className = '', id }: {
+  icon: IconName; label: string; onClick: () => void; pressed?: boolean; expanded?: boolean; big?: boolean; disabled?: boolean; className?: string; id?: string
+}) {
   return (
     <button
-      type="button" className={`wp-ctl${big ? ' wp-ctl-big' : ''} ${className}`} aria-label={label} title={label}
-      aria-pressed={pressed} disabled={disabled} onClick={onClick}
+      type="button" id={id} className={`wp-ctl${big ? ' wp-ctl-big' : ''} ${className}`} aria-label={label} title={label}
+      aria-pressed={pressed} aria-expanded={expanded} disabled={disabled} onClick={onClick}
     >
       <Icon name={icon} />
     </button>
   )
 }
 
-function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen }: {
+function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggleSettings }: {
   s: WatchState; label: string; holdOn: () => void; holdOff: () => void; rxOpen: boolean; setRxOpen: (v: boolean) => void
+  setOpen: boolean; toggleSettings: () => void
 }) {
   const c = useWatchClock()
   const [volOpen, setVolOpen] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
+  const rxRef = useRef<HTMLDivElement>(null)
+  useDismiss(rxOpen, rxRef, () => setRxOpen(false))
+  useEffect(() => { if (!s.fs) setChatOpen(false) }, [s.fs])
+  const idle = !s.kind
+  const online = s.status === 'live'
   const live = c.live || !Number.isFinite(c.dur)
   const playLabel = s.playing ? 'Pause' : 'Play'
   const camLabel = !s.call.on ? 'Join with camera + mic' : s.call.micOnly ? 'No camera' : s.call.camOff ? 'Turn camera on' : 'Turn camera off'
   return (
     <div className="wp-overlay">
-      <div className="wp-ov-top">
-        <span className="wp-ov-title">{label || 'Watch Party'}</span>
-        <Ctl icon="sync" label="Sync to the room" onClick={forceSync} />
-      </div>
-      <div className="wp-ov-mid">
-        <Ctl icon="back10" label="Back 10 seconds" onClick={() => skip(-10)} disabled={live} />
-        <Ctl icon={s.playing ? 'pause' : 'play'} label={playLabel} onClick={togglePlay} big />
-        <Ctl icon="fwd10" label="Forward 10 seconds" onClick={() => skip(10)} disabled={live} />
-      </div>
-      <div className="wp-ov-bottom">
+      {idle ? <span /> : (
+        <div className="wp-ov-top">
+          <span className="wp-ov-title">{label || 'Watch Party'}</span>
+          <Ctl icon="sync" label="Sync to the room" onClick={forceSync} />
+        </div>
+      )}
+      {!idle && (
+        <div className="wp-ov-mid">
+          <Ctl icon="back10" label="Back 10 seconds" onClick={() => skip(-10)} disabled={live} />
+          <Ctl icon={s.playing ? 'pause' : 'play'} label={playLabel} onClick={togglePlay} big />
+          <Ctl icon="fwd10" label="Forward 10 seconds" onClick={() => skip(10)} disabled={live} />
+        </div>
+      )}
+      <div className="wp-ov-bottom" data-idle={idle}>
         {rxOpen && (
-          <div className="wp-rx-strip" role="group" aria-label="Send a reaction">
-            {REACTIONS.map((e) => <button key={e} type="button" className="wp-rx-btn" onClick={() => react(e)} aria-label={`React ${e}`}>{e}</button>)}
+          <div className="wp-rx-strip" role="group" aria-label="Send a reaction" ref={rxRef}>
+            {REACTIONS.map((e) => <button key={e} type="button" className="wp-rx-btn" disabled={!online} onClick={() => react(e)} aria-label={`React ${e}`}>{e}</button>)}
           </div>
         )}
-        {!live && <Seek t={c.t} dur={c.dur} buf={c.buf} holdOn={holdOn} holdOff={holdOff} />}
+        {chatOpen && <FsChatForm online={online} onDone={() => setChatOpen(false)} />}
+        {!idle && !live && <Seek t={c.t} dur={c.dur} buf={c.buf} holdOn={holdOn} holdOff={holdOff} />}
         <div className="wp-ov-row">
-          <Ctl icon={s.playing ? 'pause' : 'play'} label={playLabel} onClick={togglePlay} />
-          <Volume s={s} open={volOpen} setOpen={(v) => { setVolOpen(v); if (v) holdOn(); else holdOff() }} />
-          <span className="wp-time num">
-            {live ? <><span className="wp-live-dot" aria-hidden="true" />LIVE</> : <>{fmtTime(c.t)}<span className="wp-time-sep"> / </span><span className="wp-time-dur">{fmtTime(c.dur)}</span></>}
-          </span>
+          {!idle && (
+            <>
+              <Ctl icon={s.playing ? 'pause' : 'play'} label={playLabel} onClick={togglePlay} />
+              <Volume s={s} open={volOpen} setOpen={(v) => { setVolOpen(v); if (v) holdOn(); else holdOff() }} />
+              <span className="wp-time num">
+                {live ? <><span className="wp-live-dot" aria-hidden="true" />LIVE</> : <>{fmtTime(c.t)}<span className="wp-time-sep"> / </span><span className="wp-time-dur">{fmtTime(c.dur)}</span></>}
+              </span>
+            </>
+          )}
           <span className="wp-ov-spacer" />
           {s.call.on && <Ctl icon={s.call.muted ? 'micOff' : 'mic'} label={s.call.muted ? 'Unmute mic' : 'Mute mic'} onClick={toggleMute} pressed={!s.call.muted} />}
           <Ctl
@@ -175,7 +201,10 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen }: {
             onClick={() => (s.call.on ? toggleVideo() : void joinCall())} pressed={s.call.on && !s.call.camOff && !s.call.micOnly}
             disabled={s.call.busy || (s.call.on && s.call.micOnly)}
           />
+          {s.call.on && <Ctl icon="leave" label="Leave call" onClick={leaveCall} className="wp-ctl-leave" />}
           <Ctl icon="smile" label={rxOpen ? 'Hide reactions' : 'Reactions'} onClick={() => setRxOpen(!rxOpen)} pressed={rxOpen} />
+          {s.fs && <Ctl icon="chat" label={chatOpen ? 'Hide chat box' : 'Chat'} onClick={() => setChatOpen(!chatOpen)} pressed={chatOpen} />}
+          <Ctl id="wp-set-btn" icon="settings" label="Settings" onClick={toggleSettings} expanded={setOpen} />
           <Ctl icon={s.fs ? 'fsExit' : 'fs'} label={s.fs ? 'Exit fullscreen' : 'Fullscreen'} onClick={toggleFs} />
         </div>
       </div>
@@ -224,14 +253,7 @@ function Seek({ t, dur, buf, holdOn, holdOff }: { t: number; dur: number; buf: n
 function Volume({ s, open, setOpen }: { s: WatchState; open: boolean; setOpen: (v: boolean) => void }) {
   const wrap = useRef<HTMLDivElement>(null)
   const icon: IconName = s.playerMuted || s.playerVol === 0 ? 'volMute' : s.playerVol < 0.5 ? 'volLow' : 'vol'
-  useEffect(() => {
-    if (!open) return
-    const off = (e: PointerEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false) }
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false) } }
-    document.addEventListener('pointerdown', off, true)
-    document.addEventListener('keydown', esc, true)
-    return () => { document.removeEventListener('pointerdown', off, true); document.removeEventListener('keydown', esc, true) }
-  }, [open, setOpen])
+  useDismiss(open, wrap, () => setOpen(false))
   const pct = (v: number, m: boolean) => (m ? 0 : Math.round(v * 100))
   return (
     <div className="wp-vol" ref={wrap}>
@@ -254,6 +276,23 @@ function Volume({ s, open, setOpen }: { s: WatchState; open: boolean; setOpen: (
     </div>
   )
 }
+/** A tap outside, or Escape, closes a popover. Its own toggle button is left to toggle it. */
+function useDismiss(open: boolean, ref: RefObject<HTMLElement | null>, close: () => void) {
+  const fn = useRef(close)
+  fn.current = close
+  useEffect(() => {
+    if (!open) return
+    const off = (e: PointerEvent) => {
+      const t = e.target as HTMLElement
+      if (!ref.current?.contains(t) && !t.closest?.('[aria-pressed="true"], [aria-expanded="true"]')) fn.current()
+    }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); fn.current() } }
+    document.addEventListener('pointerdown', off, true)
+    document.addEventListener('keydown', esc, true)
+    return () => { document.removeEventListener('pointerdown', off, true); document.removeEventListener('keydown', esc, true) }
+  }, [open, ref])
+}
+
 function VolRow({ label, muted, value, onMute, onVol }: { label: string; muted: boolean; value: number; onMute: () => void; onVol: (v: number) => void }) {
   return (
     <div className="wp-vol-row">
@@ -274,13 +313,13 @@ let floaterId = 0
 function RxLayer() {
   const reduced = useReducedMotion()
   const [list, setList] = useState<Floater[]>([])
-  const [burst, setBurst] = useState<{ e: string; id: number } | null>(null)
+  const [burst, setBurst] = useState<{ e: string; id: number; n: number } | null>(null)
   useEffect(() => onReaction((r) => {
     const f: Floater = { ...r, id: ++floaterId, x: 8 + Math.random() * 30 }
     setList((l) => [...l.slice(-24), f])
     window.setTimeout(() => setList((l) => l.filter((x) => x.id !== f.id)), 2400)
     if (r.burst) {
-      const b = { e: r.e, id: f.id }
+      const b = { e: r.e, id: f.id, n: r.burst }
       setBurst(b)
       window.setTimeout(() => setBurst((cur) => (cur?.id === b.id ? null : cur)), 2200)
     }
@@ -295,8 +334,19 @@ function RxLayer() {
       ))}
       {burst && (
         <div className="wp-burst" key={burst.id}>
-          <span className="wp-burst-e">{burst.e}</span>
-          {!reduced && Array.from({ length: 18 }, (_, i) => <i key={i} style={{ left: `${(i * 41) % 100}%`, animationDelay: `${(i % 6) * 0.07}s`, rotate: `${(i * 67) % 360}deg` }} />)}
+          <span className="wp-burst-e">{burst.e}<span className="wp-burst-n">×{burst.n}</span></span>
+          {/* Emoji confetti: two cannons from the bottom corners. */}
+          {!reduced && Array.from({ length: 36 }, (_, i) => {
+            const left = i % 2 === 0
+            const dx = (left ? 1 : -1) * (20 + ((i * 37) % 50))
+            const dy = 45 + ((i * 53) % 45)
+            return (
+              <i key={i} className="wp-confetti" style={{
+                [left ? 'left' : 'right']: '2%', animationDelay: `${(i % 9) * 0.05}s`,
+                ['--dx' as string]: `${dx}cqw`, ['--dy' as string]: `${-dy}cqh`, ['--r' as string]: `${((i * 97) % 720) - 360}deg`,
+              }}>{burst.e}</i>
+            )
+          })}
         </div>
       )}
     </div>
@@ -309,8 +359,8 @@ function FsChat() {
   useEffect(() => onChat((m) => {
     if (m.cmd && m.cmd !== 'host') return
     const k = ++floaterId
-    setLines((l) => [...l.slice(-3), { ...m, k }])
-    window.setTimeout(() => setLines((l) => l.filter((x) => x.k !== k)), 8000)
+    setLines((l) => [...l.slice(-5), { ...m, k }])
+    window.setTimeout(() => setLines((l) => l.filter((x) => x.k !== k)), 30_000)
   }), [])
   if (!lines.length) return null
   return (
@@ -321,6 +371,24 @@ function FsChat() {
         </li>
       ))}
     </ul>
+  )
+}
+
+/** The chat box in fullscreen, where the chat panel is out of view. */
+function FsChatForm({ online, onDone }: { online: boolean; onDone: () => void }) {
+  const [msg, setMsg] = useState('')
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { ref.current?.focus({ preventScroll: true }) }, [])
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    if (sendChat(msg)) setMsg('')
+  }
+  return (
+    <form className="wp-fs-form" onSubmit={submit} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDone() } }}>
+      <label className="sr-only" htmlFor="wp-fs-in">Message</label>
+      <input id="wp-fs-in" ref={ref} className="input" value={msg} maxLength={500} placeholder={online ? 'Message the room' : 'Connecting…'} disabled={!online} onChange={(e) => setMsg(e.target.value)} enterKeyHint="send" autoComplete="off" />
+      <button type="submit" className="wp-ctl" aria-label="Send" disabled={!online || !msg.trim()}><Icon name="send" /></button>
+    </form>
   )
 }
 

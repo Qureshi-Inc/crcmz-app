@@ -30,11 +30,11 @@ export function ClipSheet({
 
 /** The confirm step for an action that cannot be taken back quietly. */
 export function ConfirmDialog({
-  open, onOpenChange, title, body, action, onConfirm,
-}: { open: boolean; onOpenChange: (v: boolean) => void; title: string; body: ReactNode; action: string; onConfirm: () => void }) {
+  open, onOpenChange, title, body, action, onConfirm, container,
+}: { open: boolean; onOpenChange: (v: boolean) => void; title: string; body: ReactNode; action: string; onConfirm: () => void; container?: HTMLElement }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
+      <Dialog.Portal container={container}>
         <Dialog.Overlay className="scrim scrim-top" />
         <Dialog.Content className="dialog dialog-confirm" role="alertdialog" aria-describedby="confirm-desc">
           <Dialog.Title className="dialog-title">{title}</Dialog.Title>

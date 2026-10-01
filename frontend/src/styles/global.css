@@ -1623,11 +1623,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .wp-rx-layer[data-reduced="true"] .wp-floater { animation: fade-in var(--dur-std) linear; }
 .wp-burst { position: absolute; inset: 0; display: grid; place-items: center; }
 .wp-burst-e { font-size: clamp(64px, 22cqw, 140px); animation: wp-pop 2.2s var(--ease-out) forwards; filter: drop-shadow(0 0 24px rgba(255, 47, 214, .6)); }
-.wp-burst i { position: absolute; top: -12px; width: 8px; height: 14px; border-radius: 2px; background: var(--neon-magenta); animation: wp-fall 2s linear forwards; }
-.wp-burst i:nth-child(3n) { background: var(--neon-cyan); }
-.wp-burst i:nth-child(3n + 1) { background: var(--neon-lime); }
 @keyframes wp-pop { 0% { transform: scale(.3); opacity: 0; } 15% { transform: scale(1.15); opacity: 1; } 30% { transform: scale(1); } 80% { opacity: 1; } 100% { opacity: 0; } }
-@keyframes wp-fall { to { transform: translateY(120cqh) rotate(540deg); opacity: .2; } }
 .wp-rx-layer[data-reduced="true"] .wp-burst-e { animation: fade-in var(--dur-std) linear; }
 
 .wp-unblock { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 4; }
@@ -1642,6 +1638,51 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .wp-ripple[data-side="r"] { right: 0; border-radius: 50% 0 0 50% / 50% 0 0 50%; }
 .wp-fs-chat { position: absolute; left: var(--space-3); bottom: 108px; z-index: 3; max-width: min(60%, 420px); margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-1); pointer-events: none; }
 .wp-fs-chat li { background: rgba(0, 0, 0, .6); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); font-size: var(--text-sm); overflow-wrap: anywhere; animation: fade-in var(--dur-std) var(--ease-out); }
+
+/* Idle player (nothing playing): only the call and settings controls, on a lighter bar. */
+.wp-ov-bottom[data-idle="true"] { background: linear-gradient(transparent, rgba(0, 0, 0, .5)); padding-top: var(--space-2); }
+/* Narrow players: smaller controls, and Leave moves into Settings below 380 px. */
+@container wpstage (max-width: 440px) { .wp-ov-row .wp-ctl { width: 40px; height: 40px; } .wp-ov-row .wp-ctl svg { width: 20px; height: 20px; } }
+@container wpstage (max-width: 380px) { .wp-ctl-leave { display: none !important; } }
+.wp-ctl-leave { color: #ff8a8a; }
+.wp-inline-icon, .wp-inline-icon svg { display: inline-block; width: 16px; height: 16px; vertical-align: -3px; }
+
+/* The ⚙ panel: slides over the right of the player, inside it so fullscreen keeps it. */
+.wp-set {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 6; width: min(100%, 360px);
+  display: flex; flex-direction: column; gap: var(--space-4); overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-2) var(--space-4) var(--space-5); color: var(--text);
+  background: #0b0720; border-left: 1px solid var(--border-control); box-shadow: -8px 0 32px rgba(0, 0, 0, .5);
+  animation: wp-set-in var(--dur-std) var(--ease-out);
+}
+@keyframes wp-set-in { from { transform: translateX(24px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .wp-set { animation: none; } }
+.wp-set-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: calc(-1 * var(--space-2)); background: inherit; margin: 0 calc(-1 * var(--space-2)); padding-left: var(--space-2); }
+.wp-set-title { margin: 0; font-size: var(--text-lg); font-weight: 800; }
+.wp-set-field { display: flex; flex-direction: column; gap: var(--space-2); }
+.wp-set-field .field-hint, .wp-set-field .meta { margin: 0; }
+.wp-set > .btn { align-self: flex-start; }
+.wp-set .wp-devices { display: flex; flex-direction: column; gap: var(--space-3); }
+.wp-set .wp-orbpos-rows { grid-template-columns: 1fr; max-width: none; }
+.wp-set[data-inline="true"] { position: relative; inset: auto; z-index: auto; width: auto; overflow: visible; box-shadow: none; background: var(--glass); border: 1px solid var(--glass-border); animation: fade-in var(--dur-std) var(--ease-out); }
+.wp-set[data-inline="true"] .wp-set-head { position: static; background: none; }
+.wp-set-slot:empty { display: none; }
+
+/* Fullscreen chat box */
+.wp-fs-form { display: flex; gap: var(--space-2); align-items: center; padding: 0 var(--space-2) var(--space-2); max-width: 560px; }
+.wp-fs-form .input { flex: 1; min-width: 0; background: rgba(0, 0, 0, .6); }
+
+/* Burst: the emoji, its count, and emoji confetti from both bottom corners. */
+.wp-burst-n { display: block; margin-top: -.15em; font: 800 clamp(22px, 7cqw, 44px) / 1 var(--font-body); text-align: center; color: #fff; text-shadow: 0 2px 8px #000; }
+.wp-confetti {
+  position: absolute; bottom: 0; font-style: normal; font-size: clamp(18px, 4cqw, 30px); line-height: 1; opacity: 0;
+  animation: wp-cannon 1.8s cubic-bezier(.2, .7, .3, 1) forwards;
+}
+@keyframes wp-cannon {
+  0% { transform: translate(0, 0) rotate(0); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) rotate(var(--r)); opacity: 0; }
+}
 
 /* Camera orbs */
 .wp-orbs { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }

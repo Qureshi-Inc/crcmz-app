@@ -181,6 +181,25 @@ for (const vp of VIEWPORTS) {
         }
       }
     }
+    if (path === '/app/watch') {
+      const gear = page.locator('#wp-set-btn');
+      if (await gear.count()) {
+        await gear.click();
+        await page.waitForSelector('.wp-set[role="dialog"]', { timeout: 5_000 }).catch(() => {});
+        await page.waitForTimeout(400);
+        await scan(page, `${vp.name} ${path} + player settings`);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(200);
+        const back = await page.evaluate(() => document.activeElement?.id);
+        if (await page.locator('.wp-set').count() || back !== 'wp-set-btn') {
+          console.log(`  ✗ ${vp.name} player settings: Escape left it open or focus on ${back}`);
+          violations.push(`${vp.name} player settings close`);
+        }
+      } else {
+        console.log(`  ✗ ${vp.name} ${path}: no player settings button`);
+        violations.push(`${vp.name} no settings button`);
+      }
+    }
     if (path === '/app/community/giveaways' && vp.name === 'desktop') {
       const draw = page.getByRole('button', { name: /draw a winner/i }).first();
       if (await draw.count()) {
