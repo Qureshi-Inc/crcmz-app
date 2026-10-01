@@ -12,6 +12,7 @@ import { toast } from '../../components/toast'
 import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
+import * as lockScreen from '../../lib/mediaSession'
 import {
   beacon, extract, fmtTime, getConfig, isDirect, isProxy, joinRoom, loadScript, REACTIONS, setNickname,
   rally as postRally, ytId, type WatchConfig,
@@ -234,7 +235,14 @@ function isPlaying(): boolean {
   if (state.kind === 'yt') return ytState === 1 || ytState === 3
   return false
 }
-const syncPlaying = () => { const p = isPlaying(); if (p !== state.playing) set({ playing: p }) }
+const syncPlaying = () => {
+  const p = isPlaying()
+  if (p === state.playing) return
+  set({ playing: p })
+  // Pressing play on the party (or the room starting it) takes the lock screen.
+  if (p) lockScreen.claim('watch', lockSpec())
+  else syncLockScreen()
+}
 
 export function attachVideo(el: HTMLVideoElement | null) {
   if (!el || el === video) return
@@ -362,7 +370,7 @@ function mount(url: string) {
   ytState = -1
   set({ video: url, kind: '', ytFresh: false, playing: false, unblock: '', mediaError: '' })
   titleVideoChanged()
-  if (!url) return
+  if (!url) { lockScreen.release('watch'); return }
   const id = ytId(url)
   if (id) { set({ kind: 'yt', ytFresh: true }); mountYt(id); return }
   if (!video) return
@@ -670,6 +678,7 @@ export function leave() {
   window.clearTimeout(recoverT)
   dropSock()
   mount('')
+  lockScreen.release('watch')
   exitFs()
   set({ status: 'idle', roster: [], presence: { count: 0, viewers: [] }, chat: [], error: '' })
 }
@@ -835,6 +844,7 @@ function tick() {
     clockListeners.forEach((l) => l())
   }
   syncPlaying()
+  syncLockScreen()
   applyResume()
   if (++histN % 12 === 0) histCheck()
 }
@@ -1322,4 +1332,41 @@ function meterStop(key: string) {
   try { void m.ctx.close() } catch { /* */ }
   delete levels[key]
   if (state.loud[key]) { const loud = { ...state.loud }; delete loud[key]; set({ loud }) }
+}
+
+// ── Lock screen (Media Session) ─────────────────────────────────────────────
+// Every control goes through the same paths as the overlay, so the whole party follows.
+const SKIP_S = 10
+const lockHandlers: lockScreen.Handlers = {
+  play: () => { if (!isPlaying()) togglePlay() },
+  pause: () => { if (isPlaying()) togglePlay() },
+  seekto: (d) => { if (d.seekTime != null) userSeek(d.seekTime) },
+  seekbackward: (d) => skip(-(d.seekOffset || SKIP_S)),
+  seekforward: (d) => skip(d.seekOffset || SKIP_S),
+  // Chrome offers this when you switch away from a playing video.
+  enterpictureinpicture: () => {
+    if (state.kind === 'file' && video && document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+      video.requestPictureInPicture().catch(() => { /* not allowed right now */ })
+    }
+  },
+}
+
+function lockSpec(): lockScreen.Spec {
+  const id = state.kind === 'yt' ? ytId(state.video) : null
+  const n = state.presence.count
+  const d = duration()
+  return {
+    title: videoLabel() || 'Watch Party',
+    artist: `Watch Party${n > 1 ? ` · ${n} watching` : ''}`,
+    album: 'CRCMZ',
+    art: id ? [{ src: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`, size: '480x360' }] : [],
+    playing: state.playing,
+    handlers: lockHandlers,
+    // A live stream has no end, so no scrubber.
+    position: Number.isFinite(d) && d > 0 ? { at: time() ?? 0, duration: d } : null,
+  }
+}
+
+function syncLockScreen() {
+  if (lockScreen.holds('watch')) lockScreen.update('watch', lockSpec())
 }

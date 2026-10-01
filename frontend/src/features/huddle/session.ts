@@ -14,6 +14,7 @@ import { useSyncExternalStore } from 'react'
 import { toast } from '../../components/toast'
 import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError, request } from '../../lib/http'
+import * as lockScreen from '../../lib/mediaSession'
 import { markSignedOut } from '../../lib/session'
 import { loadScript } from '../../lib/watch'
 
@@ -119,6 +120,7 @@ const listeners = new Set<() => void>()
 function set(patch: Partial<HuddleState>) {
   state = { ...state, ...patch }
   listeners.forEach((l) => l())
+  syncLockScreen()
 }
 export function getHuddle(): HuddleState { return state }
 export function useHuddle(): HuddleState {
@@ -614,4 +616,31 @@ async function transcribe(blob: Blob, me: string) {
     addLine(me, text)
     void sendData({ t: 'line', text })
   } catch { /* the next chunk tries again */ }
+}
+
+// ── Lock screen (Media Session) ─────────────────────────────────────────────
+// Joining takes the lock screen; Slap or a Watch Party started during the call
+// takes it over, and hanging up hands it back. Chrome adds mic, camera and
+// hang-up buttons for a call; elsewhere it is just the card.
+const lockHandlers: lockScreen.Handlers = {
+  togglemicrophone: () => { void toggleMic() },
+  togglecamera: () => { void toggleCam() },
+  hangup: () => { void leave() },
+}
+
+function syncLockScreen() {
+  if (!inCall()) { lockScreen.release('huddle'); return }
+  const others = state.tiles.filter((t) => !t.local && !t.screen).length
+  const spec: lockScreen.Spec = {
+    title: `Huddle · ${state.room}`,
+    artist: state.phase === 'reconnecting' ? 'Reconnecting…' : others ? `${others + 1} in the call` : 'Waiting for the squad',
+    album: 'CRCMZ',
+    playing: true,
+    handlers: lockHandlers,
+    position: null,
+    mic: state.mic,
+    camera: state.cam,
+  }
+  if (lockScreen.holds('huddle')) lockScreen.update('huddle', spec)
+  else lockScreen.claim('huddle', spec)
 }

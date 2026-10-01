@@ -8,6 +8,7 @@ import { useSyncExternalStore } from 'react'
 import { toast } from '../../components/toast'
 import { ApiError } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
+import * as lockScreen from '../../lib/mediaSession'
 import { artUrl, reportListen, streamUrl, together, type QueueItem, type Room, type TogetherOp, type Track } from '../../lib/slap'
 
 export type Repeat = 'off' | 'all' | 'one'
@@ -60,6 +61,7 @@ const clockListeners = new Set<() => void>()
 function set(patch: Partial<PlayerState>) {
   state = { ...state, ...patch }
   listeners.forEach((l) => l())
+  syncLockScreen()
   if ('queue' in patch || 'index' in patch || 'shuffle' in patch || 'repeat' in patch) persist()
 }
 function persist() {
@@ -109,7 +111,6 @@ function el(): HTMLAudioElement {
   })
   window.addEventListener('pagehide', () => { persist(); finishListen(false) })
   audio = a
-  mediaSession()
   return a
 }
 
@@ -118,6 +119,7 @@ function setClock(position: number, duration: number) {
   if (Math.abs(position - clock.position) < 0.2 && d === clock.duration) return
   clock = { position, duration: d }
   clockListeners.forEach((l) => l())
+  syncLockScreen()
 }
 
 /** Put `item` in the element (if it is not already) and start from `at`. */
@@ -130,7 +132,6 @@ function load(item: QueueItem, at: number) {
     a.src = streamUrl(item.id)
     startListen(item)
     setClock(at, item.duration)
-    updateMetadata(item)
     set({ loading: true })
   } else if (Math.abs(a.currentTime - at) > DRIFT_S) {
     if (a.readyState >= 1) a.currentTime = at
@@ -148,6 +149,7 @@ function unload() {
 }
 
 async function start() {
+  lockScreen.claim('slap', lockSpec())
   try {
     await el().play()
   } catch (e) {
@@ -370,7 +372,7 @@ export function closePlayer() {
   unshuffled = null
   soloPos = 0
   set({ queue: [], index: -1, playing: false, blocked: false, expanded: false })
-  if ('mediaSession' in navigator) navigator.mediaSession.metadata = null
+  lockScreen.release('slap')
 }
 
 export function setExpanded(expanded: boolean) { set({ expanded }) }
@@ -481,24 +483,32 @@ export function shareMyQueue() {
 }
 
 // ── Media Session (lock screen, headphone buttons) ──────────────────────────
-function updateMetadata(item: QueueItem) {
-  if (!('mediaSession' in navigator)) return
-  const art = artUrl(item.art, 300)
-  try {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: item.title, artist: item.artist, album: item.album,
-      artwork: art ? [{ src: art, sizes: '300x300', type: 'image/jpeg' }] : [],
-    })
-  } catch { /* older browsers */ }
+// Together mode needs nothing special: toggle/next/prev/seek already go to the room.
+const SKIP_S = 10
+const handlers: lockScreen.Handlers = {
+  play: () => { if (!state.playing || state.blocked) toggle() },
+  pause: () => { if (state.playing) toggle() },
+  nexttrack: () => next(),
+  previoustrack: () => prev(),
+  seekto: (d) => { if (d.seekTime != null) seek(d.seekTime) },
+  seekbackward: (d) => seek(Math.max(0, clock.position - (d.seekOffset || SKIP_S))),
+  seekforward: (d) => seek(Math.min(clock.duration || Infinity, clock.position + (d.seekOffset || SKIP_S))),
 }
 
-function mediaSession() {
-  if (!('mediaSession' in navigator)) return
-  const ms = navigator.mediaSession
-  const h = (a: MediaSessionAction, fn: MediaSessionActionHandler) => { try { ms.setActionHandler(a, fn) } catch { /* unsupported action */ } }
-  h('play', () => { if (!state.playing || state.blocked) toggle() })
-  h('pause', () => { if (state.playing) toggle() })
-  h('nexttrack', () => next())
-  h('previoustrack', () => prev())
-  h('seekto', (d) => { if (d.seekTime != null) seek(d.seekTime) })
+function lockSpec(): lockScreen.Spec {
+  const item = current()
+  const together = state.mode === 'together'
+  return {
+    title: item?.title ?? 'Slap',
+    artist: item?.artist ?? '',
+    album: together ? 'Listen Together' : item?.album ?? '',
+    art: item?.art ? ([300, 600] as const).map((size) => ({ src: artUrl(item.art, size)!, size })) : [],
+    playing: state.playing && !state.blocked,
+    handlers,
+    position: item ? { at: clock.position, duration: clock.duration || item.duration } : null,
+  }
+}
+
+function syncLockScreen() {
+  if (lockScreen.holds('slap')) lockScreen.update('slap', lockSpec())
 }

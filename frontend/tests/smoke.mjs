@@ -41,6 +41,14 @@ const browser = await chromium.launch({ executablePath: CHROME, headless: true, 
  */
 async function newPage({ width, height, mocks = {}, match = null, reducedMotion = 'no-preference' }) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, reducedMotion, hasTouch: width < 1024 })
+  // Keep what the app hands the lock screen, so a check can press its buttons.
+  await ctx.addInitScript(() => {
+    const ms = navigator.mediaSession
+    if (!ms) return
+    const set = ms.setActionHandler.bind(ms)
+    window.__ms = {}
+    ms.setActionHandler = (a, fn) => { if (fn) window.__ms[a] = fn; else delete window.__ms[a]; try { set(a, fn) } catch { /* */ } }
+  })
   const page = await ctx.newPage()
   page.violations = []
   page.writes = []
@@ -60,6 +68,13 @@ async function newPage({ width, height, mocks = {}, match = null, reducedMotion 
   page.on('pageerror', (e) => page.violations.push(`pageerror: ${e.message}`))
   return { ctx, page }
 }
+
+/** What the lock screen shows: title, artist, play state and the buttons it offers. */
+const lock = (page) => page.evaluate(() => {
+  const ms = navigator.mediaSession
+  return { title: ms.metadata?.title ?? null, artist: ms.metadata?.artist ?? null, album: ms.metadata?.album ?? null, art: ms.metadata?.artwork?.[0]?.src ?? null, state: ms.playbackState, actions: Object.keys(window.__ms || {}).sort().join(',') }
+})
+const press = (page, action, extra = {}) => page.evaluate(([a, x]) => window.__ms[a]?.({ action: a, ...x }), [action, extra])
 
 const json = (status, body, headers = {}) => (route) =>
   route.fulfill({ status, contentType: 'application/json', headers, body: JSON.stringify(body) })
@@ -1161,6 +1176,24 @@ try {
     await page.waitForSelector('.miniplayer-bar')
     check('playing a track shows the mini-player bar', (await page.textContent('.miniplayer-title')).startsWith('Track'))
     check('html[data-player] is set while something plays', await page.evaluate(() => 'player' in document.documentElement.dataset))
+    {
+      await page.waitForFunction(() => navigator.mediaSession.metadata?.title?.startsWith('Track'))
+      const l = await lock(page)
+      check('slap lock screen: the track, its art and the music buttons', l.title === (await page.textContent('.miniplayer-title')) && (l.art?.includes('/api/slap/art/') || l.art?.endsWith('/app/pwa/icon-192.png')) && l.actions === 'nexttrack,pause,play,previoustrack,seekbackward,seekforward,seekto', JSON.stringify(l))
+      await page.waitForFunction(() => navigator.mediaSession.playbackState === 'playing', null, { timeout: 5000 }).catch(() => {})
+      await press(page, 'pause')
+      await page.waitForFunction(() => navigator.mediaSession.playbackState === 'paused', null, { timeout: 5000 }).catch(() => {})
+      check('slap lock screen: pause pauses the player', (await lock(page)).state === 'paused' && (await page.isVisible('.miniplayer-bar button[aria-label="Play"]')), JSON.stringify(await lock(page)))
+      const before = await page.textContent('.miniplayer-title')
+      await press(page, 'nexttrack')
+      await page.waitForFunction((t) => document.querySelector('.miniplayer-title')?.textContent !== t, before, { timeout: 5000 }).catch(() => {})
+      const after = await page.textContent('.miniplayer-title')
+      check('slap lock screen: next skips, and the card follows', after !== before && (await lock(page)).title === after, `${before} -> ${after} / ${(await lock(page)).title}`)
+      await press(page, 'previoustrack')
+      await page.waitForFunction((t) => document.querySelector('.miniplayer-title')?.textContent === t, before, { timeout: 5000 }).catch(() => {})
+      check('slap lock screen: previous goes back', (await page.textContent('.miniplayer-title')) === before && (await lock(page)).title === before)
+      await press(page, 'play')
+    }
     const geo = await page.evaluate(() => {
       const b = document.querySelector('.miniplayer-bar').getBoundingClientRect()
       const t = document.querySelector('.tabbar')?.getBoundingClientRect()
@@ -1733,6 +1766,17 @@ try {
     await page.click('.wp-ov-mid button[aria-label="Play"]')
     await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:play'))
     check('watch: centre play tells the room', true)
+    {
+      await page.waitForFunction(() => navigator.mediaSession.playbackState === 'playing', null, { timeout: 5000 }).catch(() => {})
+      const l = await lock(page)
+      check('watch lock screen: the party, playing, with seek and picture-in-picture', l.state === 'playing' && l.artist.startsWith('Watch Party') && l.actions === 'enterpictureinpicture,pause,play,seekbackward,seekforward,seekto', JSON.stringify(l))
+      const n = await page.evaluate(() => window.__wpEmits.filter((e) => e[0] === 'CMD:pause').length)
+      await press(page, 'pause')
+      await page.waitForFunction((k) => window.__wpEmits.filter((e) => e[0] === 'CMD:pause').length > k, n, { timeout: 5000 }).catch(() => {})
+      check('watch lock screen: pause pauses for the whole room', (await page.evaluate(() => window.__wpEmits.filter((e) => e[0] === 'CMD:pause').length)) > n)
+      await press(page, 'play')
+      await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
+    }
     await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
     await page.click('.wp-ov-mid button[aria-label="Pause"]')
     await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:pause'))
@@ -1995,6 +2039,10 @@ try {
       await h.page.waitForFunction(() => document.querySelector('.hu-count')?.textContent === '3 in call')
       check('huddle: people joining fill the filmstrip', (await h.page.locator('.hu-strip li').count()) === 3)
       check('huddle: their audio plays from outside the page', (await hs(h.page)).audio === 2)
+      {
+        const l = await lock(h.page)
+        check('huddle lock screen: the room, who is in it, and the call buttons', l.title === 'Huddle · squadnight' && l.artist === '3 in the call' && l.actions === 'hangup,togglecamera,togglemicrophone', JSON.stringify(l))
+      }
       check('huddle: the spotlight goes to someone else, not you', (await spotName(h.page)).includes('Bizzle'))
       await h.page.evaluate(() => window.__lkSpeak(['p3']))
       await h.page.waitForFunction(() => document.querySelector('.hu-spot .hu-tile-name')?.textContent.includes('Noor'))
@@ -2089,6 +2137,7 @@ try {
       await h.page.click('.hu-controls button[aria-label="Leave the call"]')
       await h.page.waitForSelector('.hu-pre')
       check('huddle: Leave goes back to pre-join, no "dropped" note', !(await h.page.isVisible('.hu-pre-form .banner')) && (await hs(h.page)).audio === 0)
+      check('huddle lock screen: leaving clears the card and its buttons', await lock(h.page).then((l) => l.title === null && l.actions === ''), JSON.stringify(await lock(h.page)))
       await h.page.click('.hu-join')
       await h.page.waitForSelector('.hu-call')
       await h.page.evaluate(() => window.__lkFire('disconnected', 2))
