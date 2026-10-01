@@ -3,14 +3,18 @@
     browser ──/api/slap/*──> crcmz-app ──admin API key + userId──> Jellyfin
                                        └─stamped username──────> slaptastic
 
-Nobody logs in to Jellyfin. crcmz-app holds one admin API key and acts *as* the
-signed-in person by passing their Jellyfin userId:
+crcmz-app holds one admin API key and acts *as* the signed-in person by passing
+their Jellyfin userId:
 
   * a Zitadel person maps to a Jellyfin user through the ``jellyfin_user``
     metadata tag (the identity graph, see crcmz_identity);
-  * a person with no tag gets a Jellyfin account created on their first visit —
-    named after their Zitadel username, non-admin, music folders only, a random
-    password nobody knows — and the tag is written back, so it happens once;
+  * a person with no tag gets the account named by ``jellyfin_name`` — the same
+    name the Zitadel ``jellyfinUser`` action puts in the SSO claim. If they have
+    already signed in to Jellyfin with Zitadel, that account is adopted (the SSO
+    plugin's link proves it is theirs); otherwise one is created — non-admin, all
+    libraries, a random password nobody knows. Either way the tag is written back,
+    so it happens once, and ``link_sso_accounts`` tags anyone who only ever used
+    Jellyfin itself;
   * the key never reaches the browser: audio and artwork stream through here.
 
 slaptastic trusts whatever ``username`` a write carries, so the browser never
@@ -50,6 +54,8 @@ JELLYFIN_TOKEN = os.environ.get("JELLYFIN_TOKEN", "")
 SLAP_API_URL = os.environ.get("SLAP_API_URL", "https://slap.qureshi.io/api/v1").rstrip("/")
 
 TAG = "jellyfin_user"
+SSO_PLUGIN = "505ce9d1-d916-42fa-86ca-673ef241d7df"   # 9p4/jellyfin-plugin-sso
+SSO_PROVIDER = os.environ.get("JELLYFIN_SSO_PROVIDER", "crcmz")
 _PLAYLISTS_FILE = Path(os.environ.get("SLAP_PLAYLISTS_FILE", "/data/slap_playlists.json"))
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
@@ -126,9 +132,40 @@ async def _jf_users(refresh: bool = False) -> dict[str, dict]:
 _create_locks: dict[str, asyncio.Lock] = {}
 
 
-async def _music_folders() -> list[str]:
-    data = _ok(await _jf("GET", "/Library/MediaFolders")) or {}
-    return [f["Id"] for f in data.get("Items", []) if f.get("CollectionType") == "music"]
+def claim_name(person: dict) -> str:
+    """What the Zitadel `jellyfinUser` action puts in the SSO claim, same order — the
+    name a Jellyfin sign-in by this person uses. '' when they have none, and then
+    the plugin names the account after their Zitadel id instead."""
+    tags = person.get("tags") or {}
+    for key in (TAG, "chosen_username", "mm_username"):
+        if v := (tags.get(key) or "").strip():
+            return v
+    return ""
+
+
+def jellyfin_name(person: dict) -> str:
+    """The Jellyfin username for a person: the claim name, so Slap and a Jellyfin
+    sign-in land on the same account, else their Zitadel username."""
+    return claim_name(person) or (person.get("username") or "").strip()
+
+
+async def _sso_links(refresh: bool = False) -> dict[str, str]:
+    """The SSO plugin's links, casefolded claim name → Jellyfin userId. A name is
+    only here once someone signed in to Jellyfin through Zitadel with that claim."""
+    if not refresh and (hit := _cached("sso", 60)) is not None:
+        return hit
+    try:
+        cfg = _ok(await _jf("GET", f"/Plugins/{SSO_PLUGIN}/Configuration")) or {}
+    except HTTPException:
+        cfg = {}   # plugin missing or Jellyfin down: nothing is linked
+    links = (((cfg.get("OidConfigs") or {}).get(SSO_PROVIDER) or {}).get("CanonicalLinks") or {})
+    return _store("sso", {str(k).casefold(): str(v).replace("-", "")
+                          for k, v in links.items() if k and v})
+
+
+def _tagged_by_other(name: str, sub: str) -> bool:
+    return any(p.get("zitadel_id") != sub and ((p.get("tags") or {}).get(TAG) or "").casefold() == name.casefold()
+               for p in crcmz_identity.people())
 
 
 async def _create_jellyfin_user(name: str) -> dict:
@@ -140,7 +177,7 @@ async def _create_jellyfin_user(name: str) -> dict:
     policy = dict((created or {}).get("Policy") or {})
     policy.update({
         "IsAdministrator": False, "IsHidden": True, "IsDisabled": False,
-        "EnableAllFolders": False, "EnabledFolders": await _music_folders(),
+        "EnableAllFolders": True, "EnabledFolders": [],
         "EnableContentDeletion": False, "EnableContentDeletionFromFolders": [],
         "EnableRemoteControlOfOtherUsers": False, "EnableMediaPlayback": True,
     })
@@ -158,7 +195,7 @@ async def resolve_jellyfin(sub: str, person: dict) -> tuple[dict, bool]:
         if not u:
             raise HTTPException(409, f"your music account '{tag}' no longer exists — ask an admin")
         return u, False
-    name = (person.get("username") or "").strip()
+    name = jellyfin_name(person)
     if not _JF_NAME.match(name):
         raise HTTPException(409, "your account has no username a music account can use — ask an admin")
     lock = _create_locks.setdefault(sub, asyncio.Lock())
@@ -167,15 +204,54 @@ async def resolve_jellyfin(sub: str, person: dict) -> tuple[dict, bool]:
         fresh = (await asyncio.to_thread(crcmz_identity.by_zitadel_id, refresh=True)).get(sub) or {}
         if tag := ((fresh.get("tags") or {}).get(TAG) or "").strip():
             return await resolve_jellyfin(sub, fresh)
-        if name.casefold() in (await _jf_users(refresh=True)):
-            # Somebody else's account, or one left unlinked on purpose: never adopt it.
-            raise HTTPException(409, f"a music account named '{name}' already exists — ask an admin to link it")
-        u = await _create_jellyfin_user(name)
+        u = (await _jf_users(refresh=True)).get(name.casefold())
+        created = u is None
+        if u:
+            # Their own Zitadel sign-in made it: the SSO link is under the name only their
+            # claim carries. Anything else is somebody else's account, or one left
+            # unlinked on purpose: never adopt it.
+            linked = (claim_name(fresh or person).casefold() == name.casefold()
+                      and (await _sso_links(refresh=True)).get(name.casefold()) == u["id"])
+            if not linked or await asyncio.to_thread(_tagged_by_other, name, sub):
+                raise HTTPException(409, f"a music account named '{name}' already exists — ask an admin to link it")
+            logger.info("slap: adopted %s, made by a Jellyfin sign-in", u["name"])
+        else:
+            u = await _create_jellyfin_user(name)
         if not await asyncio.to_thread(crcmz_identity.set_tag, sub, TAG, u["name"]):
-            logger.warning("slap: created %s but couldn't write the %s tag", u["name"], TAG)
+            logger.warning("slap: resolved %s but couldn't write the %s tag", u["name"], TAG)
         await asyncio.to_thread(crcmz_identity.people, refresh=True)
         _forget("users")
-        return u, True
+        return u, created
+
+
+async def link_sso_accounts() -> int:
+    """Write the `jellyfin_user` tag for everyone who signed in to Jellyfin through
+    Zitadel but never opened Slap, so the identity graph knows their account.
+    Returns how many it tagged."""
+    if not configured():
+        return 0
+    links = await _sso_links(refresh=True)
+    if not links:
+        return 0
+    by_id = {u["id"]: u for u in (await _jf_users(refresh=True)).values()}
+    people = await asyncio.to_thread(crcmz_identity.people, refresh=True)
+    tagged = {((p.get("tags") or {}).get(TAG) or "").casefold() for p in people} - {""}
+    n = 0
+    for p in people:
+        if ((p.get("tags") or {}).get(TAG) or "").strip():
+            continue
+        if not (name := claim_name(p)):
+            continue
+        u = by_id.get(links.get(name.casefold(), ""))
+        if not u or u["name"].casefold() != name.casefold() or name.casefold() in tagged:
+            continue
+        if await asyncio.to_thread(crcmz_identity.set_tag, p["zitadel_id"], TAG, u["name"]):
+            logger.info("slap: tagged %s with Jellyfin account %s", p["zitadel_id"], u["name"])
+            tagged.add(name.casefold())
+            n += 1
+    if n:
+        await asyncio.to_thread(crcmz_identity.people, refresh=True)
+    return n
 
 
 # ── Library shaping (allowlisted fields only) ────────────────────────────────

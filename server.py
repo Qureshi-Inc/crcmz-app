@@ -6478,6 +6478,22 @@ app.include_router(_reels.build_router(_get_session, _is_iam_admin))
 import slap as _slap
 app.include_router(_slap.build_router(_get_session, _is_iam_admin))
 
+
+@app.on_event("startup")
+async def _start_jellyfin_sso_sweep():
+    """Tag people who signed in to Jellyfin with Zitadel before ever opening Slap."""
+    async def _loop():
+        while True:
+            await asyncio.sleep(300)
+            try:
+                if n := await _slap.link_sso_accounts():
+                    logger.info("slap: tagged %d Jellyfin sign-in(s)", n)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("slap: jellyfin sso sweep failed: %s", e)
+
+    if _slap.configured():
+        asyncio.create_task(_loop())
+
 import whatsapp_analytics as _wa
 import giveaway as _giveaway
 import assistant

@@ -21,7 +21,12 @@ from urllib.parse import parse_qs, urlparse
 
 JF_LOG: list[tuple[str, str, dict, dict | None, dict]] = []
 SOCIAL_LOG: list[tuple[str, str, dict | None]] = []
-USERS = [{"Name": "moiz", "Id": "a" * 32}, {"Name": "shahraiz", "Id": "b" * 32}]
+USERS = [{"Name": "moiz", "Id": "a" * 32}, {"Name": "shahraiz", "Id": "b" * 32},
+         {"Name": "mazino", "Id": "d" * 32}, {"Name": "babefaze", "Id": "e" * 32}]
+SSO = "505ce9d1-d916-42fa-86ca-673ef241d7df"
+# Made by Zitadel sign-ins to Jellyfin; the plugin stores the GUID with dashes.
+LINKS = {"moiz": "a" * 32, "mazino": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+         "babefaze": "e" * 32, "shahraiz": "b" * 32}
 TRACKS = [
     {"Id": "1" * 32, "Name": "Breezeblocks", "Artists": ["alt-J"], "Album": "An Awesome Wave",
      "AlbumId": "2" * 32, "RunTimeTicks": 2457120000, "ImageTags": {"Primary": "x"},
@@ -68,6 +73,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/Users/New":
             USERS.append({"Name": body["Name"], "Id": "c" * 32})
             return self._send(200, {"Id": "c" * 32, "Name": body["Name"], "Policy": {"IsAdministrator": True}})
+        if p == f"/Plugins/{SSO}/Configuration":
+            return self._send(200, {"OidConfigs": {"crcmz": {"CanonicalLinks": LINKS}}})
         if p.startswith("/Users/") and p.endswith("/Policy"):
             return self._send(204)
         if p == "/Library/MediaFolders":
@@ -128,6 +135,14 @@ PEOPLE = {
             "mm_username": "moiz", "tags": {"jellyfin_user": "moiz"}},
     "200": {"zitadel_id": "200", "username": "ace", "display_name": "Zubair", "tags": {}},
     "300": {"zitadel_id": "300", "username": "shahraiz", "display_name": "Imposter", "tags": {}},
+    # Invited: Zitadel username is the email, the picked name is a tag.
+    "400": {"zitadel_id": "400", "username": "rayyan@example.com", "display_name": "Mazino",
+            "tags": {"chosen_username": "mazino", "mm_username": "mazino"}},
+    "500": {"zitadel_id": "500", "username": "faze@example.com", "display_name": "Faze",
+            "tags": {"chosen_username": "babefaze", "mm_username": "babefaze"}},
+    # Claims a name someone else's tag already holds.
+    "600": {"zitadel_id": "600", "username": "x@example.com", "display_name": "Copycat",
+            "tags": {"chosen_username": "moiz"}},
 }
 TAG_WRITES: list[tuple] = []
 
@@ -193,16 +208,53 @@ def t_autocreate():
     assert r["created"] and r["jellyfin_user"] == "ace", r
     assert TAG_WRITES == [("200", "jellyfin_user", "ace")], TAG_WRITES
     pol = next(b for m, p, q, b, h in JF_LOG if p.endswith("/Policy"))
-    assert pol["IsAdministrator"] is False and pol["EnableAllFolders"] is False
-    assert pol["EnabledFolders"] == ["m" * 32], pol["EnabledFolders"]
+    assert pol["IsAdministrator"] is False and pol["EnableAllFolders"] is True, pol
     assert client.get("/api/slap/me").json()["created"] is False  # only once
 
 
 def t_never_adopts():
+    # Linked by somebody's Jellyfin sign-in, but no claim of theirs says "shahraiz".
     as_("300")
     r = client.get("/api/slap/me")
     assert r.status_code == 409 and "already exists" in r.json()["detail"], r.text
     assert PEOPLE["300"]["tags"] == {}
+
+
+def t_name_matches_the_sso_claim():
+    # Same order as the Zitadel jellyfinUser action.
+    assert slap.jellyfin_name(PEOPLE["400"]) == "mazino"
+    assert slap.jellyfin_name({"username": "ace", "tags": {"mm_username": "zubair221b"}}) == "zubair221b"
+    assert slap.jellyfin_name({"username": "ace", "tags": {}}) == "ace"
+    assert slap.claim_name({"username": "ace", "tags": {}}) == ""
+
+
+def t_adopts_own_sso_account():
+    as_("400")
+    TAG_WRITES.clear()
+    JF_LOG.clear()
+    r = client.get("/api/slap/me").json()
+    assert r["jellyfin_user"] == "mazino" and not r["created"], r
+    assert TAG_WRITES == [("400", "jellyfin_user", "mazino")], TAG_WRITES
+    assert not any(p == "/Users/New" for m, p, q, b, h in JF_LOG), "made a second account"
+
+
+def t_never_adopts_a_tagged_account():
+    as_("600")
+    LINKS["moiz"] = "a" * 32
+    r = client.get("/api/slap/me")
+    assert r.status_code == 409, r.text
+    assert "jellyfin_user" not in PEOPLE["600"]["tags"]
+
+
+def t_sweep_tags_jellyfin_sign_ins():
+    import asyncio
+    TAG_WRITES.clear()
+    n = asyncio.run(slap.link_sso_accounts())
+    assert ("500", "jellyfin_user", "babefaze") in TAG_WRITES, TAG_WRITES
+    assert not any(uid in ("300", "600") for uid, k, v in TAG_WRITES), TAG_WRITES
+    assert n == len(TAG_WRITES)
+    TAG_WRITES.clear()
+    assert asyncio.run(slap.link_sso_accounts()) == 0   # once
 
 
 # ── library + proxy ──────────────────────────────────────────────────────────

@@ -335,6 +335,36 @@ def flow_tests():
             crcmz_identity.people = lambda: []
         assert not any(c[1].endswith("/verify") for c in z.calls), "spent the code on a bad username"
 
+    def a_jellyfin_name_is_taken_too():
+        # The username becomes their Jellyfin sign-in, and the SSO plugin walks into
+        # any account with that name: an untagged one, or another person's.
+        fresh_db()
+        z = FakeZitadel()
+
+        class WithJellyfin:
+            def handler(self, req):
+                if req.url.host == "jf.test":
+                    return httpx.Response(200, json=[{"Name": "Shahraiz", "Id": "b" * 32}])
+                return z.handler(req)
+
+        install(WithJellyfin())
+        vip_invites.JELLYFIN_URL, vip_invites.JELLYFIN_TOKEN = "https://jf.test", "jf-key"
+        uid = vip_invites.invite_vip("n@b.co")["zitadel_id"]
+        crcmz_identity.people = lambda: [{"zitadel_id": "555", "email": "x@b.co",
+                                          "tags": {"jellyfin_user": "Brendan"}}]
+        try:
+            for bad in ("shahraiz", "brendan"):
+                try:
+                    vip_invites.accept(uid, f"CODE{uid}", "Str0ng!pass", bad)
+                except vip_invites.InviteError:
+                    continue
+                raise AssertionError(f"accepted {bad!r}")
+            vip_invites.accept(uid, f"CODE{uid}", "Str0ng!pass", "mazino")
+        finally:
+            crcmz_identity.people = lambda: []
+            vip_invites.JELLYFIN_URL = vip_invites.JELLYFIN_TOKEN = ""
+        assert tags(z, uid).get("chosen_username") == "mazino"
+
     def username_suggestion():
         assert vip_invites.clean_username("Baby Bottle Pop!") == "babybottlepop"
         assert vip_invites.username_ok("faze.capz_2") and not vip_invites.username_ok("ab")

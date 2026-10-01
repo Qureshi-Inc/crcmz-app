@@ -66,6 +66,8 @@ EMAIL_REPLY_TO = os.environ.get("EMAIL_REPLY_TO", "admin@crcmz.me")
 MATTERMOST_URL = os.environ.get("MATTERMOST_URL", "").rstrip("/")
 MATTERMOST_TOKEN = os.environ.get("MATTERMOST_TOKEN", "")
 MATTERMOST_TEAM_NAME = os.environ.get("MATTERMOST_TEAM_NAME", "")
+JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
+JELLYFIN_TOKEN = os.environ.get("JELLYFIN_TOKEN", "")
 
 _HTTP_TIMEOUT = 15
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -255,7 +257,9 @@ def _get_tag(client: httpx.Client, user_id: str, key: str) -> str:
 
 def username_taken(client: httpx.Client, name: str, user_id: str, email: str) -> bool:
     """True when `name` belongs to someone else: a Mattermost account with another
-    email, or another person's chosen_username / mm_username tag."""
+    email, another person's chosen_username / mm_username / jellyfin_user tag, or a
+    Jellyfin account. The name becomes their Jellyfin sign-in, and the SSO plugin
+    walks straight into an existing account with that name."""
     if mattermost_configured():
         r = client.get(f"{MATTERMOST_URL}/api/v4/users/username/{name}",
                        headers={"Authorization": f"Bearer {MATTERMOST_TOKEN}"})
@@ -265,8 +269,17 @@ def username_taken(client: httpx.Client, name: str, user_id: str, email: str) ->
             raise InviteError("Could not check that username right now, try again.")
     import crcmz_identity
     for p in crcmz_identity.people():
-        if p["zitadel_id"] != user_id and name in (p["tags"].get("chosen_username"),
-                                                   p["tags"].get("mm_username")):
+        if p["zitadel_id"] != user_id and name.casefold() in {
+                (p["tags"].get(k) or "").casefold()
+                for k in ("chosen_username", "mm_username", "jellyfin_user")}:
+            return True
+    if JELLYFIN_URL and JELLYFIN_TOKEN:
+        try:
+            r = client.get(f"{JELLYFIN_URL}/Users", headers={"X-Emby-Token": JELLYFIN_TOKEN})
+            r.raise_for_status()
+        except httpx.HTTPError:
+            raise InviteError("Could not check that username right now, try again.")
+        if any((u.get("Name") or "").casefold() == name.casefold() for u in r.json()):
             return True
     return False
 
