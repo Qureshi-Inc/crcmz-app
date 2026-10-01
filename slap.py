@@ -1168,7 +1168,8 @@ def build_router(get_session, is_admin) -> APIRouter:
         fid = _s(b.get("id"), 20)
         if not fid.isdigit():
             raise HTTPException(400, "which song?")
-        return await discover.download(me["sub"], me["slap_user"], fid, picks=discover.picks_name(me["person"]))
+        return await discover.download(me["sub"], me["slap_user"], fid, picks=discover.picks_name(me["person"]),
+                                       requester=await asyncio.to_thread(discover.mm_id, me["person"]))
 
     @router.post("/discover/approve")
     async def discover_approve(request: Request):

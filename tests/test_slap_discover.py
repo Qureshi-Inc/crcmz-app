@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Slap Discover (slap_discover.py): new finds, downloads, expiry and picks playlists.
+"""Slap Discover (slap_discover.py): new finds, downloads, expiry and picks credit.
 
 Plain asserts, no pytest — run inside the app image where the deps live:
 
@@ -109,7 +109,7 @@ async def fake_importer(path, body, timeout):
     if path == "/jobs":
         jid = f"job-{len(JOBS) + 1}"
         JOBS[jid] = {"id": jid, "status": "pending", "url": body["url"], "title": None, "artist": None,
-                     "requester_user_id": None}
+                     "requester_user_id": body.get("requester_user_id")}
         return JOBS[jid]
     if path.endswith("/approve"):
         JOBS[path.split("/")[2]]["status"] = "approved"
@@ -164,15 +164,12 @@ slap._social = FakeSocial()
 d._importer_get = fake_importer_get
 REAL_ITUNES = d.itunes_find
 d.itunes_find = fake_itunes
-REAL_MM_NAMES = d._mm_names
-d._mm_names = lambda ids: {"mm-moiz": "moiz", "mm-noor": "nooramin40"}
 
 
 def reset():
     with d._conn() as db:
-        db.executescript("DELETE FROM finds; DELETE FROM weeks; DELETE FROM credits; DELETE FROM synced;")
+        db.executescript("DELETE FROM finds; DELETE FROM weeks; DELETE FROM credits;")
     slap._cache.clear()
-    d._DRIFTED.clear()
     IMPORTER.clear(); JOBS.clear()
     d._last_poll = 0.0
     JF.__init__()
@@ -290,8 +287,18 @@ def download_tests():
         f = next(x for x in d.current()["finds"] if x["id"] == "1001")
         assert f["status"] == "done" and f["track_id"] == "c" * 32
         assert JF.picks("zubair221b") == ["c" * 32], JF.playlists
-        # The reconciler sees the job is filed and leaves it alone.
-        assert run(d.sync_picks()) == {"checked": 0, "filed": 0}
+
+    def a_download_with_a_mattermost_id_is_slaptastics_to_credit():
+        reset()
+        run(d.generate())
+        run(d.download("u-moose", "mutasif", "1001", picks="themoosecompany", requester="a7a5hiwbe3n57koxmxbhu74jqh"))
+        assert IMPORTER[0][1] == {"url": "https://music.apple.com/us/album/x?i=1001",
+                                  "requester_user_id": "a7a5hiwbe3n57koxmxbhu74jqh"}, IMPORTER
+        JOBS["job-1"].update(status="complete", title="Not Like Us", artist="Kendrick Lamar")
+        JF.tracks.append({"Id": "c" * 32, "Name": "Not Like Us", "Artists": ["Kendrick Lamar"]})
+        run(d.follow_downloads(force=True))
+        assert d._find(d.week_of(), "1001")["status"] == "done"
+        assert JF.picks("themoosecompany") is None, "slaptastic files it; we don't add it twice"
 
     def failed_and_unsure_downloads_say_so():
         reset()
@@ -335,6 +342,7 @@ def download_tests():
             raise AssertionError("no daily cap")
 
     for fn in (download_queues_a_job_and_credits_the_presser, a_finished_download_lands_in_the_pressers_picks,
+               a_download_with_a_mattermost_id_is_slaptastics_to_credit,
                failed_and_unsure_downloads_say_so, a_song_already_in_the_library_is_not_downloaded_again,
                expired_finds_and_too_many_downloads_are_refused):
         check(fn.__name__, fn)
@@ -343,65 +351,6 @@ def download_tests():
 # ── Picks playlists ──────────────────────────────────────────────────────────
 def picks_tests():
     print("picks playlists")
-
-    def every_import_lands_in_its_requesters_picks():
-        reset()
-        JOBS.update({
-            "j1": {"id": "j1", "status": "complete", "title": "Hotline Bling", "artist": "Drake", "requester_user_id": "mm-moiz"},
-            "j2": {"id": "j2", "status": "complete", "title": "Big Dawgs", "artist": "Hanumankind ft. Kalmi",
-                   "requester_user_id": "mm-noor"},
-            "j3": {"id": "j3", "status": "complete", "title": "Big Dawgs", "artist": "Hanumankind",
-                   "requester_user_id": "srrgmm688pds7fiqndeweew6zr"},
-            "j4": {"id": "j4", "status": "complete", "title": "Not Here Yet", "artist": "Nobody", "requester_user_id": "mm-moiz"},
-            "j5": {"id": "j5", "status": "complete", "title": "Hotline Bling", "artist": "Drake", "requester_user_id": None},
-        })
-        out = run(d.sync_picks())
-        assert out == {"checked": 5, "filed": 2}, out
-        assert JF.picks("moiz") == ["a" * 32], "already there: not added twice"
-        assert JF.picks("nooramin40") == ["b" * 32] and JF.picks("slapper") == ["b" * 32], JF.playlists
-        # j4 isn't in Jellyfin yet and j5 has nobody to credit: retried, then let go.
-        assert run(d.sync_picks())["checked"] == 2
-        for _ in range(d.SYNC_TRIES):
-            run(d.sync_picks())
-        assert run(d.sync_picks())["checked"] == 0
-
-    def a_discover_credit_beats_the_importers_requester():
-        reset()
-        JOBS["j1"] = {"id": "j1", "status": "complete", "title": "Hotline Bling", "artist": "Drake",
-                      "requester_user_id": None}
-        with d._conn() as db:
-            db.execute("INSERT INTO credits VALUES ('j1', 'u-zub', 'zubair221b', 'Hotline Bling', 'Drake', ?)", (time.time(),))
-        run(d.sync_picks())
-        assert JF.picks("zubair221b") == ["a" * 32]
-
-    def a_drifted_mattermost_name_folds_into_the_charts_picks():
-        reset()
-        JF.playlists["m" * 32] = {"Name": "themoosecompany's picks", "items": ["a" * 32]}
-        JF.playlists["n" * 32] = {"Name": "mutasif's picks", "items": ["a" * 32, "b" * 32]}
-        d._DRIFTED["mutasif"] = "themoosecompany"
-        assert run(d.fold_drifted()) == 1
-        assert JF.picks("themoosecompany") == ["a" * 32, "b" * 32] and JF.picks("mutasif") is None, JF.playlists
-
-    def the_chart_names_whose_picks_an_account_fills():
-        import mattermost
-        old = (d._mm_names, httpx.post, mattermost.available, d.crcmz_identity.people)
-        users = [{"id": "mm-1", "username": "mutasif", "email": "Moose@x.co"},
-                 {"id": "mm-2", "username": "nooramin40", "email": "other@x.co"},
-                 {"id": "mm-3", "username": "shahraiz", "email": ""}]
-        people = [{"email": "moose@x.co", "mm_username": "themoosecompany", "jellyfin_user": "mutasif"},
-                  {"email": "noor@x.co", "mm_username": "nooramin40", "jellyfin_user": "noor"}]
-        try:
-            d._mm_names = REAL_MM_NAMES
-            httpx.post = lambda *a, **k: httpx.Response(200, json=users)
-            mattermost.available = lambda: True
-            d.crcmz_identity.people = lambda **k: people
-            got = d._mm_names(["mm-1", "mm-2", "mm-3"])
-        finally:
-            d._mm_names, httpx.post, mattermost.available, d.crcmz_identity.people = old
-        # By email, then by tag; nobody in the chart keeps their Mattermost name.
-        assert got == {"mm-1": "themoosecompany", "mm-2": "nooramin40", "mm-3": "shahraiz"}, got
-        assert d._DRIFTED == {"mutasif": "themoosecompany"}
-        assert d.picks_name({"mm_username": "", "jellyfin_user": "noor"}) == "noor"
 
     def a_download_lands_in_the_chart_picks_not_the_login():
         reset()
@@ -413,9 +362,11 @@ def picks_tests():
         run(d.follow_downloads(force=True))
         assert JF.picks("nooramin40") == ["c" * 32] and JF.picks("noor") is None, JF.playlists
 
-    for fn in (every_import_lands_in_its_requesters_picks, a_discover_credit_beats_the_importers_requester,
-               a_drifted_mattermost_name_folds_into_the_charts_picks, the_chart_names_whose_picks_an_account_fills,
-               a_download_lands_in_the_chart_picks_not_the_login):
+    def picks_go_by_the_chart_name():
+        assert d.picks_name({"mm_username": "themoosecompany", "jellyfin_user": "mutasif"}) == "themoosecompany"
+        assert d.picks_name({"mm_username": "", "jellyfin_user": "noor"}) == "noor"
+
+    for fn in (a_download_lands_in_the_chart_picks_not_the_login, picks_go_by_the_chart_name):
         check(fn.__name__, fn)
 
 
@@ -432,6 +383,8 @@ def http_tests():
     person = {"zitadel_id": "u-zub", "display_name": "Zubair", "username": "zubair221b"}
     import crcmz_identity
     crcmz_identity.by_zitadel_id = lambda refresh=False: {"u-zub": person}
+
+    d.mm_id = lambda p: ""
 
     async def fake_jf_user(sub, p):
         return {"id": "z" * 32, "name": "zubair221b"}, False
