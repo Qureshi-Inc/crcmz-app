@@ -260,6 +260,46 @@ function waMocks({ totals = { all_time: 1234, this_month: 42, prev_month: 300, t
   }
 }
 
+// ── Coach fixtures (PS-8). Every /api/coaching route is mocked; the writes are recorded. ──
+function coReview(i, grade, extra = {}) {
+  return {
+    review_id: `rv${i}`, clip_id: `c${i}`, psn_user: 'Goopy', is_mine: true, game: i % 2 ? 'EA FC 26' : 'Rocket League', created_at: NOW - i * 86400 - 600, status: 'complete',
+    summary: `Clip ${i}: decent rotations, late on the second ball.`, overall_assessment: `Review ${i}: solid but slow to rotate`, grade,
+    strengths: ['Good first touch', 'Called the switch early'], mistakes: ['Ball-watching on the back post', 'Late press'], coaching_tips: [`Drill ${i}: shoulder-check before every reception`],
+    notable_moments: [{ t: '0:12', note: 'Clean through ball' }, 'Missed tackle'], tags: ['positioning', 'pressing'], voice_comms: 'Bizzle: back post!\nGoopy: got it',
+    my_feedback: null, ...extra,
+  }
+}
+function coData(scope = 'me', { empty = false, processing = 1, notify = 'group', detail = 'full' } = {}) {
+  const mine = empty ? [] : [coReview(0, 'B+'), coReview(1, 'C', { my_feedback: { rating: 'up', tags: [], comment: '' } }), coReview(2, 'B'), coReview(3, 'A-'), coReview(4, 'D', { status: 'failed', grade: 'C' })]
+  const squad = empty ? [] : [{ grade: 'A', game: 'EA FC 26', created_at: NOW - 3600 }, { grade: 'C+', game: 'Rocket League', created_at: NOW - 2 * 86400 }, { grade: 'B', game: 'EA FC 26', created_at: NOW - 3 * 86400 }]
+  const reviews = scope === 'me' ? mine : squad
+  return {
+    scope, notify_mode: notify, detail_mode: detail,
+    counts: { mine: mine.length, squad: squad.length, complete: reviews.length, processing: scope === 'me' ? processing : 0 },
+    processing: scope === 'me' && processing ? [{ clip_id: 'p1', psn_user: 'Goopy', status: 'queued', created_at: NOW - 120, reason: 'waiting for the clip to download' }] : [],
+    reviews,
+    ...(scope === 'squad' ? { sightings: empty ? [] : [{ player: 'Bizzle', observation: 'Keeps drifting wide when we lose the ball', game: 'EA FC 26', created_at: NOW - 7200 }] } : {}),
+    charts: {
+      tags: empty ? [] : [{ label: 'positioning', count: 4 }, { label: 'pressing', count: 3 }],
+      mistakes: empty ? [] : [{ label: 'Ball-watching on the back post', count: 3, ...(scope === 'me' ? { reviews: ['rv3'] } : {}) }, { label: 'Late press', count: 1, ...(scope === 'me' ? { reviews: ['rv2'] } : {}) }],
+      per_day: Array.from({ length: 30 }, (_, i) => ({ label: `d${i}`, count: empty ? 0 : i % 5 === 0 ? 1 : 0 })),
+      grades: empty ? [] : [{ label: 'A', count: 1 }, { label: 'B', count: 2 }, { label: 'C', count: 1 }],
+    },
+  }
+}
+function coMocks({ get = (scope) => json(200, coData(scope)), prefs = null, feedback = null, seen = [] } = {}) {
+  return {
+    mocks: {
+      'GET /auth/settings/psn': json(200, { linked: true, online_id: 'Goopy' }),
+      'GET /api/admin/check': json(200, { admin: false }),
+      'GET /api/coaching': (r) => { const sc = new URL(r.request().url()).searchParams.get('scope'); seen.push(sc); return get(sc)(r) },
+      ...(prefs ? { 'POST /api/coaching/prefs': prefs } : {}),
+      ...(feedback ? { 'POST /api/coaching/feedback': feedback } : {}),
+    },
+  }
+}
+
 // ── Giveaway fixtures (PS-5). Times are local datetime-local strings, like the admin form sends. ──
 const localIso = (ms) => { const d = new Date(ms); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}` }
 const GW_MEMBERS = [{ id: 'z1', display: 'Goopy' }, { id: 'z2', display: 'Bizzle' }, { id: 'z3', display: 'NoorAmin' }, { id: 'z4', display: 'Shah' }, { id: 'z5', display: 'Moiz' }, { id: 'z6', display: 'Goofy' }]
@@ -429,7 +469,7 @@ try {
     check('panel collapses to a 60px rail', Math.round(rw) === 60, `${rw}`)
     await shot(page, 'squad-1440-rail')
     await page.click('button[aria-label="Expand Chat Board"]')
-    await page.goto(BASE + '/app/coach')
+    await page.goto(BASE + '/app/ask')
     await page.waitForSelector('h1')
     await shot(page, 'handoff-1440')
     await axe(page, 'Handoff 1440')
@@ -447,7 +487,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x': '/?p=pipeline', coach: '/?p=coach', ask: '/?p=ai' }
+    const classic = { 'clips/x': '/?p=pipeline', ask: '/?p=ai' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -2215,6 +2255,122 @@ try {
     await page.waitForSelector('.banner:has-text("You\'re not allowed to import — ask an admin.")')
     check('wa 1440: an import 403 hides the section', posts.length === 1 && (await page.locator('#wa-import').count()) === 0)
     check('no unmocked writes and no page errors (WhatsApp 1440)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  // ── 16. AI Coach (PS-8): scope, hero, patterns → report, filters, feedback, prefs ──
+  {
+    const prefs = []
+    const fbs = []
+    let fbMode = 'fail'
+    const seen = []
+    const co = coMocks({
+      seen,
+      prefs: (r) => { const b = JSON.parse(r.request().postData()); prefs.push(b); return json(200, { ok: true, notify_mode: b.mode ?? 'dm', detail_mode: b.detail ?? 'full' })(r) },
+      feedback: (r) => { fbs.push(JSON.parse(r.request().postData())); return fbMode === 'fail' ? json(500, { detail: 'boom' })(r) : json(200, { ok: true, feedback_id: 'f1' })(r) },
+    })
+    const { ctx, page } = await newPage({ width: 375, height: 800, ...co })
+    await ready(page, '/app/coach')
+    await page.waitForSelector('.co-hero .co-grade-big')
+    check('co: scope tabs show counts', (await page.textContent('.co-scope')).includes('Mine (5)') && (await page.textContent('.co-scope')).includes('Squad (3)'))
+    check('co: hero shows the latest grade and its move', (await page.textContent('.co-grade-big')) === 'B+' && (await page.textContent('.co-delta')).includes('up from C'), await page.textContent('.co-hero'))
+    check('co: Focus is the repeated mistake', (await page.textContent('.co-hero')).includes('Focus: Ball-watching on the back post (3×)'))
+    check('co: Next time is the latest tip', (await page.textContent('.co-drill')).includes('Next time: Drill 0'))
+    check('co: the trajectory plots the graded reviews', (await page.locator('.co-trend circle').count()) === 4)
+    check('co: In the queue lists processing clips', (await page.textContent('.co-box:has(h2:text("In the queue"))')).includes('Goopy · waiting for the clip to download'))
+    check('co: a failed review shows no grade badge', (await page.textContent('#co-r-rv4 .co-badge')) === '–')
+    check('co: report cards start collapsed', (await page.locator('.co-card-body').count()) === 0)
+    await shot(page, 'coach-375', true)
+    await axe(page, 'Coach 375', '.app-main')
+    await tapTargets(page, 'Coach 375')
+
+    // A mistake pattern opens the report it came from.
+    await page.click('.co-mis-row:has-text("Ball-watching")')
+    await page.waitForSelector('#co-r-rv3 .co-card-body')
+    check('co: a mistake pattern opens its report', (await page.getAttribute('#co-r-rv3 .co-card-head', 'aria-expanded')) === 'true')
+    const body = await page.textContent('#co-r-rv3 .co-card-body')
+    check('co: an open card shows summary, lists and moments', ['Clip 3', 'Strengths', 'Mistakes', 'Coaching tips', '0:12', 'Missed tackle'].every((t) => body.includes(t)) && !body.includes('[object Object]'))
+
+    // Feedback: a failed save keeps the rating; a retry saves.
+    await page.click('#co-r-rv3 button[aria-label="Inaccurate"]')
+    await page.click('#co-r-rv3 .co-fb-tags button:has-text("wrong-grade")')
+    await page.fill('#co-fb-rv3', 'It was a B')
+    await shot(page, 'coach-375-report')
+    await page.click('#co-r-rv3 button:has-text("Send feedback")')
+    await page.waitForSelector('#co-r-rv3 .co-fb-err')
+    check('co: a failed feedback save says so inline', (await page.textContent('#co-r-rv3 .co-fb-err')) === "Couldn't save your feedback")
+    check('co: the rating is kept after a failure', (await page.getAttribute('#co-r-rv3 button[aria-label="Inaccurate"]', 'aria-pressed')) === 'true')
+    fbMode = 'ok'
+    await page.click('#co-r-rv3 button:has-text("Send feedback")')
+    await page.waitForSelector('#co-r-rv3 .co-saved')
+    const last = fbs[fbs.length - 1]
+    check('co: feedback sends rating, tags and comment', last.review_id === 'rv3' && last.rating === 'down' && last.tags.join() === 'wrong-grade' && last.comment === 'It was a B', JSON.stringify(last))
+    check('co: earlier feedback shows as saved', await page.evaluate(() => { document.querySelector('#co-r-rv1 .co-card-head').click(); return true }) && (await page.waitForSelector('#co-r-rv1 .co-saved')) !== null)
+
+    // Filters live in a sheet on a phone.
+    await page.fill('#co-search', 'zzz')
+    await page.waitForSelector('.co-empty:has-text("No reports match")')
+    await page.click('.co-empty button:has-text("Clear filters")')
+    check('co: Clear filters brings them back', (await page.locator('.co-card').count()) === 5 && (await page.inputValue('#co-search')) === '')
+    await page.click('.co-tools button:has-text("Filters")')
+    await page.waitForSelector('.co-sheet')
+    await page.click('.co-sheet button:has-text("Rocket League")')
+    await page.click('.co-sheet button:has-text("Best")')
+    await shot(page, 'coach-375-filters')
+    await tapTargets(page, 'Coach filters sheet 375')
+    await page.click('.co-sheet button:has-text("Show")')
+    await page.waitForSelector('.co-sheet', { state: 'detached' })
+    const titles = await page.$$eval('.co-card-title', (els) => els.map((e) => e.textContent.slice(0, 8)).join(','))
+    check('co: game filter + Best sort', titles === 'Review 0,Review 2,Review 4', titles)
+    check('co: the count says how many of how many', (await page.textContent('.co-tools-foot [role=status]')) === '3 of 5')
+
+    // Prefs: Off hides "Reports as:".
+    await page.click('.co-pref button:has-text("Off")')
+    await page.waitForFunction(() => !document.querySelector('.co-prefs')?.textContent.includes('Reports as'))
+    check('co: notify prefs post {mode}', prefs.length === 1 && prefs[0].mode === 'off')
+
+    // Squad scope: no cards, grade rows + sightings.
+    await page.click('.co-scope button:has-text("Squad")')
+    await page.waitForSelector('.co-grades')
+    check('co: Squad lists grade · game · date rows', (await page.locator('.co-grades li').count()) === 3 && (await page.locator('.co-card').count()) === 0)
+    check('co: Squad shows sightings', (await page.textContent('.co-box:has(h2:text("Spotted in squad clips"))')).includes('Bizzle'))
+    check('co: the scope is in the URL', new URL(page.url()).searchParams.get('scope') === 'squad' && seen.includes('squad'))
+    await shot(page, 'coach-375-squad', true)
+    await axe(page, 'Coach squad 375', '.app-main')
+    check('no unmocked writes and no page errors (Coach 375)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // Empty, error + Retry, and signed out.
+    let down = true
+    const { ctx, page } = await newPage({ width: 375, height: 800, ...coMocks({ get: (sc) => (down ? json(503, { detail: 'down' }) : json(200, coData(sc, { empty: true, processing: 0 }))) }) })
+    await ready(page, '/app/coach')
+    await page.waitForSelector('.co-err')
+    check('co: an error says "Didn\'t load"', (await page.textContent('.co-err')).includes("Didn't load"))
+    down = false
+    await page.click('.co-err button:has-text("Retry")')
+    await page.waitForSelector('.co-hero-empty')
+    check('co: Mine empty explains rev', (await page.textContent('.co-hero-empty')).includes('Send rev in the PSN group within ~5 s of a clip'))
+    await shot(page, 'coach-375-empty')
+    await ctx.close()
+    const so = await newPage({ width: 375, height: 800, ...coMocks({ get: () => json(401, { detail: 'sign in to see coaching' }) }) })
+    await ready(so.page, '/app/coach')
+    await so.page.waitForSelector('.banner:has-text("Sign in to see coaching.")')
+    check('co: signed out shows the banner', (await so.page.locator('.banner a:has-text("Sign in")').count()) >= 1)
+    await so.ctx.close()
+  }
+  {
+    const { ctx, page } = await newPage({ width: 1440, height: 900, ...coMocks() })
+    await ready(page, '/app/coach')
+    await page.waitForSelector('.co-card')
+    const [l, r] = await page.$$eval('.co-cols > *', (els) => els.map((e) => e.getBoundingClientRect()))
+    check('co 1440: two columns, left at least 320px', l && r && Math.round(l.top) === Math.round(r.top) && l.width >= 320 && r.left > l.right, JSON.stringify([l?.width, r?.left]))
+    check('co 1440: stats sit inside the hero', (await page.locator('.co-hero .co-stats').count()) === 1)
+    check('co 1440: filters are inline, no sheet button', (await page.locator('.co-tools-chips').count()) === 1 && (await page.locator('.co-tools button:has-text("Filters")').count()) === 0)
+    await page.click('#co-r-rv0 .co-card-head')
+    await shot(page, 'coach-1440')
+    await shot(page, 'coach-1440-full', true)
+    await axe(page, 'Coach 1440', '.app-main')
+    check('no unmocked writes and no page errors (Coach 1440)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 } finally {
