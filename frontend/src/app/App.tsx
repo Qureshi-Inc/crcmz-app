@@ -7,6 +7,9 @@ import { SquadPage } from '../features/squad/SquadPage'
 import { ClipsPage } from '../features/clips/ClipsPage'
 import { StudioPage } from '../features/clips/Studio'
 import { SlapPage } from '../features/slap/SlapPage'
+import { SettingsPage } from '../features/settings/SettingsPage'
+import { PortalPage } from '../features/portal/PortalPage'
+import { AdminPage } from '../features/admin/AdminPage'
 import { Handoff, NotFound } from '../features/handoff/Handoff'
 
 const queryClient = new QueryClient({
@@ -41,9 +44,10 @@ export function App() {
               <Route path="huddle" element={<Handoff id="huddle" />} />
               <Route path="coach" element={<Handoff id="coach" />} />
               <Route path="ask" element={<Handoff id="ask" />} />
-              <Route path="settings/*" element={<Handoff id="settings" />} />
-              <Route path="admin" element={<Handoff id="admin" />} />
-              <Route path="portal" element={<Handoff id="portal" />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="settings/:tab" element={<SettingsPage />} />
+              <Route path="admin" element={<AdminPage />} />
+              <Route path="portal" element={<PortalPage />} />
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>

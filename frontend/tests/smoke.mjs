@@ -174,6 +174,39 @@ function socialFixture(path) {
 /** A one-shot SSE reply: the room, then the stream ends (EventSource retries). */
 const sse = (room) => (r) => r.fulfill({ status: 200, contentType: 'text/event-stream', headers: { 'cache-control': 'no-cache' }, body: `retry: 60000\nevent: state\ndata: ${JSON.stringify(room)}\n\n` })
 
+// ── Account fixtures (PS-10/11/12). Every account route is mocked, reads and writes. ──
+const PSN_USERS = [
+  { zitadel_user_id: 'z1', mm_username: 'goopy', online_id: 'Goopy', account_id: 'a1', linked_at: NOW - 50 * 86400, refresh_expires_at: NOW + 40 * 86400 },
+  { zitadel_user_id: null, mm_username: 'bizzle', online_id: 'Bizzle', account_id: 'a2', linked_at: NOW - 70 * 86400, refresh_expires_at: NOW - 86400 },
+  { zitadel_user_id: 'z3', mm_username: 'noor', online_id: 'NoorAmin', account_id: 'a3', linked_at: NOW - 58 * 86400, refresh_expires_at: NOW + 2.5 * 86400 },
+]
+const ACCT_BASE = {
+  'GET /api/admin/check': json(200, { admin: false }),
+  'GET /auth/settings/passkeys': json(200, { passkeys: [{ id: 'pk1', name: 'iPhone passkey' }, { id: 'pk2', name: 'MacIntel passkey' }] }),
+  'GET /auth/settings/psn': json(200, { linked: true, online_id: 'Goopy', account_id: 'a1', linked_at: NOW - 57 * 86400, npsso_ok: true, token_ok: true, refresh_expires_at: NOW + 2.5 * 86400 }),
+  'GET /auth/settings/mattermost': json(200, { linked: false, linked_at: null, connect_available: true }),
+  'GET /auth/settings/mcp': json(200, { active: false, last_used_at: null }),
+}
+const ADMIN_READS = {
+  'GET /api/pipeline-status': json(200, { services: { psn_messenger: { status: 'ok', ms: 0 }, psn_montage: { status: 'ok', ms: 12 }, wa_bridge: { status: 'down', ms: null } } }),
+  'GET /status': json(200, { psn: 'connected', whatsapp: 'configured', clip_store: 's3', groups: 2, queue_depth: 0, clips_total: 1234, clips_delivered: 1200, clips_archived: 1100, clips_failed: 3, clips_active: 1 }),
+  'GET /api/video-jobs': json(200, { stats: { total: 1234, delivered: 1200, failed: 3, archived: 1100, active: 1 }, queue_depth: 0 }),
+  'GET /auth/settings/psn': json(200, { linked: true, online_id: 'Goopy', linked_at: NOW - 50 * 86400, token_ok: true, refresh_expires_at: NOW + 40 * 86400, admin: true, users: PSN_USERS }),
+  'GET /api/admin/users': json(200, { users: [{ userId: 'u1', userName: 'goopy', displayName: 'Goopy', email: 'goopy@example.com', state: 'USER_STATE_ACTIVE' }, { userId: 'u2', userName: 'bizzle', displayName: 'Bizzle', email: 'bizzle@example.com', state: 'USER_STATE_LOCKED' }] }),
+}
+/** A fake platform authenticator: navigator.credentials.create resolves with fixed bytes, or rejects when told to. */
+const FAKE_WEBAUTHN = () => {
+  window.__cancelPasskey = false
+  window.PublicKeyCredential = window.PublicKeyCredential || function PublicKeyCredential() {}
+  const bytes = (str) => new TextEncoder().encode(str).buffer
+  navigator.credentials.create = async ({ publicKey }) => {
+    window.__createArgs = { challenge: [...new Uint8Array(publicKey.challenge)], user: [...new Uint8Array(publicKey.user.id)], exclude: (publicKey.excludeCredentials || []).map((c) => c.id instanceof ArrayBuffer) }
+    if (window.__cancelPasskey) throw new DOMException('cancelled', 'NotAllowedError')
+    return { id: 'cred-1', rawId: bytes('raw?>'), type: 'public-key', response: { clientDataJSON: bytes('{"c":1}'), attestationObject: bytes('att~~') } }
+  }
+  window.open = () => null
+}
+
 async function ready(page, path = '/app/') {
   await page.goto(BASE + path, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => document.fonts.status === 'loaded')
@@ -343,7 +376,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', giveaway: '/?p=giveaway', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai', portal: '/portal', settings: '/' }
+    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', giveaway: '/?p=giveaway', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -363,11 +396,11 @@ try {
     await ctx.close()
   }
   {
-    const { ctx, page } = await newPage({ width: 1440, height: 900, mocks: { 'GET /api/admin/check': json(200, { admin: true }) } })
+    const { ctx, page } = await newPage({ width: 1440, height: 900, mocks: { ...ADMIN_READS, 'GET /api/admin/check': json(200, { admin: true }) } })
     await ready(page, '/app/admin')
-    await page.waitForSelector('.handoff a.btn')
+    await page.waitForSelector('.svc-row')
     check('admin sees Admin in the sidebar', (await page.locator('nav[aria-label="Primary"] a:has-text("Admin")').count()) === 1)
-    check('/app/admin for an admin hands off to the classic app', (await page.getAttribute('.handoff a.btn', 'href')) === '/')
+    check('/app/admin for an admin is the Admin page in /app', (await page.locator('.handoff').count()) === 0 && (await page.textContent('h1')) === 'Admin')
     await ctx.close()
   }
   {
@@ -1081,6 +1114,186 @@ try {
     await shot(page, 'slap-1440-stats', true)
     await axe(page, 'Slap Stats 1440', '.slap-stats')
     check('no unmocked writes and no page errors (Stats)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  // ── 9. Settings (PS-10): sub-routed tabs, passkeys, password, PSN, Mattermost, MCP ──
+  {
+    const deleted = [], completes = []
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        ...ACCT_BASE,
+        'DELETE /auth/settings/passkeys/pk2': (r) => { deleted.push('pk2'); return json(200, { ok: true })(r) },
+        'POST /auth/passkey/register/begin': json(200, { passkeyId: 'reg-1', options: { challenge: 'AQID', rp: { id: 'localhost', name: 'CRCMZ' }, user: { id: 'dXNlcg', name: 'goopy', displayName: 'Goopy' }, pubKeyCredParams: [{ type: 'public-key', alg: -7 }], excludeCredentials: [{ type: 'public-key', id: 'BAUG' }] } }),
+        'POST /auth/passkey/register/complete': (r) => { completes.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+        'POST /auth/settings/password': json(400, { error: 'Current password is incorrect.' }),
+      },
+    })
+    await ctx.addInitScript(FAKE_WEBAUTHN)
+    await ready(page, '/app/settings')
+    await page.waitForSelector('.acct-row')
+    check('/app/settings opens the passkeys tab', new URL(page.url()).pathname === '/app/settings/passkeys', page.url())
+    check('settings tabs are a tablist of 5', (await page.locator('.tabstrip[role=tablist] [role=tab]').count()) === 5)
+    check('passkeys are listed', (await page.locator('.acct-row').count()) === 2)
+    await shot(page, 'settings-375-passkeys')
+    await axe(page, 'Settings passkeys 375', '.app-main')
+    await tapTargets(page, 'Settings passkeys 375')
+
+    await page.click('button[aria-label="Remove MacIntel passkey"]')
+    await page.waitForSelector('[role=alertdialog]')
+    check('removing a passkey asks first, naming it', (await page.textContent('[role=alertdialog]')).includes('MacIntel passkey') && deleted.length === 0)
+    await page.click('[role=alertdialog] button:has-text("Remove passkey")')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('Removed')))
+    check('confirmed remove sends one DELETE', deleted.length === 1)
+
+    await page.click('.settings-card-head button:has-text("Add a passkey")')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('Passkey added')))
+    const args = await page.evaluate(() => window.__createArgs)
+    const c = completes[0]
+    check('passkey options are decoded from base64url', JSON.stringify(args.challenge) === '[1,2,3]' && JSON.stringify(args.user) === JSON.stringify([...Buffer.from('user')]) && args.exclude[0] === true, JSON.stringify(args))
+    check('passkey credential is sent base64url, like the classic app', c && c.passkeyId === 'reg-1' && c.credential.rawId === 'cmF3Pz4' && c.credential.response.clientDataJSON === 'eyJjIjoxfQ' && c.credential.response.attestationObject === 'YXR0fn4' && /passkey$/.test(c.passkeyName), JSON.stringify(c))
+    await page.evaluate(() => { window.__cancelPasskey = true })
+    await page.click('.settings-card-head button:has-text("Add a passkey")')
+    await page.waitForTimeout(400)
+    check('cancelling the passkey prompt is not an error', completes.length === 1 && !(await page.locator('.toast[data-tone=error]').count()))
+
+    await page.click('.tabstrip-tab[data-state=active]')
+    await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(50)
+    const focused = await page.evaluate(() => document.activeElement?.textContent ?? '')
+    check('arrow keys move between tabs', focused === 'Password', focused)
+    await page.keyboard.press('Enter')
+    await page.waitForSelector('#pw-cur')
+    check('tabs are sub-routes', new URL(page.url()).pathname === '/app/settings/security')
+    await page.fill('#pw-new', 'short')
+    await page.locator('#pw-new').blur()
+    check('new password is checked on blur (≥ 8)', (await page.textContent('#pw-new-hint')) === 'At least 8 characters' && (await page.getAttribute('#pw-new', 'aria-invalid')) === 'true')
+    await page.fill('#pw-cur', 'wrong-one')
+    await page.fill('#pw-new', 'long-enough-1')
+    await page.fill('#pw-conf', 'long-enough-1')
+    await page.click('button:has-text("Change password")')
+    await page.waitForSelector('#pw-cur-err')
+    check('a wrong current password is flagged on that field', (await page.textContent('#pw-cur-err')).includes('incorrect') && (await page.getAttribute('#pw-cur', 'aria-describedby')) === 'pw-cur-err')
+    check('new password is kept after a wrong current one', (await page.inputValue('#pw-new')) === 'long-enough-1')
+    await shot(page, 'settings-375-security')
+    await axe(page, 'Settings security 375', '.app-main')
+
+    await page.click('.tabstrip-tab:has-text("PSN")')
+    await page.waitForSelector('.acct-status .badge')
+    check('PSN tab says "Expiring in 3 days"', (await page.textContent('.acct-status .badge')) === 'Expiring in 3 days', await page.textContent('.acct-status .badge'))
+    check('PSN tab re-links in Link PSN', (await page.getAttribute('.settings-card a:has-text("Re-link")', 'href')) === '/app/portal')
+    await shot(page, 'settings-375-psn')
+    await axe(page, 'Settings PSN 375', '.app-main')
+
+    await page.click('.tabstrip-tab:has-text("Mattermost")')
+    await page.click('button:has-text("Connect Mattermost")')
+    await page.waitForSelector('.field-err a')
+    check('blocked Mattermost pop-up offers the connect page', (await page.getAttribute('.field-err a', 'href')) === '/auth/settings/mattermost/connect')
+    await axe(page, 'Settings Mattermost 375', '.app-main')
+
+    await page.click('.tabstrip-tab:has-text("MCP")')
+    await page.waitForSelector('.code-block pre')
+    check('MCP not connected shows the config block', (await page.textContent('.code-block pre')).includes('https://app.crcmz.me/mcp'))
+    await shot(page, 'settings-375-mcp', true)
+    await axe(page, 'Settings MCP 375', '.app-main')
+    await tapTargets(page, 'Settings MCP 375')
+    await page.goto(BASE + '/app/settings')
+    await page.waitForSelector('.code-block pre')
+    check('/app/settings returns to the last tab', new URL(page.url()).pathname === '/app/settings/mcp')
+    check('no unmocked writes and no page errors (Settings)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  // ── 10. Link PSN (PS-12): claim, the stepper, a failed then good link ──
+  {
+    const links = [], claims = []
+    let linkOk = false
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        ...ACCT_BASE,
+        'GET /auth/settings/psn': json(200, { linked: false, unclaimed: [{ key: 'bizzle', online_id: 'Bizzle', mm_username: 'bizzle', linked_at: NOW - 90 * 86400 }] }),
+        'POST /auth/settings/psn/claim': (r) => { claims.push(r.request().postDataJSON()); return json(404, { error: 'record not found or already claimed' })(r) },
+        'POST /api/psn/link': (r) => { links.push(r.request().postDataJSON()); return linkOk ? json(200, { ok: true, online_id: 'Goopy' })(r) : json(400, { error: "That token didn't work. It may have expired." })(r) },
+      },
+    })
+    await ready(page, '/app/portal')
+    await page.waitForSelector('.step[data-state=open]')
+    check('portal: status card says not linked', (await page.textContent('.acct-status')).includes('Not linked'))
+    check('portal: step 0 shows when unclaimed accounts exist', (await page.locator('.step').count()) === 4)
+    check('portal: later steps are visible but locked', (await page.locator('.step[data-state=locked]').count()) === 2)
+    await shot(page, 'portal-375', true)
+    await axe(page, 'Link PSN 375', '.app-main')
+    await tapTargets(page, 'Link PSN 375')
+    await page.click('button:has-text("This is mine")')
+    await page.click('[role=alertdialog] button:has-text("Yes, it\'s mine")')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('already claimed')))
+    check('claim 404 says someone already claimed it', claims.length === 1 && claims[0].key === 'bizzle')
+    const ext = await page.$$eval('.step a[target=_blank]', (as) => as.map((a) => a.href))
+    check('step 1 opens playstation.com in a new tab', ext.includes('https://www.playstation.com/'), ext.join(' '))
+    await page.click('button:has-text("I\'m already signed in")')
+    check('step 2 links the Sony token page', (await page.getAttribute('.step[data-state=open] a[target=_blank]', 'href')) === 'https://ca.account.sony.com/api/v1/ssocookie')
+    await page.click('button:has-text("I\'ve copied it")')
+    await page.fill('#po-token', '{"npsso":"abc123"}')
+    check('the token is masked once entered', (await page.getAttribute('#po-token', 'data-masked')) === 'true')
+    await page.click('button:has-text("Link my account")')
+    await page.waitForSelector('.po-err')
+    check('a failed link shows the server message + Try a fresh token', (await page.textContent('.po-err')).includes("didn't work") && (await page.isVisible('.po-err button:has-text("Try a fresh token")')))
+    check('the pasted token is kept after a failure', (await page.inputValue('#po-token')) === '{"npsso":"abc123"}')
+    await shot(page, 'portal-375-error')
+    await axe(page, 'Link PSN error 375', '.app-main')
+    check('the token is never stored locally', await page.evaluate(() => !JSON.stringify({ ...localStorage, ...sessionStorage }).includes('abc123')))
+    linkOk = true
+    await page.click('button:has-text("Link my account")')
+    await page.waitForSelector('.portal-done')
+    check('a good link replaces the stepper with See the Squad', (await page.textContent('.portal-done')).includes('Linked as Goopy') && (await page.getAttribute('.portal-done a', 'href')) === '/app')
+    check('link posts the token once per try', links.length === 2 && links[1].npsso === '{"npsso":"abc123"}')
+    await shot(page, 'portal-375-done')
+    check('no unmocked writes and no page errors (Link PSN)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  // ── 11. Admin (PS-11): health, ops, queue, PSN accounts, users + reset ──
+  {
+    const resets = []
+    const { ctx, page } = await newPage({
+      width: 1440, height: 900,
+      mocks: {
+        ...ACCT_BASE, ...ADMIN_READS,
+        'GET /api/admin/check': json(200, { admin: true }),
+        'POST /api/admin/users/u2/reset-password': (r) => { resets.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+      },
+    })
+    await ready(page, '/app/admin')
+    await page.waitForSelector('.svc-row')
+    await page.waitForSelector('.admin-lists .acct-row')
+    check('admin: a down service is data (red dot + Unreachable)', (await page.textContent('.svc-row[data-status=down]')).includes('Unreachable'))
+    check('admin: queue depth 0 reads "Queue is clear"', (await page.textContent('.admin-queue')) === 'Queue is clear')
+    const order = await page.$$eval('section[aria-labelledby=ad-p] .acct-row-title', (els) => els.map((e) => e.textContent))
+    check('admin: PSN accounts list expired, then expiring, first', order.join(',') === 'Bizzle,NoorAmin,Goopy', order.join(','))
+    check('admin: unclaimed accounts say so', (await page.textContent('section[aria-labelledby=ad-p]')).includes('unclaimed'))
+    await shot(page, 'admin-1440', true)
+    await axe(page, 'Admin 1440', '.app-main')
+    await tapTargets(page, 'Admin 1440')
+    await page.click('button[aria-label="Reset password for Bizzle"]')
+    await page.waitForSelector('.dialog #rp-new')
+    check('reset dialog names the user', (await page.textContent('.dialog-title')).includes('Bizzle'))
+    await page.fill('#rp-new', 'short')
+    await page.fill('#rp-conf', 'short')
+    await page.click('.dialog button[type=submit]')
+    check('reset under 8 characters is blocked client-side', resets.length === 0 && (await page.getAttribute('#rp-new', 'aria-invalid')) === 'true')
+    await page.fill('#rp-new', 'brand-new-pass')
+    await page.fill('#rp-conf', 'brand-new-pass')
+    await page.click('.dialog button[type=submit]')
+    await page.waitForSelector('.dialog', { state: 'detached' })
+    check('reset posts once with the new password', resets.length === 1 && resets[0].newPassword === 'brand-new-pass')
+    check('no unmocked writes and no page errors (Admin)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { ...ADMIN_READS, 'GET /api/admin/check': json(200, { admin: true }), 'GET /api/admin/users': json(403, { detail: 'admins only' }) } })
+    await ready(page, '/app/admin')
+    await page.waitForSelector('.handoff-lede')
+    check('admin: a 403 from users turns into "Admins only"', (await page.textContent('.handoff-lede')) === 'Admins only')
+    await page.goto(BASE + '/app/admin')
     await ctx.close()
   }
 } finally {
