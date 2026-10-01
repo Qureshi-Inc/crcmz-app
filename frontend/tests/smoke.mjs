@@ -32,7 +32,8 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
-const browser = await chromium.launch({ executablePath: CHROME, headless: true })
+// Fake camera + mic so the Watch call can be joined without hardware or a prompt.
+const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
 
 /**
  * A page where every write is mocked. `mocks` maps "METHOD path" → handler(route).
@@ -394,7 +395,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai' }
+    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -1151,7 +1152,7 @@ try {
     await ready(page, '/app/settings')
     await page.waitForSelector('.acct-row')
     check('/app/settings opens the passkeys tab', new URL(page.url()).pathname === '/app/settings/passkeys', page.url())
-    check('settings tabs are a tablist of 5', (await page.locator('.tabstrip[role=tablist] [role=tab]').count()) === 5)
+    check('settings tabs are a tablist of 6', (await page.locator('.tabstrip[role=tablist] [role=tab]').count()) === 6)
     check('passkeys are listed', (await page.locator('.acct-row').count()) === 2)
     await shot(page, 'settings-375-passkeys')
     await axe(page, 'Settings passkeys 375', '.app-main')
@@ -1544,6 +1545,189 @@ try {
     check('create posts once; a failed publish leaves a visible draft, no retry', calls.length === 1 && calls[0].title === 'November drop' && page.writes.filter((w) => w === 'POST /api/giveaway/9/publish').length === 1)
     check('no unmocked writes and no page errors (Giveaway create)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
+  }
+  // ── 13. Watch (PS-6). The WatchParty socket is a fake io() that records emits;
+  // every Watch API call (join, rally, nickname, history, log) is a fixture. ──
+  {
+    const posts = { rally: [], nick: [], hist: [], log: 0, title: [], del: [] }
+    const WATCH_VIDEO = `${BASE}/wp-fixture/movie.webm`
+    const HIST = [
+      { url: WATCH_VIDEO, source_url: null, kind: 'movie', title: 'Heat', year: 1995, description: null, overview: 'Cops and robbers.', poster: null, meta_url: null, named_by: 'source', chat_count: 3, last_watched_at: NOW - 3600, position: 2, duration: 6, finished: false, viewers: [{ name: 'Goopy', position: 2, finished: false, updated_at: NOW - 3600 }], mine: { position: 2, finished: false, updated_at: NOW - 3600 } },
+      { url: `${BASE}/wp-fixture/other.mp4`, source_url: null, kind: null, title: '', year: null, description: null, overview: null, poster: null, meta_url: null, named_by: null, chat_count: 0, last_watched_at: NOW - 86400, position: 0, duration: null, finished: false, viewers: [], mine: null },
+    ]
+    const FAKE_IO = `(() => {
+      window.__wpEmits = []
+      window.io = (url, opts) => {
+        const h = {}
+        const s = { id: 'sid1', connected: false, url, opts,
+          on(ev, fn) { (h[ev] ||= []).push(fn); return s },
+          emit(ev, ...a) { window.__wpEmits.push([ev, ...a]); return s },
+          removeAllListeners() { for (const k in h) delete h[k] },
+          disconnect() { s.connected = false } }
+        window.__wpFire = (ev, ...a) => (h[ev] || []).forEach((f) => f(...a))
+        window.__wpSock = s
+        setTimeout(() => { s.connected = true; window.__wpFire('connect'); window.__wpFire('watch:presence', { count: 3, viewers: [{ id: 'me', name: 'Goopy' }, { id: 'p2', name: 'Bizzle' }, { id: 'p3', name: 'Noor' }] }); window.__wpFire('REC:nameMap', { me: 'Goopy', p2: 'Bizzle', p3: 'Noor' }) }, 30)
+        return s
+      }
+    })()`
+    const WATCH = {
+      'GET /api/watch/config': json(200, { authMode: 'zitadel', origin: '', socketPath: '/wp/socket.io', rooms: ['crcmz'], defaultRoom: 'crcmz', ticketTtl: 60, viewer: { id: 'u1', name: 'Goopy', nickname: '', psnOnlineId: 'Goopy', mod: true } }),
+      'GET /wp/socket.io/socket.io.js': (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: FAKE_IO }),
+      'POST /api/watch/join': json(200, { ticket: 'tkt', expiresIn: 60, room: 'crcmz', viewer: { name: 'Goopy', mod: true } }),
+      'POST /api/watch/rally': (r) => { posts.rally.push(r.request().postDataJSON()); return json(200, { status: 'sent' })(r) },
+      'POST /api/watch/nickname': (r) => { posts.nick.push(r.request().postDataJSON()); return json(200, { nickname: 'G', name: 'G' })(r) },
+      'POST /api/watch/history': (r) => { posts.hist.push(1); return json(200, { ok: true })(r) },
+      'POST /api/watch/history/title': (r) => { posts.title.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
+      'DELETE /api/watch/history': (r) => { posts.del.push(r.request().postDataJSON()); return json(200, { ok: true, removed: 1 })(r) },
+      'POST /api/watch/log': (r) => { posts.log++; return json(200, { ok: true })(r) },
+      'POST /api/watch/extract': json(200, { url: WATCH_VIDEO, title: 'Heat' }),
+      'GET /api/watch/history': json(200, { items: HIST }),
+      'GET /api/watch/history/chat': json(200, { messages: [{ ts: NOW, name: 'Bizzle', msg: 'classic', video_ts: 61 }] }),
+      'GET /wp-fixture/movie.webm': serveRange(STUDIO_VIDEO, 'video/webm'),
+      'GET /wp-fixture/other.mp4': serveRange(STUDIO_VIDEO, 'video/webm'),
+    }
+    const emits = (page) => page.evaluate(() => window.__wpEmits.map((e) => e[0]))
+    const host = (page) => page.evaluate((u) => window.__wpFire('REC:host', { video: u, videoTS: 0, paused: true }), WATCH_VIDEO)
+
+    // Phone
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks: WATCH })
+    await page.addInitScript(() => { if (!sessionStorage.getItem('wp-t')) { sessionStorage.setItem('wp-t', '1'); localStorage.removeItem('watch.orbs.pos') } })
+    await ready(page, '/app/watch')
+    await page.waitForSelector('.wp-pill[data-tone="live"]')
+    check('watch: joins with a ticket and goes live', page.writes.includes('POST /api/watch/join') && (await page.textContent('.wp-pill')) === '3 watching')
+    check('watch: asks for presence and the host on connect', (await emits(page)).includes('watch:presence:get') && (await emits(page)).includes('CMD:askHost'))
+    check('watch: empty stage invites a link', (await page.isVisible('.wp-empty')) && !(await page.isVisible('.wp-overlay')))
+    await page.waitForSelector('.wp-card')
+    check('watch: history lists the room', (await page.locator('.wp-card').count()) === 2 && (await page.textContent('.wp-card .wp-card-title')).includes('Heat'))
+    await shot(page, 'watch-375-empty', true)
+    await host(page)
+    await page.waitForSelector('.wp-overlay')
+    await page.waitForFunction(() => document.querySelector('.wp-video')?.readyState >= 1)
+    check('watch: the host video loads into the stage', (await page.getAttribute('.wp-video', 'src')) === WATCH_VIDEO)
+    check('watch: overlay has back 10 / play / forward 10 in the middle', (await page.locator('.wp-ov-mid button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')))).join('|') === 'Back 10 seconds|Play|Forward 10 seconds')
+    const row = await page.locator('.wp-ov-row button:visible').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')))
+    check('watch: phone control row: volume, reactions, fullscreen (no duplicate play)', row.some((l) => /^(Mute|Unmute|Volume)/.test(l)) && row.includes('Reactions') && row.some((l) => /fullscreen/i.test(l)) && !row.includes('Play'), row.join(', '))
+    check('watch: seek bar is a labelled slider', (await page.getAttribute('.wp-seek-input', 'aria-label')) !== null && (await page.getAttribute('.wp-seek-input', 'type')) === 'range')
+    await page.click('.wp-ov-mid button[aria-label="Play"]')
+    await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:play'))
+    check('watch: centre play tells the room', true)
+    await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
+    await page.click('.wp-ov-mid button[aria-label="Pause"]')
+    await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:pause'))
+    check('watch: centre pause tells the room', true)
+    await page.click('.wp-ov-mid button[aria-label="Forward 10 seconds"]')
+    await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:seek'))
+    check('watch: forward 10 seeks for everyone', true)
+    await page.evaluate(() => window.__wpFire('REC:chat', { id: 'p2', msg: 'this part 🔥' }))
+    await page.waitForSelector('.wp-chat-line')
+    check('watch: incoming chat shows with the sender name', (await page.textContent('.wp-chat-list')).includes('Bizzle'))
+    await page.fill('#wp-chat-in', 'hi all')
+    await page.press('#wp-chat-in', 'Enter')
+    check('watch: sending chat emits CMD:chatV2', (await page.evaluate(() => window.__wpEmits.find((e) => e[0] === 'CMD:chatV2')?.[1]?.msg)) === 'hi all')
+    const box = await page.locator('.wp-stage').boundingBox()
+    await page.touchscreen.tap(box.x + 12, box.y + box.height / 2)
+    await page.waitForTimeout(300)
+    if ((await page.getAttribute('.wp-stage', 'data-chrome')) === 'false') await page.touchscreen.tap(box.x + 12, box.y + box.height / 2)
+    check('watch: a tap on the picture brings the controls back', (await page.getAttribute('.wp-stage', 'data-chrome')) === 'true')
+    await page.evaluate(() => scrollTo(0, 0))
+    await page.touchscreen.tap(box.x + 12, box.y + box.height / 2)
+    await page.waitForTimeout(200)
+    if ((await page.getAttribute('.wp-stage', 'data-chrome')) === 'false') await page.touchscreen.tap(box.x + 12, box.y + box.height / 2)
+    await shot(page, 'watch-375-player')
+    await axe(page, 'Watch 375', '.app-main')
+    await tapTargets(page, 'Watch 375')
+    // Camera position: per user, remembered, and the same control in Settings.
+    check('watch: cameras default to below the video', (await page.getAttribute('.wp-screen', 'data-orbs')) === 'bottom')
+    await page.click('.wp-actions [role=radio]:has-text("Above")')
+    check('watch: Above moves the cameras over the stage', (await page.getAttribute('.wp-screen', 'data-orbs')) === 'top' && (await page.evaluate(() => JSON.parse(localStorage.getItem('watch.orbs.pos')))) === 'top')
+    // Rally asks first, then posts once.
+    await page.click('.wp-actions button:has-text("Rally")')
+    await page.waitForSelector('.dialog')
+    check('watch: Rally asks before posting', posts.rally.length === 0 && (await page.textContent('.dialog')).includes('WhatsApp'))
+    await page.click('.dialog button:has-text("Send rally")')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('Rally sent')))
+    check('watch: Rally posts once after confirming', posts.rally.length === 1)
+    // Leave /watch: the party keeps going in the Watch bar.
+    await page.click('.tabbar a[href="/app"]')
+    await page.waitForSelector('.watchbar-bar')
+    check('watch: leaving /watch keeps the party in a Watch bar', (await page.textContent('.watchbar-bar')).includes('Watch Party') && (await page.evaluate(() => document.querySelector('.wp-video')?.isConnected)) === true)
+    check('watch: the parked page is inert and out of view', (await page.getAttribute('.watch-page', 'data-hidden')) === 'true' && (await page.evaluate(() => document.querySelector('.watch-page').inert)))
+    await shot(page, 'watch-375-bar')
+    await page.goto(BASE + '/app/settings')
+    await page.click('[role=tab]:has-text("Watch")')
+    await page.waitForSelector('#st-orbpos')
+    check('settings: Watch tab shows the remembered camera position', (await page.textContent('.settings-card [role=radio][aria-checked=true]')) === 'Above')
+    await page.focus('.settings-card [role=radio][aria-checked=true]')
+    await page.keyboard.press('ArrowRight')
+    check('settings: arrow keys move the camera choice', (await page.evaluate(() => JSON.parse(localStorage.getItem('watch.orbs.pos')))) === 'bottom' && (await page.evaluate(() => document.activeElement?.textContent)) === 'Below')
+    await page.click('.settings-card [role=radio]:has-text("Over video")')
+    check('settings: picking Over video saves it', (await page.evaluate(() => JSON.parse(localStorage.getItem('watch.orbs.pos')))) === 'over')
+    await shot(page, 'settings-watch-375')
+    await axe(page, 'Settings Watch 375', '.app-main')
+    check('watch: nothing posted to history before the video was watched', true)
+    check('no unmocked writes and no page errors (Watch 375)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+
+    // Desktop
+    const d = await newPage({ width: 1440, height: 900, mocks: WATCH })
+    await ready(d.page, '/app/watch')
+    await d.page.waitForSelector('.wp-pill[data-tone="live"]')
+    await host(d.page)
+    await d.page.waitForSelector('.wp-overlay')
+    await d.page.hover('.wp-stage')
+    const drow = await d.page.locator('.wp-ov-row button:visible').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')))
+    check('watch 1440: control row has play, volume, reactions, fullscreen', drow[0] === 'Play' && drow.includes('Reactions') && drow.some((l) => /fullscreen/i.test(l)), drow.join(', '))
+    check('watch 1440: inline volume slider', await d.page.isVisible('.wp-vol-inline'))
+    check('watch 1440: chat sits beside the stage', await d.page.evaluate(() => { const a = document.querySelector('.wp-main').getBoundingClientRect(), b = document.querySelector('.wp-side').getBoundingClientRect(); return b.left >= a.right - 1 }))
+    await d.page.evaluate(() => document.activeElement?.blur())
+    await d.page.keyboard.press('k')
+    await d.page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:play'))
+    check('watch 1440: k plays', true)
+    await d.page.keyboard.press('l')
+    await d.page.waitForFunction(() => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').length >= 1)
+    check('watch 1440: l seeks ahead', true)
+    await d.page.click('.wp-ov-row button[aria-label="Reactions"]')
+    await d.page.waitForSelector('.wp-rx-strip')
+    await d.page.click('.wp-rx-strip button >> nth=1')
+    await d.page.waitForSelector('.wp-floater')
+    check('watch 1440: a reaction from the strip floats up on the stage', (await d.page.textContent('.wp-floater-name')) === 'You')
+    await d.page.hover('.wp-stage')
+    await shot(d.page, 'watch-1440')
+    await axe(d.page, 'Watch 1440', '.app-main')
+    await d.page.click('.wp-card button[aria-label^="Details"]')
+    await d.page.waitForSelector('.wp-chat-log')
+    check('watch 1440: details show viewers and chat', (await d.page.textContent('.dialog')).includes('Goopy') && (await d.page.textContent('.wp-chat-log')).includes('classic'))
+    await d.page.keyboard.press('Escape')
+    await d.page.click('.wp-card >> nth=1 >> button[aria-label^="Rename"]')
+    await d.page.fill('.dialog input', 'Collateral')
+    await d.page.click('.dialog button[type=submit]')
+    await d.page.waitForSelector('.dialog', { state: 'detached' })
+    check('watch 1440: rename posts the title once', posts.title.length === 1 && posts.title[0].title === 'Collateral')
+    // Joining the call puts your own orb where you asked for it.
+    await d.ctx.grantPermissions(['camera', 'microphone'])
+    await d.page.click('button:has-text("Join with camera + mic")')
+    await d.page.waitForSelector('.wp-orb')
+    check('watch 1440: joining the call shows your camera orb', (await d.page.getAttribute('.wp-orb', 'aria-label')).startsWith('You, mic on'))
+    await d.page.waitForFunction(() => document.querySelector('.wp-face-video')?.readyState >= 2)
+    const below = await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().top >= document.querySelector('.wp-stage').getBoundingClientRect().bottom - 1)
+    check('watch 1440: orbs sit below the video by default', below)
+    await d.page.click('.wp-actions [role=radio]:has-text("Over video")')
+    await d.page.waitForSelector('.wp-stage .wp-orbs-over')
+    check('watch 1440: Over video floats the orbs on the stage', await d.page.evaluate(() => { const o = document.querySelector('.wp-orbs-over').getBoundingClientRect(), st = document.querySelector('.wp-stage').getBoundingClientRect(); return o.right <= st.right && o.left > st.left + st.width / 2 }))
+    await d.page.hover('.wp-stage')
+    check('watch 1440: in the call the overlay gets a mic button', await d.page.isVisible('.wp-ov-row button[aria-label="Mute mic"]'))
+    await shot(d.page, 'watch-1440-over')
+    await d.page.click('.wp-actions [role=radio]:has-text("Above")')
+    check('watch 1440: Above puts the orbs over the top of the video', await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().bottom <= document.querySelector('.wp-stage').getBoundingClientRect().top + 1))
+    await d.page.click('.wp-orb')
+    await d.page.waitForSelector('.wp-orb-menu')
+    check('watch 1440: your orb menu has mute, camera, flip, enlarge, leave', (await d.page.locator('.wp-orb-menu [role=menuitem]').count()) === 5)
+    await d.page.keyboard.press('Escape')
+    await d.page.click('.wp-actions button:has-text("Leave call")')
+    await d.page.waitForSelector('.wp-orb', { state: 'detached' })
+    check('watch 1440: leaving the call removes your orb', true)
+    check('no unmocked writes and no page errors (Watch 1440)', d.page.violations.length === 0, d.page.violations.join(', '))
+    await d.ctx.close()
   }
 } finally {
   await browser.close()

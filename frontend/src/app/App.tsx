@@ -41,7 +41,8 @@ export function App() {
               <Route path="slap" element={<SlapPage />} />
               <Route path="whatsapp" element={<Handoff id="whatsapp" />} />
               <Route path="giveaway" element={<GiveawayPage />} />
-              <Route path="watch" element={<Handoff id="watch" />} />
+              {/* The Shell renders the Watch page itself, so it can stay mounted across routes. */}
+              <Route path="watch" element={null} />
               <Route path="huddle" element={<Handoff id="huddle" />} />
               <Route path="coach" element={<Handoff id="coach" />} />
               <Route path="ask" element={<Handoff id="ask" />} />

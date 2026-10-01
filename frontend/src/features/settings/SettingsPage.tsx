@@ -10,6 +10,7 @@ import { ErrorStrip, SkeletonRows } from '../../components/states'
 import { toast } from '../../components/toast'
 import { ConfirmDialog } from '../clips/ClipSheet'
 import { ClaimList } from '../portal/Claim'
+import { OrbPosControl } from '../watch/WatchPage'
 import { ApiError, getJSON } from '../../lib/http'
 import {
   addPasskey, changePassword, fmtDate, fmtDateTime, MCP_CONFIG, passkeysSupported, removePasskey, revokeMcp, tokenState,
@@ -22,6 +23,7 @@ const TABS = [
   { id: 'psn', label: 'PSN' },
   { id: 'mattermost', label: 'Mattermost' },
   { id: 'mcp', label: 'MCP' },
+  { id: 'watch', label: 'Watch' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
 const LAST = 'crcmz_app_settings_tab'
@@ -55,6 +57,7 @@ export function SettingsPage() {
         <Tabs.Content value="psn" className="settings-panel"><PsnTab /></Tabs.Content>
         <Tabs.Content value="mattermost" className="settings-panel"><MattermostTab /></Tabs.Content>
         <Tabs.Content value="mcp" className="settings-panel"><McpTab /></Tabs.Content>
+        <Tabs.Content value="watch" className="settings-panel"><WatchTab /></Tabs.Content>
       </Tabs.Root>
     </div>
   )
@@ -370,6 +373,17 @@ function McpTab() {
         action="Revoke access"
         onConfirm={() => void revoke()}
       />
+    </section>
+  )
+}
+
+// ── Watch (this device) ──────────────────────────────────────────────────────
+function WatchTab() {
+  return (
+    <section className="glass settings-card" aria-labelledby="st-watch-h">
+      <h2 className="section-h2" id="st-watch-h">Watch Party</h2>
+      <p className="dim">Where the camera orbs sit: above the video, below it, or over it in a corner. Saved on this device; you can also change it on the Watch page.</p>
+      <OrbPosControl id="st-orbpos" />
     </section>
   )
 }

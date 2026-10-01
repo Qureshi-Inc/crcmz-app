@@ -15,6 +15,9 @@ import { useSwipeDown } from '../lib/gestures'
 import { usePanelCollapsed } from '../features/chat/panelState'
 import { MiniPlayer, PlayerSheet } from '../features/slap/NowPlaying'
 import { current as nowPlaying, usePlayer } from '../features/slap/player'
+import { WatchPage } from '../features/watch/WatchPage'
+import { WatchBar, useWatchBar } from '../features/watch/WatchBar'
+import { useWatchSelect } from '../features/watch/session'
 import { DESTS, MORE_ACCOUNT, MORE_SQUAD, SIDEBAR_FOOT, SIDEBAR_MAIN, TAB_IDS, destForPath, type DestId } from './nav'
 
 const MASCOT = '/footer-avatar.png'
@@ -46,7 +49,8 @@ export function Shell() {
   useEffect(() => {
     if (prevPath.current === location.pathname) return
     prevPath.current = location.pathname
-    const h = document.querySelector<HTMLElement>('#main h1')
+    // The Watch page can stay mounted (hidden) behind other pages: pick the visible heading.
+    const h = [...document.querySelectorAll<HTMLElement>('#main h1')].find((el) => el.offsetParent !== null)
     h?.focus({ preventScroll: true })
     window.scrollTo(0, 0)
   }, [location.pathname])
@@ -62,10 +66,20 @@ export function Shell() {
     else delete d.player
   }, [hasPlayer])
 
+  // Watch Party stays mounted once started, so the video and call survive navigation.
+  const onWatch = current === 'watch'
+  const keepWatch = useWatchSelect((s) => s.active) || onWatch
+  const watchBar = useWatchBar(onWatch)
+  useEffect(() => {
+    const d = document.documentElement.dataset
+    if (watchBar && !desktop) d.watchbar = ''
+    else delete d.watchbar
+  }, [watchBar, desktop])
+
   return (
     <>
       <a className="skip-link" href="#main">Skip to content</a>
-      {desktop ? <Sidebar current={current} isAdmin={isAdmin} /> : <TopBar />}
+      {desktop ? <Sidebar current={current} isAdmin={isAdmin} watchBar={watchBar} /> : <TopBar />}
       <main id="main" className="app-main" data-chat={chatMode} tabIndex={-1} style={{ outline: 'none' }}>
         {signedOut && (
           <div className="banner" role="status" style={{ marginBottom: 'var(--space-5)' }}>
@@ -74,7 +88,9 @@ export function Shell() {
           </div>
         )}
         <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
+        {keepWatch && <WatchPage visible={onWatch} />}
       </main>
+      {!desktop && watchBar && <WatchBar variant="bar" />}
       {!desktop && <MiniPlayer variant="bar" />}
       {!desktop && <TabBar current={current} isAdmin={isAdmin} />}
       <PlayerSheet />
@@ -262,7 +278,7 @@ function MoreSheet({ current, isAdmin, onClose }: { current: DestId | null; isAd
 }
 
 // ── Desktop sidebar ──────────────────────────────────────────────────────────
-function Sidebar({ current, isAdmin }: { current: DestId | null; isAdmin: boolean }) {
+function Sidebar({ current, isAdmin, watchBar }: { current: DestId | null; isAdmin: boolean; watchBar: boolean }) {
   const badge = useLiveBadge()
   const row = (id: DestId) => {
     const d = DESTS[id]
@@ -291,6 +307,7 @@ function Sidebar({ current, isAdmin }: { current: DestId | null; isAdmin: boolea
         <div className="sidebar-spacer" />
         <ul className="sidebar-group">{SIDEBAR_FOOT.map(row)}</ul>
       </nav>
+      {watchBar && <WatchBar variant="sidebar" />}
       <MiniPlayer variant="sidebar" />
       <div className="sidebar-account">
         <AccountControl variant="sidebar" />

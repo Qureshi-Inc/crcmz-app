@@ -35,7 +35,7 @@ export const DESTS: Record<DestId, Dest> = {
   settings: {
     id: 'settings', label: 'Settings', path: '/settings', icon: 'settings', classicHref: '/',
     classicHint: 'Open the account menu at the top right, then Settings.',
-    blurb: 'Passkeys, password, PSN, Mattermost and MCP.',
+    blurb: 'Passkeys, password, PSN, Mattermost, MCP and Watch.',
   },
   admin: {
     id: 'admin', label: 'Admin', path: '/admin', icon: 'admin', classicHref: '/', adminOnly: true,
