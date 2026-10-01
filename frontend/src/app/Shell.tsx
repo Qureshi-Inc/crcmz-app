@@ -12,6 +12,7 @@ import { useStale } from '../components/states'
 import { useAccount, useAdminCheck, useSquad, SQUAD_MS, type Member } from '../lib/api'
 import { ApiError } from '../lib/http'
 import { useDesktop } from '../lib/media'
+import { useUnread } from '../lib/notifications'
 import { loginUrl, redirectToLogin, useSignedOut } from '../lib/session'
 import { useSwipeDown } from '../lib/gestures'
 import { usePanelCollapsed } from '../features/chat/panelState'
@@ -144,10 +145,25 @@ function TopBar() {
             </span>
           </Link>
           <span className="topbar-spacer" />
+          <BellLink />
           <AccountControl />
         </div>
       </header>
     </>
+  )
+}
+
+/** The bell: unread count, straight to the notification centre. Hidden when signed out. */
+function BellLink() {
+  const acct = useAccount()
+  const signedIn = acct.data?.state === 'signed-in'
+  const n = useUnread(signedIn)
+  if (!signedIn) return null
+  return (
+    <Link to="/notifications" className="bell-btn" aria-label={n ? `Notifications, ${n} unread` : 'Notifications'}>
+      <Icon name="bell" />
+      {n > 0 && <span className="tab-badge bell-badge" aria-hidden="true">{n > 99 ? '99+' : n}</span>}
+    </Link>
   )
 }
 
@@ -289,6 +305,8 @@ function MoreSheet({ current, isAdmin, onClose }: { current: DestId | null; isAd
 // ── Desktop sidebar ──────────────────────────────────────────────────────────
 function Sidebar({ current, isAdmin, watchBar, huddleBar }: { current: DestId | null; isAdmin: boolean; watchBar: boolean; huddleBar: boolean }) {
   const badge = useLiveBadge()
+  const acct = useAccount()
+  const unread = useUnread(acct.data?.state === 'signed-in')
   const row = (id: DestId) => {
     const d = DESTS[id]
     if (d.adminOnly && !isAdmin) return null
@@ -298,6 +316,7 @@ function Sidebar({ current, isAdmin, watchBar, huddleBar }: { current: DestId | 
           <Icon name={d.icon} />
           {d.label}
           {id === 'squad' && badge > 0 && <><span className="nav-badge" aria-hidden="true">{badge}</span><span className="sr-only">, {badge} in a game</span></>}
+          {id === 'notifications' && unread > 0 && <><span className="nav-badge" aria-hidden="true">{unread > 99 ? '99+' : unread}</span><span className="sr-only">, {unread} unread</span></>}
         </Link>
       </li>
     )

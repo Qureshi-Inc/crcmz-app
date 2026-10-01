@@ -76,14 +76,18 @@ self.addEventListener('push', (event) => {
   let d = {}
   try { d = event.data ? event.data.json() : {} } catch { d = { body: event.data ? event.data.text() : '' } }
   const title = d.title || 'CRCMZ'
-  event.waitUntil(self.registration.showNotification(title, {
-    body: d.body || '',
-    icon: '/app/pwa/icon-192.png',
-    badge: '/app/pwa/badge-96.png',
-    tag: d.tag || undefined,
-    renotify: !!d.tag,
-    data: { url: safeUrl(d.url) },
-  }))
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(title, {
+      body: d.body || '',
+      icon: '/app/pwa/icon-192.png',
+      badge: '/app/pwa/badge-96.png',
+      tag: d.tag || undefined,
+      renotify: !!d.tag,
+      data: { url: safeUrl(d.url) },
+    }),
+    // An open app refreshes its bell straight away instead of on the next poll.
+    self.clients.matchAll({ type: 'window' }).then((wins) => wins.forEach((w) => w.postMessage({ type: 'crcmz:push' }))),
+  ]))
 })
 
 // Only ever open a screen of this app, whatever the payload says.

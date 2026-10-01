@@ -41,6 +41,7 @@ CATEGORIES: dict[str, str] = {
     "huddle": "A Huddle starts",
     "giveaway": "Giveaways open and winners",
     "clips": "New clips from the squad",
+    "mentions": "Someone @mentions you",
 }
 
 # We POST to whatever endpoint a browser gives us, so only real push services:

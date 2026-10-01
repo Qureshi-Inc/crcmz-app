@@ -289,13 +289,13 @@ def http_tests():
 
     def giveaway_reveal_push_does_not_name_the_winner():
         seen = []
-        orig = webpush.notify_in_background
-        server._push.notify_in_background = lambda *a, **k: seen.append((a, k))
+        orig = server._notify.route_in_background
+        server._notify.route_in_background = lambda *a, **k: seen.append((a, k))
         server._giveaway.get_giveaway = lambda gid: {"title": "October drop", "prize": "PS Plus"}
         try:
             asyncio.run(server._push_giveaway_won(7))
         finally:
-            server._push.notify_in_background = orig
+            server._notify.route_in_background = orig
         (cat, title, body, url), kw = seen[0]
         assert cat == "giveaway" and url == "/app/giveaway" and "October drop" in title and "PS Plus" in body
         assert "won" not in title.lower(), title

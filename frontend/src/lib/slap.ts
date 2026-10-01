@@ -96,8 +96,29 @@ export const setFavorite = (id: string, on: boolean) =>
 export const sendThumb = (t: Pick<Track, 'id' | 'title' | 'artist' | 'album'>, thumbs: -1 | 0 | 1) =>
   request('/api/slap/thumb', { body: { ...trackBody(t), thumbs } })
 
+export type SlapComment = {
+  id: string; username: string; track_id?: string; title: string; artist: string
+  text: string; is_reaction: boolean; created_at: string
+}
+/** Posts a comment or reaction. `mentioned` names whoever the @tags reached. */
 export const sendComment = (t: Pick<Track, 'id' | 'title' | 'artist' | 'album'>, text: string, isReaction: boolean) =>
-  request('/api/slap/comment', { body: { ...trackBody(t), text, is_reaction: isReaction } })
+  request<Partial<SlapComment> & { mentioned?: string[] }>('/api/slap/comment', { body: { ...trackBody(t), text, is_reaction: isReaction } })
+
+export type Mentionable = { handle: string; name: string }
+/** Who an @ can tag: handles and names only, from the identity graph. */
+export function useMentionable(enabled = true) {
+  return useQuery({
+    queryKey: ['slap', 'mentionable'],
+    queryFn: ({ signal }) => request<{ people: Mentionable[] }>('/api/slap/mentionable', { signal }),
+    staleTime: 10 * 60_000,
+    enabled,
+  })
+}
+
+/** One track's comments and reactions, newest first. */
+export function useTrackComments(trackId: string | null) {
+  return useSocial<{ comments: SlapComment[] }>(trackId ? 'listening/comments' : null, trackId ? { track_id: trackId, limit: 30 } : undefined)
+}
 
 export function reportListen(kind: 'play' | 'skip', t: Pick<Track, 'id' | 'title' | 'artist' | 'album' | 'duration'>, heard: number, completed: boolean) {
   return request(`/api/slap/listen/${kind}`, {

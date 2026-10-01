@@ -2613,6 +2613,109 @@ try {
     check('no unmocked writes and no page errors (Ask 1440)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
+  // ── 18. Notifications + Slap @mentions: the inbox, the bell, DM switches, tagging ──
+  {
+    const reads = [], chans = []
+    let unread = 2
+    const item = (id, source, title, read, personal = false) => ({ id, at: Date.now() - id * 60_000, category: source === 'slap' ? 'mentions' : source, source, title, body: `${title} body`, url: source === 'slap' ? '/app/slap?track=t3' : '/app/squad', personal, read })
+    const ITEMS = [item(3, 'slap', 'Zubair mentioned you on Slap', false, true), item(5, 'squad', 'Moiz: Squad Up', false), item(9, 'clips', 'New clip', true)]
+    const mocks = {
+      ...SLAP_BASE,
+      'GET /auth/settings/psn': ACCT_BASE['GET /auth/settings/psn'],
+      'GET /api/notifications/unread': (r) => json(200, { unread })(r),
+      'GET /api/notifications': (r) => {
+        const src = new URL(r.request().url()).searchParams.get('source')
+        const items = src ? ITEMS.filter((i) => i.source === src) : ITEMS
+        return json(200, { items: items.map((i) => ({ ...i, read: i.read || unread === 0 })), more: false, unread })(r)
+      },
+      'POST /api/notifications/read': (r) => { const b = r.request().postDataJSON(); reads.push(b); if (b.all) unread = 0; else unread = Math.max(0, unread - b.ids.length); return json(200, { unread })(r) },
+      'GET /api/notifications/channels': json(200, { channels: [{ id: 'whatsapp', label: 'WhatsApp DM when someone @mentions you' }, { id: 'mattermost', label: 'Mattermost DM when someone @mentions you' }], prefs: { whatsapp: true, mattermost: true }, reachable: { whatsapp: true, mattermost: false } }),
+      'POST /api/notifications/channels': (r) => { chans.push(r.request().postDataJSON()); return json(200, { prefs: { whatsapp: false, mattermost: true } })(r) },
+    }
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks, match: slapMatch() })
+    await ready(page, '/app/')
+    await page.waitForSelector('.bell-btn .bell-badge')
+    check('notif: the bell shows the unread count', (await page.textContent('.bell-badge')) === '2' && (await page.getAttribute('.bell-btn', 'aria-label')) === 'Notifications, 2 unread')
+    await page.click('.bell-btn')
+    await page.waitForSelector('.notif-row')
+    check('notif: the inbox lists every alert, newest first', (await page.locator('.notif-row').count()) === 3 && (await page.textContent('.notif-row >> nth=0')).includes('Zubair mentioned you'))
+    check('notif: unread rows carry a dot, read rows do not', (await page.locator('.notif-row[data-read="false"] .notif-dot').count()) === 2 && (await page.locator('.notif-row[data-read="true"] .notif-dot').count()) === 0)
+    check('notif: a channel with no contact says so', (await page.textContent('.notif-delivery')).includes('no Mattermost account linked yet'))
+    await shot(page, 'notifications-375')
+    await axe(page, 'Notifications 375', '.app-main')
+    await tapTargets(page, 'Notifications 375')
+    await page.click('.notif-chips .chip:has-text("Mentions")')
+    await page.waitForFunction(() => document.querySelectorAll('.notif-row').length === 1)
+    check('notif: the Mentions chip filters to Slap', (await page.textContent('.notif-row')).includes('mentioned you'))
+    await page.click('.notif-chips .chip:has-text("All")')
+    await page.waitForFunction(() => document.querySelectorAll('.notif-row').length === 3)
+    await page.click('.notif-delivery label:has-text("WhatsApp") input')
+    await page.waitForFunction(() => true)
+    await page.waitForTimeout(200)
+    check('notif: switching WhatsApp off saves just that', chans.length === 1 && chans[0].whatsapp === false && Object.keys(chans[0]).length === 1, JSON.stringify(chans))
+    await page.click('.notif-head button:has-text("Mark all read")')
+    await page.waitForFunction(() => !document.querySelector('.bell-badge') && !document.querySelector('.notif-dot'), null, { timeout: 5000 }).catch(() => {})
+    check('notif: Mark all read clears the dots and the bell', reads.some((b) => b.all === true) && (await page.locator('.notif-dot').count()) === 0 && (await page.locator('.bell-badge').count()) === 0, JSON.stringify(reads))
+
+    // Tapping a mention opens that track's thread on Slap.
+    unread = 1
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForSelector('.notif-row[data-read="false"]')
+    await page.click('.notif-row >> nth=0')
+    await page.waitForSelector('.track-focus')
+    check('notif: a mention opens its track on Slap', page.url().endsWith('/app/slap?track=t3') && (await page.textContent('#track-focus-h')) === 'Track 3', page.url())
+    check('notif: tapping an unread row marks just it read', reads.some((b) => Array.isArray(b.ids) && b.ids.join() === '3'), JSON.stringify(reads))
+    check('slap: the track thread shows its comments', (await page.textContent('.track-focus .comment-list')).includes('this one goes hard'))
+    await axe(page, 'Slap track focus 375', '.track-focus')
+    check('no unmocked writes and no page errors (Notifications)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    const { ctx, page } = await newPage({ width: 1440, height: 900, mocks: { 'GET /api/admin/check': json(200, { admin: false }), 'GET /auth/settings/psn': ACCT_BASE['GET /auth/settings/psn'], 'GET /api/notifications/unread': json(200, { unread: 4 }) } })
+    await ready(page, '/app/')
+    await page.waitForSelector('.sidebar a[href="/app/notifications"] .nav-badge')
+    check('notif 1440: the sidebar row carries the unread count', (await page.textContent('.sidebar a[href="/app/notifications"] .nav-badge')) === '4' && (await page.locator('.bell-btn').count()) === 0)
+    await ctx.close()
+  }
+  {
+    const posted = []
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        ...SLAP_BASE,
+        'GET /api/slap/mentionable': json(200, { people: [{ handle: 'Moiz', name: 'Moiz Qureshi' }, { handle: 'nooramin40', name: 'Noor Amin' }, { handle: 'zubair221b', name: 'Zubair' }] }),
+        'POST /api/slap/comment': (r) => { const b = r.request().postDataJSON(); posted.push(b); return json(200, { id: 'c9', text: b.text, mentioned: b.is_reaction ? [] : ['Noor Amin'] })(r) },
+      },
+      match: slapMatch({ 'POST /api/slap/listen/play': json(200, { ok: true }), 'POST /api/slap/listen/skip': json(200, { ok: true }) }),
+    })
+    await ready(page, '/app/slap')
+    await page.waitForSelector('.track-row')
+    await page.click('.track-row .track-main >> nth=0')
+    await page.click('.miniplayer-open')
+    await page.waitForSelector('.sheet-player #slap-comment')
+    await page.click('#slap-comment')
+    await page.keyboard.type('banger @no')
+    await page.waitForSelector('.mention-list:not([hidden]) .mention-opt')
+    check('slap: @ suggests people as you type', (await page.locator('.mention-opt').count()) === 1 && (await page.textContent('.mention-opt')).includes('Noor Amin'))
+    check('slap: the composer is a combobox wired to its list', (await page.getAttribute('#slap-comment', 'aria-expanded')) === 'true' && !!(await page.getAttribute('#slap-comment', 'aria-activedescendant')))
+    await tapTargets(page, 'Slap mention list 375')
+    await shot(page, 'slap-375-mention')
+    await page.keyboard.press('Enter')
+    check('slap: Enter picks the person and inserts their handle', (await page.inputValue('#slap-comment')) === 'banger @nooramin40 ' && (await page.getAttribute('#slap-comment', 'aria-expanded')) === 'false')
+    await page.keyboard.type('listen')
+    await page.keyboard.press('Enter')
+    await page.waitForSelector('.toast:has-text("Tagged Noor Amin")', { timeout: 5000 }).catch(() => {})
+    check('slap: posting says who the tag reached', (await page.locator('.toast:has-text("Tagged Noor Amin")').count()) === 1 && posted.length === 1 && posted[0].text === 'banger @nooramin40 listen' && posted[0].is_reaction === false, JSON.stringify(posted))
+    check('slap: the box clears after posting', (await page.inputValue('#slap-comment')) === '')
+    check('slap: the player sheet shows the track thread', (await page.locator('.sheet-player .comment-thread').count()) === 1)
+    await page.click('.sheet-player .reaction-btn >> nth=0')
+    await page.waitForFunction(() => true)
+    await page.waitForTimeout(200)
+    check('slap: a reaction posts as a reaction', posted.length === 2 && posted[1].is_reaction === true && posted[1].text === '🔥', JSON.stringify(posted))
+    await axe(page, 'Slap sheet with thread 375', '.sheet-player')
+    check('no unmocked writes and no page errors (Slap mentions)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
 } finally {
   await browser.close()
 }

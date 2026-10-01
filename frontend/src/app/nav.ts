@@ -4,7 +4,7 @@ import type { IconName } from '../components/Icon'
 
 export type DestId =
   | 'squad' | 'clips' | 'slap' | 'whatsapp' | 'giveaway' | 'watch' | 'huddle'
-  | 'coach' | 'ask' | 'portal' | 'settings' | 'help' | 'admin'
+  | 'coach' | 'ask' | 'notifications' | 'portal' | 'settings' | 'help' | 'admin'
 
 export type Dest = {
   id: DestId
@@ -31,6 +31,10 @@ export const DESTS: Record<DestId, Dest> = {
   huddle: { id: 'huddle', label: 'Huddle', path: '/huddle', icon: 'huddle', classicHref: '/?p=huddle', blurb: 'Drop into a voice and video call.' },
   coach: { id: 'coach', label: 'AI Coach', path: '/coach', icon: 'coach', classicHref: '/?p=coach', blurb: 'Your match notes and the squad digest.' },
   ask: { id: 'ask', label: 'Ask AI', path: '/ask', icon: 'ask', classicHref: '/?p=ai', blurb: 'Ask anything about the squad.' },
+  notifications: {
+    id: 'notifications', label: 'Notifications', path: '/notifications', icon: 'bell', classicHref: '/',
+    blurb: 'Rallies, parties, giveaways, clips and @mentions, in one place.',
+  },
   portal: { id: 'portal', label: 'Link PSN', path: '/portal', icon: 'link', classicHref: '/portal', blurb: 'Link your PlayStation account so you show up on Squad.' },
   settings: {
     id: 'settings', label: 'Settings', path: '/settings', icon: 'settings', classicHref: '/',
@@ -49,10 +53,10 @@ export const DESTS: Record<DestId, Dest> = {
 export const TAB_IDS: DestId[] = ['squad', 'watch', 'clips']
 /** More sheet groups, research order (JOURNEY.md §IA → Mobile More sheet). */
 export const MORE_SQUAD: DestId[] = ['slap', 'whatsapp', 'giveaway', 'huddle', 'coach', 'ask']
-export const MORE_ACCOUNT: DestId[] = ['portal', 'settings', 'help', 'admin']
+export const MORE_ACCOUNT: DestId[] = ['notifications', 'portal', 'settings', 'help', 'admin']
 /** Desktop sidebar (≥ 1024 px). */
 export const SIDEBAR_MAIN: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'ask']
-export const SIDEBAR_FOOT: DestId[] = ['portal', 'settings', 'help', 'admin']
+export const SIDEBAR_FOOT: DestId[] = ['notifications', 'portal', 'settings', 'help', 'admin']
 
 /** The ⓘ beside a page title: that page's section on the Help page. */
 export function helpHref(id: DestId): string | null {

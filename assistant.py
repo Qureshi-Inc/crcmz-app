@@ -1448,6 +1448,22 @@ def _push_notifications_log(limit: int = 20) -> dict:
     return webpush.stats(limit=max(1, min(int(limit or 20), 100)))
 
 
+@tool("notification_inbox",
+      "The CRCMZ app's notification centre (the bell in /app): every alert the app "
+      "raised, from Squad Up rallies, Watch Parties, Huddles, giveaways, clips and Slap "
+      "@mentions. With no person: the latest alerts and who each went to ('everyone' "
+      "or one name). With a person (any name, PSN id or handle): their inbox, how many "
+      "are unread, and whether their @mentions also DM them on WhatsApp and Mattermost. "
+      "Read-only; looking does not mark anything read.",
+      {"type": "object", "properties": {
+          "person": {"type": "string", "description": "whose inbox; omit for app-wide recent alerts"},
+          "limit": {"type": "integer", "description": "1-100, default 20"},
+      }})
+def _notification_inbox(person: str = "", limit: int = 20) -> dict:
+    import notifications
+    return notifications.overview(str(person or "")[:80], limit=max(1, min(int(limit or 20), 100)))
+
+
 @tool("watch_history",
       "Watch Party history: videos/movies the squad watched, newest first, with "
       "metadata (title, year, poster, overview), who watched, and where each person "

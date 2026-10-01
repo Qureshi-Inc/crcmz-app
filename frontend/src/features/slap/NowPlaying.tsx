@@ -1,6 +1,6 @@
 // The persistent mini-player (above the tab bar on a phone, above the account row
 // in the sidebar) and the full player sheet it opens.
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useQueryClient } from '@tanstack/react-query'
 import { Icon } from '../../components/Icon'
@@ -8,6 +8,7 @@ import { toast } from '../../components/toast'
 import { ApiError } from '../../lib/http'
 import { useDesktop } from '../../lib/media'
 import { useSwipeDown } from '../../lib/gestures'
+import { CommentBox, CommentThread } from './Comments'
 import { artUrl, fmtTime, sendComment, sendThumb, setFavorite, type Library, type QueueItem } from '../../lib/slap'
 import {
   clearUpcoming, closePlayer, current, cycleRepeat, jump, leaveTogether, move, next, prev, remove, seek, setExpanded,
@@ -156,7 +157,6 @@ function TrackActions({ item }: { item: QueueItem }) {
   const lib = qc.getQueryData<Library>(['slap', 'library'])
   const fav = lib?.tracks.find((t) => t.id === item.id)?.fav ?? false
   const [thumb, setThumb] = useState<-1 | 0 | 1>(thumbs.get(item.id) ?? 0)
-  const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => setThumb(thumbs.get(item.id) ?? 0), [item.id])
 
@@ -177,17 +177,15 @@ function TrackActions({ item }: { item: QueueItem }) {
     thumbs.set(item.id, nv)
     sendThumb(t, nv).catch((e) => { setThumb(thumb); thumbs.set(item.id, thumb); fail(e) })
   }
-  async function say(body: string, reaction: boolean) {
-    if (!body.trim() || busy) return
+  async function react(r: string) {
+    if (busy) return
     setBusy(true)
     try {
-      await sendComment(t, body.trim(), reaction)
-      if (!reaction) setText('')
-      toast(reaction ? `Reacted ${body}` : 'Comment posted', 'success')
-      qc.invalidateQueries({ queryKey: ['slap', 'social'] })
+      await sendComment(t, r, true)
+      toast(`Reacted ${r}`, 'success')
+      void qc.invalidateQueries({ queryKey: ['slap', 'social'] })
     } catch (e) { fail(e) } finally { setBusy(false) }
   }
-  const submit = (e: FormEvent) => { e.preventDefault(); void say(text, false) }
 
   return (
     <div className="track-actions">
@@ -199,14 +197,11 @@ function TrackActions({ item }: { item: QueueItem }) {
         <button type="button" className="icon-btn" onClick={() => rate(-1)} aria-pressed={thumb === -1} aria-label="Thumbs down"><Icon name="thumbDown" /></button>
         <span className="track-actions-sep" />
         {REACTIONS.map((r) => (
-          <button key={r} type="button" className="reaction-btn" onClick={() => void say(r, true)} disabled={busy} aria-label={`React ${r}`}>{r}</button>
+          <button key={r} type="button" className="reaction-btn" onClick={() => void react(r)} disabled={busy} aria-label={`React ${r}`}>{r}</button>
         ))}
       </div>
-      <form className="comment-form" onSubmit={submit}>
-        <label className="sr-only" htmlFor="slap-comment">Comment on this track</label>
-        <input id="slap-comment" className="input" value={text} onChange={(e) => setText(e.target.value)} maxLength={500} placeholder="Say something about this one… @name to tag" />
-        <button type="submit" className="btn btn-secondary" disabled={busy || !text.trim()}>Post</button>
-      </form>
+      <CommentBox item={t} />
+      <CommentThread trackId={item.id} />
     </div>
   )
 }

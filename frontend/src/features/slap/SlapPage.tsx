@@ -5,11 +5,12 @@ import * as Tabs from '@radix-ui/react-tabs'
 import type { ShellContext } from '../../app/Shell'
 import { useTitle } from '../../app/title'
 import { ApiError } from '../../lib/http'
-import { slapName, useSlapMe } from '../../lib/slap'
+import { slapName, useLibrary, useSlapMe, useTrackComments } from '../../lib/slap'
+import { TrackFocus } from './Comments'
 import { Listen } from './Listen'
 import { Stats } from './Stats'
 import { Together } from './Together'
-import { usePlayer } from './player'
+import { playList, usePlayer } from './player'
 import { HelpLink } from '../../components/HelpLink'
 
 type Tab = 'listen' | 'together' | 'stats'
@@ -22,6 +23,14 @@ export function SlapPage() {
   const me = useSlapMe()
   const s = usePlayer()
   const tab = (TABS.find((t) => t === params.get('tab')) ?? 'listen') as Tab
+  // A mention notification opens /app/slap?track=<id>: show that track's thread.
+  const trackId = /^[0-9a-z]{1,64}$/i.test(params.get('track') ?? '') ? params.get('track')! : null
+  const lib = useLibrary()
+  const thread = useTrackComments(trackId)
+  const libTrack = trackId ? lib.data?.tracks.find((t) => t.id === trackId) : undefined
+  const first = thread.data?.comments[0]
+  const focus = trackId ? (libTrack ?? (first ? { id: trackId, title: first.title, artist: first.artist, album: '' } : { id: trackId, title: '', artist: '', album: '' })) : null
+  const closeFocus = () => setParams((p) => { const n = new URLSearchParams(p); n.delete('track'); return n }, { replace: true })
 
   function setTab(t: string) {
     setParams((p) => {
@@ -47,6 +56,7 @@ export function SlapPage() {
           </p>
         </div>
       </div>
+      <TrackFocus track={focus} onClose={closeFocus} onPlay={libTrack ? () => playList([libTrack]) : undefined} />
       <Tabs.Root value={tab} onValueChange={setTab} className="slap-tabs">
         <Tabs.List className="seg seg-3" aria-label="Slap view">
           <Tabs.Trigger value="listen" className="seg-tab">Listen</Tabs.Trigger>

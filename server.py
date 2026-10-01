@@ -58,6 +58,8 @@ import threading as _threading
 import time as _time
 
 import webpush as _push  # init() runs with the other stores, below
+import crcmz_identity
+import notifications as _notify  # the inbox + routing over push, WhatsApp and Mattermost
 
 _rl_lock = _threading.Lock()
 _rl_hits: dict[str, list[float]] = {}
@@ -319,7 +321,7 @@ def v2_squad(request: Request, req: SquadRequest | None = None):
             s = _get_session(request) or {}
             who = s.get("name") or s.get("preferred_username") or "The squad"
             if _push_squad_once.first(s.get("sub") or "machine"):
-                _push.notify_in_background("squad", f"{who}: Squad Up", text, "/app/squad",
+                _notify.route_in_background("squad", f"{who}: Squad Up", text, "/app/squad",
                                            exclude=s.get("sub", ""), urgency="high", ttl=900)
             return {"status": "sent", "group": SQUAD_GROUP_ID, "message": text}
         raise HTTPException(status_code=500, detail="Failed to send squad message")
@@ -4820,7 +4822,7 @@ async def giveaway_publish(request: Request, gid: int):
     if result and "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     g = await asyncio.to_thread(_giveaway.get_giveaway, gid) or {}
-    _push.notify_in_background(
+    _notify.route_in_background(
         "giveaway", f"🎁 Giveaway: {g.get('title') or 'new giveaway'}",
         f"Prize: {g['prize']}. You're in the draw." if g.get("prize") else "You're in the draw.",
         "/app/giveaway", tag=f"giveaway-{gid}")
@@ -4876,7 +4878,7 @@ async def _push_giveaway_won(gid: int) -> None:
     """
     g = await asyncio.to_thread(_giveaway.get_giveaway, gid) or {}
     prize = f" {g['prize']}" if g.get("prize") else " it"
-    _push.notify_in_background(
+    _notify.route_in_background(
         "giveaway", f"🏆 {g.get('title') or 'Giveaway'}: the winner is in",
         f"Tap to see who won{prize}.", "/app/giveaway", tag=f"giveaway-{gid}", urgency="high")
 
@@ -5253,7 +5255,7 @@ async def watch_join(request: Request):
     logger.info("watch ticket issued room=%s viewer=%s jti=%s kid=%s",
                 room, watch_mod.short_viewer(viewer["viewerId"]), minted["jti"], minted["kid"])
     if _push_room_quiet.first(f"watch:{room}"):
-        _push.notify_in_background(
+        _notify.route_in_background(
             "watch", f"📺 {viewer['displayName']} started a Watch Party", "Tap to join them.",
             "/app/watch", exclude=viewer["zitadelSubject"], tag=f"watch-{room}", urgency="high", ttl=1800)
 
@@ -6121,6 +6123,60 @@ async def push_test(request: Request):
     return JSONResponse(r, headers={"Cache-Control": "no-store"})
 
 
+# ── Notification centre (notifications.py) ───────────────────────────────────
+@app.get("/api/notifications")
+async def notifications_inbox(request: Request, before: int | None = None, source: str = "", limit: int = 50):
+    """This person's alerts, newest first."""
+    sub = _push_sub(request)
+    box = await asyncio.to_thread(_notify.inbox, sub, limit=limit, before=before, source=source[:20])
+    return JSONResponse(box, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/notifications/unread")
+async def notifications_unread(request: Request):
+    """Just the count, for the bell. Cheap enough to poll."""
+    sub = _push_sub(request)
+    return JSONResponse({"unread": await asyncio.to_thread(_notify.unread_count, sub)},
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/notifications/read")
+async def notifications_read(request: Request):
+    """Body: {ids: [int]} for these, or {all: true}."""
+    sub = _push_sub(request)
+    body = await _push_body(request)
+    ids = body.get("ids")
+    if body.get("all") is True:
+        ids = None
+    elif not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="ids or all required")
+    unread = await asyncio.to_thread(_notify.mark_read, sub, ids)
+    return JSONResponse({"unread": unread}, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/notifications/channels")
+async def notifications_channels(request: Request):
+    """Whether personal alerts also DM on WhatsApp and Mattermost, and whether they can."""
+    sub = _push_sub(request)
+    person = (await asyncio.to_thread(crcmz_identity.by_zitadel_id)).get(sub) or {}
+    return JSONResponse({
+        "channels": [{"id": k, "label": v} for k, v in _notify.CHANNELS.items()],
+        "prefs": await asyncio.to_thread(_notify.get_channels, sub),
+        "reachable": {"whatsapp": bool(_notify.wa_jid_for(person)) and bool(WA_BRIDGE_URL),
+                      "mattermost": bool(person.get("mm_username")) and mm_client.available()},
+    }, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/notifications/channels")
+async def notifications_channels_save(request: Request):
+    """Body: {whatsapp?: bool, mattermost?: bool}."""
+    sub = _push_sub(request)
+    body = await _push_body(request)
+    _rate_limit("push_subscribe", sub)
+    prefs = await asyncio.to_thread(_notify.save_channels, sub, body)
+    return JSONResponse({"prefs": prefs}, headers={"Cache-Control": "no-store"})
+
+
 # ── Huddle API (LiveKit token + Ollama proxy) ──────────────────────────────────
 
 def _mk_livekit_token(identity: str, name: str, room: str) -> str:
@@ -6165,7 +6221,7 @@ async def huddle_token(request: Request):
     token = _mk_livekit_token(identity, name, room)
     ws_url = LIVEKIT_URL
     if _push_room_quiet.first(f"huddle:{room}"):
-        _push.notify_in_background(
+        _notify.route_in_background(
             "huddle", f"🎧 {name} started a Huddle", f"Room {room}. Tap to jump in.",
             f"/app/huddle?room={room}", exclude=identity, tag=f"huddle-{room}", urgency="high", ttl=1800)
     return JSONResponse({"token": token, "url": ws_url, "room": room})
@@ -6603,6 +6659,20 @@ from psn_messaging import ClipNotReady, ClipUnauthorized, ClipRateLimited, ClipE
 _clips.init()
 _vip.init()
 _push.init()
+_notify.init()
+
+
+def _notify_wa_send(jid: str, text: str) -> bool:
+    """A WhatsApp DM through the bridge (the same /send the group messages use)."""
+    if not WA_BRIDGE_URL:
+        return False
+    import httpx as _hx
+    r = _hx.post(f"{WA_BRIDGE_URL}/send", json={"message": text, "groupJid": jid}, timeout=20)
+    return r.status_code < 300
+
+
+_notify.wa_send = _notify_wa_send
+_notify.mm_dm = mm_client.dm_user
 import reels as _reels
 app.include_router(_reels.build_router(_get_session, _is_iam_admin))
 import slap as _slap
@@ -7337,7 +7407,7 @@ async def _start_squad_poller():
                                 # messages, and those must not ring anyone's phone.
                                 if (not _wants_coaching(body_text)
                                         and _time.time() - _clip_ts < 600):
-                                    _push.notify_in_background(
+                                    _notify.route_in_background(
                                         "clips", f"🎬 New clip from {sender}",
                                         _game or (body_text or "Tap to watch it.")[:120],
                                         "/app/clips", exclude=_zid_for_psn(sender) or "",

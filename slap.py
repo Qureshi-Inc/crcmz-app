@@ -46,6 +46,7 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 import crcmz_identity
+import notifications
 
 logger = logging.getLogger(__name__)
 
@@ -563,6 +564,61 @@ async def _social_write(method: str, path: str, body: dict) -> Any:
     return r.json() if r.content else {"ok": True}
 
 
+# ── @mentions ────────────────────────────────────────────────────────────────
+# A comment tags someone with @<handle>. The handle the composer suggests is the
+# person's Jellyfin name (what slaptastic keys them by, so its own app agrees);
+# their login and Mattermost names, a squashed display name and a unique first
+# name work too, because people type what they know.
+_MENTION = re.compile(r"(?<![\w@])@([\w.-]{2,64})")
+
+
+def handle_of(person: dict) -> str:
+    return re.sub(r"[^\w.-]", "", person.get("jellyfin_user") or person.get("username") or "")
+
+
+def mention_index(people: list[dict]) -> dict[str, dict]:
+    idx: dict[str, dict] = {}
+    firsts: dict[str, list[dict]] = {}
+    for p in people:
+        if p.get("state") and p["state"] not in ("USER_STATE_ACTIVE", "active"):
+            continue
+        name = p.get("display_name") or ""
+        for k in (handle_of(p), p.get("username"), p.get("mm_username"), p.get("jellyfin_user"),
+                  re.sub(r"\s+", "", name)):
+            if k:
+                idx.setdefault(k.casefold(), p)
+        if name.split():
+            firsts.setdefault(name.split()[0].casefold(), []).append(p)
+    for k, ps in firsts.items():
+        if len(ps) == 1:
+            idx.setdefault(k, ps[0])
+    return idx
+
+
+def mentioned(text: str, people: list[dict]) -> list[dict]:
+    """The people a comment tags, once each, in the order they appear."""
+    idx = mention_index(people)
+    out: list[dict] = []
+    for m in _MENTION.finditer(text or ""):
+        word = m.group(1).rstrip(".-").casefold()
+        p = idx.get(word)
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+def mentionable(people: list[dict]) -> list[dict]:
+    """Who the composer offers after an @: a handle and the name people know them by."""
+    seen, out = set(), []
+    for p in people:
+        h = handle_of(p)
+        if not h or h.casefold() in seen or (p.get("state") and p["state"] not in ("USER_STATE_ACTIVE", "active")):
+            continue
+        seen.add(h.casefold())
+        out.append({"handle": h, "name": p.get("display_name") or p.get("username") or h})
+    return sorted(out, key=lambda x: x["name"].casefold())
+
+
 def _s(v: object, n: int = 300) -> str:
     return str(v or "")[:n]
 
@@ -809,9 +865,29 @@ def build_router(get_session, is_admin) -> APIRouter:
         if not text:
             raise HTTPException(400, "say something")
         f = track_fields(b)
-        return await _social_write("POST", "comment", {
+        reaction = bool(b.get("is_reaction"))
+        res = await _social_write("POST", "comment", {
             "username": me["slap_user"], "track_id": f["track_id"], "title": f["title"],
-            "artist": f["artist"], "text": text, "is_reaction": bool(b.get("is_reaction"))})
+            "artist": f["artist"], "text": text, "is_reaction": reaction})
+        tagged = [] if reaction else [
+            p for p in mentioned(text, await asyncio.to_thread(crcmz_identity.people)) if p["zitadel_id"] != me["sub"]]
+        if tagged:
+            song = f["title"] or "a track"
+            by = f" by {f['artist']}" if f["artist"] else ""
+            notifications.route_in_background(
+                "mentions", f"{me['name']} mentioned you on Slap", f"“{text[:200]}” · {song}{by}",
+                f"/app/slap?track={f['track_id']}" if _ID.match(f["track_id"] or "") else "/app/slap",
+                exclude=me["sub"], only=[p["zitadel_id"] for p in tagged], tag=f"slap-{f['track_id']}",
+                dm_text=f"🎵 {me['name']} mentioned you on Slap: “{text[:300]}” on {song}{by}")
+        if isinstance(res, dict):
+            res = {**res, "mentioned": [p.get("display_name") or handle_of(p) for p in tagged]}
+        return res
+
+    @router.get("/mentionable")
+    async def mentionable_(request: Request):
+        if not (get_session(request) or {}).get("sub"):
+            raise HTTPException(401, "sign in to use Slap")
+        return {"people": mentionable(await asyncio.to_thread(crcmz_identity.people))}
 
     @router.get("/settings")
     async def settings(request: Request):

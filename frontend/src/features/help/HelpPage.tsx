@@ -149,6 +149,19 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'notifications', title: 'Notifications', icon: 'bell', open: '/notifications',
+    body: (
+      <>
+        <p>The bell at the top shows everything the app told you about: Squad Up rallies, Watch Parties, Huddles, giveaways, new clips and @mentions.</p>
+        <ul>
+          <li><b>@mentions:</b> type <b>@</b> and a name in a Slap comment. They get it here, as a push on their phone, and as a WhatsApp and Mattermost DM.</li>
+          <li><b>Tap one</b> to go straight to it. <b>Mark all read</b> clears the count.</li>
+          <li><b>Phone pop-ups:</b> turn them on in <Link to="/settings/app">Settings → App</Link>. Turn the DMs off on the Notifications page.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
     id: 'mattermost', title: 'Mattermost', icon: 'chat',
     body: (
       <>
