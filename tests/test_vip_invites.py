@@ -180,6 +180,7 @@ def flow_tests():
         link = f"https://app.crcmz.me/invite?userId={out['zitadel_id']}&code=CODE{out['zitadel_id']}"
         assert link in sent[0]["text"], sent[0]["text"]
         assert "Baby bottle pop" in sent[0]["html"]
+        assert "interestingsoup" in sent[0]["html"] and "https://mm.qureshi.io" in sent[0]["text"]
         assert any("/metadata/vip" in c[1] for c in fake.calls), "vip tag not written"
 
     def stripe_retry_sends_once():

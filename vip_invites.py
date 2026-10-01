@@ -482,6 +482,22 @@ def _layout(title: str, body_html: str, cta_label: str, cta_url: str, footnote: 
 </body></html>"""
 
 
+# A note from the founder, in the invite email (and Zitadel's own init/invite texts on auth.crcmz.me).
+MATTERMOST_PUBLIC_URL = "https://mm.qureshi.io"
+FOUNDER_NOTE = ("A message from the founder, interestingsoup: please remember this password. "
+                "It gives you access to the platform and many other things, including Mattermost "
+                f"(our squad chat server is {MATTERMOST_PUBLIC_URL}).")
+
+
+def _founder_note_html() -> str:
+    return ("<p style=\"margin:16px 0 0;padding:12px 14px;border-left:3px solid #ff2fd6;"
+            "background:#1a0f33;border-radius:8px;\">"
+            "<b style=\"color:#f3ecff;\">A message from the founder, interestingsoup:</b> "
+            "please remember this password. It gives you access to the platform and many other "
+            "things, including Mattermost. The Mattermost server is "
+            f"<a href=\"{MATTERMOST_PUBLIC_URL}\" style=\"color:#22e6ff;\">mm.qureshi.io</a>.</p>")
+
+
 def render_invite(name: str, email: str, url: str, vip: bool = True) -> tuple[str, str, str]:
     """(subject, html, text) for a brand-new member."""
     hi = html.escape(name or "there")
@@ -492,14 +508,15 @@ def render_invite(name: str, email: str, url: str, vip: bool = True) -> tuple[st
             "<b style=\"color:#22e6ff;\">app.crcmz.me</b>, the squad's own app: chat into the PSN group, "
             "clips, watch parties, huddles and giveaways.</p>"
             f"<p style=\"margin:0;\">Your sign-in is <b style=\"color:#f3ecff;\">{html.escape(email)}</b>. "
-            "Pick your username and a password to finish:</p>")
+            "Pick your username and a password to finish:</p>"
+            + _founder_note_html())
     foot = ("This link works once and expires in 3 days. After you're in, add a passkey under "
             "Settings so you can skip the password next time.<br><br>"
             f"Button not working? Paste this into your browser:<br>"
             f"<a href=\"{html.escape(url)}\" style=\"color:#22e6ff;word-break:break-all;\">{html.escape(url)}</a>")
     text = (f"Hey {name or 'there'},\n\n{why} an account on app.crcmz.me.\n"
             f"Your sign-in is {email}. Pick your username and password here (works once, expires in 3 days):"
-            f"\n\n{url}\n\n— CRCMZ\n")
+            f"\n\n{url}\n\n{FOUNDER_NOTE}\n\n— CRCMZ\n")
     return subject, _layout("Welcome to the CRCMZ App", body, "Set up my account →", url, foot, vip), text
 
 
