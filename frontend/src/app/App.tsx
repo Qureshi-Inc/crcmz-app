@@ -12,6 +12,7 @@ import { PortalPage } from '../features/portal/PortalPage'
 import { AdminPage } from '../features/admin/AdminPage'
 import { Handoff, NotFound } from '../features/handoff/Handoff'
 import { HuddlePage } from '../features/huddle/HuddlePage'
+import { WhatsAppPage } from '../features/whatsapp/WhatsAppPage'
 import { GiveawayPage } from '../features/giveaway/GiveawayPage'
 
 const queryClient = new QueryClient({
@@ -40,7 +41,7 @@ export function App() {
               <Route path="clips/:id/edit" element={<StudioPage />} />
               <Route path="clips/*" element={<Handoff id="clips" />} />
               <Route path="slap" element={<SlapPage />} />
-              <Route path="whatsapp" element={<Handoff id="whatsapp" />} />
+              <Route path="whatsapp" element={<WhatsAppPage />} />
               <Route path="giveaway" element={<GiveawayPage />} />
               {/* The Shell renders the Watch page itself, so it can stay mounted across routes. */}
               <Route path="watch" element={null} />

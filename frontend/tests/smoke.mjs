@@ -208,6 +208,58 @@ const FAKE_WEBAUTHN = () => {
   window.open = () => null
 }
 
+// ── WhatsApp fixtures (PS-4). Every /api/whatsapp route is mocked, reads included. ──
+const WA_PEOPLE = ['Goopy', 'Bizzle', 'NoorAmin', 'Zubair']
+function waFixture(kind, total) {
+  const k = total / 1234
+  const r = (v) => Math.round(v * k)
+  switch (kind) {
+    case 'stats': return { total_messages: total, total_members: total ? 4 : 0, total_videos: r(88), total_photos: r(310), total_media: r(40), conversation_days: total ? r(400) || 1 : 0, first_ts: NOW - 400 * 86400, last_ts: NOW - 3600, member_message_counts: [] }
+    case 'awards': return total ? {
+      certified_yapper: { name: 'Goopy', count: r(600) }, night_owl: { name: 'Bizzle', count: r(90) }, early_bird: { name: 'NoorAmin', count: r(30) },
+      video_king: { name: 'Zubair', count: r(40) }, photo_king: { name: 'Goopy', count: r(120) }, most_skull: { name: 'Bizzle', count: r(55) },
+      most_laugh: { name: 'Goopy', count: r(77) }, most_fire: null, ghost_of_month: { name: 'Zubair', count: 3 },
+      fastest_replier: { name: 'NoorAmin', avg_minutes: 2.4 }, biggest_day: { date: '2026-07-04', count: r(140) }, longest_streak_days: 21,
+      peak_hour: { hour: 22, count: r(160) }, most_used_emoji: { emoji: '😂', count: r(410) },
+      most_reacted_message: { sender_name: 'Bizzle', text: 'who took my controller', timestamp: NOW - 9 * 86400, cnt: 9 },
+    } : {}
+    case 'activity': return {
+      by_hour: Array.from({ length: 24 }, (_, h) => ({ hour: h, count: r(h > 17 ? 90 : h > 8 ? 40 : 5) })),
+      by_dow: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label, dow) => ({ dow, label, count: r(120 + dow * 20) })),
+      daily: total ? Array.from({ length: 90 }, (_, i) => ({ date: new Date((NOW - (89 - i) * 86400) * 1000).toISOString().slice(0, 10), count: r(5 + (i * 7) % 30) })) : [],
+      monthly: total ? Array.from({ length: 12 }, (_, i) => ({ month: `2025-${String(i + 1).padStart(2, '0')}`, count: r(60 + i * 9) })) : [],
+      top_days: [], member_monthly: {},
+    }
+    case 'heatmap': return { cells: total ? Array.from({ length: 168 }, (_, i) => ({ dow: Math.floor(i / 24), hour: i % 24, count: (i % 24 > 17 ? 12 : 2) + (i % 7) })) : [], max_count: total ? 18 : 0 }
+    case 'words': return { top_words: total ? ['bro', 'game', 'tonight', 'lol', 'who', 'online', 'clip', 'nah', 'ranked', 'gg', 'when', 'goal', 'save', 'run', 'lag', 'mic', 'squad', 'carry', 'one', 'more', 'party', 'shot'].map((word, i) => ({ word, count: r(300 - i * 11) })) : [], member_top_words: { Goopy: [{ word: 'bro', count: 40 }, { word: 'game', count: 22 }] } }
+    case 'emojis': return { top_emoji: total ? ['😂', '💀', '🔥', '😭', '👀', '🙏', '💯', '😤', '🤣', '😎', '🫡', '❤️'].map((emoji, i) => ({ emoji, count: r(400 - i * 30), pct: Math.round((30 - i * 2) * 10) / 10 })) : [], total_emoji: r(2400), member_top_emoji: { Goopy: [{ emoji: '😂', count: 90 }, { emoji: '🔥', count: 40 }, { emoji: '💯', count: 12 }, { emoji: '👀', count: 8 }], Bizzle: [{ emoji: '💀', count: 60 }] } }
+    case 'response-times': return total ? { member_avg_minutes: [{ name: 'NoorAmin', avg_minutes: 2.4, count: 80 }, { name: 'Goopy', avg_minutes: 6.1, count: 140 }, { name: 'Bizzle', avg_minutes: 14.8, count: 60 }], distribution: [{ label: '0-5m', count: r(160) }, { label: '5-10m', count: r(70) }, { label: '10-20m', count: r(40) }, { label: '20-30m', count: r(20) }, { label: '30-60m', count: r(10) }], fastest_responder: 'NoorAmin', event_count: r(300) } : { member_avg_minutes: [], distribution: [], fastest_responder: null, event_count: 0 }
+    case 'members': return { members: total ? WA_PEOPLE.map((name, i) => ({ name, messages: r([600, 350, 200, 84][i]), photos: [120, 90, 60, 40][i], videos: [10, 20, 18, 40][i], audios: i, media_omitted: [5, 2, 30, 3][i], total_words: r([3000, 4200, 1500, 500][i]), total_chars: r([15000, 21000, 8000, 2600][i]), avg_words_per_msg: [5, 12, 7.5, 6][i], first_ts: NOW - (400 - i * 30) * 86400, last_ts: NOW - (i + 1) * 3600 })) : [] }
+  }
+  return null
+}
+/** WhatsApp mocks: per-range totals, optional per-range delay, every request's query recorded. */
+function waMocks({ totals = { all_time: 1234, this_month: 42, prev_month: 300, this_year: 900, custom: 0 }, slow = {}, fail = null, canImport = true, signedIn = true, onImport = null, seen = [] } = {}) {
+  return {
+    mocks: {
+      'GET /auth/settings/psn': signedIn ? json(200, { linked: true, online_id: 'Goopy' }) : json(401, { detail: 'authentication required' }),
+      'GET /api/admin/check': json(200, { admin: false }),
+      'GET /api/whatsapp/can-import': json(200, { can_import: signedIn && canImport }),
+      'GET /api/whatsapp/export': (r) => r.fulfill({ status: 200, headers: { 'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'content-disposition': 'attachment; filename="whatsapp-all_time.xlsx"' }, body: Buffer.from('PK\x03\x04fake') }),
+      ...(onImport ? { 'POST /api/whatsapp/import': onImport } : {}),
+    },
+    match: (key, url) => {
+      const m = /^GET \/api\/whatsapp\/(stats|awards|activity|heatmap|words|emojis|response-times|members)$/.exec(key)
+      if (!m) return null
+      const range = url.searchParams.get('range') || 'all_time'
+      seen.push({ kind: m[1], range, start: url.searchParams.get('start'), end: url.searchParams.get('end') })
+      if (fail?.(m[1], range)) return json(503, { detail: 'down' })
+      const h = json(200, waFixture(m[1], totals[range] ?? 0))
+      return slow[range] ? delayed(slow[range], h) : h
+    },
+  }
+}
+
 // ── Giveaway fixtures (PS-5). Times are local datetime-local strings, like the admin form sends. ──
 const localIso = (ms) => { const d = new Date(ms); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}` }
 const GW_MEMBERS = [{ id: 'z1', display: 'Goopy' }, { id: 'z2', display: 'Bizzle' }, { id: 'z3', display: 'NoorAmin' }, { id: 'z4', display: 'Shah' }, { id: 'z5', display: 'Moiz' }, { id: 'z6', display: 'Goofy' }]
@@ -377,7 +429,7 @@ try {
     check('panel collapses to a 60px rail', Math.round(rw) === 60, `${rw}`)
     await shot(page, 'squad-1440-rail')
     await page.click('button[aria-label="Expand Chat Board"]')
-    await page.goto(BASE + '/app/whatsapp')
+    await page.goto(BASE + '/app/coach')
     await page.waitForSelector('h1')
     await shot(page, 'handoff-1440')
     await axe(page, 'Handoff 1440')
@@ -395,7 +447,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', coach: '/?p=coach', ask: '/?p=ai' }
+    const classic = { 'clips/x': '/?p=pipeline', coach: '/?p=coach', ask: '/?p=ai' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -2006,6 +2058,164 @@ try {
       check('no unmocked writes and no page errors (Huddle 1440)', hd.page.violations.length === 0, hd.page.violations.join(', '))
       await hd.ctx.close()
     }
+  }
+  // ── 15. WhatsApp (PS-4): ranges, the generation guard, charts, members, import, export ──
+  {
+    const posts = []
+    let mode = 'bad'
+    const seen = []
+    const wa = waMocks({
+      seen, slow: { this_month: 1500 },
+      onImport: (r) => {
+        posts.push(r.request().headers()['content-type'] || '')
+        if (mode === '413') return json(413, { detail: 'file too large (max 50 MB)' })(r)
+        return json(200, { status: 'imported', message_count: 812, duplicate_count: 40, total_parsed: 852 })(r)
+      },
+    })
+    const { ctx, page } = await newPage({ width: 375, height: 800, ...wa })
+    await ready(page, '/app/whatsapp')
+    await page.waitForSelector('.wa-tiles')
+    const tiles = await page.$$eval('.wa-tiles > div', (els) => els.map((e) => e.textContent))
+    check('wa: six stat tiles, messages first', tiles.length === 6 && tiles[0].includes('1,234'), tiles.join(' | '))
+    check('wa: first load asks every endpoint for all_time', ['stats', 'awards', 'activity', 'heatmap', 'words', 'emojis', 'response-times', 'members'].every((k) => seen.some((x) => x.kind === k && x.range === 'all_time')))
+    await page.waitForSelector('.wa-award')
+    check('wa: null awards are not rendered', (await page.locator('.wa-award').count()) === 13 && !(await page.textContent('.wa-awards')).includes('Most 🔥'))
+    check('wa: the winner name is text', (await page.textContent('.wa-award:first-child .wa-award-who')) === 'Goopy')
+    await shot(page, 'whatsapp-375', true)
+    await axe(page, 'WhatsApp 375', '.app-main')
+    await tapTargets(page, 'WhatsApp 375')
+
+    // Range change: the old numbers stay, dimmed, until the new range lands.
+    await page.click('.wa-range button:has-text("This month")')
+    await page.waitForSelector('.wa-body[data-dim]')
+    check('wa: range change keeps the old numbers dimmed', (await page.textContent('.wa-tiles > div:first-child')).includes('1,234'))
+    check('wa: range change says "Loading This month…"', (await page.textContent('.wa-loading')) === 'Loading This month…')
+    check('wa: the range is in the URL', new URL(page.url()).searchParams.get('range') === 'this_month')
+    // Before This month answers, switch to Last month: the late answer must never show.
+    await page.click('.wa-range button:has-text("Last month")')
+    await page.waitForFunction(() => document.querySelector('.wa-tiles > div:first-child')?.textContent.includes('300'))
+    await page.waitForTimeout(1700)
+    check('wa: a late answer from an old range is discarded', (await page.textContent('.wa-tiles > div:first-child')).includes('300') && (await page.locator('.wa-body[data-dim]').count()) === 0)
+    check('wa: Last month is pressed', (await page.getAttribute('.wa-range button:has-text("Last month")', 'aria-pressed')) === 'true')
+
+    // Custom: both dates, start first, then Apply.
+    await page.click('.wa-range button:has-text("Custom")')
+    check('wa: Custom Apply waits for both dates', await page.isDisabled('.wa-custom button[type=submit]'))
+    await page.fill('#wa-start', '2026-01-01')
+    await page.fill('#wa-end', '2026-02-01')
+    await page.click('.wa-custom button[type=submit]')
+    await page.waitForSelector('.wa-empty-h')
+    const u = new URL(page.url())
+    check('wa: custom range sends start and end', u.searchParams.get('range') === 'custom' && seen.some((x) => x.range === 'custom' && x.start === '2026-01-01' && x.end === '2026-02-01'))
+    check('wa: an empty range says "Nothing in this range"', (await page.textContent('.wa-empty-h')) === 'Nothing in this range')
+    await page.click('.wa-empty button:has-text("All time")')
+    await page.waitForFunction(() => document.querySelector('.wa-tiles > div:first-child')?.textContent.includes('1,234'))
+    check('wa: [All time] goes back to everything', !new URL(page.url()).searchParams.has('range'))
+
+    // Charts: tap to read, Daily/Monthly, tables.
+    await page.click('.heat-row:nth-child(1) i:nth-of-type(21)', { force: true })
+    check('wa: tapping a heatmap square reads it', (await page.locator('.wa-readout').filter({ hasText: 'Mon 20:00' }).textContent()).includes('messages'))
+    const days = await page.locator('.wa-vbars').first().locator('i').count()
+    check('wa: the daily timeline is the last 60 days', days === 60, String(days))
+    await page.click('.wa-seg button:has-text("Monthly")')
+    check('wa: Monthly shows one bar per month', (await page.locator('.wa-vbars').first().locator('i').count()) === 12)
+    check('wa: every chart has "Show as table"', (await page.locator('.stat-table summary').count()) >= 7)
+    check('wa: words are lime, 15 on a phone', (await page.locator('.stat-panel:has(.stat-h:text("Top words")) .hbar').count()) === 15)
+
+    // Members: cards, Sort by + ↑/↓.
+    const names = () => page.$$eval('.wa-card-name', (els) => els.map((e) => e.textContent).join(','))
+    check('wa: member cards sort by messages first', (await names()) === 'Goopy,Bizzle,NoorAmin,Zubair', await names())
+    await page.selectOption('#wa-sort', 'total_words')
+    check('wa: Sort by Words', (await names()).startsWith('Bizzle,Goopy'), await names())
+    await page.click('.wa-sort button')
+    check('wa: ↑/↓ flips the order', (await names()).startsWith('Zubair'), await names())
+    check('wa: a card shows every column', (await page.textContent('.wa-card')).includes('media omitted') && (await page.textContent('.wa-card')).includes('First seen'))
+
+    // Export downloads the current range.
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 5000 }).catch(() => null), page.click('.wa-export')])
+    check('wa: Export names the range and downloads an xlsx', (await page.textContent('.wa-export')) === 'Export All time (.xlsx)' && dl?.suggestedFilename() === 'whatsapp-all_time.xlsx', dl?.suggestedFilename())
+
+    // Import: the wrong type never uploads; 413 and a good import report inline.
+    await page.setInputFiles('#wa-file', { name: 'chat.pdf', mimeType: 'application/pdf', buffer: Buffer.from('x') })
+    check('wa: a .pdf is refused before upload', (await page.textContent('.wa-import-err')) === "That file type won't work — upload a .txt or .zip from WhatsApp." && posts.length === 0)
+    await page.setInputFiles('#wa-file', { name: 'chat.txt', mimeType: 'text/plain', buffer: Buffer.from('1/1/26, 9:00 PM - Goopy: hi') })
+    mode = '413'
+    await page.click('.wa-import button[type=submit]')
+    await page.waitForSelector('.wa-import-err')
+    check('wa: a 413 says keep it under 50 MB', (await page.textContent('.wa-import-err')).startsWith('File too large — keep it under 50 MB.'))
+    mode = 'ok'
+    await page.click('.wa-import button[type=submit]')
+    await page.waitForSelector('.wa-import-ok')
+    check('wa: import result line', (await page.textContent('.wa-import-ok')) === 'Imported 812 · 40 duplicates skipped · 852 parsed', await page.textContent('.wa-import-ok'))
+    check('wa: import is multipart', posts.length === 2 && posts.every((c) => c.startsWith('multipart/form-data')))
+    await shot(page, 'whatsapp-375-import')
+    check('no unmocked writes and no page errors (WhatsApp 375)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // Signed out: no import section, Export asks you to sign in and never downloads.
+    const seen = []
+    const { ctx, page } = await newPage({ width: 375, height: 800, ...waMocks({ signedIn: false, seen }) })
+    await ready(page, '/app/whatsapp')
+    await page.waitForSelector('.wa-tiles')
+    check('wa signed out: reads still load', (await page.textContent('.wa-tiles')).includes('1,234'))
+    await page.waitForTimeout(300)
+    check('wa signed out: the import section is hidden', (await page.locator('#wa-import').count()) === 0)
+    await page.click('.wa-export')
+    await page.waitForSelector('.banner:has-text("Sign in to export")')
+    check('wa signed out: Export shows a sign-in banner', (await page.locator('.banner a[href*="login"], .banner a.btn').count()) > 0 && !page.writes.includes('GET /api/whatsapp/export'))
+    check('no unmocked writes and no page errors (WhatsApp signed out)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // Nothing imported yet; one panel failing on its own with Retry.
+    let wordsDown = true
+    const { ctx, page } = await newPage({ width: 375, height: 800, ...waMocks({ canImport: false, totals: { all_time: 0 } }) })
+    await ready(page, '/app/whatsapp')
+    await page.waitForSelector('.wa-empty-h')
+    check('wa empty: "No WhatsApp messages yet." + Ask Moiz', (await page.textContent('.wa-empty-h')) === 'No WhatsApp messages yet.' && (await page.textContent('.wa-empty')).includes('Ask Moiz to import the chat.'))
+    await ctx.close()
+    const b = await newPage({ width: 375, height: 800, ...waMocks({ fail: (k) => k === 'words' && wordsDown }) })
+    await ready(b.page, '/app/whatsapp')
+    await b.page.waitForSelector('.stat-err', { timeout: 10_000 })
+    check('wa: one failing panel says "Didn\'t load", the rest render', (await b.page.textContent('.stat-err span')) === "Didn't load" && (await b.page.locator('.wa-tiles').count()) === 1)
+    wordsDown = false
+    await b.page.click('.stat-err button')
+    await b.page.waitForSelector('.stat-panel:has(.stat-h:text("Top words")) .hbar')
+    check('wa: Retry brings the panel back', (await b.page.locator('.stat-err').count()) === 0)
+    await b.ctx.close()
+  }
+  {
+    // Desktop analysis desk: sticky range bar, sortable member table, expandable rows, import 403.
+    const posts = []
+    const { ctx, page } = await newPage({ width: 1440, height: 900, ...waMocks({ onImport: (r) => { posts.push(1); return json(403, { detail: 'not authorized to import WhatsApp history' })(r) } }) })
+    await ready(page, '/app/whatsapp')
+    await page.waitForSelector('.wa-table')
+    check('wa 1440: the range bar is sticky', (await page.$eval('.wa-rangebar', (e) => getComputedStyle(e).position)) === 'sticky')
+    const cols = await page.$$eval('.wa-tiles > div', (els) => new Set(els.map((e) => Math.round(e.getBoundingClientRect().top))).size)
+    check('wa 1440: stats are one row of six', cols === 1)
+    const heads = await page.$$eval('.wa-table thead th', (els) => els.map((e) => e.textContent.trim()))
+    check('wa 1440: member table columns', heads.join('|') === 'Member|Messages|Words|Avg words/msg|Chars|Photos|Videos|Audio|Media omitted|First seen|Last seen', heads.join('|'))
+    check('wa 1440: Messages sorts descending by default', (await page.getAttribute('.wa-table thead th:nth-child(2)', 'aria-sort')) === 'descending')
+    await page.click('.wa-table thead th:nth-child(3) button')
+    const first = () => page.textContent('.wa-table tbody tr:first-child th')
+    check('wa 1440: a header click sorts by that column', (await page.getAttribute('.wa-table thead th:nth-child(3)', 'aria-sort')) === 'descending' && (await first()).includes('Bizzle'))
+    await page.click('.wa-table thead th:nth-child(3) button')
+    check('wa 1440: a second click flips it', (await page.getAttribute('.wa-table thead th:nth-child(3)', 'aria-sort')) === 'ascending' && (await first()).includes('Zubair'))
+    check('wa 1440: the Member column is frozen', (await page.$eval('.wa-table tbody th', (e) => getComputedStyle(e).position)) === 'sticky')
+    await page.click('.wa-table tbody th button:has-text("Goopy")')
+    const favId = await page.getAttribute('.wa-table tbody th button:has-text("Goopy")', 'aria-controls')
+    check('wa 1440: a member row expands to their top emoji and words', (await page.getAttribute('.wa-table tbody th button:has-text("Goopy")', 'aria-expanded')) === 'true' && (await page.textContent(`#${favId}`)).includes('😂') && (await page.textContent(`#${favId}`)).includes('bro'))
+    check('wa 1440: words show the top 20', (await page.locator('.stat-panel:has(.stat-h:text("Top words")) .hbar').count()) === 20)
+    await shot(page, 'whatsapp-1440')
+    await shot(page, 'whatsapp-1440-full', true)
+    await axe(page, 'WhatsApp 1440', '.app-main')
+    await page.setInputFiles('#wa-file', { name: 'chat.zip', mimeType: 'application/zip', buffer: Buffer.from('PK') })
+    await page.click('.wa-import button[type=submit]')
+    await page.waitForSelector('.banner:has-text("You\'re not allowed to import — ask an admin.")')
+    check('wa 1440: an import 403 hides the section', posts.length === 1 && (await page.locator('#wa-import').count()) === 0)
+    check('no unmocked writes and no page errors (WhatsApp 1440)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
   }
 } finally {
   await browser.close()

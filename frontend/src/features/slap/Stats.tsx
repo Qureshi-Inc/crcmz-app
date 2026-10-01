@@ -1,7 +1,8 @@
 // PS-3 Stats: the Slaptastic dashboard, read through /api/slap/social. Each panel
 // loads, fails and empties on its own; the AI panels only ask when scrolled to.
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useQueryClient, type UseQueryResult } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
+import { Bars, DataTable, DAYS, HeatGrid, Panel as ChartPanel, hour, n } from '../../components/charts'
 import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
 import { slapName, useSocial, type Library, type Track } from '../../lib/slap'
@@ -36,9 +37,7 @@ const GROUPS = [
   { id: 'charts', label: 'Charts' }, { id: 'listening', label: 'Listening' }, { id: 'feed', label: 'Feed' },
 ] as const
 const RAMP = ['var(--neon-magenta)', 'var(--neon-cyan)', 'var(--neon-gold)', 'var(--neon-lime)', 'var(--neon-violet)']
-const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-const n = (v: number | null | undefined) => (v == null ? '–' : v.toLocaleString())
 const ago = (iso?: string | null) => {
   if (!iso) return ''
   const t = Date.parse(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`)
@@ -49,7 +48,6 @@ const ago = (iso?: string | null) => {
   if (m < 48 * 60) return `${Math.round(m / 60)} h ago`
   return `${Math.round(m / 1440)} d ago`
 }
-const hour = (h: number | null | undefined) => (h == null ? '–' : `${String(h).padStart(2, '0')}:00`)
 
 export function Stats({ me }: { me: string | null }) {
   const qc = useQueryClient()
@@ -88,32 +86,8 @@ function Group({ id, label, children }: { id: string; label: string; children: R
   )
 }
 
-/** A panel's four states: skeleton, "Slap didn't answer", empty, content. */
-function Panel<T>({ title, q, empty, wide, children, loadingText }: {
-  title: string; q: UseQueryResult<T>; empty?: (d: T) => string | null; wide?: boolean; loadingText?: string; children: (d: T) => ReactNode
-}) {
-  let body: ReactNode
-  if (q.isPending) {
-    body = q.fetchStatus === 'idle' || loadingText
-      ? <p className="dim stat-wait" role="status">{loadingText ?? 'Waiting…'}</p>
-      : <div className="stat-skel" aria-hidden="true"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div>
-  } else if (q.isError) {
-    body = (
-      <div className="stat-err" role="alert">
-        <span>Slap didn't answer</span>
-        <button type="button" className="btn btn-secondary" onClick={() => void q.refetch()}>Retry</button>
-      </div>
-    )
-  } else {
-    const e = empty?.(q.data)
-    body = e ? <p className="dim stat-empty">{e}</p> : children(q.data)
-  }
-  return (
-    <article className="glass stat-panel" data-wide={wide || undefined} aria-busy={q.isFetching || undefined}>
-      <h3 className="stat-h">{title}</h3>
-      {body}
-    </article>
-  )
+function Panel<T>(p: Parameters<typeof ChartPanel<T>>[0]) {
+  return <ChartPanel errorText="Slap didn't answer" {...p} />
 }
 
 /** True once the element has come near the viewport. AI calls wait for this. */
@@ -169,37 +143,6 @@ function SongRows({ items, play, extra }: { items: Song[]; play?: (id: string) =
         </li>
       ))}
     </ol>
-  )
-}
-
-function Bars({ rows, color, label }: { rows: { name: string; value: number; color?: string }[]; color?: string; label: string }) {
-  const max = Math.max(1, ...rows.map((r) => r.value))
-  return (
-    <>
-      <ol className="hbars" aria-hidden="true">
-        {rows.map((r) => (
-          <li key={r.name} className="hbar">
-            <span className="hbar-name">{r.name}</span>
-            <span className="hbar-track"><i style={{ width: `${(r.value / max) * 100}%`, background: r.color ?? color }} /></span>
-            <span className="hbar-v num">{n(r.value)}</span>
-          </li>
-        ))}
-      </ol>
-      <DataTable label={label} head={['Name', 'Count']} rows={rows.map((r) => [r.name, n(r.value)])} />
-    </>
-  )
-}
-
-function DataTable({ label, head, rows }: { label: string; head: string[]; rows: ReactNode[][] }) {
-  return (
-    <details className="stat-table">
-      <summary>Show as table</summary>
-      <table>
-        <caption className="sr-only">{label}</caption>
-        <thead><tr>{head.map((h) => <th key={h} scope="col">{h}</th>)}</tr></thead>
-        <tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody>
-      </table>
-    </details>
   )
 }
 
@@ -521,19 +464,9 @@ function Heatmap() {
       {(d) => {
         const grid = Array.from({ length: 7 }, () => Array<number>(24).fill(0))
         for (const c of d.cells) if (c.day >= 0 && c.day < 7 && c.hour >= 0 && c.hour < 24) grid[c.day]![c.hour] = c.count
-        const max = Math.max(1, ...d.cells.map((c) => c.count))
-        const alpha = (v: number) => (v <= 0 ? 0 : v / max <= 1 / 3 ? 0.5 : v / max <= 2 / 3 ? 0.75 : 1)
         return (
           <>
-            <div className="heat" aria-hidden="true">
-              {grid.map((row, di) => (
-                <div key={di} className="heat-row">
-                  <span className="heat-day meta">{DAYS[di]}</span>
-                  {row.map((v, h) => <i key={h} style={{ opacity: alpha(v) || undefined }} data-on={v > 0 || undefined} title={`${DAYS[di]} ${hour(h)}: ${v}`} />)}
-                </div>
-              ))}
-              <div className="heat-row heat-hours meta"><span className="heat-day" />{[0, 6, 12, 18].map((h) => <span key={h} style={{ gridColumn: `${h + 2} / span 6` }}>{hour(h)}</span>)}</div>
-            </div>
+            <HeatGrid grid={grid} />
             <DataTable label="Songs by day and hour" head={['Day', 'Busiest hour', 'Songs']} rows={grid.map((row, di) => {
               const best = row.indexOf(Math.max(...row))
               return [DAYS[di], row[best] ? hour(best) : '–', n(row.reduce((s, v) => s + v, 0))]

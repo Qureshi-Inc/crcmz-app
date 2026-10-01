@@ -45,7 +45,7 @@ export function AdminPage() {
         <div className="step-actions">
           <Link className="btn btn-secondary" to="/giveaway"><Icon name="giveaway" />Giveaway admin</Link>
           <Link className="btn btn-secondary" to="/clips"><Icon name="clips" />Everyone's reels</Link>
-          <a className="btn btn-secondary" href="/?p=wa"><Icon name="chat" />WhatsApp import</a>
+          <Link className="btn btn-secondary" to="/whatsapp#wa-import"><Icon name="chat" />WhatsApp import</Link>
         </div>
       </section>
     </div>
