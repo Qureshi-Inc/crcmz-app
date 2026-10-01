@@ -1274,7 +1274,7 @@ try {
     await ready(page, '/app/settings')
     await page.waitForSelector('.acct-row')
     check('/app/settings opens the passkeys tab', new URL(page.url()).pathname === '/app/settings/passkeys', page.url())
-    check('settings tabs are a tablist of 6', (await page.locator('.tabstrip[role=tablist] [role=tab]').count()) === 6)
+    check('settings tabs are a tablist of 7', (await page.locator('.tabstrip[role=tablist] [role=tab]').count()) === 7)
     check('passkeys are listed', (await page.locator('.acct-row').count()) === 2)
     await shot(page, 'settings-375-passkeys')
     await axe(page, 'Settings passkeys 375', '.app-main')

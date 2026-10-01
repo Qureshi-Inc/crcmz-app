@@ -3,6 +3,7 @@
 // and the room keeps going; the call bar brings you back.
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
+import { useSearchParams } from 'react-router-dom'
 import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { useDesktop } from '../../lib/media'
@@ -18,6 +19,14 @@ import {
 export function HuddlePage() {
   useTitle('Huddle')
   const s = useHuddle()
+  // A "started a Huddle" notification links /app/huddle?room=<room>: fill it in, don't join.
+  const [params, setParams] = useSearchParams()
+  const linkedRoom = params.get('room')
+  useEffect(() => {
+    if (!linkedRoom) return
+    if (s.phase === 'pre') setRoomName(linkedRoom.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 64))
+    setParams((p) => { p.delete('room'); return p }, { replace: true })
+  }, [linkedRoom]) // only when the link changes, not on every phase change
   // The pre-join preview runs only while this page shows; the camera light goes off when you leave.
   useEffect(() => {
     void startPreview()

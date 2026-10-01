@@ -58,6 +58,9 @@ STORES: dict[str, list[str] | None] = {
     "/data/montage_records.db": ["montage_records", "month_clips"],
     "/data/wa_reactions.db":   ["whatsapp_clip_reactions"],
     "/data/video_uploads.db":  ["pending_video_uploads"],
+    "/data/push.db":           ["push_notifications_log"],
+    # The VAPID private key that signs push requests. A secret, never exposed.
+    "/data/vapid_private.pem": None,
     "/data/video_uploads_staging": None,  # half-finished chunked uploads, swept
                                           # after 6h; the finished video lives in
                                           # video_uploads.db + the clip store.

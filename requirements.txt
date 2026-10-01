@@ -13,3 +13,4 @@ cryptography==44.0.0
 yt-dlp==2026.7.4
 # Vector search extension for SQLite — semantic memory layer
 sqlite-vec
+pywebpush==2.3.0

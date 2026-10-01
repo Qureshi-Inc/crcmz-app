@@ -1,11 +1,13 @@
 // PS-0 · App shell: top bar + tab bar + More sheet below 1024 px, sidebar at and
 // above it. Owns the session probe, the shared squad store (badge) and the toast region.
 import { useEffect, useRef, useState } from 'react'
-import { Link, Outlet, useLocation } from 'react-router-dom'
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Menu from '@radix-ui/react-dropdown-menu'
 import { Icon } from '../components/Icon'
 import { Toaster } from '../components/toast'
+import { InstallStrip } from '../components/InstallStrip'
+import { onWorkerNavigate } from '../lib/pwa'
 import { useStale } from '../components/states'
 import { useAccount, useAdminCheck, useSquad, SQUAD_MS, type Member } from '../lib/api'
 import { ApiError } from '../lib/http'
@@ -30,6 +32,9 @@ export function Shell() {
   const isAdmin = admin.data?.admin === true // fail closed: errors and loading are non-admin
   const signedOut = useSignedOut()
   const collapsed = usePanelCollapsed()
+  const navigate = useNavigate()
+  // A tapped notification while the app is open routes here, so calls and music keep going.
+  useEffect(() => onWorkerNavigate((path) => navigate(path)), [navigate])
 
   // Boot probe: a 401 before the app ever had a session answer means the cookie is
   // gone. Send them to sign in and come straight back here.
@@ -89,6 +94,7 @@ export function Shell() {
             <a className="btn btn-secondary" href={loginUrl()}>Sign in</a>
           </div>
         )}
+        {!desktop && <InstallStrip />}
         <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
         {keepWatch && <WatchPage visible={onWatch} />}
       </main>

@@ -57,6 +57,8 @@ app = FastAPI(title="PSN Messenger")
 import threading as _threading
 import time as _time
 
+import webpush as _push  # init() runs with the other stores, below
+
 _rl_lock = _threading.Lock()
 _rl_hits: dict[str, list[float]] = {}
 
@@ -72,6 +74,8 @@ _RL_LIMITS = {
     "watch_log": (30, 60.0),    # client diagnostics batches (one per ~10s per tab)
     "assistant": (10, 60.0),    # platform assistant (each ask = several local LLM calls)
     "facts_add": (12, 60.0),    # squad facts (shared prompt context, keep it civil)
+    "push_subscribe": (20, 60.0),  # device push subscribe/unsubscribe/prefs
+    "push_test": (4, 60.0),     # "send me a test notification"
 }
 
 
@@ -136,6 +140,7 @@ def health():
 # is handled: /app answers 503 with an explanation rather than a traceback.
 _APP_DIST = Path(__file__).parent / "frontend" / "dist"
 _APP_ASSET_PREFIX = "/app/assets/"
+_PWA_ICON_PREFIX = "/app/pwa/"
 
 _FAVICON_PATH = Path(__file__).parent / "favicon.png"
 _LOGO_PATH         = Path(__file__).parent / "crcmz-logo.png"
@@ -292,6 +297,10 @@ except Exception as e:  # noqa: BLE001
     _squad_messenger = None
 
 
+# One push per rallier per 2 minutes, however often the button is mashed.
+_push_squad_once = _push.Debounce(120)
+
+
 class SquadRequest(BaseModel):
     message: str | None = None
 
@@ -307,6 +316,11 @@ def v2_squad(request: Request, req: SquadRequest | None = None):
     try:
         if _squad_messenger.send_message(text):
             logger.info(f"squad: sent -> {text[:60]}")
+            s = _get_session(request) or {}
+            who = s.get("name") or s.get("preferred_username") or "The squad"
+            if _push_squad_once.first(s.get("sub") or "machine"):
+                _push.notify_in_background("squad", f"{who}: Squad Up", text, "/app/squad",
+                                           exclude=s.get("sub", ""), urgency="high", ttl=900)
             return {"status": "sent", "group": SQUAD_GROUP_ID, "message": text}
         raise HTTPException(status_code=500, detail="Failed to send squad message")
     except HTTPException:
@@ -739,6 +753,9 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # Brand images. The sign-in page shows them before there is a
                # session, and the VIP invite email loads the logo from here.
                "/favicon.png", "/crcmz-logo.png", "/footer-avatar.png",
+               # Installable app: manifest + service worker (icons are the
+               # /app/pwa/ prefix in _auth_gate). Static, no user data.
+               "/app/manifest.webmanifest", "/app/sw.js",
                # VIP invite: the emailed link lands here signed out, and the
                # code in it is the credential (see vip_invites.py).
                "/invite",
@@ -897,7 +914,7 @@ async def _auth_gate(request: Request, call_next):
     # edge caching it — the whole point of the immutable filenames. The *document* at
     # /app is still gated below, so an unauthenticated visitor gets sent to sign in
     # before any of this is requested.
-    if path.startswith(_APP_ASSET_PREFIX):
+    if path.startswith(_APP_ASSET_PREFIX) or path.startswith(_PWA_ICON_PREFIX):
         return await call_next(request)
 
     # A machine with an explicit credential, on any Host. This is the migration
@@ -4802,6 +4819,11 @@ async def giveaway_publish(request: Request, gid: int):
     result = await asyncio.to_thread(_giveaway.publish_giveaway, gid, all_members)
     if result and "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    g = await asyncio.to_thread(_giveaway.get_giveaway, gid) or {}
+    _push.notify_in_background(
+        "giveaway", f"🎁 Giveaway: {g.get('title') or 'new giveaway'}",
+        f"Prize: {g['prize']}. You're in the draw." if g.get("prize") else "You're in the draw.",
+        "/app/giveaway", tag=f"giveaway-{gid}")
     return JSONResponse(result)
 
 
@@ -4835,6 +4857,7 @@ async def giveaway_reveal(request: Request, gid: int):
     result = await asyncio.to_thread(_giveaway.reveal_winner, gid)
     if result and "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
+    await _push_giveaway_won(gid)
     return JSONResponse(result)
 
 
@@ -4843,6 +4866,19 @@ GIVEAWAY_TZ = os.environ.get("GIVEAWAY_TIMEZONE") or os.environ.get("MONTAGE_TIM
 # One reveal at a time: the auto-reveal job and an admin's button share it, so
 # the two can't both draw.
 _GW_REVEAL_LOCK = asyncio.Lock()
+
+
+async def _push_giveaway_won(gid: int) -> None:
+    """Every reveal path (button, draw-and-reveal, the auto loop) tells the squad once.
+
+    The name stays out of the notification: the Giveaway page plays the reveal, and a
+    lock-screen banner would spoil it.
+    """
+    g = await asyncio.to_thread(_giveaway.get_giveaway, gid) or {}
+    prize = f" {g['prize']}" if g.get("prize") else " it"
+    _push.notify_in_background(
+        "giveaway", f"🏆 {g.get('title') or 'Giveaway'}: the winner is in",
+        f"Tap to see who won{prize}.", "/app/giveaway", tag=f"giveaway-{gid}", urgency="high")
 
 
 def _with_reveal_ms(g: dict | None) -> dict | None:
@@ -4871,6 +4907,7 @@ async def giveaway_draw_and_reveal(request: Request, gid: int):
         r2 = await asyncio.to_thread(_giveaway.reveal_winner, gid)
         if r2 and "error" in r2:
             raise HTTPException(status_code=400, detail=r2["error"])
+    await _push_giveaway_won(gid)
     return JSONResponse({"status": "revealed"})
 
 
@@ -4883,6 +4920,7 @@ async def _giveaway_auto_reveal_loop():
                 r = await asyncio.to_thread(_giveaway.auto_reveal_due, GIVEAWAY_TZ)
             if r and r["status"] == "revealed":
                 logger.info("giveaway %s auto-revealed", r["id"])
+                await _push_giveaway_won(r["id"])
                 last_err = None
             elif r and (r["id"], r["error"]) != last_err:
                 last_err = (r["id"], r["error"])
@@ -5214,6 +5252,10 @@ async def watch_join(request: Request):
     # Log-safe: hashed viewer prefix + jti, never the ticket itself.
     logger.info("watch ticket issued room=%s viewer=%s jti=%s kid=%s",
                 room, watch_mod.short_viewer(viewer["viewerId"]), minted["jti"], minted["kid"])
+    if _push_room_quiet.first(f"watch:{room}"):
+        _push.notify_in_background(
+            "watch", f"📺 {viewer['displayName']} started a Watch Party", "Tap to join them.",
+            "/app/watch", exclude=viewer["zitadelSubject"], tag=f"watch-{room}", urgency="high", ttl=1800)
 
     return JSONResponse(
         {
@@ -5996,6 +6038,89 @@ async def watch_rally(request: Request):
         return JSONResponse({"detail": "failed to send"}, status_code=502)
 
 
+# ── Push notifications (webpush.py) ──────────────────────────────────────────
+# A room "starts" on the first join after 30 quiet minutes; later joins and
+# reconnects stay silent. Shared by Watch and Huddle (keys are prefixed).
+_push_room_quiet = _push.Debounce(30 * 60)
+
+
+def _push_sub(request: Request) -> str:
+    s = _get_session(request) or {}
+    if not s.get("sub"):
+        raise HTTPException(status_code=401, detail="authentication required")
+    return s["sub"]
+
+
+async def _push_body(request: Request) -> dict:
+    if not _watch_same_origin(request):
+        raise HTTPException(status_code=403, detail="cross-origin request rejected")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON object required")
+    return body
+
+
+@app.get("/api/push/config")
+async def push_config(request: Request):
+    """The VAPID public key, the categories and this person's choices."""
+    sub = _push_sub(request)
+    key = await asyncio.to_thread(_push.public_key)
+    return JSONResponse({
+        "publicKey": key,
+        "categories": [{"id": k, "label": v} for k, v in _push.CATEGORIES.items()],
+        "prefs": await asyncio.to_thread(_push.get_prefs, sub),
+        "devices": await asyncio.to_thread(_push.device_count, sub),
+    }, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/push/subscribe")
+async def push_subscribe(request: Request):
+    """Body: {subscription: PushSubscription.toJSON(), replaces?: old endpoint}."""
+    sub = _push_sub(request)
+    body = await _push_body(request)
+    _rate_limit("push_subscribe", sub)
+    r = await asyncio.to_thread(_push.subscribe, sub, body.get("subscription") or {},
+                                ua=request.headers.get("user-agent", ""),
+                                replaces=str(body.get("replaces") or ""))
+    if "error" in r:
+        raise HTTPException(status_code=400, detail=r["error"])
+    return JSONResponse(r, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/push/unsubscribe")
+async def push_unsubscribe(request: Request):
+    sub = _push_sub(request)
+    body = await _push_body(request)
+    _rate_limit("push_subscribe", sub)
+    r = await asyncio.to_thread(_push.unsubscribe, sub, str(body.get("endpoint") or ""))
+    return JSONResponse(r, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/push/prefs")
+async def push_prefs(request: Request):
+    """Body: {<category>: bool, ...}; unknown keys are ignored."""
+    sub = _push_sub(request)
+    body = await _push_body(request)
+    _rate_limit("push_subscribe", sub)
+    prefs = await asyncio.to_thread(_push.save_prefs, sub, body)
+    return JSONResponse({"prefs": prefs}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/push/test")
+async def push_test(request: Request):
+    """Send a test notification to this person's own devices only."""
+    sub = _push_sub(request)
+    await _push_body(request)
+    _rate_limit("push_test", sub)
+    r = await asyncio.to_thread(_push.notify, "test", "CRCMZ notifications are on",
+                                "This is what they look like. Tap to open the app.",
+                                "/app/settings/app", only=[sub], tag="test")
+    return JSONResponse(r, headers={"Cache-Control": "no-store"})
+
+
 # ── Huddle API (LiveKit token + Ollama proxy) ──────────────────────────────────
 
 def _mk_livekit_token(identity: str, name: str, room: str) -> str:
@@ -6039,6 +6164,10 @@ async def huddle_token(request: Request):
     name = session.get("name") or session.get("preferred_username") or identity
     token = _mk_livekit_token(identity, name, room)
     ws_url = LIVEKIT_URL
+    if _push_room_quiet.first(f"huddle:{room}"):
+        _push.notify_in_background(
+            "huddle", f"🎧 {name} started a Huddle", f"Room {room}. Tap to jump in.",
+            f"/app/huddle?room={room}", exclude=identity, tag=f"huddle-{room}", urgency="high", ttl=1800)
     return JSONResponse({"token": token, "url": ws_url, "room": room})
 
 
@@ -6473,6 +6602,7 @@ import clip_store as _cstore
 from psn_messaging import ClipNotReady, ClipUnauthorized, ClipRateLimited, ClipError, ClipDownload
 _clips.init()
 _vip.init()
+_push.init()
 import reels as _reels
 app.include_router(_reels.build_router(_get_session, _is_iam_admin))
 import slap as _slap
@@ -7203,6 +7333,15 @@ async def _start_squad_poller():
                                         logger.info(
                                             "ig_queued uid=%s sender=%s post=%s",
                                             uid, sender, pid)
+                                # Live clips only: a cursor reset re-claims old
+                                # messages, and those must not ring anyone's phone.
+                                if (not _wants_coaching(body_text)
+                                        and _time.time() - _clip_ts < 600):
+                                    _push.notify_in_background(
+                                        "clips", f"🎬 New clip from {sender}",
+                                        _game or (body_text or "Tap to watch it.")[:120],
+                                        "/app/clips", exclude=_zid_for_psn(sender) or "",
+                                        tag=f"clip-{uid}")
                                 await _video_queue.put(uid)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("video-watch tick failed: %s", exc)
@@ -7949,6 +8088,40 @@ def app_asset(asset_path: str):
         # changed file is a different URL.
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+# The installable-app files (frontend/public → dist root). Open (see _OPEN_PATHS and _auth_gate): the
+# browser fetches the manifest and icons without cookies, and the install prompt and
+# the home-screen icon have to work before anyone signs in. None holds user data.
+
+
+@app.get("/app/manifest.webmanifest", include_in_schema=False)
+def app_manifest():
+    f = _APP_DIST / "manifest.webmanifest"
+    if not f.is_file():
+        return Response(status_code=404)
+    return Response(f.read_bytes(), media_type="application/manifest+json",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/app/sw.js", include_in_schema=False)
+def app_service_worker():
+    f = _APP_DIST / "sw.js"
+    if not f.is_file():
+        return Response(status_code=404)
+    # Never cached, so a fixed worker reaches every installed app on its next launch.
+    return Response(f.read_bytes(), media_type="text/javascript; charset=utf-8",
+                    headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/app/"})
+
+
+@app.get("/app/pwa/{name}", include_in_schema=False)
+def app_pwa_icon(name: str):
+    root = (_APP_DIST / "pwa").resolve()
+    target = (root / name).resolve()
+    if target.suffix != ".png" or not target.is_file() or not target.is_relative_to(root):
+        return Response(status_code=404)
+    return Response(target.read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/app", include_in_schema=False)

@@ -1434,6 +1434,20 @@ def _watchparty_events_list(limit: int = 10, event_type: str | None = None,
     )}
 
 
+@tool("push_notifications_log",
+      "Phone/desktop push notifications from the installed CRCMZ app: how many people "
+      "and devices have them on, which categories (squad, watch, huddle, giveaway, "
+      "clips) each person switched off, and the most recent notifications with how "
+      "many devices received each. recipients is devices targeted, delivered is how "
+      "many the push service accepted, gone is dead devices dropped. Read-only.",
+      {"type": "object", "properties": {
+          "limit": {"type": "integer", "description": "recent notifications, 1-100, default 20"},
+      }})
+def _push_notifications_log(limit: int = 20) -> dict:
+    import webpush
+    return webpush.stats(limit=max(1, min(int(limit or 20), 100)))
+
+
 @tool("watch_history",
       "Watch Party history: videos/movies the squad watched, newest first, with "
       "metadata (title, year, poster, overview), who watched, and where each person "

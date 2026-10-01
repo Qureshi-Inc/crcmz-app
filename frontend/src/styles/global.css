@@ -2200,3 +2200,9 @@ textarea.ask-input { flex: 1; min-width: 0; resize: none; min-height: var(--tap-
 .ask-chips .chip:disabled { opacity: .55; cursor: not-allowed; }
 .player-close { align-self: center; color: var(--text-dim); }
 .callbar-leave { flex: none; min-height: var(--tap-min); padding-inline: var(--space-3); color: var(--error); }
+
+/* ── Install strip (components/InstallStrip.tsx) ───────────────────────────── */
+.install-strip { flex-wrap: nowrap; padding: var(--space-3); }
+.install-strip .install-icon { flex: none; border-radius: 9px; }
+.install-strip .install-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: .92rem; line-height: 1.3; }
+.install-strip .btn { flex: none; }

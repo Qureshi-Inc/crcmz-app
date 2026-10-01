@@ -16,6 +16,10 @@ import {
   addPasskey, changePassword, fmtDate, fmtDateTime, MCP_CONFIG, passkeysSupported, removePasskey, revokeMcp, tokenState,
   unlinkMattermost, type McpStatus, type MmStatus, type Passkey, type PsnStatus,
 } from '../../lib/account'
+import {
+  currentSubscription, disablePush, enablePush, fetchPushConfig, isIOS, isStandalone, promptInstall, pushSupported,
+  savePushPrefs, sendTestPush, useInstall,
+} from '../../lib/pwa'
 
 const TABS = [
   { id: 'passkeys', label: 'Passkeys' },
@@ -24,6 +28,7 @@ const TABS = [
   { id: 'mattermost', label: 'Mattermost' },
   { id: 'mcp', label: 'MCP' },
   { id: 'watch', label: 'Watch' },
+  { id: 'app', label: 'App' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
 const LAST = 'crcmz_app_settings_tab'
@@ -58,6 +63,7 @@ export function SettingsPage() {
         <Tabs.Content value="mattermost" className="settings-panel"><MattermostTab /></Tabs.Content>
         <Tabs.Content value="mcp" className="settings-panel"><McpTab /></Tabs.Content>
         <Tabs.Content value="watch" className="settings-panel"><WatchTab /></Tabs.Content>
+        <Tabs.Content value="app" className="settings-panel"><AppTab /></Tabs.Content>
       </Tabs.Root>
     </div>
   )
@@ -384,6 +390,131 @@ function WatchTab() {
       <h2 className="section-h2" id="st-watch-h">Watch Party</h2>
       <p className="dim">Where the camera orbs sit: above the video, below it, or on it along the top, the bottom or the side. Saved on this device; you can also change it on the Watch page.</p>
       <OrbPosControl id="st-orbpos" />
+    </section>
+  )
+}
+
+// ── App: install + notifications ─────────────────────────────────────────────
+function AppTab() {
+  return (
+    <>
+      <InstallCard />
+      <NotificationsCard />
+    </>
+  )
+}
+
+function InstallCard() {
+  const state = useInstall()
+  return (
+    <section className="glass settings-card" aria-labelledby="st-app-h">
+      <div className="settings-card-head">
+        <h2 className="section-h2" id="st-app-h">Install CRCMZ</h2>
+        {state === 'prompt' && <button type="button" className="btn btn-primary" onClick={() => { void promptInstall() }}><Icon name="plus" />Install</button>}
+      </div>
+      {state === 'installed' ? (
+        <p className="dim">Installed. CRCMZ opens full screen from your home screen, with lock-screen controls for music and calls.</p>
+      ) : state === 'ios' ? (
+        <>
+          <p className="dim">Add it to your Home Screen to get full screen, lock-screen controls and notifications.</p>
+          <ol className="steps-plain">
+            <li>In Safari, tap <b>Share</b> (the square with the arrow).</li>
+            <li>Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.</li>
+            <li>Open CRCMZ from the new icon and sign in once.</li>
+          </ol>
+        </>
+      ) : state === 'prompt' ? (
+        <p className="dim">Put CRCMZ on your home screen: full screen, lock-screen controls and notifications.</p>
+      ) : (
+        <p className="dim">Open app.crcmz.me in Chrome on Android or Safari on iPhone to install it. On a computer, use Chrome or Edge's install button in the address bar.</p>
+      )}
+    </section>
+  )
+}
+
+function NotificationsCard() {
+  const qc = useQueryClient()
+  const cfg = useQuery({ queryKey: ['push', 'config'], queryFn: ({ signal }) => fetchPushConfig(signal) })
+  const [on, setOn] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [perm, setPerm] = useState(() => ('Notification' in window ? Notification.permission : 'default'))
+  useEffect(() => { void currentSubscription().then((s) => setOn(!!s)).catch(() => setOn(false)) }, [])
+
+  const iosNeedsInstall = isIOS() && !isStandalone()
+  const supported = pushSupported()
+
+  async function toggle() {
+    setBusy(true)
+    try {
+      if (on) {
+        await disablePush()
+        setOn(false)
+        toast('Notifications off on this device', 'success')
+      } else {
+        const r = await enablePush()
+        if ('Notification' in window) setPerm(Notification.permission)
+        if (r === 'on') { setOn(true); toast('Notifications on', 'success') }
+        else if (r === 'denied') toast('Notifications are blocked for CRCMZ', 'error')
+        else toast("This browser can't show notifications", 'error')
+      }
+    } catch {
+      toast(on ? "Couldn't turn notifications off" : "Couldn't turn notifications on", 'error')
+    } finally {
+      setBusy(false)
+      void qc.invalidateQueries({ queryKey: ['push', 'config'] })
+    }
+  }
+  async function test() {
+    try {
+      const r = await sendTestPush()
+      toast(r.delivered ? 'Sent. It should pop up in a moment.' : 'Nothing was delivered. Turn notifications off and on again.', r.delivered ? 'success' : 'error')
+    } catch (e) {
+      toast(e instanceof ApiError && e.status === 429 ? 'Wait a minute before the next test' : "Couldn't send a test", 'error')
+    }
+  }
+  async function setPref(id: string, value: boolean) {
+    qc.setQueryData(['push', 'config'], (d: typeof cfg.data) => (d ? { ...d, prefs: { ...d.prefs, [id]: value } } : d))
+    try {
+      await savePushPrefs({ [id]: value })
+    } catch {
+      toast("Couldn't save that", 'error')
+      void qc.invalidateQueries({ queryKey: ['push', 'config'] })
+    }
+  }
+
+  return (
+    <section className="glass settings-card" aria-labelledby="st-push-h">
+      <div className="settings-card-head">
+        <h2 className="section-h2" id="st-push-h">Notifications</h2>
+        {supported && !iosNeedsInstall && perm !== 'denied' && on !== null && (
+          <button type="button" className={on ? 'btn btn-secondary' : 'btn btn-primary'} onClick={toggle} disabled={busy}>
+            {busy ? 'One moment…' : on ? 'Turn off here' : 'Turn on'}
+          </button>
+        )}
+      </div>
+      <p className="dim">Squad Up rallies, parties and huddles starting, giveaways and new clips. You choose which below; they apply to every device you turn on.</p>
+      {iosNeedsInstall ? (
+        <p className="settings-note" role="note">On iPhone, notifications only work in the installed app. Add CRCMZ to your Home Screen (above), open it from there, then turn them on.</p>
+      ) : !supported ? (
+        <p className="settings-note" role="note">This browser can't show notifications.</p>
+      ) : perm === 'denied' ? (
+        <p className="settings-note" role="note">Notifications are blocked for CRCMZ. Allow them in your browser or phone settings, then come back.</p>
+      ) : null}
+      {cfg.isPending ? <SkeletonRows n={3} />
+        : cfg.isError ? <ErrorStrip text="Couldn't load your notification choices" onRetry={() => cfg.refetch()} />
+        : (
+          <fieldset className="push-cats" style={{ border: 0, margin: 0, padding: 0 }}>
+            <legend className="meta" style={{ padding: 0, marginBottom: 'var(--space-2)' }}>Tell me when</legend>
+            {cfg.data.categories.map((c) => (
+              <label key={c.id} className="check-row">
+                <input type="checkbox" checked={cfg.data.prefs[c.id] !== false} onChange={(e) => { void setPref(c.id, e.target.checked) }} />
+                {c.label}
+              </label>
+            ))}
+          </fieldset>
+        )}
+      {on && <div><button type="button" className="btn btn-secondary" onClick={test}><Icon name="megaphone" />Send me a test</button></div>}
+      {cfg.data && <p className="meta">{cfg.data.devices === 0 ? 'No devices yet.' : cfg.data.devices === 1 ? 'On for 1 device.' : `On for ${cfg.data.devices} devices.`}</p>}
     </section>
   )
 }
