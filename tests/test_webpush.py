@@ -243,7 +243,7 @@ def http_tests():
             assert client.get(i["src"]).status_code == 200, i["src"]
         r = client.get("/app/sw.js")
         assert r.status_code == 200 and r.headers.get("service-worker-allowed") == "/app/"
-        assert "no-cache" in r.headers["cache-control"]
+        assert "no-cache" in r.headers["cache-control"] and r.headers.get("cloudflare-cdn-cache-control") == "no-store"
         assert client.get("/app/pwa/apple-touch-icon.png").status_code == 200
 
     def pwa_icons_do_not_leak_other_files():

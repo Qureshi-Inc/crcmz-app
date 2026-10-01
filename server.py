@@ -8106,12 +8106,15 @@ def app_manifest():
 
 @app.get("/app/sw.js", include_in_schema=False)
 def app_service_worker():
+    # Never cached, so a fixed worker reaches every installed app on its next launch.
+    # Cloudflare caches .js at the edge whatever Cache-Control says (and rewrote it to
+    # 4 h), so tell the CDN separately; a 404 from mid-deploy must not stick either.
+    nocache = {"Cache-Control": "no-cache", "CDN-Cache-Control": "no-store", "Cloudflare-CDN-Cache-Control": "no-store"}
     f = _APP_DIST / "sw.js"
     if not f.is_file():
-        return Response(status_code=404)
-    # Never cached, so a fixed worker reaches every installed app on its next launch.
+        return Response(status_code=404, headers=nocache)
     return Response(f.read_bytes(), media_type="text/javascript; charset=utf-8",
-                    headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/app/"})
+                    headers={**nocache, "Service-Worker-Allowed": "/app/"})
 
 
 @app.get("/app/pwa/{name}", include_in_schema=False)
