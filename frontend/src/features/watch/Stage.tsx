@@ -160,7 +160,7 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggle
   const online = s.status === 'live'
   const live = c.live || !Number.isFinite(c.dur)
   const playLabel = s.playing ? 'Pause' : 'Play'
-  const camLabel = !s.call.on ? 'Join with camera + mic' : s.call.micOnly ? 'No camera' : s.call.camOff ? 'Turn camera on' : 'Turn camera off'
+  const camLabel = !s.call.on ? 'Join with camera' : s.call.micOnly ? 'No camera' : s.call.camOff ? 'Turn camera on' : 'Turn camera off'
   return (
     <div className="wp-overlay">
       {idle ? <span /> : (

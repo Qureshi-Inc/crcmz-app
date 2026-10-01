@@ -132,7 +132,7 @@ let state: WatchState = {
   active: false, status: 'idle', error: '', cfg: null, room: '', clientId: clientId(), myName: '', isMod: false,
   presence: { count: 0, viewers: [] }, roster: [], names: {},
   video: '', kind: '', ytFresh: false, playing: false, unblock: '', mediaError: '',
-  chat: [], call: { on: false, muted: false, micOnly: false, camOff: false, facing: 'user', busy: false, note: '' },
+  chat: [], call: { on: false, muted: true, micOnly: false, camOff: false, facing: 'user', busy: false, note: '' },
   rtc: 0, loud: {}, playerVol: 1, playerMuted: false, camVol: 1, camMuted: false,
   prefs: readLocal<Record<string, { v: number; m: boolean }>>(PREFS_KEY, {}),
   fs: false, extracting: false, extractUntil: 0, title: '', needGesture: false, histTick: 0,
@@ -979,19 +979,18 @@ export async function joinCall() {
     let stream: MediaStream
     let micOnly = false
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { ...VIDEO_C, facingMode: 'user' }, audio: audioC() })
+      // Video only. A capturing mic (even a disabled track) flips the OS into
+      // voice-call audio: Bluetooth drops to the headset profile, iOS/Android/
+      // Windows switch to communications mode and the movie sounds worse. The
+      // mic is opened only while you're unmuted.
+      stream = await navigator.mediaDevices.getUserMedia({ video: { ...VIDEO_C, facingMode: 'user' }, audio: false })
     } catch (e) {
       const n = (e as { name?: string })?.name || ''
       log('cam.error', { name: n, msg: String((e as Error)?.message || '').slice(0, 160) }, 'warn')
       if (n === 'NotFoundError' || n === 'DevicesNotFoundError') {
-        setCall({ note: 'No camera found — joining with mic only…' })
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: audioC() })
-          micOnly = true
-        } catch (e2) {
-          setCall({ note: (e2 as { name?: string })?.name === 'NotAllowedError' ? 'Mic blocked — allow it in your browser settings.' : 'Could not access the mic.' })
-          return
-        }
+        // No camera: join anyway, muted; Unmute opens the mic.
+        stream = new MediaStream()
+        micOnly = true
       } else {
         setCall({ note: n === 'NotAllowedError' ? 'Camera/mic blocked — allow it in your browser settings.' : n === 'NotReadableError' ? 'Camera is in use by another app.' : 'Could not start the camera.' })
         return
@@ -999,16 +998,11 @@ export async function joinCall() {
     }
     void enumerate()
     localStream = stream
-    // The mic is live as soon as you join; Mute is one tap away.
-    setCall({ on: true, muted: false, camOff: false, micOnly, facing: 'user', note: '' })
+    // You join muted, with no mic open at all; Unmute is one tap away.
+    setCall({ on: true, muted: true, camOff: false, micOnly, facing: 'user', note: micOnly ? 'No camera found — tap Unmute to talk.' : '' })
     log('cam.on', { micOnly, tracks: stream.getTracks().map((t) => `${t.kind}:${t.readyState}`) })
-    // A camera can be revoked mid-call; a mic can end on its own (phone call, iOS
-    // background). Video ending hangs up; audio ending remounts just the mic.
+    // A camera can be revoked mid-call: video ending hangs up.
     stream.getVideoTracks().forEach((t) => t.addEventListener('ended', () => { if (state.call.on) camStop() }))
-    stream.getAudioTracks().forEach((t) => t.addEventListener('ended', () => { if (state.call.on) void remountMic() }))
-    meter('me', stream)
-    const others = muteOtherCalls('watch')
-    if (others.length) toast(`Muted your ${others.join(' and ')} mic while you're in Watch Party`, 'info')
     announce(true)
     live().forEach((id) => peer(id, true))
     Object.values(peers).forEach(syncTracks)
@@ -1019,7 +1013,8 @@ export async function joinCall() {
 }
 function camStop() {
   log('cam.off')
-  setCall({ on: false, muted: false, camOff: false, micOnly: false })
+  micGen++
+  setCall({ on: false, muted: true, camOff: false, micOnly: false })
   announce(false)
   for (const id of Object.keys(peers)) {
     // Keep the connection if they still send us video; otherwise drop it.
@@ -1034,33 +1029,62 @@ function camStop() {
 export const leaveCall = () => { if (state.call.on) camStop() }
 function endCall() { if (state.call.on) camStop() }
 
-async function remountMic() {
-  if (!state.call.on || !localStream) return
+/** The peer's audio sender, live or parked (track null after a mute). */
+function audioSender(pc: RTCPeerConnection): RTCRtpSender | undefined {
+  const live = pc.getSenders().find((x) => x.track?.kind === 'audio')
+  if (live) return live
+  return pc.getTransceivers().find((t) => t.currentDirection !== 'stopped' && !t.sender.track && t.receiver.track?.kind === 'audio'
+    && (t.direction === 'sendrecv' || t.direction === 'sendonly'))?.sender
+}
+/** Put `track` (or nothing) on every peer's audio sender, without renegotiating where a sender exists. */
+async function swapAudio(track: MediaStreamTrack | null) {
+  await Promise.all(Object.values(peers).map(async (p) => {
+    const s = audioSender(p.pc)
+    if (s) await s.replaceTrack(track).catch(() => { /* */ })
+  }))
+}
+let micGen = 0
+/** Open the mic and send it. Returns false if the mic couldn't be opened. */
+async function micOpen(): Promise<boolean> {
+  if (!state.call.on || !localStream) return false
+  const gen = ++micGen
   let track: MediaStreamTrack | undefined
   try {
-    const fresh = await navigator.mediaDevices.getUserMedia({ audio: audioC() })
-    track = fresh.getAudioTracks()[0]
-  } catch {
-    setCall({ note: 'Mic disconnected — tap Unmute to refresh.' })
-    return
+    track = (await navigator.mediaDevices.getUserMedia({ audio: audioC() })).getAudioTracks()[0]
+  } catch (e) {
+    const n = (e as { name?: string })?.name
+    setCall({ note: n === 'NotAllowedError' ? 'Mic blocked — allow it in your browser settings.' : n === 'NotFoundError' ? 'No mic found.' : 'Could not access the mic.' })
+    return false
   }
   const ls = localStream
-  if (!track || !state.call.on || !ls) return
+  // Muted or left while the permission prompt was up.
+  if (!track || gen !== micGen || !state.call.on || !ls) { track?.stop(); return false }
   const nt = track
-  // Swap into every sender without renegotiating (video keeps flowing).
-  await Promise.all(Object.values(peers).map(async (p) => {
-    const s = p.pc.getSenders().find((x) => x.track?.kind === 'audio')
-    if (s) await s.replaceTrack(nt).catch(() => { /* */ })
-  }))
+  await swapAudio(nt)
+  if (gen !== micGen || localStream !== ls) { nt.stop(); return false }
   ls.getAudioTracks().forEach((t) => { try { t.stop() } catch { /* */ } ls.removeTrack(t) })
   ls.addTrack(nt)
-  nt.enabled = !state.call.muted
-  nt.addEventListener('ended', () => { if (state.call.on) void remountMic() })
+  // A mic can end on its own (phone call, iOS background): reopen just the mic.
+  nt.addEventListener('ended', () => { if (state.call.on && !state.call.muted && localStream?.getAudioTracks().includes(nt)) void micOpen() })
+  // Peers with no audio sender yet get one (a one-off renegotiation).
+  Object.values(peers).forEach(syncTracks)
   meterStop('me')
   meter('me', ls)
+  void enumerate()
   setCall({ note: '' })
+  return true
 }
-export function setMic(id: string) { set({ micId: id }); if (state.call.on) void remountMic() }
+/** Stop the mic entirely, so the OS leaves voice-call mode. */
+function micClose() {
+  micGen++
+  meterStop('me')
+  const ls = localStream
+  if (!ls) return
+  const old = ls.getAudioTracks()
+  old.forEach((t) => ls.removeTrack(t))
+  void swapAudio(null).finally(() => old.forEach((t) => { try { t.stop() } catch { /* */ } }))
+}
+export function setMic(id: string) { set({ micId: id }); if (state.call.on && !state.call.muted) void micOpen() }
 export function setSpeaker(id: string) { set({ speakerId: id }); applySink() }
 function applySink() {
   type Sinkable = HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> }
@@ -1068,13 +1092,15 @@ function applySink() {
   els.forEach((el) => { el.setSinkId?.(state.speakerId).catch(() => { /* */ }) })
 }
 
-export function toggleMute() {
+export async function toggleMute() {
   if (!state.call.on || !localStream) return
-  const muted = !state.call.muted
-  localStream.getAudioTracks().forEach((t) => { t.enabled = !muted })
-  setCall({ muted })
+  if (!state.call.muted) { micClose(); setCall({ muted: true }); return }
+  setCall({ muted: false })
+  const others = muteOtherCalls('watch')
+  if (others.length) toast(`Muted your ${others.join(' and ')} mic while you're talking in Watch Party`, 'info')
+  if (!(await micOpen()) && state.call.on && !localStream?.getAudioTracks().length) setCall({ muted: true })
 }
-registerCall('watch', { label: 'Watch', live: () => state.call.on && !state.call.muted, mute: toggleMute })
+registerCall('watch', { label: 'Watch', live: () => state.call.on && !state.call.muted, mute: () => void toggleMute() })
 /** Camera off/on while staying in the call. Before joining, the same control joins. */
 export function toggleVideo() {
   if (!state.call.on) { void joinCall(); return }

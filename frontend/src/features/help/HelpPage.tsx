@@ -116,7 +116,7 @@ const SECTIONS: Section[] = [
     body: (
       <ul>
         <li>Paste a YouTube link or a video link. Everyone sees it at the same time.</li>
-        <li>Tap the camera button in the player to join with camera + mic. Tap it again to turn your camera off; the red phone leaves the call.</li>
+        <li>Tap the camera button in the player to join with your camera. You start muted and your mic stays off until you tap Unmute, so the movie keeps its full sound. Tap the camera again to turn it off; the red phone leaves the call.</li>
         <li>Tap 😀 in the player to react. Three of the same in a row sets off a party.</li>
         <li>Tap ⚙ in the player for camera position, flip camera, mic and speaker, your display name, and <b>Rally</b> (tells the WhatsApp group to join).</li>
         <li>In fullscreen, the cameras sit on the video and the chat button lets you type without leaving.</li>

@@ -1961,9 +1961,26 @@ try {
     check('watch 1440: rename posts the title once', posts.title.length === 1 && posts.title[0].title === 'Collateral')
     // Joining the call puts your own orb where you asked for it.
     await d.ctx.grantPermissions(['camera', 'microphone'])
-    await d.page.click('button:has-text("Join with camera + mic")')
+    // Record every track the page captures: an open mic (even disabled) puts the OS
+    // in voice-call mode and degrades the movie, so joining must capture video only.
+    await d.page.evaluate(() => {
+      const md = navigator.mediaDevices, gum = md.getUserMedia.bind(md)
+      window.__gum = []
+      md.getUserMedia = async (c) => { const st = await gum(c); window.__gum.push(...st.getTracks()); return st }
+    })
+    const liveMics = () => d.page.evaluate(() => window.__gum.filter((t) => t.kind === 'audio' && t.readyState === 'live').length)
+    await d.page.click('button:has-text("Join with camera")')
     await d.page.waitForSelector('.wp-orb')
-    check('watch 1440: joining the call shows your camera orb', (await d.page.getAttribute('.wp-orb', 'aria-label')).startsWith('You, mic on'))
+    check('watch 1440: joining the call shows your camera orb, muted', (await d.page.getAttribute('.wp-orb', 'aria-label')).startsWith('You, mic muted'))
+    check('watch 1440: joining captures video only — no mic is opened', (await d.page.evaluate(() => window.__gum.map((t) => t.kind).join())) === 'video' && (await liveMics()) === 0)
+    await d.page.hover('.wp-stage')
+    await d.page.click('.wp-ov-row button[aria-label="Unmute mic"]')
+    await d.page.waitForSelector('.wp-ov-row button[aria-label="Mute mic"]')
+    await d.page.waitForFunction(() => window.__gum.some((t) => t.kind === 'audio' && t.readyState === 'live'))
+    check('watch 1440: Unmute opens exactly one live mic', (await liveMics()) === 1)
+    await d.page.click('.wp-ov-row button[aria-label="Mute mic"]')
+    await d.page.waitForFunction(() => window.__gum.filter((t) => t.kind === 'audio').every((t) => t.readyState === 'ended'))
+    check('watch 1440: Mute stops the mic track, not just disables it', (await liveMics()) === 0)
     await d.page.waitForFunction(() => document.querySelector('.wp-face-video')?.readyState >= 2)
     const below = await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().top >= document.querySelector('.wp-stage').getBoundingClientRect().bottom - 1)
     check('watch 1440: orbs sit below the video by default', below)
@@ -2014,7 +2031,7 @@ try {
     }
     await pickPos(d.page, 'over')
     await d.page.hover('.wp-stage')
-    check('watch 1440: in the call the overlay gets a mic button', await d.page.isVisible('.wp-ov-row button[aria-label="Mute mic"]'))
+    check('watch 1440: in the call the overlay gets a mic button', await d.page.isVisible('.wp-ov-row button[aria-label="Unmute mic"]'))
     await shot(d.page, 'watch-1440-over')
     await pickPos(d.page, 'top')
     check('watch 1440: Above puts the orbs over the top of the video', await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().bottom <= document.querySelector('.wp-stage').getBoundingClientRect().top + 1))
@@ -2231,14 +2248,18 @@ try {
       await h.page.click('.watchbar-bar button[aria-label="Huddle mic muted. Unmute"]')
       await h.page.waitForSelector('.watchbar-bar button[aria-label="Huddle mic live. Mute"]')
       await shot(h.page, 'huddle-375-bar')
-      // Joining the Watch call with a live Huddle mic mutes the Huddle mic (F-5).
+      // The Watch call joins muted, so the Huddle mic stays live; unmuting Watch
+      // mutes the Huddle mic (F-5: one live mic at a time).
       await h.page.click('.tabbar a[href="/app/watch"]')
       await h.page.waitForSelector('.wp-pill[data-tone="live"]')
-      await h.page.click('.wp-actions button:has-text("Join with camera + mic")')
-      await h.page.waitForSelector('.toast:has-text("Muted your Huddle mic")')
-      check('huddle: joining the Watch call mutes your Huddle mic, and says so', await h.page.evaluate(() => !window.__lkRoom.localParticipant.isMicrophoneEnabled))
+      await h.page.click('.wp-actions button:has-text("Join with camera")')
+      await h.page.waitForSelector('.wp-orb')
+      check('huddle: joining the Watch call (muted) leaves your Huddle mic alone', await h.page.evaluate(() => window.__lkRoom.localParticipant.isMicrophoneEnabled))
       await h.page.click('.tabbar a[href="/app"]')
       await h.page.waitForFunction(() => document.querySelectorAll('.watchbar-bar .miniplayer-row').length === 2)
+      await h.page.click('.watchbar-bar button[aria-label="Watch mic muted. Unmute"]')
+      await h.page.waitForSelector('.toast:has-text("Muted your Huddle mic")')
+      check('huddle: unmuting the Watch mic mutes your Huddle mic, and says so', await h.page.evaluate(() => !window.__lkRoom.localParticipant.isMicrophoneEnabled))
       check('huddle: two calls, two rows in the call bar', (await h.page.getAttribute('.watchbar-bar', 'aria-label')) === 'Calls' && (await h.page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--callbar-rows').trim())) === '2')
       await shot(h.page, 'huddle-375-two-calls')
       await h.page.click('.watchbar-bar button[aria-label="Leave the watch party"]')

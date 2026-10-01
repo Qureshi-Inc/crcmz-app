@@ -170,7 +170,7 @@ function CallRow({ s }: { s: WatchState }) {
       {!c.on && (
         <div className="wp-action-row">
           <button type="button" className="btn btn-primary" disabled={!live || c.busy || !canCall()} onClick={() => void joinCall()}>
-            <Icon name="cam" />{c.busy ? 'Starting…' : 'Join with camera + mic'}
+            <Icon name="cam" />{c.busy ? 'Starting…' : 'Join with camera'}
           </button>
         </div>
       )}
