@@ -1147,6 +1147,42 @@ try {
     check('no unmocked writes and no page errors (Studio edge cases)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
+  // ── 8a. Slap Discover: the default tab. The AI mix, new finds (Listen + Download), charts ──
+  {
+    const downloads = []
+    const FIND = (id, title, status = 'new', extra = {}) => ({ id, title, artist: 'New Artist', album: 'New Album', art: null, preview: `https://audio-ssl.itunes.apple.com/${id}.m4a`, duration: 200, for: 'moiz', status, by: null, track_id: null, error: null, ...extra })
+    const disc = { week: '2026-09-28', expires: (NOW + 3 * 86400) * 1000, ready: true, making: false, why: { moiz: 'You like rap.' },
+      finds: [FIND('1001', 'Fresh One'), FIND('1002', 'Queued One', 'queued', { by: 'zubair221b' }), FIND('1003', 'Landed One', 'done', { by: 'nooramin40', track_id: 't1' }), FIND('1004', 'Broke One', 'failed')] }
+    const { ctx, page } = await newPage({
+      width: 375, height: 800, mocks: { ...SLAP_BASE, 'GET /api/slap/discover': json(200, disc) },
+      match: slapMatch({
+        'POST /api/slap/discover/download': (r) => { const b = r.request().postDataJSON(); downloads.push(b.id); return json(200, { ...disc.finds.find((f) => f.id === b.id), status: 'queued', by: 'moiz' })(r) },
+        'POST /api/slap/listen/play': json(200, { ok: true }), 'POST /api/slap/listen/skip': json(200, { ok: true }),
+      }),
+    })
+    await page.route('https://audio-ssl.itunes.apple.com/**', serveRange(STUDIO_VIDEO, 'video/webm'))
+    await ready(page, '/app/slap')
+    await page.waitForSelector('.find')
+    check('discover: Slap opens on Discover', (await page.getAttribute('.seg-4 [role=tab][data-state=active]', 'id'))?.includes('discover') || (await page.textContent('.seg-4 [role=tab][data-state=active]')) === 'Discover')
+    check('discover: the AI mix leads, from the library', (await page.textContent('#disc-mix-h')) === 'Friday fuel' && (await page.locator('.disc-hero .shelf-card').count()) === 1)
+    check('discover: four new finds with their state', (await page.locator('.find').count()) === 4
+      && (await page.textContent('.find[data-status=queued]')).includes('Downloading by zubair')
+      && (await page.textContent('.find[data-status=done]')).includes('added by noor'))
+    check('discover: Listen on every find not in the library', (await page.locator('.find button[aria-pressed]').count()) === 3)
+    check('discover: failed finds offer Try again', (await page.textContent('.find[data-status=failed] .btn-primary')).includes('Try again'))
+    check('discover: charts and recently added show', (await page.locator('#disc-fav-h').count()) === 1 && (await page.locator('#disc-hot-h').count()) === 1 && (await page.locator('#disc-recent-h').count()) === 1)
+    await shot(page, 'slap-discover-375', true)
+    await axe(page, 'Slap Discover 375', '.app-main')
+    await tapTargets(page, 'Slap Discover 375')
+    await page.click('.find[data-status=new] .btn-primary')
+    await page.waitForFunction(() => document.querySelector('.toasts')?.textContent?.includes('your picks'))
+    check('discover: Download credits you and says where it goes', downloads.join() === '1001' && (await page.textContent('.find >> nth=0')).includes('Downloading by moiz'), downloads.join())
+    await page.click('.find[data-status=done] .btn-primary')
+    await page.waitForSelector('.miniplayer-bar')
+    check('discover: a landed find plays from the library', (await page.textContent('.miniplayer-title')).includes('Track 1'))
+    check('no unmocked writes and no page errors (Slap Discover)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
   // ── 8. Slap (PS-3): Listen, the mini-player and sheet, Together, Stats ──
   {
     const favs = [], plays = []
@@ -1157,12 +1193,12 @@ try {
         'POST /api/slap/listen/skip': (r) => { plays.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
       })(key),
     })
-    await ready(page, '/app/slap')
+    await ready(page, '/app/slap?tab=listen')
     await page.waitForSelector('.track-row')
     check('Slap header names the music account', (await page.textContent('.slap-sub')).includes('Listening as moiz'))
-    check('three segmented tabs (Listen / Together / Stats)', (await page.locator('.seg-3 [role=tab]').count()) === 3)
-    const segCols = await page.$eval('.seg-3', (e) => getComputedStyle(e).gridTemplateColumns.split(' ').length)
-    check('.seg-3 lays out three columns', segCols === 3, `${segCols}`)
+    check('four segmented tabs (Discover / Listen / Together / Stats)', (await page.locator('.seg-4 [role=tab]').count()) === 4)
+    const segCols = await page.$eval('.seg-4', (e) => getComputedStyle(e).gridTemplateColumns.split(' ').length)
+    check('.seg-4 lays out four columns', segCols === 4, `${segCols}`)
     check('no mini-player before anything plays', (await page.locator('.miniplayer-bar').count()) === 0)
     await shot(page, 'slap-375')
     await axe(page, 'Slap Listen 375', '.app-main')
@@ -2689,7 +2725,7 @@ try {
       },
       match: slapMatch({ 'POST /api/slap/listen/play': json(200, { ok: true }), 'POST /api/slap/listen/skip': json(200, { ok: true }) }),
     })
-    await ready(page, '/app/slap')
+    await ready(page, '/app/slap?tab=listen')
     await page.waitForSelector('.track-row')
     await page.click('.track-row .track-main >> nth=0')
     await page.click('.miniplayer-open')
@@ -2737,7 +2773,7 @@ try {
         ...Object.fromEntries(SLAP_TRACKS.map(({ id }) => [`GET /api/slap/track/${id}`, json(200, { picked_by: ['nooramin40', 'themoosecompany'], thumbs: { up: ['zubair221b'], down: [], mine: 0 } })])),
       }),
     })
-    await ready(page, '/app/slap')
+    await ready(page, '/app/slap?tab=listen')
     await page.waitForSelector('.track-row')
     await page.click('.track-row .track-main >> nth=0')
     await page.waitForSelector('.miniplayer-by')

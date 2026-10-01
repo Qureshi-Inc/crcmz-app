@@ -1142,6 +1142,42 @@ def build_router(get_session, is_admin) -> APIRouter:
             logger.warning("slap: thumb not forwarded to slaptastic: %s", e.detail)
         return await asyncio.to_thread(thumbs_for, f["track_id"], me["sub"])
 
+    # ── Discover: this week's new finds ──────────────────────────────────────
+    import slap_discover as discover
+
+    def kick_generate() -> None:
+        if discover.needs_finds(discover.week_of()) and not discover._gen_lock.locked():
+            task = asyncio.create_task(discover.generate())
+            _reroll_tasks.add(task)
+            task.add_done_callback(_reroll_tasks.discard)
+
+    @router.get("/discover")
+    async def discover_get(request: Request):
+        await caller(request)
+        kick_generate()
+        try:
+            await discover.follow_downloads()
+        except HTTPException as e:
+            logger.info("slap: discover couldn't check downloads: %s", e.detail)
+        return {**await asyncio.to_thread(discover.current), "making": discover._gen_lock.locked()}
+
+    @router.post("/discover/download")
+    async def discover_download(request: Request):
+        me = await caller(request)
+        b = await body_of(request)
+        fid = _s(b.get("id"), 20)
+        if not fid.isdigit():
+            raise HTTPException(400, "which song?")
+        return await discover.download(me["sub"], me["slap_user"], fid)
+
+    @router.post("/discover/approve")
+    async def discover_approve(request: Request):
+        me = await caller(request)
+        if not me["admin"]:
+            raise HTTPException(403, "admins only")
+        fid = _s((await body_of(request)).get("id"), 20)
+        return await discover.approve(fid)
+
     @router.get("/track/{tid}")
     async def track_social(tid: str, request: Request):
         """What the player shows beside a track: who added it and who thumbed it."""

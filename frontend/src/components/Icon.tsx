@@ -70,6 +70,7 @@ const PATHS: Record<string, ReactNode> = {
   blur: (<g {...S}><circle cx="10" cy="7" r="3" /><path d="M4 17.5a6 6 0 0 1 12 0" /><path d="M1.5 4v.01M1.5 9v.01M1.5 14v.01M18.5 4v.01M18.5 9v.01M18.5 14v.01" strokeWidth="2.2" /></g>),
   spotlight: (<g {...S}><rect x="1.5" y="2.5" width="17" height="10" rx="1.5" /><rect x="1.5" y="14.5" width="5" height="3" rx="1" /><rect x="7.5" y="14.5" width="5" height="3" rx="1" /><rect x="13.5" y="14.5" width="5" height="3" rx="1" /></g>),
   notes: (<g {...S}><rect x="3.5" y="2" width="13" height="16" rx="2" /><path d="M7 6.5h6M7 10h6M7 13.5h3.5" /></g>),
+  download: (<g {...S}><path d="M10 2.5v10M5.5 8.5 10 13l4.5-4.5M3 17h14" /></g>),
   send: (<g {...S}><path d="M18 2L9 11M18 2l-5.5 16-3.5-7-7-3.5z" /></g>),
   bell: (<g {...S}><path d="M5 8a5 5 0 0 1 10 0c0 4.5 2 6 2 6H3s2-1.5 2-6M8.3 17a1.9 1.9 0 0 0 3.4 0" /></g>),
   megaphone: (<g {...S}><path d="M3 8v4h2.5L14 16V4L5.5 8zM5.5 12l1 5h2.5l-1-4.2M16.5 7.5a3 3 0 0 1 0 5" /></g>),

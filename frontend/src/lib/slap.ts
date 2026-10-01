@@ -202,3 +202,27 @@ export function sourceLink(text: string): string | null {
     return null
   }
 }
+
+// ── Discover ────────────────────────────────────────────────────────────────
+/** A song the library doesn't have yet: Listen plays Apple's 30-second preview,
+ *  Download sends it to the importer and files it in the presser's picks. */
+export type Find = {
+  id: string; title: string; artist: string; album: string; art: string | null; preview: string | null
+  duration: number; for: string; status: 'new' | 'queued' | 'review' | 'done' | 'failed'
+  by: string | null; track_id: string | null; error: string | null
+}
+export type Discover = { week: string; expires: number; finds: Find[]; why: Record<string, string>; ready: boolean; making: boolean }
+
+export function useDiscover() {
+  return useQuery({
+    queryKey: ['slap', 'discover'],
+    queryFn: ({ signal }) => request<Discover>('/api/slap/discover', { signal, timeoutMs: 30_000 }),
+    staleTime: 30_000,
+    // Follow downloads in flight (and a mix still being made) without a reload.
+    refetchInterval: (q) => (q.state.data && (q.state.data.making || !q.state.data.ready
+      || q.state.data.finds.some((f) => f.status === 'queued')) ? 12_000 : false),
+  })
+}
+
+export const downloadFind = (id: string) => request<Find>('/api/slap/discover/download', { body: { id }, timeoutMs: 45_000 })
+export const approveFind = (id: string) => request<Find>('/api/slap/discover/approve', { body: { id } })

@@ -66,6 +66,8 @@ const SECTIONS: Section[] = [
         <p>The squad's music library. It runs on a Jellyfin server.</p>
         <ul>
           <li><b>In this app:</b> open Slap and press play. Your music account is set up for you.</li>
+          <li><b>Discover:</b> Slap opens here. You get the AI mix of the week (from the library), what was just added, and what the squad is playing this week.</li>
+          <li><b>New finds:</b> AI picks that are not in the library yet. <b>Listen</b> plays a 30-second preview. <b>Download</b> adds the song to the library and to your picks playlist, with you as the person who added it. Finds nobody downloads are gone after Sunday.</li>
           <li><b>Listen Together:</b> on the Together tab, tap <b>Start a room</b> or <b>Join them</b>. Everyone hears the same song; anyone can add, skip or pause.</li>
           <li><b>Stats:</b> rankings, charts and who listens to what.</li>
           <li><b>In the player:</b> it shows who added the song. Thumbs up or down and emoji reactions show who pressed them, and stay pressed on every device. Reactions also appear in the comments.</li>

@@ -6705,6 +6705,15 @@ async def _start_jellyfin_sso_sweep():
     if _slap.configured():
         asyncio.create_task(_loop())
 
+
+@app.on_event("startup")
+async def _start_slap_discover():
+    """Expire last week's undownloaded finds, make this week's, and file every import
+    into its person's picks playlist."""
+    import slap_discover
+    if _slap.configured() and _slap.SLAP_ADMIN_TOKEN:
+        asyncio.create_task(slap_discover.loop())
+
 import whatsapp_analytics as _wa
 import giveaway as _giveaway
 import assistant

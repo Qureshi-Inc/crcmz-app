@@ -1674,6 +1674,18 @@ def _slap_thumbs(query: str = "", limit: int = 20) -> dict:
     return _slap.thumbs_overview(str(query or ""), max(1, min(int(limit or 20), 100)))
 
 
+@tool("slap_discover",
+      "Slap's Discover page: this week's new finds (AI-suggested songs that are not in the "
+      "library yet), who each was picked for, whether someone downloaded it and who, plus "
+      "recent downloads from Discover. Finds nobody downloads leave when the week ends.",
+      {"type": "object", "properties": {
+          "limit": {"type": "integer", "description": "recent downloads to list, 1-100, default 20"},
+      }})
+def _slap_discover(limit: int = 20) -> dict:
+    import slap_discover
+    return slap_discover.overview(max(1, min(int(limit or 20), 100)))
+
+
 def tool_specs() -> list[dict]:
     """The registry in OpenAI function-calling form."""
     return [
