@@ -89,13 +89,13 @@ can already sign in → a "you're VIP" email; its password is never touched. The
 session id makes webhook retries send once. Admins can also call it with their session
 and list sends with `GET /api/invites/vip`.
 
-Each VIP also gets a Mattermost account on the `crcmz` team. It signs up through the team's
-invite id, so the app's ordinary bot token is enough. The username comes from the gamer tag,
-then the Discord name, then the email prefix; if a name is taken, a number goes on the end.
-Mattermost emails its own set-password link. The username goes into the person's
-`mm_username` tag. An existing Mattermost account is only added to the team; its password
-is never touched. The PSN portal (`/portal`) reads that tag, so a signed-in member is never
-asked to pick their name.
+Mattermost (mm.qureshi.io) signs in through Authentik → Zitadel, so a VIP uses this same
+CRCMZ account there. The app never creates Mattermost accounts: the bot token can only make
+password accounts, and those clash with the SSO login (Authentik sends the email as the
+OpenID subject). Instead, the invite email carries the crcmz team's join link. Once the
+member has signed in, a background sweep (every 2 minutes) puts them on the team and writes
+their `mm_username` tag. The PSN portal does the same lookup by email, so a signed-in member
+is never asked to pick their name.
 
 Env: `VIP_INVITE_SECRET`, `SMTP_USER`, `SMTP_PASS` (required), and optionally `SMTP_HOST`
 (`smtp.gmail.com`), `SMTP_PORT` (587), `EMAIL_FROM_ADDRESS` (`auth@crcmz.me`),

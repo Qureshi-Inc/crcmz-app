@@ -16,10 +16,11 @@ Two cases, decided by whether the account can already sign in:
 * an account that already signs in → email a plain "you're VIP, sign in" note.
   Its password is never touched.
 
-Each VIP also gets a Mattermost account on the crcmz team (provision_mattermost):
-created through the team's invite id, so the app's non-admin bot token is enough,
-then Mattermost mails its own "set your password" link. The username is written to
-the person's `mm_username` tag, so the PSN portal never has to ask who they are.
+Mattermost (mm.qureshi.io) signs in through Authentik → Zitadel, so a VIP uses this
+same account there. The email carries the crcmz team's join link; once they have
+signed in, link_mattermost (run by a background sweep, and by the PSN portal) puts
+them on the team and writes their `mm_username` tag, so the portal never has to
+ask who they are.
 
 Every send is logged in /data/vip_invites.db. A Stripe checkout session id is
 unique there, so a webhook that Stripe retries sends one email, not three.
@@ -32,7 +33,6 @@ import html
 import logging
 import os
 import re
-import secrets
 import smtplib
 import sqlite3
 import ssl
@@ -272,76 +272,77 @@ def mattermost_configured() -> bool:
     return bool(MATTERMOST_URL and MATTERMOST_TOKEN and MATTERMOST_TEAM_NAME)
 
 
-def mm_username_candidates(*names: str) -> list[str]:
-    """Mattermost-legal usernames from a gamer tag, Discord name or email prefix:
-    3-22 chars of a-z 0-9 . - _, starting with a letter."""
-    out: list[str] = []
-    for raw in names:
-        u = re.sub(r"[^a-z0-9._-]", "", (raw or "").lower())
-        u = re.sub(r"^[^a-z]+", "", u)[:22].rstrip("._-")
-        if len(u) >= 3 and u not in out and u not in {"all", "channel", "here", "matterbot"}:
-            out.append(u)
-    return out
+def _mm_team(client: httpx.Client) -> tuple[str, str]:
+    bot = {"Authorization": f"Bearer {MATTERMOST_TOKEN}"}
+    team = client.get(f"{MATTERMOST_URL}/api/v4/teams/name/{MATTERMOST_TEAM_NAME}", headers=bot)
+    if team.status_code != 200 or not team.json().get("invite_id"):
+        raise InviteError(f"Mattermost team lookup failed ({team.status_code})")
+    return team.json()["id"], team.json()["invite_id"]
 
 
-def provision_mattermost(user_id: str, email: str, *names: str) -> dict:
-    """Make sure `email` has a Mattermost account in the crcmz team and the person's
-    Zitadel `mm_username` tag points at it. Returns {mm_username, created}.
-    Raises InviteError. Never resets the password of an account that already exists."""
+def mattermost_join_url() -> str:
+    """The crcmz team's invite link. Signing up through it with the Authentik →
+    Zitadel button makes an SSO account that is already on the team."""
+    if not mattermost_configured():
+        return ""
+    with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
+        return f"{MATTERMOST_URL}/signup_user_complete/?id={_mm_team(client)[1]}"
+
+
+def link_mattermost(user_id: str, email: str) -> str:
+    """If `email` already has a Mattermost account, put it on the crcmz team and
+    write the person's `mm_username` tag. Returns the username, or '' if there is
+    no account yet.
+
+    Accounts are never created here. Mattermost signs people in through Authentik
+    → Zitadel (OpenID, auth data = email), and the bot token can only make
+    password accounts, which would then clash with that SSO login."""
     if not mattermost_configured():
         raise InviteError("MATTERMOST_URL / MATTERMOST_TOKEN / MATTERMOST_TEAM_NAME are not set")
     email = (email or "").strip().lower()
     bot = {"Authorization": f"Bearer {MATTERMOST_TOKEN}"}
-    created = False
     with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
-        team = client.get(f"{MATTERMOST_URL}/api/v4/teams/name/{MATTERMOST_TEAM_NAME}", headers=bot)
-        if team.status_code != 200 or not team.json().get("invite_id"):
-            raise InviteError(f"Mattermost team lookup failed ({team.status_code})")
-        team_id, invite_id = team.json()["id"], team.json()["invite_id"]
-
         r = client.get(f"{MATTERMOST_URL}/api/v4/users/email/{email}", headers=bot)
-        if r.status_code == 200:
-            mm = r.json()
-            # Already a Mattermost user: just make sure they are on the team.
-            tm = client.get(f"{MATTERMOST_URL}/api/v4/teams/{team_id}/members/{mm['id']}", headers=bot)
-            if tm.status_code != 200:
-                a = client.post(f"{MATTERMOST_URL}/api/v4/teams/{team_id}/members", headers=bot,
-                                json={"team_id": team_id, "user_id": mm["id"]})
-                if a.status_code not in (200, 201):
-                    logger.warning("vip: could not add %s to the team: %s", mm["username"], a.status_code)
-        elif r.status_code == 404:
-            mm = None
-            for base in mm_username_candidates(*names, email.split("@", 1)[0]) or ["member"]:
-                for name in [base] + [f"{base[:20]}{n}" for n in range(2, 10)]:
-                    if client.get(f"{MATTERMOST_URL}/api/v4/users/username/{name}",
-                                  headers=bot).status_code != 404:
-                        continue
-                    # Signing up with the team invite id joins the team and works with
-                    # open signup off; no Authorization header, it is a signup.
-                    c = client.post(f"{MATTERMOST_URL}/api/v4/users", params={"iid": invite_id},
-                                    json={"email": email, "username": name,
-                                          "password": secrets.token_urlsafe(24) + "!A1"})
-                    if c.status_code in (200, 201):
-                        mm, created = c.json(), True
-                        break
-                    logger.warning("vip: mattermost signup as %s answered %s %s",
-                                   name, c.status_code, c.text[:200])
-                if mm:
-                    break
-            if not mm:
-                raise InviteError("could not create the Mattermost account")
-            # Mattermost mails its own link; the random password above is never shown.
-            pr = client.post(f"{MATTERMOST_URL}/api/v4/users/password/reset/send", json={"email": email})
-            if pr.status_code != 200:
-                logger.warning("vip: mattermost password email for %s answered %s", email, pr.status_code)
-        else:
+        if r.status_code == 404:
+            return ""
+        if r.status_code != 200:
             raise InviteError(f"Mattermost user lookup failed ({r.status_code})")
-
+        mm = r.json()
+        team_id, _ = _mm_team(client)
+        tm = client.get(f"{MATTERMOST_URL}/api/v4/teams/{team_id}/members/{mm['id']}", headers=bot)
+        if tm.status_code != 200:
+            a = client.post(f"{MATTERMOST_URL}/api/v4/teams/{team_id}/members", headers=bot,
+                            json={"team_id": team_id, "user_id": mm["id"]})
+            if a.status_code not in (200, 201):
+                logger.warning("vip: could not add @%s to the team: %s", mm["username"], a.status_code)
         if user_id:
             _set_tag(client, user_id, "mm_username", mm["username"])
-    logger.info("vip: mattermost @%s for zitadel %s (%s)", mm["username"], user_id,
-                "created" if created else "existing")
-    return {"mm_username": mm["username"], "created": created}
+    if user_id:
+        with _lock, _conn() as c:
+            c.execute("UPDATE vip_invites SET mm_username = ? WHERE zitadel_id = ? AND mm_username = ''",
+                      (mm["username"], user_id))
+    logger.info("vip: mattermost @%s linked to zitadel %s", mm["username"], user_id)
+    return mm["username"]
+
+
+def link_pending_mattermost(max_age_days: int = 30) -> int:
+    """Background sweep: VIPs who have signed in to Mattermost since their invite
+    get their team membership and `mm_username` tag. Returns how many it linked."""
+    if not (mattermost_configured() and ZITADEL_SERVICE_TOKEN):
+        return 0
+    since = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() - max_age_days * 86400,
+                                   timezone.utc).isoformat(timespec="seconds")
+    with _lock, _conn() as c:
+        rows = c.execute("SELECT DISTINCT zitadel_id, email FROM vip_invites WHERE mm_username = '' "
+                         "AND zitadel_id != '' AND status != 'failed' AND created_at >= ?",
+                         (since,)).fetchall()
+    linked = 0
+    for r in rows:
+        try:
+            linked += bool(link_mattermost(r["zitadel_id"], r["email"]))
+        except (InviteError, httpx.HTTPError) as e:
+            logger.debug("vip: mattermost sweep for %s: %s", r["zitadel_id"], e)
+    return linked
 
 
 def mm_username_for(user_id: str) -> str:
@@ -352,6 +353,19 @@ def mm_username_for(user_id: str) -> str:
         with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
             return _get_tag(client, user_id, "mm_username")
     except httpx.HTTPError:
+        return ""
+
+
+def known_mm_username(user_id: str, email: str) -> str:
+    """Their `mm_username` tag, else their Mattermost account found by email (and
+    then linked). '' when they have never signed in to Mattermost."""
+    name = mm_username_for(user_id)
+    if name or not (email and mattermost_configured()):
+        return name
+    try:
+        return link_mattermost(user_id, email)
+    except (InviteError, httpx.HTTPError) as e:
+        logger.debug("vip: mattermost lookup for %s: %s", user_id, e)
         return ""
 
 
@@ -426,19 +440,29 @@ def render_welcome(name: str, email: str) -> tuple[str, str, str]:
     return subject, _layout("You're a VIP", body, "Open the app →", url, foot), text
 
 
-def _with_mattermost(html_body: str, text_body: str, mm_username: str) -> tuple[str, str]:
-    """Add the squad-chat line to either email, just above the footnote."""
-    note = ("<p style=\"margin:0 0 12px;\">Squad chat is on Mattermost "
-            f"(<a href=\"{html.escape(MATTERMOST_URL)}\" style=\"color:#22e6ff;\">"
-            f"{html.escape(MATTERMOST_URL.split('//')[-1])}</a>) as "
-            f"<b style=\"color:#f3ecff;\">@{html.escape(mm_username)}</b>. "
-            "Mattermost sends its own email to set that password.</p>")
+def _with_mattermost(html_body: str, text_body: str, mm_username: str,
+                     join_url: str) -> tuple[str, str]:
+    """Add the squad-chat line to either email, just above the button."""
+    a = "color:#22e6ff;"
+    if mm_username:
+        note = ("Squad chat is on Mattermost "
+                f"(<a href=\"{html.escape(MATTERMOST_URL)}\" style=\"{a}\">"
+                f"{html.escape(MATTERMOST_URL.split('//')[-1])}</a>), where you are "
+                f"<b style=\"color:#f3ecff;\">@{html.escape(mm_username)}</b>.")
+        text = f"Squad chat: {MATTERMOST_URL} (you are @{mm_username})."
+    else:
+        note = (f"Squad chat is on Mattermost. <a href=\"{html.escape(join_url)}\" style=\"{a}\">"
+                "Join the CRCMZ team</a>, choose <b style=\"color:#f3ecff;\">Authentik</b>, then "
+                "<b style=\"color:#f3ecff;\">Zitadel</b>, and sign in with this same CRCMZ account "
+                "(set your password below first).")
+        text = (f"Squad chat: join the CRCMZ team on Mattermost at {join_url} — choose Authentik, "
+                "then Zitadel, and sign in with this same CRCMZ account.")
     marker = '<tr><td align="center" style="padding:26px 28px 8px;">'
     html_body = html_body.replace(marker, f'<tr><td style="padding:12px 32px 0;font-family:-apple-system,'
                                   f"BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;font-size:15px;"
-                                  f'line-height:1.6;color:#d9cff5;">{note}</td></tr>\n    {marker}', 1)
-    text_body = text_body.replace("\n— CRCMZ", f"Squad chat: {MATTERMOST_URL} as @{mm_username} "
-                                  "(Mattermost emails you a link to set its password).\n\n— CRCMZ", 1)
+                                  f'line-height:1.6;color:#d9cff5;"><p style="margin:0;">{note}</p></td></tr>'
+                                  f'\n    {marker}', 1)
+    text_body = text_body.replace("\n— CRCMZ", f"{text}\n\n— CRCMZ", 1)
     return html_body, text_body
 
 
@@ -498,16 +522,16 @@ def invite_vip(email: str, *, name: str = "", source: str = "", stripe_session_i
                 subject, html_body, text_body = render_invite(name, email,
                                                               invite_url(user_id, _invite_code(client, user_id)))
             _tag_vip(client, user_id)
-        mm_username = ""
+        mm_username, join_url = "", ""
         if mattermost_configured():
             # Best effort: a Mattermost hiccup must not cost them the app invite.
             try:
-                mm_username = provision_mattermost(user_id, email, gamer_tag, discord_username,
-                                                   name)["mm_username"]
+                mm_username = link_mattermost(user_id, email)
+                join_url = "" if mm_username else mattermost_join_url()
             except (InviteError, httpx.HTTPError) as e:
                 logger.warning("vip: mattermost for %s failed: %s", email, e)
-        if mm_username:
-            html_body, text_body = _with_mattermost(html_body, text_body, mm_username)
+        if mm_username or join_url:
+            html_body, text_body = _with_mattermost(html_body, text_body, mm_username, join_url)
         send_email(email, subject, html_body, text_body)
     except (InviteError, httpx.HTTPError, smtplib.SMTPException, OSError) as e:
         logger.warning("vip: invite for %s failed: %s", email, e)

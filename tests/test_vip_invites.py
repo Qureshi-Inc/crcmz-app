@@ -86,7 +86,7 @@ class FakeZitadel:
 
 
 class FakeMattermost:
-    """Team lookup, user lookups, invite-id signup and the password email."""
+    """Team lookup, user-by-email and team membership."""
 
     def __init__(self, users=None, members=None):
         self.users = users or {}            # email -> {"id", "username"}
@@ -102,18 +102,6 @@ class FakeMattermost:
         if path.startswith("/api/v4/users/email/"):
             u = self.users.get(path.rsplit("/", 1)[1])
             return httpx.Response(200, json=u) if u else httpx.Response(404, json={})
-        if path.startswith("/api/v4/users/username/"):
-            name = path.rsplit("/", 1)[1]
-            hit = any(u["username"] == name for u in self.users.values())
-            return httpx.Response(200 if hit else 404, json={})
-        if path == "/api/v4/users" and req.method == "POST":
-            assert req.url.params.get("iid") == "INV" and "authorization" not in req.headers
-            u = {"id": f"mm{len(self.users)}", "username": body["username"]}
-            self.users[body["email"]] = u
-            self.members.add(u["id"])
-            return httpx.Response(201, json=u)
-        if path == "/api/v4/users/password/reset/send":
-            return httpx.Response(200, json={})
         if path.startswith("/api/v4/teams/T1/members/"):
             return httpx.Response(200 if path.rsplit("/", 1)[1] in self.members else 404, json={})
         if path == "/api/v4/teams/T1/members":
@@ -262,29 +250,40 @@ def flow_tests():
             return
         raise AssertionError("wrong code accepted")
 
-    def vip_gets_mattermost_account_and_tag():
+    def vip_without_mattermost_gets_join_link():
         fresh_db()
-        z, m = FakeZitadel(), FakeMattermost(users={"x@y.co": {"id": "o", "username": "babybottlepop"}})
+        z, m = FakeZitadel(), FakeMattermost()
         sent = install(Both(z, m))
-        out = vip_invites.invite_vip("fan@example.com", gamer_tag="Baby bottle pop",
-                                     discord_username="kurokishi_haruma")
-        # The gamer tag's username is taken, so the next free variant is used.
-        assert out["mm_username"] == "babybottlepop2", out
-        signup = [c for c in m.calls if c[1] == "/api/v4/users"][0]
-        assert signup[2]["email"] == "fan@example.com" and signup[3]["iid"] == "INV"
-        assert any(c[1].endswith("/password/reset/send") for c in m.calls)
-        assert any(c[1].endswith("/metadata/mm_username") for c in z.calls), "no mm_username tag"
-        assert "@babybottlepop2" in sent[0]["html"] and "@babybottlepop2" in sent[0]["text"]
-        assert vip_invites.recent()[0]["mm_username"] == "babybottlepop2"
+        out = vip_invites.invite_vip("fan@example.com", gamer_tag="Baby bottle pop")
+        assert out["mm_username"] == "", out
+        # SSO accounts only: the app must never make a password account.
+        assert not any(c[0] == "POST" and c[1] == "/api/v4/users" for c in m.calls)
+        assert "https://mm.test/signup_user_complete/?id=INV" in sent[0]["text"], sent[0]["text"]
+        assert "signup_user_complete/?id=INV" in sent[0]["html"] and "Zitadel" in sent[0]["html"]
 
-    def existing_mattermost_user_keeps_password():
+    def existing_mattermost_user_linked_and_named():
         fresh_db()
         z, m = FakeZitadel(), FakeMattermost(users={"old@y.co": {"id": "o1", "username": "oldie"}})
-        install(Both(z, m))
-        out = vip_invites.provision_mattermost("1000", "Old@y.co", "whatever")
-        assert out == {"mm_username": "oldie", "created": False}, out
-        assert not any(c[1].endswith("/password/reset/send") for c in m.calls)
+        sent = install(Both(z, m))
+        out = vip_invites.invite_vip("Old@y.co")
+        assert out["mm_username"] == "oldie", out
         assert "o1" in m.members, "not added to the team"
+        assert any(c[1].endswith("/metadata/mm_username") for c in z.calls), "no mm_username tag"
+        assert "@oldie" in sent[0]["html"] and "signup_user_complete" not in sent[0]["text"]
+        assert vip_invites.recent()[0]["mm_username"] == "oldie"
+
+    def sweep_links_after_first_sso_login():
+        fresh_db()
+        z, m = FakeZitadel(), FakeMattermost()
+        install(Both(z, m))
+        out = vip_invites.invite_vip("new@y.co")
+        assert vip_invites.link_pending_mattermost() == 0
+        m.users["new@y.co"] = {"id": "n1", "username": "newbie"}   # they signed in via SSO
+        assert vip_invites.link_pending_mattermost() == 1
+        assert vip_invites.recent()[0]["mm_username"] == "newbie"
+        assert "n1" in m.members
+        assert vip_invites.link_pending_mattermost() == 0, "linked twice"
+        assert vip_invites.known_mm_username(out["zitadel_id"], "new@y.co") == "newbie"
 
     def mattermost_failure_still_sends_app_invite():
         fresh_db()
@@ -296,12 +295,8 @@ def flow_tests():
         out = vip_invites.invite_vip("n@b.co")
         assert out["kind"] == "invite" and out["mm_username"] == "" and len(sent) == 1
 
-    def username_candidates_are_legal():
-        c = vip_invites.mm_username_candidates("Baby bottle pop", "__9Faze!", "ab", "x" * 40)
-        assert c == ["babybottlepop", "faze", "x" * 22], c
-
-    for fn in (vip_gets_mattermost_account_and_tag, existing_mattermost_user_keeps_password,
-               mattermost_failure_still_sends_app_invite, username_candidates_are_legal,
+    for fn in (vip_without_mattermost_gets_join_link, existing_mattermost_user_linked_and_named,
+               sweep_links_after_first_sso_login, mattermost_failure_still_sends_app_invite,
                new_member_gets_account_and_invite_link, stripe_retry_sends_once,
                existing_account_gets_welcome_and_no_code, existing_account_without_password_gets_invite,
                bad_email_rejected, smtp_failure_is_logged_and_retryable,
@@ -355,7 +350,7 @@ def http_tests():
         assert r.status_code == 200, r.status_code
 
     def portal_skips_picker_when_name_known():
-        server._vip.mm_username_for = lambda sub: "babybottlepop" if sub == "393" else ""
+        server._vip.known_mm_username = lambda sub, email: "babybottlepop" if sub == "393" else ""
         server.portal_mod.find_by_zitadel_id = lambda sub: None
         cookie = server._signer().dumps(server._make_session("393", "f@b.co"))
         r = client.get("/portal", cookies={server._SESSION_COOKIE: cookie})

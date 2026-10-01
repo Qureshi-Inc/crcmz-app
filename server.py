@@ -1667,6 +1667,22 @@ async def vip_invite(request: Request):
     return JSONResponse(result)
 
 
+@app.on_event("startup")
+async def _start_vip_mattermost_sweep():
+    async def _loop():
+        while True:
+            await asyncio.sleep(120)
+            try:
+                n = await asyncio.to_thread(_vip.link_pending_mattermost)
+                if n:
+                    logger.info("vip: linked %d Mattermost account(s)", n)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("vip: mattermost sweep failed: %s", e)
+
+    if _vip.mattermost_configured():
+        asyncio.create_task(_loop())
+
+
 @app.get("/api/invites/vip")
 async def vip_invite_list(request: Request, limit: int = 50):
     session = _get_session(request)
@@ -6170,7 +6186,7 @@ async def api_psn_link(request: Request):
     derived_username = email.split("@")[0] if email else ""
     existing = portal_mod.find_by_zitadel_id(zitadel_user_id)
     mm_username = ((existing or {}).get("mm_username")
-                   or await asyncio.to_thread(_vip.mm_username_for, zitadel_user_id)
+                   or await asyncio.to_thread(_vip.known_mm_username, zitadel_user_id, email)
                    or derived_username)
     try:
         result = portal_mod.link_user(npsso, mm_username=mm_username, zitadel_user_id=zitadel_user_id)
@@ -6185,11 +6201,13 @@ async def api_psn_link(request: Request):
 def _known_mm_username(request: Request) -> str:
     """The signed-in person's Mattermost name: their portal record, else their
     Zitadel `mm_username` tag. '' when signed out or unknown."""
-    sub = (_get_session(request) or {}).get("sub", "")
+    session = _get_session(request) or {}
+    sub = session.get("sub", "")
     if not sub:
         return ""
     existing = portal_mod.find_by_zitadel_id(sub) or {}
-    return (existing.get("mm_username") or "").strip() or _vip.mm_username_for(sub)
+    return ((existing.get("mm_username") or "").strip()
+            or _vip.known_mm_username(sub, session.get("email", "")))
 
 
 @app.get("/portal", response_class=HTMLResponse)
