@@ -93,8 +93,29 @@ const trackBody = (t: Pick<Track, 'id' | 'title' | 'artist' | 'album'>) => ({ tr
 export const setFavorite = (id: string, on: boolean) =>
   request<{ fav: boolean }>(`/api/slap/favorites/${id}`, { method: on ? 'POST' : 'DELETE' })
 
+export type Thumbs = { up: string[]; down: string[]; mine: -1 | 0 | 1 }
+/** Beside a track in the player: whose picks brought it in, and who thumbed it. */
+export type TrackSocial = { picked_by: string[]; thumbs: Thumbs }
+
+export function useTrackSocial(id: string | null | undefined) {
+  return useQuery({
+    queryKey: ['slap', 'track', id],
+    queryFn: ({ signal }) => request<TrackSocial>(`/api/slap/track/${id}`, { signal }),
+    enabled: !!id,
+    staleTime: 60_000,
+    retry: false,
+  })
+}
+
 export const sendThumb = (t: Pick<Track, 'id' | 'title' | 'artist' | 'album'>, thumbs: -1 | 0 | 1) =>
-  request('/api/slap/thumb', { body: { ...trackBody(t), thumbs } })
+  request<Thumbs>('/api/slap/thumb', { body: { ...trackBody(t), thumbs } })
+
+/** "Moiz", "Moiz and Noor", "Moiz, Noor and 2 more". */
+export function names(list: string[], max = 2): string {
+  if (list.length <= max) return list.length === 2 ? `${list[0]} and ${list[1]}` : list.join('')
+  const rest = list.length - max
+  return `${list.slice(0, max).join(', ')} and ${rest} more`
+}
 
 export type SlapComment = {
   id: string; username: string; track_id?: string; title: string; artist: string

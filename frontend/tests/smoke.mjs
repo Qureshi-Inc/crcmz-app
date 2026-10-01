@@ -153,6 +153,7 @@ const slapMatch = (extra = {}) => (key) => {
   if (key.startsWith('GET /api/slap/art/')) return (r) => r.fulfill({ status: 200, contentType: 'image/jpeg', body: STUDIO_FRAME })
   if (key.startsWith('GET /api/slap/stream/')) return serveRange(STUDIO_VIDEO, 'video/webm')
   if (key.startsWith('GET /api/slap/social/')) return socialFixture(key.slice('GET /api/slap/social/'.length))
+  if (key.startsWith('GET /api/slap/track/')) return json(200, { picked_by: [], thumbs: { up: [], down: [], mine: 0 } })
   return null
 }
 const WHO = [{ username: 'moiz', color: '#ff3df0' }, { username: 'zubair221b', color: '#22e6ff' }, { username: 'nooramin40', color: '#ffd24a' }]
@@ -2714,6 +2715,54 @@ try {
     check('slap: a reaction posts as a reaction', posted.length === 2 && posted[1].is_reaction === true && posted[1].text === '🔥', JSON.stringify(posted))
     await axe(page, 'Slap sheet with thread 375', '.sheet-player')
     check('no unmocked writes and no page errors (Slap mentions)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+
+  // ── 19. Slap player: who added it, thumbs that remember, reactions you can see ──
+  {
+    const thumbed = []
+    const mine = new Date((NOW - 120) * 1000).toISOString()
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        ...SLAP_BASE,
+        'POST /api/slap/thumb': (r) => { const b = r.request().postDataJSON(); thumbed.push(b.thumbs); return json(200, { up: b.thumbs === 1 ? ['Zubair', 'Moiz Qureshi'] : ['Zubair'], down: [], mine: b.thumbs })(r) },
+      },
+      match: slapMatch({
+        'POST /api/slap/listen/play': json(200, { ok: true }), 'POST /api/slap/listen/skip': json(200, { ok: true }),
+        'GET /api/slap/social/listening/comments': json(200, { comments: [
+          { id: 'r1', username: 'moiz', title: 'Track 1', artist: 'SZA', text: '🔥', is_reaction: true, created_at: mine },
+          { id: 'r2', username: 'nooramin40', title: 'Track 1', artist: 'SZA', text: '🔥', is_reaction: true, created_at: mine },
+        ] }),
+        ...Object.fromEntries(SLAP_TRACKS.map(({ id }) => [`GET /api/slap/track/${id}`, json(200, { picked_by: ['Noor Amin'], thumbs: { up: ['Zubair'], down: [], mine: 0 } })])),
+      }),
+    })
+    await ready(page, '/app/slap')
+    await page.waitForSelector('.track-row')
+    await page.click('.track-row .track-main >> nth=0')
+    await page.waitForSelector('.miniplayer-by')
+    check('slap: the mini-player says whose pick is playing', (await page.textContent('.miniplayer-by')).includes('Noor Amin'))
+    await page.click('.miniplayer-open')
+    await page.waitForSelector('.sheet-player .player-by')
+    check('slap: the player says who added the track', (await page.textContent('.sheet-player .player-by')).includes('Added by Noor Amin'))
+    const up = '.sheet-player button[aria-label^="Thumbs up"]'
+    check('slap: thumbs show how many and who', (await page.getAttribute(up, 'aria-label')) === 'Thumbs up, 1 so far' && (await page.textContent('.sheet-player .track-rated')).includes('Zubair'))
+    const fire = '.sheet-player .reaction-btn >> nth=0'
+    check('slap: your reaction shows as pressed, with the count', (await page.getAttribute(fire, 'aria-pressed')) === 'true' && (await page.textContent(fire)).includes('2'))
+    check('slap: reactions show in the thread', (await page.locator('.sheet-player .comment-item[data-reaction="true"]').count()) === 2)
+    await page.click(up)
+    await page.waitForFunction((sel) => document.querySelector(sel)?.getAttribute('aria-pressed') === 'true', up.replace(' >> nth=0', ''))
+    check('slap: a thumb sticks and the tally follows the server', thumbed.join() === '1' && (await page.getAttribute(up, 'aria-label')) === 'Thumbs up, 2 so far')
+    await page.click(up)
+    await page.waitForFunction((sel) => document.querySelector(sel)?.getAttribute('aria-pressed') === 'false', up)
+    check('slap: pressing it again takes the thumb back', thumbed.join() === '1,0')
+    await page.click(fire)
+    await page.waitForSelector('.toast:has-text("already reacted")', { timeout: 3000 }).catch(() => {})
+    check('slap: a second identical reaction is not posted', (await page.locator('.toast:has-text("already reacted")').count()) === 1)
+    await tapTargets(page, 'Slap player actions 375')
+    await shot(page, 'slap-375-thumbs')
+    await axe(page, 'Slap player actions 375', '.sheet-player')
+    check('no unmocked writes and no page errors (Slap thumbs)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 } finally {

@@ -23,6 +23,9 @@ JF_LOG: list[tuple[str, str, dict, dict | None, dict]] = []
 SOCIAL_LOG: list[tuple[str, str, dict | None]] = []
 USERS = [{"Name": "moiz", "Id": "a" * 32}, {"Name": "shahraiz", "Id": "b" * 32},
          {"Name": "mazino", "Id": "d" * 32}, {"Name": "babefaze", "Id": "e" * 32}]
+# "<name>'s picks" contents, and playlists only the who-added test turns on.
+PLAYLIST_ITEMS = {"4" * 32: ["1" * 32], "5" * 32: ["1" * 32], "6" * 32: ["1" * 32, "3" * 32]}
+EXTRA_PLAYLISTS: list[dict] = []
 SSO = "505ce9d1-d916-42fa-86ca-673ef241d7df"
 # Made by Zitadel sign-ins to Jellyfin; the plugin stores the GUID with dashes.
 LINKS = {"moiz": "a" * 32, "mazino": "dddddddd-dddd-dddd-dddd-dddddddddddd",
@@ -85,7 +88,9 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/Items" and q.get("IncludeItemTypes") == "Playlist":
             return self._send(200, {"Items": [
                 {"Id": "4" * 32, "Name": "moiz's picks", "ChildCount": 2},
-                {"Id": "5" * 32, "Name": "shahraiz's picks", "ChildCount": 1}]})
+                {"Id": "5" * 32, "Name": "shahraiz's picks", "ChildCount": 1}, *EXTRA_PLAYLISTS]})
+        if p.startswith("/Playlists/") and p.endswith("/Items") and method == "GET":
+            return self._send(200, {"Items": [{"Id": i} for i in PLAYLIST_ITEMS.get(p.split("/")[2], [])]})
         if p.startswith("/Items/") and method == "GET":
             iid = p.split("/")[2]
             names = {"4" * 32: "moiz's picks", "5" * 32: "shahraiz's picks"}
@@ -121,6 +126,7 @@ os.environ["JELLYFIN_URL"] = serve("jf")
 os.environ["JELLYFIN_TOKEN"] = "jf-key"
 os.environ["SLAP_API_URL"] = serve("social")
 os.environ["SLAP_PLAYLISTS_FILE"] = os.path.join(tempfile.mkdtemp(), "slap_playlists.json")
+os.environ["SLAP_THUMBS_DB"] = os.path.join(tempfile.mkdtemp(), "slap_thumbs.db")
 os.environ.setdefault("SESSION_SECRET", "test-secret")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -333,6 +339,43 @@ def t_stamped():
     assert SOCIAL_LOG[0][2]["listened_seconds"] == 245 and SOCIAL_LOG[1][2]["thumbs"] == 1
 
 
+def t_thumbs_persist_and_show_who():
+    as_("100")
+    SOCIAL_LOG.clear()
+    with slap._thumbs() as db:
+        db.execute("DELETE FROM thumbs")
+    t = {"track_id": "1" * 32, "title": "Breezeblocks", "artist": "alt-J"}
+    r = client.post("/api/slap/thumb", json={**t, "thumbs": 1}).json()
+    assert r == {"up": ["Moiz"], "down": [], "mine": 1}, r
+    assert SOCIAL_LOG[-1][2]["thumbs"] == 1, "slaptastic still hears about it"
+    as_("200")
+    client.post("/api/slap/thumb", json={**t, "thumbs": -1})
+    r = client.get("/api/slap/track/" + "1" * 32).json()["thumbs"]
+    assert r == {"up": ["Moiz"], "down": ["Zubair"], "mine": -1}, r
+    client.post("/api/slap/thumb", json={**t, "thumbs": 1})
+    client.post("/api/slap/thumb", json={**t, "thumbs": 0})
+    as_("100")
+    r = client.get("/api/slap/track/" + "1" * 32).json()["thumbs"]
+    assert r == {"up": ["Moiz"], "down": [], "mine": 1}, "one thumb each, and 0 takes it back"
+    out = slap.thumbs_overview("alt")
+    assert out["tracks"][0]["thumbs_up"] == ["Moiz"] and "100" not in json.dumps(out)
+    assert client.get("/api/slap/track/nope").status_code == 404
+    as_(None)
+    assert client.get("/api/slap/track/" + "1" * 32).status_code == 401
+
+
+def t_who_added_comes_from_picks_playlists():
+    as_("100")
+    EXTRA_PLAYLISTS.append({"Id": "6" * 32, "Name": "slapper's picks"})
+    try:
+        r = client.get("/api/slap/track/" + "1" * 32).json()
+        assert r["picked_by"] == ["Moiz", "Imposter"], "people by their display names, the bot dropped"
+        assert client.get("/api/slap/track/" + "3" * 32).json()["picked_by"] == ["Slap"], "the bot only when nobody else"
+        assert client.get("/api/slap/track/" + "f" * 32).json()["picked_by"] == []
+    finally:
+        EXTRA_PLAYLISTS.clear()
+
+
 # ── Listen Together ──────────────────────────────────────────────────────────
 def room():
     r = slap.Room()
@@ -414,7 +457,7 @@ def t_together_resolves_server_side():
 def t_tools_registered():
     import assistant
     names = assistant.tool_names()
-    for n in ("slap_library_search", "slap_together", "slap_stats"):
+    for n in ("slap_library_search", "slap_together", "slap_stats", "slap_thumbs"):
         assert n in names, n
     assert "error" in assistant._slap_stats("nope")
 

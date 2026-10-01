@@ -36,6 +36,7 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -314,6 +315,105 @@ def _names_of(me: dict) -> set[str]:
     p = me["person"]
     return {n.casefold() for n in (me["jf"]["name"], p.get("username"), p.get("mm_username"),
                                    p.get("psn_id")) if n}
+
+
+# ── Who added a track ────────────────────────────────────────────────────────
+# music-importer files every song someone submits into "<name>'s picks", so those
+# playlists say who brought a track in. "slapper" is the bot's own playlist (AI
+# picks and imports nobody asked for); it only counts when no person claims the song.
+_PICKS = re.compile(r"^(.+)'s picks$", re.I)
+_BOT_PICKS = {"slapper"}
+
+
+def _picker_name(name: str, idx: dict[str, dict]) -> str:
+    p = idx.get(name.casefold())
+    return (p.get("display_name") or p.get("username") or name) if p else name
+
+
+async def picked_by() -> dict[str, list[str]]:
+    """track id → the people whose picks playlist holds it. Cached ten minutes."""
+    if (hit := _cached("picks", 600)) is not None:
+        return hit
+    users = await _jf_users()
+    if not users:
+        return _store("picks", {})
+    uid = next(iter(users.values()))["id"]
+    data = _ok(await _jf("GET", "/Items", params={
+        "userId": uid, "IncludeItemTypes": "Playlist", "Recursive": "true"})) or {}
+    idx = mention_index(await asyncio.to_thread(crcmz_identity.people))
+    people: dict[str, list[str]] = {}
+    bots: dict[str, list[str]] = {}
+    for pl in data.get("Items", []):
+        m = _PICKS.match(pl.get("Name") or "")
+        if not m or not pl.get("Id"):
+            continue
+        owner = m.group(1).strip()
+        items = _ok(await _jf("GET", f"/Playlists/{pl['Id']}/Items", params={"userId": uid})) or {}
+        into = bots if owner.casefold() in _BOT_PICKS else people
+        name = "Slap" if into is bots else _picker_name(owner, idx)
+        for t in items.get("Items", []):
+            if (tid := t.get("Id")) and name not in into.setdefault(tid, []):
+                into[tid].append(name)
+    for tid, names in bots.items():
+        people.setdefault(tid, names)
+    return _store("picks", people)
+
+
+# ── Thumbs ───────────────────────────────────────────────────────────────────
+# slaptastic keeps thumbs as append-only play events with no way to read them
+# back, so the app keeps its own: one row per (track, person), so a thumb shows
+# as pressed on every device and everyone sees who rated what.
+_THUMBS_DB = Path(os.environ.get("SLAP_THUMBS_DB", "/data/slap_thumbs.db"))
+_thumbs_ready = False
+
+
+def _thumbs() -> sqlite3.Connection:
+    global _thumbs_ready
+    c = sqlite3.connect(_THUMBS_DB, check_same_thread=False)
+    c.row_factory = sqlite3.Row
+    if not _thumbs_ready:
+        _THUMBS_DB.parent.mkdir(parents=True, exist_ok=True)
+        c.execute("""CREATE TABLE IF NOT EXISTS thumbs (
+            track_id TEXT NOT NULL, sub TEXT NOT NULL, name TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '', artist TEXT NOT NULL DEFAULT '',
+            value INTEGER NOT NULL, ts REAL NOT NULL, PRIMARY KEY (track_id, sub))""")
+        _thumbs_ready = True
+    return c
+
+
+def save_thumb(track_id: str, sub: str, name: str, title: str, artist: str, value: int) -> None:
+    with _thumbs() as db:
+        if value:
+            db.execute("INSERT INTO thumbs(track_id, sub, name, title, artist, value, ts) VALUES (?,?,?,?,?,?,?) "
+                       "ON CONFLICT(track_id, sub) DO UPDATE SET value=excluded.value, ts=excluded.ts, "
+                       "name=excluded.name", (track_id, sub, name, title, artist, value, time.time()))
+        else:
+            db.execute("DELETE FROM thumbs WHERE track_id=? AND sub=?", (track_id, sub))
+
+
+def thumbs_for(track_id: str, sub: str = "") -> dict:
+    """Who rated a track up and down, and the caller's own thumb."""
+    with _thumbs() as db:
+        rows = db.execute("SELECT sub, name, value FROM thumbs WHERE track_id=? ORDER BY ts", (track_id,)).fetchall()
+    return {"up": [r["name"] for r in rows if r["value"] > 0],
+            "down": [r["name"] for r in rows if r["value"] < 0],
+            "mine": next((r["value"] for r in rows if r["sub"] == sub), 0)}
+
+
+def thumbs_overview(query: str = "", limit: int = 20) -> dict:
+    """Recent thumbs by track, for the assistant. Names only, never account ids."""
+    q = f"%{query.strip()[:100]}%"
+    with _thumbs() as db:
+        rows = db.execute(
+            "SELECT track_id, MAX(title) title, MAX(artist) artist, MAX(ts) ts, "
+            "GROUP_CONCAT(CASE WHEN value > 0 THEN name END, ', ') up, "
+            "GROUP_CONCAT(CASE WHEN value < 0 THEN name END, ', ') down "
+            "FROM thumbs WHERE title LIKE ? OR artist LIKE ? GROUP BY track_id ORDER BY ts DESC LIMIT ?",
+            (q, q, max(1, min(int(limit or 20), 100)))).fetchall()
+    return {"tracks": [{"title": r["title"], "artist": r["artist"],
+                        "thumbs_up": (r["up"] or "").split(", ") if r["up"] else [],
+                        "thumbs_down": (r["down"] or "").split(", ") if r["down"] else [],
+                        "last": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(r["ts"]))} for r in rows]}
 
 
 def can_edit(me: dict, pid: str, name: str) -> bool:
@@ -853,9 +953,26 @@ def build_router(get_session, is_admin) -> APIRouter:
         me = await caller(request)
         b = await body_of(request)
         f = track_fields(b)
-        return await _social_write("POST", "thumb", {
-            "username": me["slap_user"], "track_id": f["track_id"], "title": f["title"],
-            "artist": f["artist"], "thumbs": max(-1, min(_int(b.get("thumbs"), 0), 1))})
+        v = max(-1, min(_int(b.get("thumbs"), 0), 1))
+        await asyncio.to_thread(save_thumb, f["track_id"], me["sub"], me["name"], f["title"], f["artist"], v)
+        try:  # slaptastic's taste stats learn from it too; the thumb stands either way
+            await _social_write("POST", "thumb", {
+                "username": me["slap_user"], "track_id": f["track_id"], "title": f["title"],
+                "artist": f["artist"], "thumbs": v})
+        except HTTPException as e:
+            logger.warning("slap: thumb not forwarded to slaptastic: %s", e.detail)
+        return await asyncio.to_thread(thumbs_for, f["track_id"], me["sub"])
+
+    @router.get("/track/{tid}")
+    async def track_social(tid: str, request: Request):
+        """What the player shows beside a track: who added it and who thumbed it."""
+        me = await caller(request)
+        check_id(tid)
+        try:
+            by = (await picked_by()).get(tid, [])
+        except HTTPException:
+            by = []
+        return {"picked_by": by, "thumbs": await asyncio.to_thread(thumbs_for, tid, me["sub"])}
 
     @router.post("/comment")
     async def comment(request: Request):

@@ -9,7 +9,10 @@ import { ApiError } from '../../lib/http'
 import { useDesktop } from '../../lib/media'
 import { useSwipeDown } from '../../lib/gestures'
 import { CommentBox, CommentThread } from './Comments'
-import { artUrl, fmtTime, sendComment, sendThumb, setFavorite, type Library, type QueueItem } from '../../lib/slap'
+import {
+  artUrl, fmtTime, names, sendComment, slapName, sendThumb, setFavorite, useSlapMe, useTrackComments, useTrackSocial,
+  type Library, type QueueItem, type TrackSocial,
+} from '../../lib/slap'
 import {
   clearUpcoming, closePlayer, current, cycleRepeat, jump, leaveTogether, move, next, prev, remove, seek, setExpanded,
   toggle, toggleShuffle, useClock, usePlayer, type PlayerState,
@@ -55,6 +58,7 @@ export function MiniPlayer({ variant }: { variant: 'bar' | 'sidebar' }) {
             <span className="miniplayer-sub">
               {s.mode === 'together' && <span className="together-tag">Together{members ? ` · ${members}` : ''}</span>}
               {item?.artist ?? (s.link === 'live' ? 'Nothing queued yet' : 'Connecting…')}
+              <MiniAddedBy id={item?.id} />
             </span>
           </span>
         </button>
@@ -104,7 +108,7 @@ function PlayerBody({ s }: { s: PlayerState }) {
         <div className="player-meta">
           <p className="player-title">{item?.title ?? 'Nothing playing'}</p>
           <p className="player-artist">{item ? [item.artist, item.album].filter(Boolean).join(' · ') : s.mode === 'together' ? 'Add a track from Listen to start the room.' : 'Pick something from Listen.'}</p>
-          {item?.added_by && <p className="meta">Queued by {item.added_by}</p>}
+          <AddedBy item={item} together={s.mode === 'together'} />
         </div>
         <Seek disabled={!item} />
         <div className="player-controls">
@@ -150,18 +154,40 @@ function Seek({ disabled }: { disabled: boolean }) {
 }
 
 const REACTIONS = ['🔥', '😂', '💀', '😍', '🫡']
-const thumbs = new Map<string, -1 | 0 | 1>()
+
+/** "Added by Noor" (from the picks playlists) and, in the room, who queued it. */
+function AddedBy({ item, together }: { item: QueueItem | null | undefined; together: boolean }) {
+  const q = useTrackSocial(item?.id)
+  const by = q.data?.picked_by ?? []
+  const queued = together && item?.added_by
+  if (!by.length && !queued) return null
+  return (
+    <p className="player-by meta">
+      {by.length > 0 && <span>Added by <b>{names(by)}</b></span>}
+      {by.length > 0 && queued && <span aria-hidden="true"> · </span>}
+      {queued && <span>Queued by <b>{item.added_by}</b></span>}
+    </p>
+  )
+}
+
+function MiniAddedBy({ id }: { id: string | undefined }) {
+  const by = useTrackSocial(id).data?.picked_by ?? []
+  return by.length ? <span className="miniplayer-by">· {names(by, 1)}</span> : null
+}
 
 function TrackActions({ item }: { item: QueueItem }) {
   const qc = useQueryClient()
   const lib = qc.getQueryData<Library>(['slap', 'library'])
   const fav = lib?.tracks.find((t) => t.id === item.id)?.fav ?? false
-  const [thumb, setThumb] = useState<-1 | 0 | 1>(thumbs.get(item.id) ?? 0)
-  const [busy, setBusy] = useState(false)
-  useEffect(() => setThumb(thumbs.get(item.id) ?? 0), [item.id])
+  const social = useTrackSocial(item.id)
+  const thumbs = social.data?.thumbs ?? { up: [], down: [], mine: 0 as const }
+  const me = useSlapMe().data?.slap_user?.toLowerCase()
+  const comments = useTrackComments(item.id).data?.comments ?? []
+  const [busy, setBusy] = useState<string | null>(null)
 
   const t = { id: item.id, title: item.title, artist: item.artist, album: item.album }
   const fail = (e: unknown) => toast(e instanceof ApiError && e.detail ? e.detail : "Slap didn't take that", 'error')
+  const key = ['slap', 'track', item.id]
 
   function favourite() {
     const on = !fav
@@ -172,20 +198,33 @@ function TrackActions({ item }: { item: QueueItem }) {
     })
   }
   function rate(v: -1 | 1) {
-    const nv = thumb === v ? 0 : v
-    setThumb(nv)
-    thumbs.set(item.id, nv)
-    sendThumb(t, nv).catch((e) => { setThumb(thumb); thumbs.set(item.id, thumb); fail(e) })
+    const nv = thumbs.mine === v ? 0 : v
+    const before = qc.getQueryData<TrackSocial>(key)
+    qc.setQueryData<TrackSocial>(key, (d) => d && { ...d, thumbs: { ...d.thumbs, mine: nv } })
+    sendThumb(t, nv)
+      .then((th) => qc.setQueryData<TrackSocial>(key, (d) => ({ picked_by: d?.picked_by ?? [], thumbs: th })))
+      .catch((e) => { qc.setQueryData(key, before); fail(e) })
+  }
+  // Each emoji's reactors, from the thread; yours shows as pressed.
+  const reacted = new Map<string, { who: string[]; mine: boolean }>()
+  for (const c of comments) {
+    if (!c.is_reaction) continue
+    const r = reacted.get(c.text) ?? { who: [], mine: false }
+    const name = c.username.toLowerCase()
+    if (!r.who.includes(slapName(c.username))) r.who.push(slapName(c.username))
+    if (me && name === me) r.mine = true
+    reacted.set(c.text, r)
   }
   async function react(r: string) {
     if (busy) return
-    setBusy(true)
+    if (reacted.get(r)?.mine) { toast(`You already reacted ${r}`, 'info'); return }
+    setBusy(r)
     try {
       await sendComment(t, r, true)
-      toast(`Reacted ${r}`, 'success')
       void qc.invalidateQueries({ queryKey: ['slap', 'social'] })
-    } catch (e) { fail(e) } finally { setBusy(false) }
+    } catch (e) { fail(e) } finally { setBusy(null) }
   }
+  const rated = [thumbs.up.length ? `👍 ${names(thumbs.up, 3)}` : '', thumbs.down.length ? `👎 ${names(thumbs.down, 3)}` : ''].filter(Boolean)
 
   return (
     <div className="track-actions">
@@ -193,15 +232,35 @@ function TrackActions({ item }: { item: QueueItem }) {
         <button type="button" className="icon-btn" onClick={favourite} aria-pressed={fav} aria-label={fav ? 'Remove from favourites' : 'Add to favourites'} data-on={fav}>
           <Icon name={fav ? 'heartFill' : 'heart'} />
         </button>
-        <button type="button" className="icon-btn" onClick={() => rate(1)} aria-pressed={thumb === 1} aria-label="Thumbs up"><Icon name="thumbUp" /></button>
-        <button type="button" className="icon-btn" onClick={() => rate(-1)} aria-pressed={thumb === -1} aria-label="Thumbs down"><Icon name="thumbDown" /></button>
+        <button
+          type="button" className="icon-btn thumb-btn" onClick={() => rate(1)} aria-pressed={thumbs.mine === 1}
+          aria-label={`Thumbs up${thumbs.up.length ? `, ${thumbs.up.length} so far` : ''}`} title={thumbs.up.join(', ') || undefined}
+        >
+          <Icon name="thumbUp" />{thumbs.up.length > 0 && <span className="thumb-n num" aria-hidden="true">{thumbs.up.length}</span>}
+        </button>
+        <button
+          type="button" className="icon-btn thumb-btn" onClick={() => rate(-1)} aria-pressed={thumbs.mine === -1}
+          aria-label={`Thumbs down${thumbs.down.length ? `, ${thumbs.down.length} so far` : ''}`} title={thumbs.down.join(', ') || undefined}
+        >
+          <Icon name="thumbDown" />{thumbs.down.length > 0 && <span className="thumb-n num" aria-hidden="true">{thumbs.down.length}</span>}
+        </button>
         <span className="track-actions-sep" />
-        {REACTIONS.map((r) => (
-          <button key={r} type="button" className="reaction-btn" onClick={() => void react(r)} disabled={busy} aria-label={`React ${r}`}>{r}</button>
-        ))}
+        {REACTIONS.map((r) => {
+          const x = reacted.get(r)
+          return (
+            <button
+              key={r} type="button" className="reaction-btn" onClick={() => void react(r)} disabled={busy === r}
+              aria-pressed={!!x?.mine} title={x ? x.who.join(', ') : undefined}
+              aria-label={`React ${r}${x ? `, ${x.who.length} so far${x.mine ? ', including you' : ''}` : ''}`}
+            >
+              <span aria-hidden="true">{r}</span>{x && <span className="reaction-n num" aria-hidden="true">{x.who.length}</span>}
+            </button>
+          )
+        })}
       </div>
+      {rated.length > 0 && <p className="track-rated meta">{rated.join(' · ')}</p>}
       <CommentBox item={t} />
-      <CommentThread trackId={item.id} />
+      <CommentThread trackId={item.id} tally={false} />
     </div>
   )
 }

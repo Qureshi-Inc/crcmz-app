@@ -1661,6 +1661,19 @@ def _slap_stats(view: str, limit: int = 20) -> dict:
     return _slap.social_sync(path, {"limit": max(1, min(int(limit or 20), 100))})
 
 
+@tool("slap_thumbs",
+      "Thumbs up and down on Slap tracks: for each recently rated track, who gave it a "
+      "thumbs up and who gave it a thumbs down, newest first. query narrows to a title or "
+      "artist. Emoji reactions are comments; see slap_stats view=comments.",
+      {"type": "object", "properties": {
+          "query": {"type": "string", "description": "optional title or artist words"},
+          "limit": {"type": "integer", "description": "1-100, default 20"},
+      }})
+def _slap_thumbs(query: str = "", limit: int = 20) -> dict:
+    import slap as _slap
+    return _slap.thumbs_overview(str(query or ""), max(1, min(int(limit or 20), 100)))
+
+
 def tool_specs() -> list[dict]:
     """The registry in OpenAI function-calling form."""
     return [

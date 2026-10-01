@@ -124,12 +124,12 @@ function Rich({ text }: { text: string }) {
   return <>{parts.map((p, i) => (i % 2 ? <span key={i} className="mention-tag">{p}</span> : p))}</>
 }
 
-/** One track's thread: reactions summed up top, comments newest first. */
-export function CommentThread({ trackId, limit = 8 }: { trackId: string; limit?: number }) {
+/** One track's thread: reactions summed up top, then comments and reactions newest first. */
+export function CommentThread({ trackId, limit = 8, tally = true }: { trackId: string; limit?: number; tally?: boolean }) {
   const q = useTrackComments(trackId)
   const all: SlapComment[] = q.data?.comments ?? []
   const reactions = all.filter((c) => c.is_reaction)
-  const comments = all.filter((c) => !c.is_reaction).slice(0, limit)
+  const comments = all.slice(0, limit)
   const counts = new Map<string, string[]>()
   for (const r of reactions) counts.set(r.text, [...(counts.get(r.text) ?? []), slapName(r.username)])
 
@@ -137,7 +137,7 @@ export function CommentThread({ trackId, limit = 8 }: { trackId: string; limit?:
   if (q.isError) return <p className="meta comment-thread-note">Couldn't load comments. <button type="button" className="link-btn" onClick={() => q.refetch()}>Try again</button></p>
   return (
     <section className="comment-thread" aria-label="Comments on this track">
-      {counts.size > 0 && (
+      {tally && counts.size > 0 && (
         <ul className="reaction-tally" aria-label="Reactions">
           {[...counts].map(([emoji, who]) => (
             <li key={emoji} className="reaction-chip" title={[...new Set(who)].join(', ')}>
@@ -150,9 +150,10 @@ export function CommentThread({ trackId, limit = 8 }: { trackId: string; limit?:
       {comments.length ? (
         <ol className="comment-list">
           {comments.map((c) => (
-            <li key={c.id} className="comment-item">
-              <span className="comment-who">{slapName(c.username)}</span>
-              <span className="comment-body"><Rich text={c.text} /></span>
+            <li key={c.id} className="comment-item" data-reaction={c.is_reaction}>
+              {c.is_reaction
+                ? <span className="comment-who">{slapName(c.username)} <span className="comment-react">reacted <span className="comment-emoji">{c.text}</span></span></span>
+                : <><span className="comment-who">{slapName(c.username)}</span><span className="comment-body"><Rich text={c.text} /></span></>}
               <span className="meta num"><time dateTime={c.created_at}>{ago(toAt(c.created_at))}</time></span>
             </li>
           ))}

@@ -68,6 +68,7 @@ const SECTIONS: Section[] = [
           <li><b>In this app:</b> open Slap and press play. Your music account is set up for you.</li>
           <li><b>Listen Together:</b> on the Together tab, tap <b>Start a room</b> or <b>Join them</b>. Everyone hears the same song; anyone can add, skip or pause.</li>
           <li><b>Stats:</b> rankings, charts and who listens to what.</li>
+          <li><b>In the player:</b> it shows who added the song. Thumbs up or down and emoji reactions show who pressed them, and stay pressed on every device. Reactions also appear in the comments.</li>
         </ul>
         <p><b>Jellyfin app or browser:</b></p>
         <ol>
