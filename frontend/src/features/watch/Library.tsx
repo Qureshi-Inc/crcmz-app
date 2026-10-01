@@ -1,16 +1,18 @@
 // Watch · Library, under the player. Downloaded: the films in Jellyfin, ready for the
 // party. Find movies: search the catalogue and add one; the server picks the copy
-// (4K, else 1080p) and the card follows it into the library. Watched: history.
+// (4K, else 1080p) and the card follows it into the library. Whoever added a film
+// (or an admin) can remove it again. Watched: history.
 import { useEffect, useState } from 'react'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Icon } from '../../components/Icon'
 import { ErrorStrip, SkeletonRows } from '../../components/states'
 import { toast } from '../../components/toast'
+import { ConfirmDialog } from '../clips/ClipSheet'
 import { ApiError } from '../../lib/http'
 import { useReducedMotion } from '../../lib/media'
 import {
-  addMovie, getLibrary, inFlight, popularMovies, searchMovies, stateText, streamUrl,
+  addMovie, getLibrary, removeMovie, inFlight, popularMovies, searchMovies, stateText, streamUrl,
   type Adding, type Library as LibraryData, type Movie, type Result,
 } from '../../lib/movies'
 import { Watched } from './History'
@@ -94,21 +96,48 @@ function Downloaded({ onFind }: { onFind: () => void }) {
 }
 
 function MovieCard({ m, live, playing, onPlay }: { m: Movie; live: boolean; playing: boolean; onPlay: () => void }) {
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const qc = useQueryClient()
+  async function doRemove() {
+    setBusy(true)
+    try {
+      await removeMovie(m.id)
+      qc.setQueryData<LibraryData>(['movies', 'library'], (d) => d && { ...d, movies: d.movies.filter((x) => x.id !== m.id) })
+      void qc.invalidateQueries({ queryKey: ['movies'] })
+      toast(`${m.title} is out of the library`, 'success')
+    } catch (e) {
+      toast((e instanceof ApiError && e.detail) || "That movie didn't come out", 'error')
+    } finally { setBusy(false) }
+  }
   return (
     <article className="glass mv-card" aria-label={m.year ? `${m.title} (${m.year})` : m.title}>
       <Poster src={m.poster} title={m.title} badge={m.quality} />
       <div className="mv-body">
         <h3 className="mv-title">{m.title}{m.year && <span className="dim"> ({m.year})</span>}</h3>
         {m.by && <p className="meta">Added by {m.by}</p>}
-        {playing ? (
-          <span className="wp-playing"><span className="wp-live-dot" aria-hidden="true" />Playing</span>
-        ) : (
-          <button type="button" className="btn btn-primary mv-act" onClick={onPlay} disabled={!live}
-            aria-label={`Play ${m.title} for the party`}>
-            <Icon name="play" />Play
-          </button>
-        )}
+        <div className="mv-acts">
+          {playing ? (
+            <span className="wp-playing"><span className="wp-live-dot" aria-hidden="true" />Playing</span>
+          ) : (
+            <button type="button" className="btn btn-primary mv-act" onClick={onPlay} disabled={!live}
+              aria-label={`Play ${m.title} for the party`}>
+              <Icon name="play" />Play
+            </button>
+          )}
+          {m.can_remove && (
+            <button type="button" className="icon-btn" onClick={() => setConfirm(true)} disabled={busy || playing}
+              aria-label={`Remove ${m.title} from the library`}>
+              <Icon name="trash" />
+            </button>
+          )}
+        </div>
       </div>
+      <ConfirmDialog
+        open={confirm} onOpenChange={setConfirm} title="Remove this movie?" action="Remove"
+        body={<p>Take ‘{m.title}’ out of the library for everyone? You can add it again later.</p>}
+        onConfirm={() => void doRemove()}
+      />
     </article>
   )
 }

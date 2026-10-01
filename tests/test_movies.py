@@ -71,6 +71,9 @@ DUNE = [
     st("1080p", "Dune.Part.Two.2024.1080p.HDCAM.x264", "2.0", 900, "3"),
     st("720p", "Dune.Part.Two.2024.720p.WEB", "1.2", 50, "4"),
     st("4k HDR", "Dune.Part.Two.2024.2160p.HDR.WEB-DL [ABCD1234]", "15.0", 80, "5"),
+    st("4k HDR", "Dune Part Two (2024) Featurettes (2160p BluRay x265 HDR)", "8.0", 400, "6"),
+    st("4k", "Dune.Part.Two.2024.2160p.BluRay.x265-SMALL", "6.5", 800, "7"),
+    st("4k DV", "Dune.Part.Two.2024.UHD.Blu-ray.2160p.DTS-HD.MA.5.1.DV.HEVC.x265-E", "17.5", 21, "8"),
 ]
 
 
@@ -91,6 +94,8 @@ class FakeRD:
                                   "files": [{"id": 1, "path": "/Sample/sample.mkv", "bytes": 10},
                                             {"id": 2, "path": "/Movie.mkv", "bytes": 10_000}]}
             return {"id": tid}
+        if method == "GET" and path == "/torrents":
+            return [{"id": k, "filename": v.get("filename", "")} for k, v in self.torrents.items()]
         tid = path.rsplit("/", 1)[1]
         t = self.torrents.get(tid)
         if path.startswith("/torrents/info/"):
@@ -162,6 +167,7 @@ slap._jf = JF
 
 
 mv.POLL_S = 0   # no real waiting between Real-Debrid checks
+mv.RESCAN_AFTER_S = 0
 
 
 import notifications  # noqa: E402
@@ -171,6 +177,7 @@ notifications.route_in_background = lambda *a, **k: NOTES.append((a, k))
 def reset(cached=()):
     with mv._conn() as db:
         db.execute("DELETE FROM adds")
+        db.execute("DELETE FROM removed")
     RD.__init__(cached)
     JF.__init__()
     mv._cache.clear()
@@ -193,7 +200,9 @@ def ranking_tests():
         # FLUX (busy, WEB-DL, HDR) beats Tigole; the DV-only one sinks to the end of the 4K
         # copies; the remux, the 3.5 GB "4K", 4KLight, the Italian dub, the cam, the 720p
         # and the hex-tagged one (Zurg files it under anime) are all gone.
-        assert got == ["a", "d", "f", "2"], got
+        # A proper 10-35 GB encode beats a busier 6.5 GB one; the extras-only torrent is gone.
+        # Disc Dolby Vision (profile 7, HDR10 underneath) is fine; web DV with no HDR isn't.
+        assert got == ["a", "d", "8", "7", "f", "2"], got
 
     def sizes_seeders_and_hdr_are_read():
         c = mv.parse_stream(DUNE[0])
@@ -338,7 +347,7 @@ def follow_tests():
         cards = {m["title"]: m for m in lib["movies"]}
         assert cards["Edward Scissorhands"]["id"] == "2" * 32 and cards["Edward Scissorhands"]["quality"] == "4K HDR"
         assert cards["Dune: Part Two"]["by"] == "Zubair" and "path" not in cards["Dune: Part Two"]
-        assert lib["adding"] == [] and lib["can_add"] is True
+        assert lib["adding"] == [] and lib["can_add"] is True and "versions" not in cards["Dune: Part Two"]
 
     def search_results_say_what_is_in_the_library_or_on_its_way():
         reset()
@@ -353,6 +362,58 @@ def follow_tests():
 
     for fn in (downloading_shows_progress_then_jellyfin_gets_a_rescan_then_it_is_ready, an_add_jellyfin_never_finds_gives_up,
                the_library_shows_the_best_version_and_who_added_it, search_results_say_what_is_in_the_library_or_on_its_way):
+        check(fn.__name__, fn)
+
+
+# ── Removing ─────────────────────────────────────────────────────────────────
+def remove_tests():
+    print("removing")
+
+    def setup():
+        reset(cached={"a" * 40})
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        tid = mv._row("tt15239678")["rd_id"]
+        RD.torrents[tid]["filename"] = "Dune.Part.Two.2024.2160p.WEB-DL-FLUX"
+        RD.torrents["OLD"] = {"filename": "Dune Part Two 2024.mkv", "hash": "9" * 40}
+        RD.torrents["KEEP"] = {"filename": "Heat.1995.mkv", "hash": "8" * 40}
+        JF.movie("c" * 32, "Dune: Part Two", "tt15239678", path="/zurg/movies/Dune.Part.Two.2024.2160p.WEB-DL-FLUX/dune.mkv")
+        JF.movie("d" * 32, "Dune: Part Two", "tt15239678", width=1920, rng="SDR", path="/zurg/movies/Dune 1080/Dune Part Two 2024.mkv")
+        JF.movie("e" * 32, "Heat", "tt0113277", path="/zurg/movies/Heat.1995/Heat.1995.mkv")
+        JF.movie("1" * 32, "Half Baked", "tt0120693", path="/media/movies-local/Half Baked/hb.mkv")
+        run(mv.tick(force=True))
+        return tid
+
+    def the_adder_or_an_admin_can_remove_and_it_says_so():
+        setup()
+        lib = {m["title"]: m["can_remove"] for m in run(mv.library("u-zub"))["movies"]}
+        assert lib == {"Dune: Part Two": True, "Heat": False, "Half Baked": False}, lib
+        lib = {m["title"]: m["can_remove"] for m in run(mv.library("u-admin", True))["movies"]}
+        assert lib == {"Dune: Part Two": True, "Heat": True, "Half Baked": False}, lib
+
+    def removing_deletes_every_real_debrid_copy_and_hides_it_at_once():
+        tid = setup()
+        out = run(mv.remove("u-zub", "d" * 32))
+        run(asyncio.gather(*list(mv._tasks)) if mv._tasks else asyncio.sleep(0))
+        assert out == {"title": "Dune: Part Two", "removed": 2}, out
+        assert set(RD.torrents) == {"KEEP"} and tid not in RD.torrents
+        assert "Dune: Part Two" not in [m["title"] for m in run(mv.library("u-zub"))["movies"]]
+        assert mv._row("tt15239678") is None, "it can be added again"
+
+    def nobody_else_and_never_a_film_on_the_servers_disk():
+        setup()
+        for who, jf, admin, code in (("u-noor", "c" * 32, False, 403), ("u-zub", "e" * 32, False, 403),
+                                     ("u-admin", "1" * 32, True, 400), ("u-zub", "nope", False, 404)):
+            try:
+                run(mv.remove(who, jf, admin=admin))
+            except HTTPException as e:
+                assert e.status_code == code, (who, jf, e.status_code)
+            else:
+                raise AssertionError(f"{who} removed {jf}")
+        assert {"OLD", "KEEP"} <= set(RD.torrents)
+        assert run(mv.remove("u-admin", "e" * 32, admin=True))["removed"] == 1 and "KEEP" not in RD.torrents
+
+    for fn in (the_adder_or_an_admin_can_remove_and_it_says_so, removing_deletes_every_real_debrid_copy_and_hides_it_at_once,
+               nobody_else_and_never_a_film_on_the_servers_disk):
         check(fn.__name__, fn)
 
 
@@ -421,6 +482,8 @@ def http_tests():
         r = client.post("/api/watch/movies/add", json={"imdb": "tt15239678"}, cookies=cookie, headers=origin)
         assert r.status_code == 200 and r.json()["by"] == "Zubair", r.text
         assert "sub" not in r.json() and "rd_id" not in r.json()
+        r = client.post("/api/watch/movies/remove", json={"id": "f" * 32}, cookies=cookie, headers=origin)
+        assert r.status_code == 404, r.text
         r = client.get(f"/api/watch/movies/stream/{'c' * 32}/master.m3u8", cookies=cookie)
         assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.apple.mpegurl")
 
@@ -439,6 +502,7 @@ if __name__ == "__main__":
     ranking_tests()
     add_tests()
     follow_tests()
+    remove_tests()
     stream_tests()
     http_tests()
     print(f"\n{PASSED} passed, {len(FAILED)} failed")

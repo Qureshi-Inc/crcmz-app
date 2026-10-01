@@ -4,7 +4,7 @@
 import { request } from './http'
 
 export type MovieState = 'new' | 'finding' | 'downloading' | 'adding' | 'ready' | 'failed'
-export type Movie = { id: string; imdb: string; title: string; year: string; quality: string; overview: string; poster: string; added: string; by: string }
+export type Movie = { id: string; imdb: string; title: string; year: string; quality: string; overview: string; poster: string; added: string; by: string; can_remove: boolean }
 export type Adding = { imdb: string; title: string; year: string; poster: string; status: MovieState; progress: number; quality: string; size_gb: number; by: string; error: string; id: string | null; at: number }
 export type Result = { imdb: string; title: string; year: string; poster: string; overview: string; state: MovieState; id: string | null; quality: string; progress: number; error: string }
 export type Library = { movies: Movie[]; adding: Adding[]; can_add: boolean }
@@ -14,6 +14,7 @@ export const searchMovies = (q: string, signal?: AbortSignal) =>
   request<{ results: Result[] }>(`/api/watch/movies/search?q=${encodeURIComponent(q)}`, { signal, timeoutMs: 20_000 })
 export const popularMovies = (signal?: AbortSignal) => request<{ results: Result[] }>('/api/watch/movies/popular', { signal, timeoutMs: 20_000 })
 export const addMovie = (imdb: string) => request<Adding>('/api/watch/movies/add', { body: { imdb }, timeoutMs: 30_000 })
+export const removeMovie = (id: string) => request<{ title: string; removed: number }>('/api/watch/movies/remove', { body: { id }, timeoutMs: 30_000 })
 export const streamUrl = (id: string) => `/api/watch/movies/stream/${id}/master.m3u8`
 
 /** In flight: still worth polling for. */

@@ -10,6 +10,9 @@
     library     Real-Debrid -> Zurg (/zurg/movies) -> Jellyfin's Movies library. Once
                 Real-Debrid has the file we ask Jellyfin to rescan, find the film by
                 its IMDb id and tell the person who added it.
+    remove      the person who added a film (or an admin) can take it out: its copies on
+                Real-Debrid are deleted, so Zurg drops them and Jellyfin forgets the film.
+                Films on the server's own disk (movies-local) stay.
     play        a party can't play a raw 4K HDR file, so the stream is Jellyfin's 1080p
                 H.264 HLS transcode, proxied here so the Jellyfin token stays on the
                 server. Each viewer gets their own transcode session.
@@ -18,7 +21,8 @@ The Real-Debrid token is Zurg's (same account, or Jellyfin never sees the file):
 REAL_DEBRID_TOKEN.
 
 DB: /data/movies.db
-  adds   one row per movie someone added: what it is, which copy, its download state
+  adds     one row per movie someone added: what it is, which copy, its download state
+  removed  Jellyfin ids just removed, hidden until Jellyfin's rescan catches up
 """
 
 from __future__ import annotations
@@ -60,6 +64,7 @@ ADDS_PER_DAY = 5        # per person; admins aren't capped
 TRY_4K = 5              # cached-copy attempts before settling
 TRY_1080 = 3
 ADDING_GIVE_UP_S = 30 * 60
+RESCAN_AFTER_S = 20      # Zurg notices a deleted torrent within seconds
 POLL_S = 1.5            # between Real-Debrid checks while a copy is being tried
 STREAM_PREFIX = "/api/watch/movies/stream/"
 
@@ -99,6 +104,10 @@ def _conn() -> sqlite3.Connection:
                 created   REAL NOT NULL,
                 updated   REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS removed (
+                jf_id  TEXT PRIMARY KEY,
+                ts     REAL NOT NULL
+            );
         """)
         _ready = True
     return c
@@ -127,14 +136,14 @@ def _public(r: dict) -> dict:
 # ── Choosing a copy ──────────────────────────────────────────────────────────
 _REJECT = re.compile(
     r"\b(cam|camrip|hdcam|ts|hdts|telesync|tc|telecine|scr|screener|dvdscr|r5|3d|hsbs|h-sbs|sbs|"
-    r"remux|bdremux|iso|bdmv|complete[ .-]?(uhd[ .-]?)?blu-?ray|upscaled?|ai[ .-]?upscale|4klight|sample|trailer)\b",
+    r"remux|bdremux|iso|bdmv|complete[ .-]?(uhd[ .-]?)?blu-?ray|upscaled?|ai[ .-]?upscale|4klight|sample|trailer|featurettes?|extras|bonus|behind[ .-]the[ .-]scenes|making[ .-]of)\b",
     re.I)
 _ZURG_ANIME = re.compile(r"\b[a-fA-F0-9]{8}\b")   # Zurg files these under anime, which Jellyfin doesn't read
 _FLAG = re.compile(r"[\U0001F1E6-\U0001F1FF]{2}")
 _SIZE = re.compile(r"💾\s*([\d.]+)\s*(GB|MB)", re.I)
 _SEEDS = re.compile(r"👤\s*(\d+)")
-_BOUNDS = {2160: (6.0, 40.0), 1080: (1.5, 20.0)}   # GB: not a remux, not a starved encode
-_SWEET = {2160: (10.0, 30.0), 1080: (4.0, 15.0)}
+_BOUNDS = {2160: (6.0, 45.0), 1080: (1.5, 20.0)}   # GB: not a remux, not a starved encode
+_SWEET = {2160: (10.0, 35.0), 1080: (4.0, 15.0)}    # a proper encode: the quality without the remux size
 
 
 def parse_stream(s: dict) -> dict | None:
@@ -160,7 +169,9 @@ def parse_stream(s: dict) -> dict | None:
 
 def _score(c: dict) -> float:
     rel = c["release"]
-    s = math.log2(c["seeders"] + 1) * 10
+    # Seeders matter less than you'd think: a copy Real-Debrid has cached plays the same
+    # whoever seeds it. They break ties and decide what downloads when nothing is cached.
+    s = math.log2(c["seeders"] + 1) * 4
     if re.search(r"blu-?ray|bdrip|brrip", rel, re.I):
         s += 8
     elif re.search(r"web-?dl", rel, re.I):
@@ -169,11 +180,15 @@ def _score(c: dict) -> float:
         s += 3
     if c["hdr"]:
         s += 5
-    if c["dv"] and not c["hdr"]:
-        s -= 30   # Dolby Vision with no HDR10 under it comes out green and purple when transcoded
+    if c["dv"] and not c["hdr"] and not re.search(r"blu-?ray|bdrip|brrip|uhd", rel, re.I):
+        # Web Dolby Vision with no HDR10 under it (profile 5) comes out green and purple when
+        # transcoded. Disc DV is profile 7, always on an HDR10 base, so it's fine.
+        s -= 30
     lo, hi = _SWEET[c["tier"]]
     if lo <= c["size_gb"] <= hi:
-        s += 5
+        s += 15
+    elif c["size_gb"] < lo:
+        s -= 10   # a "4K" this small is starved of bitrate
     return s
 
 
@@ -225,7 +240,7 @@ def _meta_row(m: dict) -> dict | None:
 
 async def _cinemeta(path: str) -> dict:
     try:
-        async with httpx.AsyncClient(timeout=15, headers={"User-Agent": _UA}) as c:
+        async with httpx.AsyncClient(timeout=15, headers={"User-Agent": _UA}, follow_redirects=True) as c:
             r = await c.get(f"{CINEMETA_URL}/{path}")
     except httpx.HTTPError as e:
         logger.warning("movies: cinemeta %s failed: %s", path, e)
@@ -234,7 +249,11 @@ async def _cinemeta(path: str) -> dict:
         return {}
     if r.status_code >= 400:
         raise HTTPException(502, "the movie catalogue refused the request")
-    return r.json()
+    try:
+        return r.json()
+    except ValueError:
+        logger.warning("movies: cinemeta %s answered %s that isn't JSON", path, r.status_code)
+        raise HTTPException(502, "the movie catalogue is unreachable")
 
 
 async def search(q: str) -> list[dict]:
@@ -266,7 +285,7 @@ async def meta(imdb: str) -> dict | None:
 
 async def _torrentio(imdb: str) -> list[dict]:
     try:
-        async with httpx.AsyncClient(timeout=25, headers={"User-Agent": _UA}) as c:
+        async with httpx.AsyncClient(timeout=25, headers={"User-Agent": _UA}, follow_redirects=True) as c:
             r = await c.get(f"{TORRENTIO_URL}/stream/movie/{imdb}.json")
         r.raise_for_status()
         return list(r.json().get("streams") or [])
@@ -295,7 +314,8 @@ def _version(item: dict) -> tuple[int, bool]:
 
 
 async def jellyfin_movies(refresh: bool = False) -> list[dict]:
-    """The Movies library, one card per film (the best version of each), newest first."""
+    """The Movies library, one card per film (the best version of each), newest first.
+    Each card keeps every version's id and path, which removing needs."""
     if not refresh and (hit := _cached("jf:movies", 60)) is not None:
         return hit
     lib = await _movies_library_id()
@@ -304,24 +324,30 @@ async def jellyfin_movies(refresh: bool = False) -> list[dict]:
     if lib:
         params["ParentId"] = lib
     items = (slap._ok(await slap._jf("GET", "/Items", params=params)) or {}).get("Items") or []
-    best: dict[str, dict] = {}
+    with _lock, _conn() as db:
+        db.execute("DELETE FROM removed WHERE ts < ?", (time.time() - 6 * 3600,))
+        gone = {r[0] for r in db.execute("SELECT jf_id FROM removed")}
+    films: dict[str, list[tuple[tuple, dict]]] = {}
     for it in items:
-        if not _JF_ID.match(str(it.get("Id") or "")):
+        if not _JF_ID.match(str(it.get("Id") or "")) or it["Id"] in gone:
             continue
         tier, hdr = _version(it)
         path = str(it.get("Path") or "")
         # An upscale is never the version to play; 8K can't be transcoded in time.
         rank_ = (0 if re.search(r"upscale", path, re.I) or tier > 2160 else 1, tier, hdr)
-        key = (it.get("ProviderIds") or {}).get("Imdb") or f"jf:{(it.get('Name') or '').lower()}:{it.get('ProductionYear')}"
-        card = {"id": it["Id"], "imdb": (it.get("ProviderIds") or {}).get("Imdb") or "", "title": it.get("Name") or "",
-                "year": str(it.get("ProductionYear") or ""), "quality": quality_label(tier, hdr) if tier >= 1080 else "",
-                "overview": (it.get("Overview") or "")[:600], "poster": f"/api/watch/movies/poster/{it['Id']}",
-                "added": it.get("DateCreated") or "", "path": path, "_rank": rank_}
-        if key not in best or rank_ > best[key]["_rank"]:
-            best[key] = card
-    out = sorted(best.values(), key=lambda c: c["added"], reverse=True)
-    for c in out:
-        c.pop("_rank", None)
+        imdb = (it.get("ProviderIds") or {}).get("Imdb") or ""
+        key = imdb or f"jf:{(it.get('Name') or '').lower()}:{it.get('ProductionYear')}"
+        films.setdefault(key, []).append((rank_, {
+            "id": it["Id"], "imdb": imdb, "title": it.get("Name") or "", "year": str(it.get("ProductionYear") or ""),
+            "quality": quality_label(tier, hdr) if tier >= 1080 else "", "overview": (it.get("Overview") or "")[:600],
+            "poster": f"/api/watch/movies/poster/{it['Id']}", "added": it.get("DateCreated") or "", "path": path}))
+    out = []
+    for versions in films.values():
+        card = dict(max(versions, key=lambda v: v[0])[1])
+        card["versions"] = [{"id": v["id"], "path": v["path"]} for _, v in versions]
+        card["added"] = max(v["added"] for _, v in versions)
+        out.append(card)
+    out.sort(key=lambda c: c["added"], reverse=True)
     _cache["jf:movies"] = (time.time(), out)
     return out
 
@@ -543,18 +569,76 @@ async def loop() -> None:
 
 
 # ── What the page shows ──────────────────────────────────────────────────────
-async def library() -> dict:
-    movies = [{k: v for k, v in m.items() if k != "path"} for m in await jellyfin_movies()]
+def _on_debrid(card: dict) -> bool:
+    return any(v["path"].startswith("/zurg/") for v in card["versions"])
+
+
+async def library(sub: str = "", admin: bool = False) -> dict:
+    cards = await jellyfin_movies()
     with _conn() as db:
         rows = [dict(r) for r in db.execute(
             "SELECT * FROM adds WHERE status != 'ready' AND updated > ? ORDER BY created DESC", (time.time() - 7 * 86400,))]
-    by = {}
-    with _conn() as db:
-        for r in db.execute("SELECT imdb, name FROM adds WHERE status = 'ready'"):
-            by[r["imdb"]] = r["name"]
-    for m in movies:
-        m["by"] = by.get(m["imdb"], "")
+        added = {r["imdb"]: (r["name"], r["sub"]) for r in db.execute("SELECT imdb, name, sub FROM adds WHERE status = 'ready'")}
+    movies = []
+    for c in cards:
+        name, by_sub = added.get(c["imdb"], ("", ""))
+        movies.append({**{k: v for k, v in c.items() if k not in ("path", "versions")}, "by": name,
+                       "can_remove": _on_debrid(c) and (admin or (bool(sub) and by_sub == sub))})
     return {"movies": movies, "adding": [_public(r) for r in rows], "can_add": bool(RD_TOKEN)}
+
+
+def _rd_dir(path: str) -> tuple[str, str]:
+    """/zurg/movies/<torrent folder>/<file> -> (folder, file)."""
+    parts = path.split("/")
+    return (parts[3] if len(parts) > 4 else "", parts[-1])
+
+
+async def remove(sub: str, jf_id: str, *, admin: bool = False) -> dict:
+    """Take a film out of the library: delete its Real-Debrid copies. Returns how many."""
+    if not _JF_ID.match(jf_id or ""):
+        raise HTTPException(404, "not found")
+    card = next((c for c in await jellyfin_movies(refresh=True) if jf_id in {v["id"] for v in c["versions"]}), None)
+    if not card:
+        raise HTTPException(404, "that movie isn't in the library")
+    row = _row(card["imdb"]) if card["imdb"] else None
+    if not (admin or (row and row["sub"] == sub)):
+        raise HTTPException(403, "only the person who added it, or an admin, can remove it")
+    debrid = [v for v in card["versions"] if v["path"].startswith("/zurg/")]
+    if not debrid:
+        raise HTTPException(400, "this one is on the server's own disk, so it can't be removed here")
+    want = {n for v in debrid for n in _rd_dir(v["path"]) if n}
+    torrents = await _rd("GET", "/torrents", params={"limit": "2500"}) or []
+    ids = {str(t["id"]) for t in torrents if isinstance(t, dict) and t.get("filename") in want}
+    if row and row["rd_id"]:
+        ids.add(row["rd_id"])
+    if not ids:
+        raise HTTPException(404, "couldn't find its copy on Real-Debrid")
+    for tid in ids:
+        try:
+            await _rd("DELETE", f"/torrents/delete/{tid}")
+        except HTTPException:
+            logger.info("movies: a copy of %s was already gone", card["title"])
+    now = time.time()
+    with _lock, _conn() as db:
+        db.executemany("INSERT OR REPLACE INTO removed (jf_id, ts) VALUES (?, ?)", [(v["id"], now) for v in debrid])
+        if card["imdb"]:
+            db.execute("DELETE FROM adds WHERE imdb = ?", (card["imdb"],))
+    _cache.pop("jf:movies", None)
+    logger.info("movies: %s removed %s (%d copies)", "admin" if admin and not (row and row["sub"] == sub) else "adder",
+                card["title"], len(ids))
+    task = asyncio.create_task(_rescan_later())
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+    return {"title": card["title"], "removed": len(ids)}
+
+
+async def _rescan_later() -> None:
+    """Once Zurg has dropped the deleted copies, Jellyfin can forget the film."""
+    await asyncio.sleep(RESCAN_AFTER_S)
+    try:
+        await _rescan()
+    except HTTPException as e:
+        logger.info("movies: rescan after removing failed: %s", e.detail)
 
 
 async def annotate(rows: list[dict]) -> list[dict]:
@@ -664,12 +748,22 @@ def build_router(get_session, is_admin) -> APIRouter:
 
     @router.get("/library")
     async def library_get(request: Request):
-        caller_sub(request)
+        sub = caller_sub(request)
         try:
             await tick()
         except HTTPException as e:
             logger.info("movies: couldn't check adds: %s", e.detail)
-        return await library()
+        return await library(sub, await is_admin(sub))
+
+    @router.post("/remove")
+    async def remove_post(request: Request):
+        sub = caller_sub(request)
+        try:
+            b = await request.json()
+        except ValueError:
+            raise HTTPException(400, "expected JSON")
+        jf_id = str((b or {}).get("id") or "") if isinstance(b, dict) else ""
+        return await remove(sub, jf_id, admin=await is_admin(sub))
 
     @router.get("/search")
     async def search_get(request: Request, q: str = ""):
@@ -731,5 +825,5 @@ def build_router(get_session, is_admin) -> APIRouter:
     return router
 
 
-__all__ = ["add", "annotate", "build_router", "configured", "fetch", "hls_request", "history_meta", "library", "loop",
+__all__ = ["add", "annotate", "build_router", "remove", "configured", "fetch", "hls_request", "history_meta", "library", "loop",
            "overview", "popular", "rank", "search", "stream_url", "tick"]
