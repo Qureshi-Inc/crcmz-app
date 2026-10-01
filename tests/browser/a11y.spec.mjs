@@ -117,6 +117,7 @@ const SCREENS = [
   '/app/settings',
   '/app/admin',
   '/app/watch',
+  '/app/help',
   '/app/not-a-real-screen',
 ];
 

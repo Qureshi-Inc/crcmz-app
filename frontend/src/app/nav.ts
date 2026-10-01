@@ -4,7 +4,7 @@ import type { IconName } from '../components/Icon'
 
 export type DestId =
   | 'squad' | 'clips' | 'slap' | 'whatsapp' | 'giveaway' | 'watch' | 'huddle'
-  | 'coach' | 'ask' | 'portal' | 'settings' | 'admin'
+  | 'coach' | 'ask' | 'portal' | 'settings' | 'help' | 'admin'
 
 export type Dest = {
   id: DestId
@@ -37,6 +37,7 @@ export const DESTS: Record<DestId, Dest> = {
     classicHint: 'Open the account menu at the top right, then Settings.',
     blurb: 'Passkeys, password, PSN, Mattermost, MCP and Watch.',
   },
+  help: { id: 'help', label: 'Help', path: '/help', icon: 'info', classicHref: '/', blurb: 'How to use each part of the app.' },
   admin: {
     id: 'admin', label: 'Admin', path: '/admin', icon: 'admin', classicHref: '/', adminOnly: true,
     classicHint: 'Open the account menu, then Settings, then Users.',
@@ -48,10 +49,15 @@ export const DESTS: Record<DestId, Dest> = {
 export const TAB_IDS: DestId[] = ['squad', 'watch', 'clips']
 /** More sheet groups, research order (JOURNEY.md §IA → Mobile More sheet). */
 export const MORE_SQUAD: DestId[] = ['slap', 'whatsapp', 'giveaway', 'huddle', 'coach', 'ask']
-export const MORE_ACCOUNT: DestId[] = ['portal', 'settings', 'admin']
+export const MORE_ACCOUNT: DestId[] = ['portal', 'settings', 'help', 'admin']
 /** Desktop sidebar (≥ 1024 px). */
 export const SIDEBAR_MAIN: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'ask']
-export const SIDEBAR_FOOT: DestId[] = ['portal', 'settings', 'admin']
+export const SIDEBAR_FOOT: DestId[] = ['portal', 'settings', 'help', 'admin']
+
+/** The ⓘ beside a menu item: that item's section on the Help page. */
+export function helpHref(id: DestId): string | null {
+  return id === 'help' ? null : `/help#${id}`
+}
 
 /** Which destination owns an in-app pathname (relative to /app). */
 export function destForPath(pathname: string): DestId | null {

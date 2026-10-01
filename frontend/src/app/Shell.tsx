@@ -20,7 +20,7 @@ import { current as nowPlaying, usePlayer } from '../features/slap/player'
 import { WatchPage } from '../features/watch/WatchPage'
 import { CallBar, useHuddleBar, useWatchBar } from '../features/watch/WatchBar'
 import { useWatchSelect } from '../features/watch/session'
-import { DESTS, MORE_ACCOUNT, MORE_SQUAD, SIDEBAR_FOOT, SIDEBAR_MAIN, TAB_IDS, destForPath, type DestId } from './nav'
+import { DESTS, MORE_ACCOUNT, MORE_SQUAD, SIDEBAR_FOOT, SIDEBAR_MAIN, TAB_IDS, destForPath, helpHref, type DestId } from './nav'
 
 const MASCOT = '/footer-avatar.png'
 
@@ -57,8 +57,9 @@ export function Shell() {
     // The Watch page can stay mounted (hidden) behind other pages: pick the visible heading.
     const h = [...document.querySelectorAll<HTMLElement>('#main h1')].find((el) => el.offsetParent !== null)
     h?.focus({ preventScroll: true })
-    window.scrollTo(0, 0)
-  }, [location.pathname])
+    // A #section link (Help's ⓘ) scrolls itself to that section.
+    if (!location.hash) window.scrollTo(0, 0)
+  }, [location.pathname, location.hash])
 
   const chatMode = current === 'squad' ? (desktop ? (collapsed ? 'rail' : 'panel') : 'mobile') : undefined
 
@@ -260,6 +261,7 @@ function MoreSheet({ current, isAdmin, onClose }: { current: DestId | null; isAd
           <Link className="more-row" to={d.path} aria-current={current === id ? 'page' : undefined} onClick={onClose}>
             <Icon name={d.icon} />{d.label}
           </Link>
+          <HelpDot id={id} onClick={onClose} />
         </li>
       )
     })
@@ -285,6 +287,17 @@ function MoreSheet({ current, isAdmin, onClose }: { current: DestId | null; isAd
   )
 }
 
+/** The ⓘ beside a menu row: a sibling link (links cannot nest) to that item's Help section. */
+function HelpDot({ id, onClick }: { id: DestId; onClick?: () => void }) {
+  const href = helpHref(id)
+  if (!href) return null
+  return (
+    <Link className="help-dot" to={href} onClick={onClick} aria-label={`How to use ${DESTS[id].label}`} title={`How to use ${DESTS[id].label}`}>
+      <Icon name="info" />
+    </Link>
+  )
+}
+
 // ── Desktop sidebar ──────────────────────────────────────────────────────────
 function Sidebar({ current, isAdmin, watchBar, huddleBar }: { current: DestId | null; isAdmin: boolean; watchBar: boolean; huddleBar: boolean }) {
   const badge = useLiveBadge()
@@ -298,6 +311,7 @@ function Sidebar({ current, isAdmin, watchBar, huddleBar }: { current: DestId | 
           {d.label}
           {id === 'squad' && badge > 0 && <><span className="nav-badge" aria-hidden="true">{badge}</span><span className="sr-only">, {badge} in a game</span></>}
         </Link>
+        <HelpDot id={id} />
       </li>
     )
   }

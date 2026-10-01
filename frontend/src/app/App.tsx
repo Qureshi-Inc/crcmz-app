@@ -15,6 +15,7 @@ import { HuddlePage } from '../features/huddle/HuddlePage'
 import { WhatsAppPage } from '../features/whatsapp/WhatsAppPage'
 import { CoachPage } from '../features/coach/CoachPage'
 import { GiveawayPage } from '../features/giveaway/GiveawayPage'
+import { HelpPage } from '../features/help/HelpPage'
 
 // assistant-ui and the markdown renderer are ~140 kB gzipped, so only Ask AI pays for them.
 const AskPage = lazy(() => import('../features/ask/AskPage').then((m) => ({ default: m.AskPage })))
@@ -54,6 +55,7 @@ export function App() {
               <Route path="ask" element={<Suspense fallback={null}><AskPage /></Suspense>} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="settings/:tab" element={<SettingsPage />} />
+              <Route path="help" element={<HelpPage />} />
               <Route path="admin" element={<AdminPage />} />
               <Route path="portal" element={<PortalPage />} />
               <Route path="*" element={<NotFound />} />

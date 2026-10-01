@@ -19,6 +19,7 @@ const PATHS: Record<string, ReactNode> = {
   link: (<g {...S}><path d="M8 11a4 4 0 0 0 5.66.54l2.5-2.5A4 4 0 0 0 10.5 3.3L9.08 4.72" /><path d="M12 9a4 4 0 0 0-5.66-.54l-2.5 2.5a4 4 0 0 0 5.66 5.66l1.42-1.42" /></g>),
   settings: (<g {...S}><circle cx="10" cy="10" r="3" /><path d="M10 1v2M10 17v2M1 10h2M17 10h2M3.2 3.2l1.4 1.4M15.4 15.4l1.4 1.4M16.8 3.2l-1.4 1.4M4.6 15.4l-1.4 1.4" /></g>),
   admin: (<g {...S}><path d="M10 18.5s7-3.5 7-8.5V4l-7-2.5L3 4v6c0 5 7 8.5 7 8.5z" /></g>),
+  info: (<g {...S}><circle cx="10" cy="10" r="8" /><path d="M10 9v5" /><circle cx="10" cy="6.2" r=".9" fill="currentColor" stroke="none" /></g>),
   close: (<g {...S}><path d="M5 5l10 10M15 5L5 15" /></g>),
   up: (<g {...S}><path d="M5 12l5-5 5 5" /></g>),
   down: (<g {...S}><path d="M5 8l5 5 5-5" /></g>),

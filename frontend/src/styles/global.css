@@ -250,6 +250,17 @@ img { max-width: 100%; }
 }
 .nav-row .nav-badge { margin-left: auto; }
 @media (hover: hover) { .nav-row:hover { background: rgba(255, 60, 200, .07); color: var(--text); } }
+/* The ⓘ beside a menu row: a sibling link to that item's Help section. */
+.sidebar-group > li, .more-list > li { position: relative; }
+.sidebar-group .nav-row, .more-list .more-row { padding-right: var(--tap-min); }
+.help-dot {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  display: grid; place-items: center; width: var(--tap-min); height: var(--tap-min);
+  border-radius: var(--radius-md); color: var(--text-dim); text-decoration: none;
+}
+.help-dot svg { width: 16px; height: 16px; }
+.help-dot[aria-current="page"] { color: var(--c-nav-active-text); }
+@media (hover: hover) { .help-dot:hover { color: var(--text); background: rgba(255, 60, 200, .07); } }
 .sidebar-account { border-top: 1px solid var(--border-decorative); padding: var(--space-2) var(--space-3); display: flex; align-items: center; gap: var(--space-2); }
 .account-trigger {
   display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: var(--tap-min);
@@ -274,6 +285,25 @@ img { max-width: 100%; }
 }
 .page { max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-6); }
 .page-reading { max-width: var(--reading-w); }
+
+/* Help page */
+.help-jump { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.help-jump .chip { text-decoration: none; }
+.help-card { scroll-margin-top: calc(var(--topbar-h) + env(safe-area-inset-top) + var(--space-4)); outline: none; }
+.help-h { display: flex; align-items: center; gap: var(--space-2); }
+.help-h svg { width: 20px; height: 20px; flex: none; }
+.help-body { line-height: 1.55; }
+.help-body > :first-child { margin-top: 0; }
+.help-body > :last-child { margin-bottom: 0; }
+.help-body ol, .help-body ul { padding-left: 1.3em; display: grid; gap: var(--space-1); }
+.help-body code { overflow-wrap: anywhere; }
+.help-body a { text-decoration: underline; text-underline-offset: 2px; }
+.help-table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0; }
+.help-table th, .help-table td { text-align: left; vertical-align: top; padding: var(--space-2) var(--space-3) var(--space-2) 0; border-bottom: 1px solid var(--border-decorative); }
+.help-table th { font-size: var(--text-sm); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+.help-table td:first-child { white-space: nowrap; width: 1%; }
+.help-copy { display: inline-flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.help-copy-btn { min-height: 32px; padding: 0 var(--space-3); }
 
 /* Signed-out banner */
 .banner {
