@@ -1,7 +1,7 @@
 // The camera orbs: you and everyone in the call. Each orb is its own menu
 // (mute for me, volume, enlarge, remove). Video only — audio plays through the
 // session's hidden <audio> elements, so these can re-render freely.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Menu from '@radix-ui/react-dropdown-menu'
 import { Icon } from '../../components/Icon'
@@ -59,8 +59,21 @@ function Face({ t, s, mirror }: { t: Tile; s: WatchState; mirror?: boolean }) {
     if (v.srcObject !== t.stream) v.srcObject = t.stream
     if (t.stream) v.play().catch(() => { /* muted autoplay is allowed; ignore the odd refusal */ })
   }, [t.stream, s.rtc])
+  // The camera's real shape (landscape, portrait, square), so an enlarged tile can
+  // match it instead of cropping into a fixed box. 'resize' fires on rotate / flip.
+  const [ar, setAr] = useState(1)
+  useEffect(() => {
+    const v = ref.current
+    if (!v) return
+    const read = () => { if (v.videoWidth && v.videoHeight) setAr(v.videoWidth / v.videoHeight) }
+    read()
+    v.addEventListener('loadedmetadata', read)
+    v.addEventListener('resize', read)
+    return () => { v.removeEventListener('loadedmetadata', read); v.removeEventListener('resize', read) }
+  }, [t.stream])
+  const style = { background: tint(t.name), '--ar': t.video ? ar : 1 } as CSSProperties
   return (
-    <span className="wp-face" style={{ background: tint(t.name) }}>
+    <span className="wp-face" style={style}>
       <video ref={ref} className="wp-face-video" muted playsInline autoPlay hidden={!t.video} data-mirror={!!mirror} />
       {!t.video && <span className="wp-face-initials" aria-hidden="true">{initials(t.name)}</span>}
     </span>

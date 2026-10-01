@@ -1876,8 +1876,16 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .wp-orb { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; width: 76px; padding: 0; border: 0; background: none; color: var(--text); border-radius: var(--radius-md); }
 .wp-orb:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .wp-face { position: relative; display: grid; place-items: center; width: 64px; height: 64px; border-radius: var(--radius-md); overflow: hidden; border: 2px solid rgba(255, 255, 255, .14); transition: border-color var(--dur-micro), box-shadow var(--dur-micro); }
-.wp-orb[data-big="true"] { width: 136px; }
-.wp-orb[data-big="true"] .wp-face { width: 128px; height: 128px; }
+/* Enlarged: the tile takes the camera's own shape (--ar, set from the video) and fits
+   a box (--big-w x --big-h), so a landscape camera is wide and a portrait one tall,
+   never cropped. The selectors out-rank the small on-video / phone sizes below. */
+.wp-orbs { --big-w: min(320px, 80vw); --big-h: 200px; }
+.wp-orbs-over { --big-w: min(360px, 60cqw); --big-h: min(240px, 30cqw, 45dvh); }
+.wp-orbs .wp-orb[data-big="true"] { width: auto; max-width: none; }
+.wp-orbs .wp-orb[data-big="true"] .wp-face {
+  width: min(var(--big-w), calc(var(--big-h) * var(--ar, 1))); height: auto; aspect-ratio: var(--ar, 1);
+}
+.wp-orbs .wp-orb[data-big="true"] .wp-face-video { object-fit: contain; }
 .wp-orb[data-loud="true"] .wp-face, .wp-grid-tile[data-loud="true"] .wp-face { border-color: var(--neon-lime); box-shadow: 0 0 14px rgba(170, 255, 0, .55); }
 .wp-face-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .wp-face-video[hidden] { display: none; }
@@ -1895,7 +1903,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   right: var(--space-2); top: 50%; transform: translateY(-50%);
   flex-direction: column; max-height: calc(100% - 2 * var(--tap-min) - var(--space-4));
 }
-.wp-orbs-over-side .wp-orb-list { flex-direction: column; overflow-x: hidden; overflow-y: auto; }
+.wp-orbs-over-side .wp-orb-list { flex-direction: column; align-items: flex-end; overflow-x: hidden; overflow-y: auto; }
 /* Top / bottom: a row along the edge; it steps past the control bars while they show. */
 .wp-orbs-over-top, .wp-orbs-over-bottom { left: var(--space-2); right: var(--space-2); justify-content: center; }
 .wp-orbs-over-top .wp-orb-list, .wp-orbs-over-bottom .wp-orb-list { flex: 0 1 auto; }
