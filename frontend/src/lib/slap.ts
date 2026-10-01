@@ -131,7 +131,7 @@ export type SlapComment = {
 export const sendComment = (t: Pick<Track, 'id' | 'title' | 'artist' | 'album'>, text: string, isReaction: boolean) =>
   request<Partial<SlapComment> & { mentioned?: string[] }>('/api/slap/comment', { body: { ...trackBody(t), text, is_reaction: isReaction } })
 
-export type Mentionable = { handle: string; name: string }
+export type Mentionable = { handle: string; name: string; aka?: string[] }
 /** Who an @ can tag: handles and names only, from the identity graph. */
 export function useMentionable(enabled = true) {
   return useQuery({

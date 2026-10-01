@@ -734,19 +734,47 @@ def handle_of(person: dict) -> str:
     return re.sub(r"[^\w.-]", "", person.get("jellyfin_user") or person.get("username") or "")
 
 
+def _active(p: dict) -> bool:
+    return not p.get("state") or p["state"] in ("USER_STATE_ACTIVE", "active")
+
+
+def aliases(person: dict, public: bool = False) -> list[str]:
+    """Every name the identity chart knows someone by, squashed to mention form.
+
+    ``public`` leaves out the login and email, which the composer must not show.
+    """
+    tags = person.get("tags") or {}
+    login = [] if public else [person.get("username"),
+                               (person.get("email") or "").split("@")[0] if "@" in (person.get("email") or "") else ""]
+    raw = [handle_of(person), *login, person.get("mm_username"), person.get("jellyfin_user"),
+           person.get("psn_id"), tags.get("chosen_username"), person.get("display_name"),
+           *re.split(r"[,;]", tags.get("nicknames") or ""),
+           *re.split(r"[,;]", person.get("wa_names") or tags.get("wa_names") or "")]
+    out: list[str] = []
+    for r in raw:
+        k = re.sub(r"[^\w.-]", "", r or "").casefold()
+        if len(k) >= 2 and k not in out:
+            out.append(k)
+    return out
+
+
 def mention_index(people: list[dict]) -> dict[str, dict]:
-    idx: dict[str, dict] = {}
+    """Exact names first, then a unique first name; names two people share are dropped."""
+    exact: dict[str, list[dict]] = {}
     firsts: dict[str, list[dict]] = {}
     for p in people:
-        if p.get("state") and p["state"] not in ("USER_STATE_ACTIVE", "active"):
+        if not _active(p):
             continue
-        name = p.get("display_name") or ""
-        for k in (handle_of(p), p.get("username"), p.get("mm_username"), p.get("jellyfin_user"),
-                  re.sub(r"\s+", "", name)):
-            if k:
-                idx.setdefault(k.casefold(), p)
-        if name.split():
-            firsts.setdefault(name.split()[0].casefold(), []).append(p)
+        for k in aliases(p):
+            if p not in exact.setdefault(k, []):
+                exact[k].append(p)
+        tags = p.get("tags") or {}
+        for name in (p.get("display_name") or "", *re.split(r"[,;]", p.get("wa_names") or tags.get("wa_names") or "")):
+            if name.split():
+                f = re.sub(r"[^\w.-]", "", name.split()[0]).casefold()
+                if f and p not in firsts.setdefault(f, []):
+                    firsts[f].append(p)
+    idx = {k: ps[0] for k, ps in exact.items() if len(ps) == 1}
     for k, ps in firsts.items():
         if len(ps) == 1:
             idx.setdefault(k, ps[0])
@@ -754,12 +782,20 @@ def mention_index(people: list[dict]) -> dict[str, dict]:
 
 
 def mentioned(text: str, people: list[dict]) -> list[dict]:
-    """The people a comment tags, once each, in the order they appear."""
+    """The people a comment tags, once each, in the order they appear.
+
+    ``@moose`` finds themoosecompany: when no name matches exactly, a word that is
+    part of exactly one person's names (4+ letters) is taken as them.
+    """
     idx = mention_index(people)
+    live = [p for p in people if _active(p)]
     out: list[dict] = []
     for m in _MENTION.finditer(text or ""):
         word = m.group(1).rstrip(".-").casefold()
         p = idx.get(word)
+        if p is None and len(word) >= 4:
+            hits = [q for q in live if any(word in a for a in aliases(q))]
+            p = hits[0] if len(hits) == 1 else None
         if p and p not in out:
             out.append(p)
     return out
@@ -770,10 +806,12 @@ def mentionable(people: list[dict]) -> list[dict]:
     seen, out = set(), []
     for p in people:
         h = handle_of(p)
-        if not h or h.casefold() in seen or (p.get("state") and p["state"] not in ("USER_STATE_ACTIVE", "active")):
+        if not h or h.casefold() in seen or not _active(p):
             continue
         seen.add(h.casefold())
-        out.append({"handle": h, "name": p.get("display_name") or p.get("username") or h})
+        # aka: the other names they go by, so typing any of them finds them in the list.
+        out.append({"handle": h, "name": p.get("display_name") or p.get("username") or h,
+                    "aka": [a for a in aliases(p, public=True) if a != h.casefold()][:8]})
     return sorted(out, key=lambda x: x["name"].casefold())
 
 

@@ -17,8 +17,8 @@ export function mentionQuery(text: string, caret: number): { start: number; q: s
 
 export function matchPeople(people: Mentionable[], q: string, max = 6): Mentionable[] {
   const n = q.toLowerCase()
-  const starts = people.filter((p) => p.handle.toLowerCase().startsWith(n) || p.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(n)))
-  const rest = n ? people.filter((p) => !starts.includes(p) && (p.handle + ' ' + p.name).toLowerCase().includes(n)) : []
+  const starts = people.filter((p) => p.handle.toLowerCase().startsWith(n) || p.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(n)) || (p.aka ?? []).some((a) => a.startsWith(n)))
+  const rest = n ? people.filter((p) => !starts.includes(p) && [p.handle, p.name, ...(p.aka ?? [])].join(' ').toLowerCase().includes(n)) : []
   return [...starts, ...rest].slice(0, max)
 }
 

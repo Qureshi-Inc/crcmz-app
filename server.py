@@ -6163,7 +6163,7 @@ async def notifications_channels(request: Request):
         "channels": [{"id": k, "label": v} for k, v in _notify.CHANNELS.items()],
         "prefs": await asyncio.to_thread(_notify.get_channels, sub),
         "reachable": {"whatsapp": bool(_notify.wa_jid_for(person)) and bool(WA_BRIDGE_URL),
-                      "mattermost": bool(person.get("mm_username")) and mm_client.available()},
+                      "mattermost": bool(person.get("mm_username") or person.get("email")) and mm_client.available()},
     }, headers={"Cache-Control": "no-store"})
 
 

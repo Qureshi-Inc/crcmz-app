@@ -56,7 +56,7 @@ CHANNELS: dict[str, str] = {
 # The senders are wired by server.py (which knows the bridge's address); tests swap
 # them for fakes. Each returns True when the message was accepted.
 wa_send: Callable[[str, str], bool] | None = None
-mm_dm: Callable[[str, str], bool] | None = None
+mm_dm: Callable[..., bool] | None = None  # (username, message, email=)
 
 # Five mentions in a row from one thread should not buzz someone's WhatsApp five times.
 _dm_quiet = webpush.Debounce(90)
@@ -184,9 +184,10 @@ def _direct(subs: list[str], exclude: str, text: str, url: str, tag: str) -> dic
                 sent["whatsapp"] += bool(wa_send(jid, msg))
             except Exception:  # noqa: BLE001
                 logger.warning("notifications: WhatsApp DM failed")
-        if ch["mattermost"] and mm_dm and (mm := p.get("mm_username")):
+        # The tag first; the email finds them when the tag is missing or wrong.
+        if ch["mattermost"] and mm_dm and (p.get("mm_username") or p.get("email")):
             try:
-                sent["mattermost"] += bool(mm_dm(mm, msg))
+                sent["mattermost"] += bool(mm_dm(p.get("mm_username") or "", msg, email=p.get("email") or ""))
             except Exception:  # noqa: BLE001
                 logger.warning("notifications: Mattermost DM failed")
     return sent

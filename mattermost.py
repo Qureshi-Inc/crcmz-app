@@ -11,6 +11,7 @@ import logging
 import os
 
 import httpx
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,45 @@ def _get_bot_id(client: httpx.Client) -> str | None:
     return _bot_id
 
 
-def dm_user(username: str, message: str) -> bool:
-    """DM a single user by username. Returns True on success."""
+def _find_user(client: httpx.Client, username: str, email: str = "") -> str | None:
+    """The Mattermost user id for ``username``, else for the account with ``email``.
+
+    The ``mm_username`` tag is typed by hand and has been wrong (a Zitadel login
+    where the Mattermost name differs); the email is what SSO linked, so it is the
+    fallback that finds them anyway.
+    """
+    if username:
+        r = client.get(f"{_BASE}/api/v4/users/username/{username}", headers=_headers(), timeout=15)
+        if r.status_code == 200:
+            return r.json().get("id")
+    if email and "@" in email:
+        r = client.get(f"{_BASE}/api/v4/users/email/{quote(email, safe="@")}", headers=_headers(), timeout=15)
+        if r.status_code == 200:
+            if username:
+                logger.warning("mm: user %s not found; reached them by email as %s", username, r.json().get("username"))
+            return r.json().get("id")
+    logger.warning("mm: user %s not found", username or "(no tag)")
+    return None
+
+
+def username_for(username: str, email: str = "") -> str | None:
+    """The Mattermost username those identifiers reach, or None."""
+    if not available():
+        return None
+    try:
+        with httpx.Client() as client:
+            uid = _find_user(client, username, email)
+            if not uid:
+                return None
+            r = client.get(f"{_BASE}/api/v4/users/{uid}", headers=_headers(), timeout=15)
+            return r.json().get("username") if r.status_code == 200 else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mm: lookup of %s failed: %s", username, exc)
+        return None
+
+
+def dm_user(username: str, message: str, email: str = "") -> bool:
+    """DM a single user by username (or, failing that, email). Returns True on success."""
     if not available():
         return False
     try:
@@ -47,14 +85,9 @@ def dm_user(username: str, message: str) -> bool:
             bot_id = _get_bot_id(client)
             if not bot_id:
                 return False
-            ur = client.get(
-                f"{_BASE}/api/v4/users/username/{username}",
-                headers=_headers(), timeout=15,
-            )
-            if ur.status_code != 200:
-                logger.warning("mm: user %s not found", username)
+            uid = _find_user(client, username, email)
+            if not uid:
                 return False
-            uid = ur.json().get("id")
             # Open (or get) the bot<->user direct channel.
             cr = client.post(
                 f"{_BASE}/api/v4/channels/direct",

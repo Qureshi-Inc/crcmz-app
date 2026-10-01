@@ -58,6 +58,10 @@ PEOPLE = [
      "mm_username": "zubair", "wa_jid": "abc@lid", "wa_phone": "", "jellyfin_user": "zubair221b", "email": ""},
     {"zitadel_id": "u-zed", "display_name": "Zubair Two", "username": "zed", "state": "USER_STATE_ACTIVE",
      "mm_username": "", "wa_jid": "", "wa_phone": "", "jellyfin_user": "", "email": ""},
+    # The real chart: Zitadel login, a wrong mm tag, Jellyfin/PSN/WhatsApp names all differ.
+    {"zitadel_id": "u-moose", "display_name": "themoosecompany thegoopcompany", "username": "themoosecompany",
+     "state": "USER_STATE_ACTIVE", "mm_username": "themoosecompany", "wa_jid": "", "wa_phone": "",
+     "jellyfin_user": "mutasif", "psn_id": "mutasif", "wa_names": "Mutasif", "email": "goop@example.com"},
     {"zitadel_id": "u-gone", "display_name": "Old Account", "username": "old", "state": "USER_STATE_INACTIVE",
      "mm_username": "old", "wa_jid": "", "wa_phone": "", "jellyfin_user": "", "email": ""},
 ]
@@ -70,7 +74,7 @@ WA: list[tuple[str, str]] = []
 MM: list[tuple[str, str]] = []
 PUSHED: list[str] = []
 notifications.wa_send = lambda jid, text: WA.append((jid, text)) or True
-notifications.mm_dm = lambda user, text: MM.append((user, text)) or True
+notifications.mm_dm = lambda user, text, email="": MM.append((user, text)) or True
 webpush._send_one = lambda row, payload, **kw: PUSHED.append(row["sub"]) or 201
 
 
@@ -176,6 +180,17 @@ def route_tests():
         assert WA == [("15550100001@s.whatsapp.net", "🎵 Zubair mentioned you\nhttps://app.crcmz.me/app/slap?track=" + "a" * 32)], WA
         assert MM and MM[0][0] == "moiz" and "app.crcmz.me/app/slap" in MM[0][1]
 
+    def mattermost_gets_the_email_to_fall_back_on():
+        reset()
+        calls = []
+        old = notifications.mm_dm
+        notifications.mm_dm = lambda user, text, email="": calls.append((user, email)) or True
+        try:
+            notifications.route("mentions", "x", only=["u-moose"], exclude="u-zub")
+        finally:
+            notifications.mm_dm = old
+        assert calls == [("themoosecompany", "goop@example.com")], calls
+
     def a_broadcast_never_dms():
         reset()
         device("u-noor", 1)
@@ -228,7 +243,7 @@ def route_tests():
             notifications.wa_send = old
         assert out["dms"]["whatsapp"] == 0 and len(MM) == 1
 
-    for fn in (a_mention_goes_to_inbox_push_whatsapp_and_mattermost, a_broadcast_never_dms,
+    for fn in (a_mention_goes_to_inbox_push_whatsapp_and_mattermost, mattermost_gets_the_email_to_fall_back_on, a_broadcast_never_dms,
                switched_off_channels_are_respected, a_burst_of_mentions_dms_once,
                nobody_is_dmed_about_their_own_mention_or_without_a_contact, whatsapp_targets,
                a_failing_sender_does_not_stop_the_rest):
@@ -250,16 +265,28 @@ def mention_tests():
         assert slap.mentioned("mail me@moiz or @nobody or @@moiz", PEOPLE) == []
         assert slap.mentioned("@old", PEOPLE) == [], "inactive accounts are not taggable"
 
-    def the_composer_list_has_handles_and_names_only():
+    def every_name_in_the_identity_chart_tags_them():
+        for word in ("mutasif", "themoosecompany", "Mutasif", "moose", "goop"):
+            got = slap.mentioned(f"yo @{word} listen", PEOPLE)
+            assert [p["zitadel_id"] for p in got] == ["u-moose"], (word, got)
+        # A fragment two people share is nobody, not a guess.
+        assert slap.mentioned("@ubai", PEOPLE) == []
+        assert slap.mentioned("@mo", PEOPLE) == [], "too short to guess from"
+
+    def the_composer_list_has_handles_names_and_public_akas():
         people = slap.mentionable(PEOPLE)
-        assert {"handle": "Moiz", "name": "Moiz Qureshi"} in people
-        assert all(set(p) == {"handle", "name"} for p in people)
+        moiz = next(p for p in people if p["handle"] == "Moiz")
+        assert moiz["name"] == "Moiz Qureshi"
+        assert all(set(p) == {"handle", "name", "aka"} for p in people)
+        moose = next(p for p in people if p["handle"] == "mutasif")
+        assert "themoosecompany" in moose["aka"]
+        assert not any("goop@" in a or a == "goop" for p in people for a in p["aka"]), "no email in the list"
         assert "old" not in {p["handle"] for p in people}
         handles = {p["handle"] for p in people}
         assert all(slap.mentioned(f"@{h}", PEOPLE) for h in handles), "every suggested handle resolves"
 
     for fn in (handles_resolve_by_any_name_people_know, ambiguous_first_names_unknown_and_emails_are_not_mentions,
-               the_composer_list_has_handles_and_names_only):
+               every_name_in_the_identity_chart_tags_them, the_composer_list_has_handles_names_and_public_akas):
         check(fn.__name__, fn)
 
 
@@ -332,7 +359,8 @@ def http_tests():
             client.post("/api/slap/comment", json={**t, "text": "no tags here"}, cookies=cookie, headers=origin)
             assert len(routed) == 1, "reactions and untagged comments notify nobody"
             people = client.get("/api/slap/mentionable", cookies=cookie).json()["people"]
-            assert {"handle": "Moiz", "name": "Moiz Qureshi"} in people
+            assert any(p["handle"] == "Moiz" and p["name"] == "Moiz Qureshi" for p in people), people
+            assert "m@x.co" not in str(people), "no emails in the composer list"
             assert client.get("/api/slap/mentionable").status_code == 401
         finally:
             slap._social_write, slap.resolve_jellyfin, notifications.route_in_background = old
