@@ -1,4 +1,4 @@
-// Help: one plain page, a section per menu item. Every nav row's ⓘ links to its
+// Help: one plain page, a section per menu item. Every page title's ⓘ links to its
 // section here (/help#<id>), so the answer is one tap from where the question is.
 import { useEffect, type ReactNode } from 'react'
 import { Link, useLocation, useOutletContext } from 'react-router-dom'
@@ -209,7 +209,7 @@ export function HelpPage() {
   const { isAdmin } = useOutletContext<{ isAdmin: boolean }>()
   const sections = SECTIONS.filter((s) => !s.adminOnly || isAdmin)
 
-  // Arriving from a menu ⓘ: go to that section (the Shell leaves the scroll alone when there is a hash).
+  // Arriving from a page ⓘ: go to that section (the Shell leaves the scroll alone when there is a hash).
   useEffect(() => {
     const el = hash ? document.getElementById(`help-${hash.slice(1)}`) : null
     if (!el) return
@@ -220,6 +220,7 @@ export function HelpPage() {
   return (
     <div className="page page-reading help">
       <h1 className="page-h1" tabIndex={-1}>Help</h1>
+      <p className="help-intro">Pick a topic. Every page also has an <Icon name="info" className="nav-icon help-inline-icon" /> next to its title that opens its part of this page.</p>
       <nav className="help-jump" aria-label="Help sections">
         {sections.map((s) => <Link key={s.id} className="chip" to={`#${s.id}`}>{s.title}</Link>)}
       </nav>
@@ -236,12 +237,17 @@ export function HelpPage() {
   )
 }
 
+/** What to type or add, and what happens: one row each, stacked on a phone. */
 function Table({ head, rows }: { head: [string, string]; rows: [string, string][] }) {
   return (
-    <table className="help-table">
-      <thead><tr><th scope="col">{head[0]}</th><th scope="col">{head[1]}</th></tr></thead>
-      <tbody>{rows.map(([a, b]) => <tr key={a}><td><code>{a}</code></td><td>{b}</td></tr>)}</tbody>
-    </table>
+    <ul className="help-keys" aria-label={`${head[0]} and ${head[1].toLowerCase()}`}>
+      {rows.map(([a, b]) => (
+        <li key={a}>
+          <span>{a === 'nothing' ? <b>Nothing</b> : <code>{a}</code>}</span>
+          <span>{b}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
 

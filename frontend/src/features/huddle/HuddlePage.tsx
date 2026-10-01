@@ -15,6 +15,7 @@ import {
   spotlightTile, startAudio, startPreview, stopPreview, tileTrack, toggleBlur, toggleCam, toggleMic, toggleShare, toggleTranscript,
   useHuddle, type HuddleState, type Tile,
 } from './session'
+import { HelpLink } from '../../components/HelpLink'
 
 export function HuddlePage() {
   useTitle('Huddle')
@@ -36,7 +37,7 @@ export function HuddlePage() {
   return (
     <div className="page hu-page" data-call={call}>
       <div className="hu-head">
-        <h1 className="page-h1" tabIndex={-1}>Huddle</h1>
+        <h1 className="page-h1" tabIndex={-1}>Huddle<HelpLink id="huddle" /></h1>
       </div>
       {call ? <CallView s={s} /> : <PreJoin s={s} />}
     </div>

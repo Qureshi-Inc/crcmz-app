@@ -4,6 +4,7 @@ import { Link, useLocation, useOutletContext } from 'react-router-dom'
 import { DESTS, type DestId } from '../../app/nav'
 import type { ShellContext } from '../../app/Shell'
 import { useTitle } from '../../app/title'
+import { HelpLink } from '../../components/HelpLink'
 
 export function Handoff({ id }: { id: DestId }) {
   const d = DESTS[id]
@@ -15,7 +16,7 @@ export function Handoff({ id }: { id: DestId }) {
   if (d.adminOnly && !isAdmin) {
     return (
       <div className="page page-reading">
-        <h1 className="page-h1" tabIndex={-1}>{d.label}</h1>
+        <h1 className="page-h1" tabIndex={-1}>{d.label}<HelpLink id={d.id} /></h1>
         {adminKnown ? (
           <section className="glass handoff">
             <p className="handoff-lede">Admins only</p>
@@ -34,7 +35,7 @@ export function Handoff({ id }: { id: DestId }) {
 
   return (
     <div className="page page-reading">
-      <h1 className="page-h1" tabIndex={-1}>{d.label}</h1>
+      <h1 className="page-h1" tabIndex={-1}>{d.label}<HelpLink id={d.id} /></h1>
       <section className="glass handoff" aria-labelledby="handoff-lede">
         <p className="handoff-lede" id="handoff-lede">Lives in the classic app for now.</p>
         <p className="dim">{d.blurb} It works there today; the new version is next in line.</p>

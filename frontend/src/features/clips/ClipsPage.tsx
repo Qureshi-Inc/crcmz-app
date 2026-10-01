@@ -10,6 +10,7 @@ import { pillText, useUpload } from '../../lib/upload'
 import { Catalogue } from './Catalogue'
 import { Overview, useCountdown } from './Overview'
 import { UploadSheet, useUploadRefresh } from './SendVideo'
+import { HelpLink } from '../../components/HelpLink'
 
 export function ClipsPage() {
   useTitle('Clips')
@@ -44,7 +45,7 @@ export function ClipsPage() {
     <div className="page">
       <div className="clips-head">
         <div>
-          <h1 className="page-h1" tabIndex={-1}>Clips</h1>
+          <h1 className="page-h1" tabIndex={-1}>Clips<HelpLink id="clips" /></h1>
           <SummaryBar q={status} />
         </div>
         <div className="clips-cta">

@@ -14,6 +14,7 @@ import {
   fmtDate, inviteMember, resetUserPassword, type Invite, tokenState, type AdminUser, type OpsStatus, type PipelineHealth, type PsnAccount, type PsnStatus,
   type VideoJobs,
 } from '../../lib/account'
+import { HelpLink } from '../../components/HelpLink'
 
 const POLL_MS = 30_000
 const SERVICES: [string, string][] = [['psn_messenger', 'CRCMZ app'], ['psn_montage', 'Montage builder'], ['wa_bridge', 'WhatsApp bridge']]
@@ -30,7 +31,7 @@ export function AdminPage() {
   if (!isAdmin || denied) return <Forbidden known={adminKnown || denied} />
   return (
     <div className="page">
-      <h1 className="page-h1" tabIndex={-1}>Admin</h1>
+      <h1 className="page-h1" tabIndex={-1}>Admin<HelpLink id="admin" /></h1>
       <div className="admin-cards">
         <Health />
         <Ops />
@@ -56,7 +57,7 @@ export function AdminPage() {
 function Forbidden({ known }: { known: boolean }) {
   return (
     <div className="page page-reading">
-      <h1 className="page-h1" tabIndex={-1}>Admin</h1>
+      <h1 className="page-h1" tabIndex={-1}>Admin<HelpLink id="admin" /></h1>
       {known ? (
         <section className="glass handoff">
           <p className="handoff-lede">Admins only</p>

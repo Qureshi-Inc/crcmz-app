@@ -18,6 +18,7 @@ import {
   FEEDBACK_TAGS, filterReviews, gradeColor, gradeVal, loadDrafts, momentText, NO_FILTERS, POLL_MS, saveDrafts, savePrefs, sendFeedback, useCoaching,
   type Coaching, type DetailMode, type Feedback, type Filters, type NotifyMode, type Review, type Scope, type Sort,
 } from '../../lib/coach'
+import { HelpLink } from '../../components/HelpLink'
 
 const when = (ts: number | undefined) => {
   if (!ts) return ''
@@ -54,7 +55,7 @@ export function CoachPage() {
   const noAccess = signedOut || is401(q.error)
   return (
     <div className="page co-page">
-      <h1 className="page-h1" tabIndex={-1}>AI Coach</h1>
+      <h1 className="page-h1" tabIndex={-1}>AI Coach<HelpLink id="coach" /></h1>
       {noAccess && (
         <div className="banner" role="alert">
           <span style={{ fontWeight: 700 }}>Sign in to see coaching.</span>

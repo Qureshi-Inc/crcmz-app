@@ -54,7 +54,7 @@ export const MORE_ACCOUNT: DestId[] = ['portal', 'settings', 'help', 'admin']
 export const SIDEBAR_MAIN: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'ask']
 export const SIDEBAR_FOOT: DestId[] = ['portal', 'settings', 'help', 'admin']
 
-/** The ⓘ beside a menu item: that item's section on the Help page. */
+/** The ⓘ beside a page title: that page's section on the Help page. */
 export function helpHref(id: DestId): string | null {
   return id === 'help' ? null : `/help#${id}`
 }

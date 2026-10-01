@@ -16,6 +16,7 @@ import {
   EXPORT_HINT, MAX_IMPORT_BYTES, parseRange, RANGES, rangeLabel, rangeQuery, useCanImport, useWa,
   type Range, type RangeId, type WaAwards, type WaImport, type WaMember,
 } from '../../lib/whatsapp'
+import { HelpLink } from '../../components/HelpLink'
 
 /** The page has no group headings, so each panel is a top-level section (h2). */
 function Panel<T>(p: Parameters<typeof ChartPanel<T>>[0]) {
@@ -46,7 +47,7 @@ export function WhatsAppPage() {
   const none = s && s.total_messages === 0
   return (
     <div className="page wa-page">
-      <h1 className="page-h1" tabIndex={-1}>WhatsApp</h1>
+      <h1 className="page-h1" tabIndex={-1}>WhatsApp<HelpLink id="whatsapp" /></h1>
       <RangeBar range={range} onPick={pick} signedIn={signedIn} onSignIn={() => setSignInFor('export')} />
       {signInFor && !signedIn && (
         <div className="banner" role="alert">

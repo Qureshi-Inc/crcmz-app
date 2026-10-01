@@ -20,6 +20,7 @@ import {
   currentSubscription, disablePush, enablePush, fetchPushConfig, isIOS, isStandalone, promptInstall, pushSupported,
   savePushPrefs, sendTestPush, useInstall,
 } from '../../lib/pwa'
+import { HelpLink } from '../../components/HelpLink'
 
 const TABS = [
   { id: 'passkeys', label: 'Passkeys' },
@@ -52,7 +53,7 @@ export function SettingsPage() {
 
   return (
     <div className="page page-reading">
-      <h1 className="page-h1" tabIndex={-1}>Settings</h1>
+      <h1 className="page-h1" tabIndex={-1}>Settings<HelpLink id="settings" /></h1>
       <Tabs.Root value={tab} onValueChange={(t) => nav(`/settings/${t}`)} activationMode="manual">
         <Tabs.List className="tabstrip" aria-label="Settings sections">
           {TABS.map((t) => <Tabs.Trigger key={t.id} value={t.id} className="tabstrip-tab">{t.label}</Tabs.Trigger>)}

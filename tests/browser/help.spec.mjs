@@ -1,5 +1,5 @@
 /**
- * Help: every menu row's ⓘ lands on its own section of /app/help.
+ * Help: every page title's ⓘ lands on its own section of /app/help.
  *
  *   tests/browser/run.sh help.spec.mjs
  */
@@ -48,25 +48,25 @@ async function landed(page, id) {
   assert(top >= 0 && (top < 200 || atEnd), `#help-${id} top is ${top}`);
 }
 
-await check('desktop: sidebar ⓘ opens that section', async () => {
+await check('desktop: the page title ⓘ opens that section; the sidebar has none', async () => {
   const { ctx, page } = await open({ width: 1440, height: 900 }, false);
   await page.goto(`${BASE}/app/settings`);
-  await page.getByRole('link', { name: 'How to use Mattermost' }).count().then(n => assert(n === 0, 'no Mattermost row'));
-  await page.getByRole('link', { name: 'How to use Slap' }).click();
-  await landed(page, 'slap');
-  assert(await page.getByText('https://jelly.qureshi.io').count() > 0, 'Jellyfin URL shown');
-  await page.getByRole('link', { name: 'How to use Settings' }).click();
+  const n = await page.locator('aside').getByRole('link', { name: /^How to use/ }).count();
+  assert(n === 0, `${n} ⓘ in the sidebar`);
+  await page.locator('h1').getByRole('link', { name: 'How to use Settings' }).click();
   await landed(page, 'settings');
   await ctx.close();
 });
 
-await check('phone: More sheet ⓘ closes the sheet and opens that section', async () => {
+await check('phone: the page title ⓘ opens that section; the More sheet has none', async () => {
   const { ctx, page } = await open({ width: 390, height: 844 }, false);
   await page.goto(`${BASE}/app/settings`);
   await page.getByRole('button', { name: /^more/i }).click();
-  await page.getByRole('link', { name: 'How to use Huddle' }).click();
-  await landed(page, 'huddle');
-  assert(await page.locator('[role="dialog"]').count() === 0, 'sheet closed');
+  const n = await page.locator('[role="dialog"]').getByRole('link', { name: /^How to use/ }).count();
+  assert(n === 0, `${n} ⓘ in the More sheet`);
+  await page.keyboard.press('Escape');
+  await page.locator('h1').getByRole('link', { name: 'How to use Settings' }).click();
+  await landed(page, 'settings');
   await ctx.close();
 });
 
@@ -87,6 +87,7 @@ await check('jump chips scroll within the page', async () => {
   await page.goto(`${BASE}/app/help`);
   await page.locator('.help-jump').getByRole('link', { name: 'Mattermost' }).click();
   await landed(page, 'mattermost');
+  assert(await page.getByText('https://mm.qureshi.io').count() > 0, 'Mattermost URL shown');
   await ctx.close();
 });
 

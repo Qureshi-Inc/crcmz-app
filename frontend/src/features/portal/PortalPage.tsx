@@ -11,6 +11,7 @@ import { ApiError, NetworkError } from '../../lib/http'
 import { fmtDate, linkPsn, tokenState } from '../../lib/account'
 import { usePsnStatus } from '../settings/SettingsPage'
 import { ClaimList } from './Claim'
+import { HelpLink } from '../../components/HelpLink'
 
 const PS_HOME = 'https://www.playstation.com'
 const SSO_COOKIE = 'https://ca.account.sony.com/api/v1/ssocookie'
@@ -66,7 +67,7 @@ export function PortalPage() {
   if (linked) {
     return (
       <div className="page page-reading">
-        <h1 className="page-h1" tabIndex={-1}>Link PSN</h1>
+        <h1 className="page-h1" tabIndex={-1}>Link PSN<HelpLink id="portal" /></h1>
         <section className="glass portal-done" role="status" aria-labelledby="po-done">
           <p className="portal-done-emoji" aria-hidden="true">🎮</p>
           <h2 className="section-h2" id="po-done">Linked as {linked}</h2>
@@ -79,7 +80,7 @@ export function PortalPage() {
 
   return (
     <div className="page page-reading">
-      <h1 className="page-h1" tabIndex={-1}>Link PSN</h1>
+      <h1 className="page-h1" tabIndex={-1}>Link PSN<HelpLink id="portal" /></h1>
       <StatusCard q={q} />
       <ol className="stepper" aria-label="Link your PSN account">
         {unclaimed.length > 0 && (

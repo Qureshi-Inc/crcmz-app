@@ -21,6 +21,7 @@ import {
   attachLayout, canCall, changeName, clearVideo, exitFs, flipCam, joinCall, leave, leaveCall, rally, rejoin, setMic, setOrbPos, setSpeaker,
   setTitle, setVideo, start, toggleMute, toggleVideo, useWatch, videoLabel, type OrbPos, type WatchState,
 } from './session'
+import { HelpLink } from '../../components/HelpLink'
 
 export function WatchPage({ visible }: { visible: boolean }) {
   const s = useWatch()
@@ -37,7 +38,7 @@ export function WatchPage({ visible }: { visible: boolean }) {
     <div className="page watch-page" data-hidden={!visible} inert={!visible} aria-hidden={!visible || undefined}>
       {visible && <WatchTitle />}
       <div className="wp-head">
-        <h1 className="page-h1" tabIndex={-1}>Watch</h1>
+        <h1 className="page-h1" tabIndex={-1}>Watch<HelpLink id="watch" /></h1>
         <PresencePill s={s} />
         <Roster s={s} max={desktop ? 8 : 4} />
         {s.active && s.status !== 'idle' && (

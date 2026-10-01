@@ -8,6 +8,7 @@ import { SEND_LABEL, slowLabel } from '../../lib/send'
 import { usePsnControl } from '../chat/usePsnControl'
 import { ChatBoard } from '../chat/ChatBoard'
 import { useTitle } from '../../app/title'
+import { HelpLink } from '../../components/HelpLink'
 
 export function SquadPage() {
   useTitle('Squad')
@@ -45,7 +46,7 @@ function SquadHeader({ squad, stale, hasTogether }: { squad: UseQueryResult<Squa
   return (
     <div className="squad-head">
       <div>
-        <h1 className="page-h1" tabIndex={-1}>Squad</h1>
+        <h1 className="page-h1" tabIndex={-1}>Squad<HelpLink id="squad" /></h1>
         <div className="live-count-slot">
           {showCount && (
             <p className="live-count" role="status">

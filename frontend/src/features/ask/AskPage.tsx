@@ -27,6 +27,7 @@ import {
   addFact, ask, clearThread, deleteFact, loadDraft, MAX_IMG_BYTES, MAX_Q, saveDraft, stopAnswer, streamAnswer, SUGGESTIONS,
   useFacts, useHistory, useTools, type History, type Msg, type StreamEvent,
 } from '../../lib/ask'
+import { HelpLink } from '../../components/HelpLink'
 
 const SEEN_KEY = 'crcmz.ask.seen'
 const TOO_LONG = 'Too long — keep it under 1 000 characters.'
@@ -256,7 +257,7 @@ export function AskPage() {
       <div className="page page-reading ask-page">
         <div className="ask-head">
           <div className="ask-head-t">
-            <h1 className="page-h1" tabIndex={-1}>Ask AI</h1>
+            <h1 className="page-h1" tabIndex={-1}>Ask AI<HelpLink id="ask" /></h1>
             {tools.data?.available && <p className="meta ask-model">{tools.data.model} · {tools.data.tools.length} tools</p>}
           </div>
           <div className="ask-head-b">

@@ -10,6 +10,7 @@ import { Listen } from './Listen'
 import { Stats } from './Stats'
 import { Together } from './Together'
 import { usePlayer } from './player'
+import { HelpLink } from '../../components/HelpLink'
 
 type Tab = 'listen' | 'together' | 'stats'
 const TABS: Tab[] = ['listen', 'together', 'stats']
@@ -39,7 +40,7 @@ export function SlapPage() {
     <div className="page">
       <div className="slap-head">
         <div>
-          <h1 className="page-h1" tabIndex={-1}>Slap</h1>
+          <h1 className="page-h1" tabIndex={-1}>Slap<HelpLink id="slap" /></h1>
           <p className="slap-sub meta" aria-live="polite">
             {who ? <>Listening as <b>{who}</b>{me.data?.created ? ' · your music account was just made' : ''}</>
               : unlinked ? 'Your music account needs an admin' : ' '}

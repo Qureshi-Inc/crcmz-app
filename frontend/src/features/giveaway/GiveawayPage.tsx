@@ -12,6 +12,7 @@ import {
   countdownLabel, fmtWhen, memberSees, parseWhen, PENDING, revealMs as revealAt, splitMs, type Giveaway, type GwData,
 } from '../../lib/giveaway'
 import { AdminTools } from './AdminTools'
+import { HelpLink } from '../../components/HelpLink'
 
 const POLL_MS = 60_000
 /** After the reveal time: 5 s, 15 s, 60 s, then every 60 s until the status moves (F-6). */
@@ -36,7 +37,7 @@ export function GiveawayPage() {
 
   return (
     <div className="page">
-      <h1 className="page-h1" tabIndex={-1}>Giveaway</h1>
+      <h1 className="page-h1" tabIndex={-1}>Giveaway<HelpLink id="giveaway" /></h1>
       <div className="gw-layout">
         <div className="gw-main">
           {q.data === undefined && q.isError ? (
