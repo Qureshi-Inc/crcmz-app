@@ -243,7 +243,7 @@ def invite_url(user_id: str, code: str) -> str:
 
 def _layout(title: str, body_html: str, cta_label: str, cta_url: str, footnote: str) -> str:
     """Neon-arcade shell (DESIGN.md tokens), table layout and inline styles for mail clients."""
-    logo = f"https://{PUBLIC_HOST}/crcmz-logo.png"
+    logo = f"https://{PUBLIC_HOST}/footer-avatar.png"
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark"><title>{html.escape(title)}</title></head>
@@ -253,7 +253,7 @@ def _layout(title: str, body_html: str, cta_label: str, cta_url: str, footnote: 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#120a26;border:1px solid #3a1f5c;border-radius:22px;">
     <tr><td style="height:4px;background:#ff2fd6;background-image:linear-gradient(90deg,#22e6ff,#ff2fd6,#9d5cff);border-radius:22px 22px 0 0;font-size:0;line-height:0;">&nbsp;</td></tr>
     <tr><td align="center" style="padding:30px 28px 6px;">
-      <img src="{logo}" width="72" height="72" alt="CRCMZ" style="display:block;border:0;border-radius:18px;">
+      <img src="{logo}" width="84" height="84" alt="CRCMZ" style="display:block;border:0;">
     </td></tr>
     <tr><td align="center" style="padding:10px 28px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
       <div style="display:inline-block;padding:5px 12px;border-radius:999px;background:#ffd24a;color:#0b0616;font-size:11px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;">VIP Clan Member</div>

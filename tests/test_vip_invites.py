@@ -261,7 +261,7 @@ def http_tests():
         assert r.status_code == 400 and "match" in r.text
 
     def logo_is_public():
-        r = client.get("/crcmz-logo.png")
+        r = client.get("/footer-avatar.png")
         assert r.status_code == 200, r.status_code
 
     for fn in (invite_api_needs_a_credential, invite_api_with_secret, invite_page_is_public,
