@@ -487,7 +487,9 @@ def _slap_people() -> Any:
       "gamer tag, platform, Discord name, whether the invite email went out, and whether "
       "they have finished setting up their account (status 'accepted'). "
       "kind 'welcome' means they already had an account. mm_username is the Mattermost "
-      "account made for them. Emails are not included.",
+      "account made for them. Emails are not included. This is the invite log only: "
+      "people who were VIP before invites existed are not in it, so for 'who is VIP' "
+      "use squad_roster's `vips`.",
       {"type": "object", "properties": {
           "limit": {"type": "integer", "description": "1-50, default 10."}}, "required": []})
 def _vip_invites_recent(limit: int = 10) -> Any:
@@ -1076,7 +1078,10 @@ def _soundboard_tool(who: str = "", limit: int = 40) -> dict:
       "under in WhatsApp. Call this first when a question names a person, so you "
       "use their real identities rather than guessing. Phone numbers are masked "
       "to the last four digits. `untagged` lists people whose identities are not "
-      "linked yet, which is why some questions about them cannot be answered.",
+      "linked yet, which is why some questions about them cannot be answered. "
+      "`vips` is who is a VIP Clan Member: answer 'who is VIP' from this, not from "
+      "vip_invites_recent. `vip_since` is when the tag was written, not always the "
+      "day they started paying.",
       {"type": "object", "properties": {}, "required": []})
 def _squad_roster() -> dict:
     ident = _ident()
@@ -1091,11 +1096,14 @@ def _squad_roster() -> dict:
             "mm_username": p["mm_username"],
             "whatsapp_names": p["wa_names"],
             "phone": _mask_phone(p["wa_phone"]),
+            "vip": bool(vip := (p["tags"].get("vip") or "").strip()),
+            "vip_since": vip or None,
         }
         people.append(entry)
         if not (p["psn_id"] or p["wa_names"] or p["mm_username"]):
             untagged.append(entry["name"])
-    return {"people": people, "count": len(people), "untagged": untagged}
+    return {"people": people, "count": len(people), "untagged": untagged,
+            "vips": [e["name"] for e in people if e["vip"]]}
 
 
 @tool("person_profile",

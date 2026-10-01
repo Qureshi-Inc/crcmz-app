@@ -92,6 +92,7 @@ META = {
         {"key": "wa_phone", "value": "+15875550002"},
         # Semicolon-separated, with padding to trim.
         {"key": "wa_names", "value": b64("Zubair CRCMZ ; Zubair")},
+        {"key": "vip", "value": b64("2026-10-01")},
     ],
     "1003": [],
     # Both twins claim the same WhatsApp name, so it must map to neither.
@@ -322,6 +323,18 @@ def main():
         for secret in ("npsso", "access_token", "refresh_token"):
             assert secret not in blob, f"{secret} leaked into identity output"
     check("identity output carries no credential fields", no_credentials_leak)
+
+    def roster_lists_vips():
+        # "Who is VIP" comes from the vip tag on everyone, not just the invite log.
+        reset()
+        import assistant
+        r = assistant._squad_roster()
+        assert r["vips"] == ["ace killerx"], r["vips"]
+        ace = next(p for p in r["people"] if p["username"] == "zubair221b")
+        assert ace["vip"] is True and ace["vip_since"] == "2026-10-01", ace
+        soup = next(p for p in r["people"] if p["username"] == "moiz")
+        assert soup["vip"] is False and soup["vip_since"] is None, soup
+    check("squad_roster says who is VIP from the vip tag", roster_lists_vips)
 
     def caching():
         global SEARCH_CALLS
