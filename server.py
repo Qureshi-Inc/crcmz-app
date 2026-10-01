@@ -369,7 +369,7 @@ import portal as portal_mod
 
 
 
-def _portal_page(error: str = "", ok: str = "") -> str:
+def _portal_page(error: str = "", ok: str = "", known_mm: str = "") -> str:
     """Render the single-page portal wizard (only reached once unlocked)."""
     from portal import NPSSO_TOKEN_URL, PSN_LOGIN_URL, mattermost_usernames
 
@@ -438,8 +438,13 @@ def _portal_page(error: str = "", ok: str = "") -> str:
     # "Who are you?" dropdown of Mattermost users, so each link ties to a person
     # (like the Apple Music re-link page). Falls back to a text field if the
     # user list can't be fetched.
-    names = mattermost_usernames()
-    if names:
+    # A signed-in person whose Mattermost name is already known (their mm_username
+    # tag, written when the account was provisioned) skips the picker entirely.
+    names = [] if known_mm else mattermost_usernames()
+    if known_mm:
+        who_input = (f'<input type="hidden" name="mm_username" value="{_html.escape(known_mm)}">'
+                     f'<div class="known-mm">Linking as <b>@{_html.escape(known_mm)}</b></div>')
+    elif names:
         opts = '<option value="" disabled selected>Select your name…</option>' + "".join(
             f'<option value="{n}">{n}</option>' for n in names
         )
@@ -546,6 +551,8 @@ def _portal_page(error: str = "", ok: str = "") -> str:
 
   label {{ display:block; font-size:12px; color:var(--dim); margin:15px 0 7px;
     font-weight:600; letter-spacing:.3px; }}
+  .known-mm {{ padding:13px 14px; border-radius:13px; border:1px solid rgba(46,230,160,.35);
+    background:rgba(46,230,160,.08); color:#9dffd6; font-size:15px; }}
   input, textarea, select {{ width:100%; padding:13px 14px; border-radius:13px;
     border:1px solid rgba(140,160,255,.22); background:rgba(6,11,24,.6);
     color:var(--txt); font-size:15px; transition:border .15s, box-shadow .15s;
@@ -6162,7 +6169,9 @@ async def api_psn_link(request: Request):
     email = session.get("email", "")
     derived_username = email.split("@")[0] if email else ""
     existing = portal_mod.find_by_zitadel_id(zitadel_user_id)
-    mm_username = (existing or {}).get("mm_username") or derived_username
+    mm_username = ((existing or {}).get("mm_username")
+                   or await asyncio.to_thread(_vip.mm_username_for, zitadel_user_id)
+                   or derived_username)
     try:
         result = portal_mod.link_user(npsso, mm_username=mm_username, zitadel_user_id=zitadel_user_id)
     except portal_mod.LinkError as e:
@@ -6173,9 +6182,19 @@ async def api_psn_link(request: Request):
     return JSONResponse({"ok": True, "online_id": result.get("online_id", "")})
 
 
+def _known_mm_username(request: Request) -> str:
+    """The signed-in person's Mattermost name: their portal record, else their
+    Zitadel `mm_username` tag. '' when signed out or unknown."""
+    sub = (_get_session(request) or {}).get("sub", "")
+    if not sub:
+        return ""
+    existing = portal_mod.find_by_zitadel_id(sub) or {}
+    return (existing.get("mm_username") or "").strip() or _vip.mm_username_for(sub)
+
+
 @app.get("/portal", response_class=HTMLResponse)
 def portal_home(request: Request):
-    return HTMLResponse(_portal_page())
+    return HTMLResponse(_portal_page(known_mm=_known_mm_username(request)))
 
 
 @app.post("/portal/link", response_class=HTMLResponse)
@@ -6185,15 +6204,17 @@ def portal_link(
     mm_username: str = Form(""),
 ):
     zitadel_user_id = (_get_session(request) or {}).get("sub", "")
+    known = _known_mm_username(request)
+    mm_username = known or mm_username
     try:
         result = portal_mod.link_user(npsso, mm_username=mm_username.strip(),
                                       zitadel_user_id=zitadel_user_id)
     except portal_mod.LinkError as e:
-        return HTMLResponse(_portal_page(error=str(e)), status_code=400)
+        return HTMLResponse(_portal_page(error=str(e), known_mm=known), status_code=400)
     except Exception as e:  # noqa: BLE001
         logger.error("portal: link failed: %s", e)
         return HTMLResponse(
-            _portal_page(error="Something went wrong. Try a fresh token."),
+            _portal_page(error="Something went wrong. Try a fresh token.", known_mm=known),
             status_code=500,
         )
     who = result.get("online_id") or result.get("mm_username") or "Your account"

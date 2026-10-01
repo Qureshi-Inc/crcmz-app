@@ -80,9 +80,56 @@ class FakeZitadel:
             return httpx.Response(200, json={"inviteCode": self.codes[uid]})
         if path.endswith("/password"):
             return httpx.Response(200, json={})
-        if "/metadata/vip" in path:
+        if "/metadata/" in path:
             return httpx.Response(200, json={})
         return httpx.Response(404, json={"message": f"unexpected {req.method} {path}"})
+
+
+class FakeMattermost:
+    """Team lookup, user lookups, invite-id signup and the password email."""
+
+    def __init__(self, users=None, members=None):
+        self.users = users or {}            # email -> {"id", "username"}
+        self.members = set(members or ())
+        self.calls: list[tuple[str, str, dict, dict]] = []
+
+    def handler(self, req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        body = json.loads(req.content) if req.content else {}
+        self.calls.append((req.method, path, body, dict(req.url.params)))
+        if path == "/api/v4/teams/name/crcmz":
+            return httpx.Response(200, json={"id": "T1", "invite_id": "INV"})
+        if path.startswith("/api/v4/users/email/"):
+            u = self.users.get(path.rsplit("/", 1)[1])
+            return httpx.Response(200, json=u) if u else httpx.Response(404, json={})
+        if path.startswith("/api/v4/users/username/"):
+            name = path.rsplit("/", 1)[1]
+            hit = any(u["username"] == name for u in self.users.values())
+            return httpx.Response(200 if hit else 404, json={})
+        if path == "/api/v4/users" and req.method == "POST":
+            assert req.url.params.get("iid") == "INV" and "authorization" not in req.headers
+            u = {"id": f"mm{len(self.users)}", "username": body["username"]}
+            self.users[body["email"]] = u
+            self.members.add(u["id"])
+            return httpx.Response(201, json=u)
+        if path == "/api/v4/users/password/reset/send":
+            return httpx.Response(200, json={})
+        if path.startswith("/api/v4/teams/T1/members/"):
+            return httpx.Response(200 if path.rsplit("/", 1)[1] in self.members else 404, json={})
+        if path == "/api/v4/teams/T1/members":
+            self.members.add(body["user_id"])
+            return httpx.Response(201, json={})
+        return httpx.Response(404, json={"message": f"unexpected {req.method} {path}"})
+
+
+class Both:
+    """Routes by host, so one MockTransport serves Zitadel and Mattermost."""
+
+    def __init__(self, z, m):
+        self.z, self.m = z, m
+
+    def handler(self, req):
+        return (self.m if req.url.host == "mm.test" else self.z).handler(req)
 
 
 _REAL_CLIENT = httpx.Client
@@ -109,6 +156,9 @@ def install(fake: FakeZitadel):
     vip_invites.send_email = lambda to, subject, h, t: sent.append(
         {"to": to, "subject": subject, "html": h, "text": t})
     vip_invites.ZITADEL_SERVICE_TOKEN = "svc-token"
+    vip_invites.MATTERMOST_URL = "https://mm.test" if isinstance(fake, Both) else ""
+    vip_invites.MATTERMOST_TOKEN = "bot-token"
+    vip_invites.MATTERMOST_TEAM_NAME = "crcmz"
     return sent
 
 
@@ -212,7 +262,47 @@ def flow_tests():
             return
         raise AssertionError("wrong code accepted")
 
-    for fn in (new_member_gets_account_and_invite_link, stripe_retry_sends_once,
+    def vip_gets_mattermost_account_and_tag():
+        fresh_db()
+        z, m = FakeZitadel(), FakeMattermost(users={"x@y.co": {"id": "o", "username": "babybottlepop"}})
+        sent = install(Both(z, m))
+        out = vip_invites.invite_vip("fan@example.com", gamer_tag="Baby bottle pop",
+                                     discord_username="kurokishi_haruma")
+        # The gamer tag's username is taken, so the next free variant is used.
+        assert out["mm_username"] == "babybottlepop2", out
+        signup = [c for c in m.calls if c[1] == "/api/v4/users"][0]
+        assert signup[2]["email"] == "fan@example.com" and signup[3]["iid"] == "INV"
+        assert any(c[1].endswith("/password/reset/send") for c in m.calls)
+        assert any(c[1].endswith("/metadata/mm_username") for c in z.calls), "no mm_username tag"
+        assert "@babybottlepop2" in sent[0]["html"] and "@babybottlepop2" in sent[0]["text"]
+        assert vip_invites.recent()[0]["mm_username"] == "babybottlepop2"
+
+    def existing_mattermost_user_keeps_password():
+        fresh_db()
+        z, m = FakeZitadel(), FakeMattermost(users={"old@y.co": {"id": "o1", "username": "oldie"}})
+        install(Both(z, m))
+        out = vip_invites.provision_mattermost("1000", "Old@y.co", "whatever")
+        assert out == {"mm_username": "oldie", "created": False}, out
+        assert not any(c[1].endswith("/password/reset/send") for c in m.calls)
+        assert "o1" in m.members, "not added to the team"
+
+    def mattermost_failure_still_sends_app_invite():
+        fresh_db()
+
+        class Down(FakeMattermost):
+            def handler(self, req):
+                return httpx.Response(500, json={})
+        sent = install(Both(FakeZitadel(), Down()))
+        out = vip_invites.invite_vip("n@b.co")
+        assert out["kind"] == "invite" and out["mm_username"] == "" and len(sent) == 1
+
+    def username_candidates_are_legal():
+        c = vip_invites.mm_username_candidates("Baby bottle pop", "__9Faze!", "ab", "x" * 40)
+        assert c == ["babybottlepop", "faze", "x" * 22], c
+
+    for fn in (vip_gets_mattermost_account_and_tag, existing_mattermost_user_keeps_password,
+               mattermost_failure_still_sends_app_invite, username_candidates_are_legal,
+               new_member_gets_account_and_invite_link, stripe_retry_sends_once,
                existing_account_gets_welcome_and_no_code, existing_account_without_password_gets_invite,
                bad_email_rejected, smtp_failure_is_logged_and_retryable,
                accept_checks_password_before_spending_code, accept_wrong_code):
@@ -264,7 +354,28 @@ def http_tests():
         r = client.get("/footer-avatar.png")
         assert r.status_code == 200, r.status_code
 
-    for fn in (invite_api_needs_a_credential, invite_api_with_secret, invite_page_is_public,
+    def portal_skips_picker_when_name_known():
+        server._vip.mm_username_for = lambda sub: "babybottlepop" if sub == "393" else ""
+        server.portal_mod.find_by_zitadel_id = lambda sub: None
+        cookie = server._signer().dumps(server._make_session("393", "f@b.co"))
+        r = client.get("/portal", cookies={server._SESSION_COOKIE: cookie})
+        assert r.status_code == 200, r.status_code
+        assert 'name="mm_username" value="babybottlepop"' in r.text and "Select your name" not in r.text
+
+    def portal_link_uses_known_name_over_form():
+        seen = {}
+
+        def link(npsso, mm_username="", zitadel_user_id=""):
+            seen.update(mm=mm_username, sub=zitadel_user_id)
+            return {"online_id": "PSN1"}
+        server.portal_mod.link_user = link
+        cookie = server._signer().dumps(server._make_session("393", "f@b.co"))
+        r = client.post("/portal/link", data={"npsso": "tok", "mm_username": "someone_else"},
+                        cookies={server._SESSION_COOKIE: cookie})
+        assert r.status_code == 200 and seen == {"mm": "babybottlepop", "sub": "393"}, (r.status_code, seen)
+
+    for fn in (portal_skips_picker_when_name_known, portal_link_uses_known_name_over_form,
+               invite_api_needs_a_credential, invite_api_with_secret, invite_page_is_public,
                invite_page_escapes_code, mismatched_passwords, logo_is_public):
         check(fn.__name__, fn)
 
