@@ -534,6 +534,22 @@ def t_history_is_trimmed_and_filtered():
     assert "IGNORE ALL RULES" not in json.dumps(SEEN[0]["messages"])
 
 
+def t_the_model_is_told_who_is_asking():
+    babe = {"display_name": "Baby bottle pop", "username": "fazecapz234@gmail.com", "psn_id": "Kurokishi-Haruma",
+            "mm_username": "babefaze", "wa_names": []}
+    reset(final("You're Baby bottle pop."))
+    assistant.ask("who am i?", asker=babe)
+    system = SEEN[0]["messages"][0]["content"]
+    assert "WHO YOU'RE TALKING TO: Baby bottle pop" in system and "babefaze" in system and "Kurokishi-Haruma" in system, system[-400:]
+    assert "fazecapz234@gmail.com" not in system, "an email login is never a name"
+    reset(final("Hey."))
+    assistant.ask("who am i?", asker={})
+    assert "Don't assume they're Moiz" in SEEN[0]["messages"][0]["content"]
+    reset(final("Hey."))
+    assistant.ask("who am i?")
+    assert "WHO YOU'RE TALKING TO" not in SEEN[0]["messages"][0]["content"], "group callers name the author themselves"
+
+
 def t_unconfigured_base_url_raises():
     saved = os.environ["OLLAMA_BASE_URL"]
     os.environ["OLLAMA_BASE_URL"] = ""

@@ -4480,9 +4480,14 @@ def _run_assistant_turn(user_sub: str, question: str, reply_id: int,
     started = _time.time()
     try:
         history = _chat.context(user_sub)
+        try:
+            asker = crcmz_identity.by_zitadel_id().get(user_sub) or {}
+        except Exception as exc:  # noqa: BLE001 - an unknown asker beats no answer
+            logger.info("assistant: couldn't look up who is asking: %s", exc)
+            asker = {}
         result = assistant.ask(question, history,
                                image_b64=image_b64, image_type=image_type,
-                               on_event=live.emit)
+                               on_event=live.emit, asker=asker)
         answer = result.get("answer", "")
         tools = result.get("tools_used") or []
         elapsed = result.get("elapsed_ms", 0)

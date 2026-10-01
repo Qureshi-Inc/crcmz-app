@@ -19,7 +19,8 @@ const PATHS: Record<string, ReactNode> = {
   ask: (<g {...S}><path d="M10 1v3M10 16v3M1 10h3M16 10h3M3.5 3.5l2 2M14.5 14.5l2 2M16.5 3.5l-2 2M5.5 14.5l-2 2" /><circle cx="10" cy="10" r="3.5" /></g>),
   coach: (<g {...S}><circle cx="10" cy="10" r="8" /><circle cx="10" cy="10" r="4.5" /><circle cx="10" cy="10" r="1" fill="currentColor" stroke="none" /></g>),
   link: (<g {...S}><path d="M8 11a4 4 0 0 0 5.66.54l2.5-2.5A4 4 0 0 0 10.5 3.3L9.08 4.72" /><path d="M12 9a4 4 0 0 0-5.66-.54l-2.5 2.5a4 4 0 0 0 5.66 5.66l1.42-1.42" /></g>),
-  settings: (<g {...S}><circle cx="10" cy="10" r="3" /><path d="M10 1v2M10 17v2M1 10h2M17 10h2M3.2 3.2l1.4 1.4M15.4 15.4l1.4 1.4M16.8 3.2l-1.4 1.4M4.6 15.4l-1.4 1.4" /></g>),
+  // A gear (Lucide's, ISC), drawn on a 24 grid: scaled to 20 with the stroke kept at 1.5.
+  settings: (<g {...S} strokeWidth={1.8} transform="scale(.8333)"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></g>),
   admin: (<g {...S}><path d="M10 18.5s7-3.5 7-8.5V4l-7-2.5L3 4v6c0 5 7 8.5 7 8.5z" /></g>),
   info: (<g {...S}><circle cx="10" cy="10" r="8" /><path d="M10 9v5" /><circle cx="10" cy="6.2" r=".9" fill="currentColor" stroke="none" /></g>),
   close: (<g {...S}><path d="M5 5l10 10M15 5L5 15" /></g>),

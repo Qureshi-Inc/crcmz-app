@@ -3819,10 +3819,36 @@ def _text_streamer(emit: Callable[[dict], None] | None, enabled: bool):
     return on_text, state
 
 
+def asker_block(person: dict | None) -> str:
+    """Who this chat belongs to, for the system prompt. Everyone in the squad has their
+    own Ask AI thread, so every user message in it is from this one person."""
+    p = person or {}
+    names = [p.get("display_name"), p.get("mm_username"), p.get("psn_id"), *(p.get("wa_names") or [])]
+    seen: list[str] = []
+    for n in names:
+        n = str(n or "").strip()
+        if n and "@" not in n and n.lower() not in {x.lower() for x in seen}:
+            seen.append(n)
+    if not seen:
+        return ("\n\nWHO YOU'RE TALKING TO: a signed-in squad member whose name isn't on file. "
+                "Don't assume they're Moiz or anyone else; if it matters, ask their name.\n")
+    main, *aka = seen
+    ids = []
+    if p.get("psn_id"):
+        ids.append(f"PSN {p['psn_id']}")
+    if p.get("mm_username"):
+        ids.append(f"Mattermost @{p['mm_username']}")
+    return (f"\n\nWHO YOU'RE TALKING TO: {main}" + (f" (also goes by {', '.join(aka)})" if aka else "")
+            + (f"; {', '.join(ids)}" if ids else "") + ". This is their own private chat with you: "
+            "every user message here is from them and nobody else. When they say I, me or my, they "
+            f"mean {main}; \"who am I\" is {main}. Never mix them up with another squad member.\n")
+
+
 def ask(question: str, history: list[dict] | None = None,
         image_b64: str = "", image_type: str = "image/jpeg",
         on_tool: Callable[[str], None] | None = None,
-        on_event: Callable[[dict], None] | None = None) -> dict:
+        on_event: Callable[[dict], None] | None = None,
+        asker: dict | None = None) -> dict:
     """Answer `question` with tools. Returns answer + the trail of tool calls.
 
     `image_b64` is an optional base64-encoded image for vision-capable models.
@@ -3832,6 +3858,9 @@ def ask(question: str, history: list[dict] | None = None,
     (drop the text so far, it was chatter before a tool call), {"type": "tool",
     "name"} and {"type": "tool_done", "name", "ok"}. It may raise Stopped.
     The returned answer is authoritative and replaces whatever was streamed.
+
+    `asker` is the identity-graph person this chat belongs to (Ask AI is one thread
+    per person), so the model knows who "I" is.
     """
     from datetime import datetime
 
@@ -3876,7 +3905,8 @@ def ask(question: str, history: list[dict] | None = None,
         {"role": "system",
          "content": SYSTEM_PROMPT.format(
              today=datetime.now().strftime("%A %Y-%m-%d"),
-             style=_persona(), facts=facts_block + members_block)},
+             style=_persona(), facts=facts_block + members_block
+             + (asker_block(asker) if asker is not None else ""))},
     ]
     # Prior turns, trimmed: only user/assistant text, last 3 exchanges.
     for turn in (history or [])[-6:]:
