@@ -463,3 +463,47 @@ def remove_entry(giveaway_id: int, member_id: str) -> dict:
                 (giveaway_id, member_id),
             )
             return {"status": "removed" if cur.rowcount else "not_found"}
+
+
+# ── auto-reveal ──────────────────────────────────────────────────────────────
+# reveal_at is what the admin typed into a datetime-local field ("2026-10-31T20:00"):
+# a wall-clock time with no zone. The server reads it in one configured zone
+# (GIVEAWAY_TIMEZONE, default the app's Pacific time) so the countdown everyone
+# sees and the moment the job fires are the same instant.
+AUTO_STATUSES = ("open", "locked", "drawn")
+
+
+def reveal_epoch(reveal_at: str | None, tz_name: str) -> float | None:
+    """Unix seconds for reveal_at. Naive strings are wall-clock time in tz_name."""
+    if not reveal_at:
+        return None
+    from zoneinfo import ZoneInfo
+    try:
+        dt = datetime.fromisoformat(reveal_at.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+    return dt.timestamp()
+
+
+def auto_reveal_due(tz_name: str, now: float | None = None) -> dict | None:
+    """Draw (if needed) and reveal the active giveaway once its reveal time passes.
+
+    Returns None when nothing is due, else {"id", "status": "revealed"|"error", ...}.
+    Drafts never reveal: an unpublished giveaway has no entries to draw from.
+    """
+    g = get_active_giveaway()
+    if not g or g["status"] not in AUTO_STATUSES:
+        return None
+    at = reveal_epoch(g.get("reveal_at"), tz_name)
+    if at is None or at > (now if now is not None else datetime.now(timezone.utc).timestamp()):
+        return None
+    if g["status"] in ("open", "locked"):
+        r = draw_winner(g["id"])
+        if "error" in r:
+            return {"id": g["id"], "status": "error", "error": r["error"]}
+    r = reveal_winner(g["id"])
+    if "error" in r:
+        return {"id": g["id"], "status": "error", "error": r["error"]}
+    return {"id": g["id"], "status": "revealed", "winner": r.get("winner")}

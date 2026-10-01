@@ -1347,13 +1347,24 @@ try {
     })
     await ready(page, '/app/giveaway')
     await page.waitForSelector('.gw-due')
-    check('giveaway: overdue reveal says "The reveal is on its way."', (await page.textContent('.gw-due')) === 'The reveal is on its way.')
+    check('giveaway: overdue reveal says the server is revealing it', (await page.textContent('.gw-due')) === 'Revealing the winner…')
     check('giveaway: drawn never shows a winner to members', !(await page.textContent('.gw-hero')).includes('Bizzle') && !(await page.locator('.gw-count').count()))
     const before = gets
     await page.waitForTimeout(6000)
     check('giveaway: overdue re-fetches on a backoff (5 s first)', gets > before, `${before} → ${gets}`)
     check('giveaway: overdue page never POSTs', posts.length === 0, posts.join(', '))
     check('giveaway: empty history hides Past winners', (await page.locator('#gw-past').count()) === 0)
+    await ctx.close()
+  }
+  {
+    // The server's reveal_at_ms is the instant; a skewed reveal_at string must not move the countdown.
+    const d = gwData({ revealIn: 5 * 86400e3 })
+    d.giveaway.reveal_at_ms = Date.now() + 3 * 3600e3 + 30e3
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { 'GET /api/giveaway': json(200, d), 'GET /api/giveaway/history': json(200, []) } })
+    await ready(page, '/app/giveaway')
+    await page.waitForSelector('.gw-count')
+    const lbl = await page.getAttribute('.gw-count', 'aria-label')
+    check('giveaway: countdown follows the server instant (reveal_at_ms)', /^Reveal in 3 hours and 0 minutes$/.test(lbl), lbl)
     await ctx.close()
   }
   {
@@ -1398,7 +1409,7 @@ try {
       width: 1440, height: 900,
       mocks: {
         'GET /api/admin/check': json(200, { admin: true }),
-        'GET /api/giveaway': json(200, gwData({ admin: true })),
+        'GET /api/giveaway': json(200, { ...gwData({ admin: true }), reveal_tz: 'America/Los_Angeles' }),
         'GET /api/giveaway/history': json(200, GW_HISTORY),
         'POST /api/giveaway/7/draw-and-reveal': rec('draw', json(200, { status: 'revealed' })),
         'DELETE /api/giveaway/7/entries/z4': rec('rm', json(200, { status: 'removed' })),
@@ -1410,6 +1421,7 @@ try {
     await ready(page, '/app/giveaway')
     await page.waitForSelector('.gw-strip')
     check('admin desk: open by default on desktop', await page.isVisible('#gw-admin-body'))
+    check('admin form names the reveal zone and says it is automatic', (await page.textContent('#gw-f-when-hint')) === 'Pacific Time. The winner is revealed automatically at this time.')
     check('admin desk: lifecycle marks Open as the current step', (await page.textContent('.gw-strip [aria-current=step]')).startsWith('Open') && (await page.locator('.gw-strip [data-past]').count()) === 2)
     check('admin desk: state line in text', (await page.textContent('.gw-state-line')).replace(/\s+/g, ' ').startsWith('Open · 4 entries · reveal'))
     check('admin desk: entries header counts entered + eligible', (await page.textContent('#gw-en ~ *, section[aria-labelledby=gw-en] .settings-card-head')).includes('4 entered · 4 eligible'))

@@ -13,6 +13,8 @@ export type Giveaway = {
   id: number; title: string; prize: string; status: GwStatus
   draw_at: string | null; reveal_at: string | null; drawn_at: string | null; revealed_at: string | null; closed_at?: string | null
   entries: GwEntry[]; active_draw: GwDraw | null
+  /** The reveal instant the server's auto-reveal fires at, and the zone reveal_at is written in. */
+  reveal_at_ms?: number | null; reveal_tz?: string
 }
 export type GwMember = { id: string; display: string }
 export type Rotation = {
@@ -20,7 +22,7 @@ export type Rotation = {
   eligible?: GwMember[]; won_members: { member_id: string; display_name: string; won_at: string; giveaway_id: number | null }[]
   all_members: GwMember[]
 }
-export type GwData = { giveaway: Giveaway | null; rotation: Rotation; is_admin: boolean; user_eligible: boolean; user_won_this_cycle: boolean }
+export type GwData = { giveaway: Giveaway | null; rotation: Rotation; is_admin: boolean; user_eligible: boolean; user_won_this_cycle: boolean; reveal_tz?: string }
 
 /** Members never see drafts (F-6): the member view treats one as "no giveaway". */
 export const memberSees = (g: Giveaway | null, admin: boolean) => (g && (admin || g.status !== 'draft') ? g : null)
@@ -44,6 +46,37 @@ export function parseWhen(s: string | null | undefined): number | null {
   const t = new Date(y, mo - 1, dy, h || 0, mi || 0).getTime()
   return Number.isFinite(t) ? t : null
 }
+/** When the winner is revealed. The server's instant wins over parsing reveal_at here. */
+export const revealMs = (g: Giveaway | null | undefined) => (g ? (g.reveal_at_ms ?? parseWhen(g.reveal_at)) : null)
+
+/** Unix ms for a wall-clock "YYYY-MM-DDTHH:mm" in an IANA zone (the zone the server reveals in). */
+export function zonedMs(s: string, tz: string | undefined): number | null {
+  const local = parseWhen(s)
+  if (local == null || !tz) return local
+  const [d, tm = '00:00'] = s.split('T')
+  const [y = 0, mo = 1, dy = 1] = (d ?? '').split('-').map(Number)
+  const [h = 0, mi = 0] = tm.slice(0, 5).split(':').map(Number)
+  const wall = Date.UTC(y, mo - 1, dy, h, mi)
+  const offset = (ms: number) => {
+    try {
+      const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' })
+        .formatToParts(ms).map((x) => [x.type, Number(x.value)])) as Record<string, number>
+      return Date.UTC(p.year ?? 0, (p.month ?? 1) - 1, p.day ?? 1, p.hour ?? 0, p.minute ?? 0) - ms
+    } catch { return null }
+  }
+  const o1 = offset(wall)
+  if (o1 == null) return local
+  const o2 = offset(wall - o1)
+  return wall - (o2 ?? o1)
+}
+/** "Pacific Time" for America/Los_Angeles; the raw id if the browser can't name it. */
+export function tzName(tz: string | undefined): string {
+  if (!tz) return 'Your local time'
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'longGeneric' }).formatToParts(0).find((p) => p.type === 'timeZoneName')?.value ?? tz
+  } catch { return tz }
+}
+
 export const fmtWhen = (ms: number | null, withYear = false) =>
   ms == null ? '—' : new Date(ms).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', ...(withYear ? { year: 'numeric' } : {}), hour: 'numeric', minute: '2-digit' })
 /** The value a datetime-local input wants, in local time. */

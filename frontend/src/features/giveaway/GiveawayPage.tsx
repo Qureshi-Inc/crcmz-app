@@ -9,7 +9,7 @@ import { useAccount } from '../../lib/api'
 import { getJSON } from '../../lib/http'
 import { readLocal, useDesktop, useReducedMotion, writeLocal } from '../../lib/media'
 import {
-  countdownLabel, fmtWhen, memberSees, parseWhen, PENDING, splitMs, type Giveaway, type GwData,
+  countdownLabel, fmtWhen, memberSees, parseWhen, PENDING, revealMs as revealAt, splitMs, type Giveaway, type GwData,
 } from '../../lib/giveaway'
 import { AdminTools } from './AdminTools'
 
@@ -29,7 +29,7 @@ export function GiveawayPage() {
   const d = q.data
   const admin = Boolean(d?.is_admin)
   const g = d ? memberSees(d.giveaway, admin) : null
-  const revealMs = parseWhen(g?.reveal_at)
+  const revealMs = revealAt(g)
   const overdue = useOverdue(g && PENDING.includes(g.status) ? revealMs : null)
   useBackoff(overdue, q.refetch, `${g?.id}:${g?.status}`)
   const { stale, minutes } = useStale(q, POLL_MS)
@@ -122,7 +122,7 @@ function Hero({ d, g, revealMs, overdue }: { d: GwData; g: Giveaway | null; reve
       {revealMs == null ? (
         <p className="dim">Reveal date to be announced.</p>
       ) : overdue ? (
-        <p className="gw-due" role="status">{d.is_admin ? 'The reveal time has passed. Draw & reveal from Admin tools when you\'re ready.' : 'The reveal is on its way.'}</p>
+        <p className="gw-due" role="status">Revealing the winner…</p>
       ) : (
         <>
           <p className="gw-lead">{lead}</p>

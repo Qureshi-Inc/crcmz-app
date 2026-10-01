@@ -4406,11 +4406,12 @@ def _giveaway_payload(g, rotation, all_members, user_id, is_admin) -> dict:
         user_eligible = any(e["member_id"] == user_id for e in (g.get("entries") or []))
         user_won_this_cycle = any(m["member_id"] == user_id for m in rotation.get("won_members", []))
     return {
-        "giveaway": g,
+        "giveaway": _with_reveal_ms(g),
         "rotation": {**rotation, "all_members": all_members},
         "is_admin": is_admin,
         "user_eligible": user_eligible,
         "user_won_this_cycle": user_won_this_cycle,
+        "reveal_tz": GIVEAWAY_TZ,
     }
 
 
@@ -4523,24 +4524,64 @@ async def giveaway_reveal(request: Request, gid: int):
     return JSONResponse(result)
 
 
+# The reveal time is wall-clock time in this zone (see giveaway.reveal_epoch).
+GIVEAWAY_TZ = os.environ.get("GIVEAWAY_TIMEZONE") or os.environ.get("MONTAGE_TIMEZONE") or "America/Los_Angeles"
+# One reveal at a time: the auto-reveal job and an admin's button share it, so
+# the two can't both draw.
+_GW_REVEAL_LOCK = asyncio.Lock()
+
+
+def _with_reveal_ms(g: dict | None) -> dict | None:
+    """Add the reveal instant (ms) and its zone so every viewer counts down to the same moment."""
+    if not g:
+        return g
+    at = _giveaway.reveal_epoch(g.get("reveal_at"), GIVEAWAY_TZ)
+    return {**g, "reveal_at_ms": int(at * 1000) if at is not None else None, "reveal_tz": GIVEAWAY_TZ}
+
+
 @app.post("/api/giveaway/{gid}/draw-and-reveal")
 async def giveaway_draw_and_reveal(request: Request, gid: int):
     session = _get_session(request)
     if not session or not await _is_iam_admin(session.get("sub", "")):
         raise HTTPException(status_code=403, detail="admin only")
-    # Draw if not already drawn
-    g = await asyncio.to_thread(_giveaway.get_giveaway, gid)
-    if not g:
-        raise HTTPException(status_code=404, detail="not found")
-    if g["status"] in ("open", "locked"):
-        r = await asyncio.to_thread(_giveaway.draw_winner, gid)
-        if r and "error" in r:
-            raise HTTPException(status_code=400, detail=r["error"])
-    # Reveal
-    r2 = await asyncio.to_thread(_giveaway.reveal_winner, gid)
-    if r2 and "error" in r2:
-        raise HTTPException(status_code=400, detail=r2["error"])
+    async with _GW_REVEAL_LOCK:
+        # Draw if not already drawn
+        g = await asyncio.to_thread(_giveaway.get_giveaway, gid)
+        if not g:
+            raise HTTPException(status_code=404, detail="not found")
+        if g["status"] in ("open", "locked"):
+            r = await asyncio.to_thread(_giveaway.draw_winner, gid)
+            if r and "error" in r:
+                raise HTTPException(status_code=400, detail=r["error"])
+        # Reveal
+        r2 = await asyncio.to_thread(_giveaway.reveal_winner, gid)
+        if r2 and "error" in r2:
+            raise HTTPException(status_code=400, detail=r2["error"])
     return JSONResponse({"status": "revealed"})
+
+
+async def _giveaway_auto_reveal_loop():
+    """Reveal the winner at reveal_at with nobody watching. Every 30 s; logs a failure once."""
+    last_err = None
+    while True:
+        try:
+            async with _GW_REVEAL_LOCK:
+                r = await asyncio.to_thread(_giveaway.auto_reveal_due, GIVEAWAY_TZ)
+            if r and r["status"] == "revealed":
+                logger.info("giveaway %s auto-revealed", r["id"])
+                last_err = None
+            elif r and (r["id"], r["error"]) != last_err:
+                last_err = (r["id"], r["error"])
+                logger.warning("giveaway %s auto-reveal failed: %s", r["id"], r["error"])
+        except Exception:  # noqa: BLE001 — the loop must outlive one bad tick
+            logger.exception("giveaway auto-reveal tick failed")
+        await asyncio.sleep(30)
+
+
+@app.on_event("startup")
+async def _start_giveaway_auto_reveal():
+    asyncio.create_task(_giveaway_auto_reveal_loop())
+    logger.info("giveaway auto-reveal started (30s, %s)", GIVEAWAY_TZ)
 
 
 @app.post("/api/giveaway/{gid}/close")

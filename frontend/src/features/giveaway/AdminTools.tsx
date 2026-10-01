@@ -11,7 +11,7 @@ import { ConfirmDialog } from '../clips/ClipSheet'
 import { ApiError, NetworkError } from '../../lib/http'
 import {
   addEntry, closeGiveaway, createGiveaway, drawAndReveal, fmtWhen, parseWhen, publishGiveaway, redraw, removeEntry, resetAndSeed,
-  toLocalInput, updateGiveaway, type Giveaway, type GwData, type GwMember, type GwStatus,
+  revealMs, toLocalInput, tzName, updateGiveaway, zonedMs, type Giveaway, type GwData, type GwMember, type GwStatus,
 } from '../../lib/giveaway'
 
 const STEPS: [GwStatus | 'none', string][] = [
@@ -63,7 +63,7 @@ export function AdminTools({ d, overdue, defaultOpen }: { d: GwData; overdue: bo
         <div className="gw-desk">
           <StateCard d={d} overdue={overdue} />
           <Entries d={d} />
-          <EditCard key={g ? `${g.id}` : 'new'} g={g} />
+          <EditCard key={g ? `${g.id}` : 'new'} g={g} tz={d.reveal_tz} />
         </div>
         <DangerZone />
       </div>
@@ -110,7 +110,7 @@ function StateCard({ d, overdue }: { d: GwData; overdue: boolean }) {
     )
   }
   const n = g.entries.length
-  const reveal = parseWhen(g.reveal_at)
+  const reveal = revealMs(g)
   const winner = g.active_draw?.winner_name || 'the current winner'
   async function act(kind: 'publish' | 'draw' | 'reveal' | 'close') {
     if (!g) return
@@ -136,7 +136,7 @@ function StateCard({ d, overdue }: { d: GwData; overdue: boolean }) {
       <p className="gw-state-line">
         <b>{LABEL[g.status]}</b> · <span className="num">{n}</span> {n === 1 ? 'entry' : 'entries'}{reveal ? ` · reveal ${fmtWhen(reveal)}` : ''}
       </p>
-      {overdue && g.status !== 'draft' && <p className="settings-note" role="note">The reveal time has passed. Nothing happens on its own here.</p>}
+      {overdue && g.status !== 'draft' && <p className="settings-note" role="note">The reveal time has passed. The winner is drawn and revealed automatically within a minute.</p>}
       {primary && (
         <div><button type="button" className="btn btn-primary" onClick={primary.on} disabled={busy !== null}>{busy === 'main' ? 'Working…' : primary.label}</button></div>
       )}
@@ -318,14 +318,15 @@ function AddEntryDialog({ open, onClose, g, members }: { open: boolean; onClose:
 }
 
 // ── Create / edit (GW-07, GW-08) ─────────────────────────────────────────────
-function EditCard({ g }: { g: Giveaway | null }) {
+function EditCard({ g, tz }: { g: Giveaway | null; tz: string | undefined }) {
   const { busy, run, errAt } = useAction()
   const [title, setTitle] = useState(g?.title ?? '')
   const [prize, setPrize] = useState(g?.prize ?? '')
-  const [when, setWhen] = useState(() => (g?.reveal_at ? toLocalInput(parseWhen(g.reveal_at)) : ''))
+  const [when, setWhen] = useState(() => (!g?.reveal_at ? '' : /[zZ]$|[+-]\d\d:?\d\d$/.test(g.reveal_at) ? toLocalInput(parseWhen(g.reveal_at)) : g.reveal_at.slice(0, 16)))
   const [touched, setTouched] = useState({ title: false, when: false })
   const creating = !g
-  const whenMs = parseWhen(when)
+  // The server reveals at this wall-clock time in its zone, so check "future" there too.
+  const whenMs = zonedMs(when, tz)
   const titleErr = touched.title && !title.trim() ? 'Give it a title' : ''
   const whenErr = touched.when && !when ? 'Pick when the winner is revealed'
     : touched.when && creating && whenMs != null && whenMs <= Date.now() ? 'Pick a time in the future' : ''
@@ -363,7 +364,7 @@ function EditCard({ g }: { g: Giveaway | null }) {
           <label className="field-label" htmlFor="gw-f-when">Reveal date & time</label>
           <input id="gw-f-when" className="input" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} onBlur={() => setTouched((t) => ({ ...t, when: true }))}
             aria-invalid={!!whenErr} aria-describedby={whenErr ? 'gw-f-when-err' : 'gw-f-when-hint'} />
-          {whenErr ? <p className="field-err" id="gw-f-when-err">{whenErr}</p> : <p className="field-hint" id="gw-f-when-hint">Your local time.</p>}
+          {whenErr ? <p className="field-err" id="gw-f-when-err">{whenErr}</p> : <p className="field-hint" id="gw-f-when-hint">{tzName(tz)}. The winner is revealed automatically at this time.</p>}
         </div>
         {errAt('save')}
         <div><button type="submit" className="btn btn-primary" disabled={busy !== null}>{busy ? 'Saving…' : creating ? 'Create & publish' : 'Save'}</button></div>
