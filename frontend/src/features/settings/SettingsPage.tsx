@@ -382,7 +382,7 @@ function WatchTab() {
   return (
     <section className="glass settings-card" aria-labelledby="st-watch-h">
       <h2 className="section-h2" id="st-watch-h">Watch Party</h2>
-      <p className="dim">Where the camera orbs sit: above the video, below it, or over it in a corner. Saved on this device; you can also change it on the Watch page.</p>
+      <p className="dim">Where the camera orbs sit: above the video, below it, or on it along the top, the bottom or the side. Saved on this device; you can also change it on the Watch page.</p>
       <OrbPosControl id="st-orbpos" />
     </section>
   )

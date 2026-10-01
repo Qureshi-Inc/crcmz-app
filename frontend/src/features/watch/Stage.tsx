@@ -79,6 +79,7 @@ export function Stage({ over, rxOpen, setRxOpen }: { over?: ReactNode; rxOpen: b
       ref={stage}
       className="wp-stage"
       data-chrome={chrome}
+      data-rx={rxOpen}
       data-kind={s.kind || 'none'}
       onPointerMove={(e) => { if (e.pointerType === 'mouse') poke() }}
       onFocus={holdOn}

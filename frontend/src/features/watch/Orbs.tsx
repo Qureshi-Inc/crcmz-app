@@ -25,14 +25,14 @@ export function useTiles(s: WatchState): Tile[] {
   return [...me, ...peers]
 }
 
-export function Orbs({ variant }: { variant: 'strip' | 'over' }) {
+export function Orbs({ variant }: { variant: 'strip' | 'side' | 'top' | 'bottom' }) {
   const s = useWatch()
   const tiles = useTiles(s)
   const [big, setBig] = useState<Record<string, boolean>>({})
   const [grid, setGrid] = useState(false)
   if (!tiles.length) return null
   return (
-    <div className={`wp-orbs wp-orbs-${variant}`} role="group" aria-label="Cameras">
+    <div className={`wp-orbs ${variant === 'strip' ? 'wp-orbs-strip' : `wp-orbs-over wp-orbs-over-${variant}`}`} role="group" aria-label="Cameras">
       <ul className="wp-orb-list">
         {tiles.map((t) => (
           <li key={t.id}>

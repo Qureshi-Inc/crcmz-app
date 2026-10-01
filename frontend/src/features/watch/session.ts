@@ -44,7 +44,8 @@ export type RosterEntry = { id: string; isMod?: boolean }
 export type Call = { on: boolean; muted: boolean; micOnly: boolean; camOff: boolean; facing: 'user' | 'environment'; busy: boolean; note: string }
 export type Device = { id: string; label: string }
 export type Unblock = '' | 'play' | 'unmute'
-export type OrbPos = 'top' | 'bottom' | 'over'
+/** Cameras outside the video (top/bottom) or on it: 'over' is the side column (its stored name predates the others). */
+export type OrbPos = 'top' | 'bottom' | 'over' | 'overTop' | 'overBottom'
 
 export type WatchState = {
   active: boolean
@@ -115,7 +116,7 @@ function sessionId(): string {
     return id
   } catch { return crypto.randomUUID() }
 }
-const readOrbPos = (): OrbPos => { const v = readLocal<string>(ORB_KEY, 'bottom'); return v === 'top' || v === 'over' ? v : 'bottom' }
+const readOrbPos = (): OrbPos => { const v = readLocal<string>(ORB_KEY, 'bottom'); return v === 'top' || v === 'over' || v === 'overTop' || v === 'overBottom' ? v : 'bottom' }
 
 let state: WatchState = {
   active: false, status: 'idle', error: '', cfg: null, room: '', clientId: clientId(), myName: '', isMod: false,

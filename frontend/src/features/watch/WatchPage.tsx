@@ -31,7 +31,8 @@ export function WatchPage({ visible }: { visible: boolean }) {
   useEffect(() => { if (!visible) exitFs() }, [visible])
   usePlayerKeys(visible, setRxOpen)
 
-  const over = s.orbPos === 'over' ? <Orbs variant="over" /> : null
+  const onVideo = { over: 'side', overTop: 'top', overBottom: 'bottom' } as const
+  const over = s.orbPos in onVideo ? <Orbs variant={onVideo[s.orbPos as keyof typeof onVideo]} /> : null
   return (
     <div className="page watch-page" data-hidden={!visible} inert={!visible} aria-hidden={!visible || undefined}>
       {visible && <WatchTitle />}
@@ -156,14 +157,14 @@ function useCountdown(until: number): number {
   return Math.max(0, Math.ceil((until - now) / 1000))
 }
 
-const ORB_POS: { id: OrbPos; label: string }[] = [
-  { id: 'top', label: 'Above' },
-  { id: 'bottom', label: 'Below' },
-  { id: 'over', label: 'Over video' },
+const ORB_ROWS: { label: string; opts: { id: OrbPos; label: string; name: string }[] }[] = [
+  { label: 'Outside the video', opts: [{ id: 'top', label: 'Above', name: 'Above the video' }, { id: 'bottom', label: 'Below', name: 'Below the video' }] },
+  { label: 'On the video', opts: [{ id: 'overTop', label: 'Top', name: 'On the video, along the top' }, { id: 'overBottom', label: 'Bottom', name: 'On the video, along the bottom' }, { id: 'over', label: 'Side', name: 'On the video, down the side' }] },
 ]
+const ORB_POS = ORB_ROWS.flatMap((r) => r.opts)
 export function OrbPosControl({ id = 'wp-orbpos' }: { id?: string }) {
   const s = useWatch()
-  // A radio group: one tab stop, arrows move and pick.
+  // One radio group across both rows: one tab stop, arrows move and pick.
   function onKey(e: KeyboardEvent<HTMLDivElement>) {
     const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
     if (!d) return
@@ -176,16 +177,23 @@ export function OrbPosControl({ id = 'wp-orbpos' }: { id?: string }) {
   return (
     <div className="wp-orbpos">
       <span className="field-label" id={id}>Cameras</span>
-      <div className="seg seg-3" role="radiogroup" aria-labelledby={id} onKeyDown={onKey}>
-        {ORB_POS.map((p) => {
-          const on = s.orbPos === p.id
-          return (
-            <button
-              key={p.id} type="button" role="radio" className="seg-tab" data-pos={p.id} aria-checked={on}
-              data-state={on ? 'active' : 'inactive'} tabIndex={on ? 0 : -1} onClick={() => setOrbPos(p.id)}
-            >{p.label}</button>
-          )
-        })}
+      <div className="wp-orbpos-rows" role="radiogroup" aria-labelledby={id} onKeyDown={onKey}>
+        {ORB_ROWS.map((r) => (
+          <div key={r.label} className="wp-orbpos-row">
+            <span className="meta" aria-hidden="true">{r.label}</span>
+            <div className={`seg ${r.opts.length === 3 ? 'seg-3' : ''}`}>
+              {r.opts.map((p) => {
+                const on = s.orbPos === p.id
+                return (
+                  <button
+                    key={p.id} type="button" role="radio" className="seg-tab" data-pos={p.id} aria-checked={on} aria-label={p.name}
+                    data-state={on ? 'active' : 'inactive'} tabIndex={on ? 0 : -1} onClick={() => setOrbPos(p.id)}
+                  >{p.label}</button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
