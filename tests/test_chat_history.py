@@ -46,8 +46,24 @@ class _Stub(BaseHTTPRequestHandler):
     """A slow model, so the background behaviour is observable."""
 
     def do_POST(self):  # noqa: N802
-        SEEN.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        SEEN.append(body)
         time.sleep(REPLY.get("delay", 0.0))
+        if body.get("stream") and REPLY.get("sse"):
+            # Word by word, the way oMLX streams.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            try:
+                for word in REPLY["content"].split(" "):
+                    chunk = {"choices": [{"delta": {"content": word + " "}}]}
+                    self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
+                    self.wfile.flush()
+                    time.sleep(REPLY.get("chunk_delay", 0.0))
+                self.wfile.write(b"data: [DONE]\n\n")
+            except BrokenPipeError:
+                pass  # stopped: the app hung up
+            return
         payload = json.dumps({"choices": [
             {"message": {"role": "assistant", "content": REPLY["content"]}}]}).encode()
         self.send_response(200)
@@ -138,6 +154,23 @@ def t_restart_releases_pending_replies():
     last = chat.recent("u7")[-1]
     assert last["status"] == "error", last
     assert "interrupted" in last["content"], last
+
+
+def t_text_streamer_holds_back_tool_json_and_think_blocks():
+    import assistant
+    for opener, shown in (("Hello there", True), ('{"name": "x"}', False), ("<think>hm", False)):
+        evs = []
+        on_text, state = assistant._text_streamer(evs.append, enabled=True)
+        for piece in ("  ", opener[:3], opener[3:]):
+            on_text(piece)
+        texts = [e for e in evs if e["type"] == "text"]
+        assert bool(texts) == shown and state["live"] == shown, (opener, evs)
+        if shown:
+            assert "".join(e["delta"] for e in texts) == opener
+    evs = []
+    on_text, state = assistant._text_streamer(evs.append, enabled=False)
+    on_text("guess")
+    assert not [e for e in evs if e["type"] == "text"], "a forced tool turn streamed its guess"
 
 
 def t_garbage_input_is_ignored():
@@ -258,6 +291,54 @@ def http_tests():
         r = client.post("/api/assistant/clear", headers=HDR)
         assert r.status_code == 200 and r.json()["removed"] >= 2, r.text
         assert client.get("/api/assistant/history").json()["messages"] == []
+
+    def events_for(reply_id):
+        r = client.get(f"/api/assistant/stream?reply_id={reply_id}")
+        assert r.status_code == 200, (r.status_code, r.text)
+        assert r.headers["content-type"].startswith("text/event-stream")
+        return [json.loads(line[5:]) for line in r.text.splitlines() if line.startswith("data:")]
+
+    def t_stream_delivers_text_then_the_stored_answer():
+        login("http-s1")
+        REPLY.update(content="one two three four five", sse=True, chunk_delay=0.02)
+        try:
+            rid = client.post("/api/assistant/ask", json={"question": "hi"}, headers=HDR).json()["reply_id"]
+            evs = events_for(rid)
+        finally:
+            REPLY.update(sse=False, chunk_delay=0.0)
+        text = "".join(e["delta"] for e in evs if e["type"] == "text")
+        assert text.split() == "one two three four five".split(), evs
+        assert sum(e["type"] == "text" for e in evs) >= 5, "arrived in one piece, not streamed"
+        assert evs[-1]["type"] == "done" and evs[-1]["status"] == "done", evs[-1]
+        stored = wait_for_answer()["messages"][-1]["content"]
+        assert evs[-1]["content"] == stored, (evs[-1], stored)
+        # A reconnect replays it all.
+        assert events_for(rid) == evs
+
+    def t_stream_is_private():
+        login("http-s2")
+        rid = client.post("/api/assistant/ask", json={"question": "mine"}, headers=HDR).json()["reply_id"]
+        wait_for_answer()
+        login("http-s3")
+        assert client.get(f"/api/assistant/stream?reply_id={rid}").status_code == 404
+        client.cookies.clear()
+        assert client.get(f"/api/assistant/stream?reply_id={rid}",
+                          headers={"Accept": "application/json"}).status_code == 401
+
+    def t_stop_keeps_what_was_written():
+        login("http-s4")
+        full = "a b c d e f g h i j k l"
+        REPLY.update(content=full, sse=True, chunk_delay=0.15)
+        try:
+            client.post("/api/assistant/ask", json={"question": "long one"}, headers=HDR)
+            time.sleep(0.6)
+            assert client.post("/api/assistant/stop", headers=HDR).json()["status"] == "stopping"
+            last = wait_for_answer()["messages"][-1]
+        finally:
+            REPLY.update(sse=False, chunk_delay=0.0)
+        assert last["status"] == "done" and last["content"], last
+        assert len(last["content"].split()) < len(full.split()), last
+        assert client.post("/api/assistant/stop", headers=HDR).json()["status"] == "idle"
 
     def t_facts_listing_suggests_subjects():
         login("http-8")

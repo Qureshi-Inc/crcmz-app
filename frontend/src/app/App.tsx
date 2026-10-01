@@ -1,4 +1,4 @@
-import { Component, type ReactNode } from 'react'
+import { Component, lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ApiError } from '../lib/http'
@@ -14,8 +14,10 @@ import { Handoff, NotFound } from '../features/handoff/Handoff'
 import { HuddlePage } from '../features/huddle/HuddlePage'
 import { WhatsAppPage } from '../features/whatsapp/WhatsAppPage'
 import { CoachPage } from '../features/coach/CoachPage'
-import { AskPage } from '../features/ask/AskPage'
 import { GiveawayPage } from '../features/giveaway/GiveawayPage'
+
+// assistant-ui and the markdown renderer are ~140 kB gzipped, so only Ask AI pays for them.
+const AskPage = lazy(() => import('../features/ask/AskPage').then((m) => ({ default: m.AskPage })))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,7 +51,7 @@ export function App() {
               <Route path="watch" element={null} />
               <Route path="huddle" element={<HuddlePage />} />
               <Route path="coach" element={<CoachPage />} />
-              <Route path="ask" element={<AskPage />} />
+              <Route path="ask" element={<Suspense fallback={null}><AskPage /></Suspense>} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="settings/:tab" element={<SettingsPage />} />
               <Route path="admin" element={<AdminPage />} />

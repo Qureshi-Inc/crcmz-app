@@ -3582,9 +3582,17 @@ def signal_tool_specs() -> list[dict]:
                           "parameters": spec["parameters"]}}]
 
 
+class Stopped(Exception):
+    """Raised from an on_event callback to abandon an answer mid-stream."""
+
+
 def _chat(messages: list[dict], model: str, base: str, key: str,
-          force_tool: bool = False) -> dict:
-    """One /v1/chat/completions round trip with the tool registry attached."""
+          force_tool: bool = False,
+          on_text: Callable[[str], None] | None = None) -> dict:
+    """One /v1/chat/completions round trip with the tool registry attached.
+
+    With `on_text` the reply is streamed and each content chunk is handed over as
+    it arrives; the return value has the same shape either way."""
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     tc: Any = "required" if force_tool else "auto"
     payload = {
@@ -3609,10 +3617,58 @@ def _chat(messages: list[dict], model: str, base: str, key: str,
         # most of the latency as well as all of the leakage.
         "chat_template_kwargs": {"enable_thinking": False},
     }
+    if on_text is None:
+        with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
+            r = client.post(f"{base}/chat/completions", json=payload, headers=headers)
+            r.raise_for_status()
+            return r.json()
+    payload["stream"] = True
+    content: list[str] = []
+    calls: dict[int, dict] = {}
     with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
-        r = client.post(f"{base}/chat/completions", json=payload, headers=headers)
-        r.raise_for_status()
-        return r.json()
+        with client.stream("POST", f"{base}/chat/completions", json=payload,
+                           headers=headers) as r:
+            r.raise_for_status()
+            if "event-stream" not in r.headers.get("content-type", ""):
+                # A server that ignores "stream" answers in one piece.
+                r.read()
+                data = r.json()
+                text = (((data.get("choices") or [{}])[0].get("message") or {})
+                        .get("content") or "")
+                if text:
+                    on_text(text)
+                return data
+            for line in r.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if raw == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(raw)
+                except ValueError:
+                    continue
+                delta = ((chunk.get("choices") or [{}])[0].get("delta") or {})
+                if delta.get("content"):
+                    content.append(delta["content"])
+                    on_text(delta["content"])
+                # OpenAI-style tool-call deltas: the id and name come once, the
+                # arguments may arrive in pieces.
+                for tc in delta.get("tool_calls") or []:
+                    cur = calls.setdefault(int(tc.get("index", len(calls))), {
+                        "id": "", "type": "function",
+                        "function": {"name": "", "arguments": ""}})
+                    cur["id"] = cur["id"] or tc.get("id") or ""
+                    fn = tc.get("function") or {}
+                    cur["function"]["name"] = cur["function"]["name"] or fn.get("name") or ""
+                    args = fn.get("arguments")
+                    if args:
+                        cur["function"]["arguments"] += (args if isinstance(args, str)
+                                                         else json.dumps(args))
+    message: dict = {"role": "assistant", "content": "".join(content)}
+    if calls:
+        message["tool_calls"] = [calls[i] for i in sorted(calls)]
+    return {"choices": [{"message": message}]}
 
 
 _THINK_BLOCK = None   # compiled lazily; see _strip_thinking
@@ -3657,13 +3713,45 @@ def _tool_calls_from(message: dict) -> list[dict]:
              "function": {"name": name, "arguments": json.dumps(args)}}]
 
 
+def _text_streamer(emit: Callable[[dict], None] | None, enabled: bool):
+    """on_text for one model turn: forwards text to `emit` once it looks like an
+    answer. A turn that opens with "{" (a tool call typed as text) or "<" (a
+    think block) stays quiet, since the final answer replaces it anyway."""
+    if emit is None:
+        return None, {"live": False}
+    state = {"buf": "", "live": False, "off": not enabled}
+
+    def on_text(chunk: str) -> None:
+        if state["off"]:
+            emit({"type": "tick"})  # still a chance to stop
+            return
+        if not state["live"]:
+            state["buf"] += chunk
+            head = state["buf"].lstrip()
+            if not head:
+                return
+            if head[0] in "{<":
+                state["off"] = True
+                return
+            state["live"] = True
+            chunk = head
+        emit({"type": "text", "delta": chunk})
+    return on_text, state
+
+
 def ask(question: str, history: list[dict] | None = None,
         image_b64: str = "", image_type: str = "image/jpeg",
-        on_tool: Callable[[str], None] | None = None) -> dict:
+        on_tool: Callable[[str], None] | None = None,
+        on_event: Callable[[dict], None] | None = None) -> dict:
     """Answer `question` with tools. Returns answer + the trail of tool calls.
 
     `image_b64` is an optional base64-encoded image for vision-capable models.
     The image travels with the current question only; history turns stay text.
+
+    `on_event` streams progress: {"type": "text", "delta"}, {"type": "reset"}
+    (drop the text so far, it was chatter before a tool call), {"type": "tool",
+    "name"} and {"type": "tool_done", "name", "ok"}. It may raise Stopped.
+    The returned answer is authoritative and replaces whatever was streamed.
     """
     from datetime import datetime
 
@@ -3735,10 +3823,14 @@ def ask(question: str, history: list[dict] | None = None,
     retried_bare = False
     for step in range(MAX_STEPS):
         force_this = (force_build or force_first) and not trail
-        data = _chat(messages, model, base, key, force_tool=force_this)
+        # A forced turn must call a tool, so any text it writes is a guess: not streamed.
+        on_text, streamed = _text_streamer(on_event, enabled=not force_this)
+        data = _chat(messages, model, base, key, force_tool=force_this, on_text=on_text)
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         calls = _tool_calls_from(message)
+        if calls and streamed["live"] and on_event:
+            on_event({"type": "reset"})
 
         if not calls:
             # A data question that produced no tool call is a guess, and the
@@ -3812,9 +3904,13 @@ def ask(question: str, history: list[dict] | None = None,
                     on_tool(name)
                 except Exception:  # noqa: BLE001
                     pass
+            if on_event:
+                on_event({"type": "tool", "name": name})
             result, ok = call_tool(name, args)
             trail.append({"tool": name, "args": args, "ok": ok,
                           "chars": len(result)})
+            if on_event:
+                on_event({"type": "tool_done", "name": name, "ok": ok})
             messages.append({"role": "tool",
                              "tool_call_id": call.get("id") or name,
                              "name": name,
@@ -3823,7 +3919,8 @@ def ask(question: str, history: list[dict] | None = None,
     # Ran out of steps: ask for a final answer with no tools left to call.
     messages.append({"role": "user",
                      "content": "Answer now, using only what the tools returned."})
-    data = _chat(messages, model, base, key)
+    on_text, _ = _text_streamer(on_event, enabled=True)
+    data = _chat(messages, model, base, key, on_text=on_text)
     answer = _strip_thinking(
         ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
     return {

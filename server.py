@@ -4401,6 +4401,51 @@ async def settings_mcp_revoke(request: Request):
     return JSONResponse({"ok": True})
 
 
+class _LiveTurn:
+    """An answer being written, as a replayable list of events for
+    /api/assistant/stream. The worker thread appends; readers only index."""
+
+    def __init__(self, user_sub: str):
+        self.user_sub = user_sub
+        self.events: list[dict] = []
+        self.text = ""
+        self.tools: list[str] = []
+        self.done = False
+        self.stop = False
+        self.finished_at = 0.0
+
+    def emit(self, ev: dict) -> None:
+        if self.stop:
+            raise assistant.Stopped()
+        kind = ev.get("type")
+        if kind == "tick":
+            return
+        if kind == "text":
+            self.text += ev.get("delta", "")
+        elif kind == "reset":
+            self.text = ""
+        elif kind == "tool":
+            self.tools.append(ev.get("name", ""))
+        self.events.append(ev)
+
+    def finish(self, ev: dict) -> None:
+        self.events.append({"type": "done", **ev})
+        self.finished_at = _time.time()
+        self.done = True
+
+
+_LIVE: dict[int, _LiveTurn] = {}
+_LIVE_KEEP_S = 120
+
+
+def _live_start(user_sub: str, reply_id: int) -> _LiveTurn:
+    now = _time.time()
+    for rid in [r for r, t in _LIVE.items() if t.done and now - t.finished_at > _LIVE_KEEP_S]:
+        _LIVE.pop(rid, None)
+    live = _LIVE[reply_id] = _LiveTurn(user_sub)
+    return live
+
+
 def _run_assistant_turn(user_sub: str, question: str, reply_id: int,
                         image_b64: str = "", image_type: str = "image/jpeg") -> None:
     """Answer and write the reply into the person's thread.
@@ -4409,21 +4454,36 @@ def _run_assistant_turn(user_sub: str, question: str, reply_id: int,
     the whole job is synchronous anyway, and a phone that locks or a tab that
     gets backgrounded must not be able to cancel it. If the process dies
     mid-answer, chat_history.init() releases the pending row on the next boot.
+    Progress is published on _LIVE for /api/assistant/stream; the stored row
+    stays the source of truth.
     """
+    live = _LIVE.get(reply_id) or _live_start(user_sub, reply_id)
+    started = _time.time()
     try:
         history = _chat.context(user_sub)
         result = assistant.ask(question, history,
-                               image_b64=image_b64, image_type=image_type)
-        _chat.finish_turn(reply_id, result.get("answer", ""),
-                          result.get("tools_used") or [],
-                          result.get("elapsed_ms", 0))
-        logger.info("assistant: %r -> tools=%s in %dms", question[:60],
-                    result.get("tools_used"), result.get("elapsed_ms", 0))
+                               image_b64=image_b64, image_type=image_type,
+                               on_event=live.emit)
+        answer = result.get("answer", "")
+        tools = result.get("tools_used") or []
+        elapsed = result.get("elapsed_ms", 0)
+        _chat.finish_turn(reply_id, answer, tools, elapsed)
+        live.finish({"status": "done", "content": answer, "tools": tools, "elapsed_ms": elapsed})
+        logger.info("assistant: %r -> tools=%s in %dms", question[:60], tools, elapsed)
+    except assistant.Stopped:
+        answer = live.text.strip() or "_Stopped._"
+        elapsed = int((_time.time() - started) * 1000)
+        _chat.finish_turn(reply_id, answer, live.tools, elapsed)
+        live.finish({"status": "done", "content": answer, "tools": live.tools,
+                     "elapsed_ms": elapsed, "stopped": True})
     except ValueError as exc:
         _chat.fail_turn(reply_id, str(exc))
+        live.finish({"status": "error", "content": str(exc)})
     except Exception as exc:  # noqa: BLE001
         logger.warning("assistant ask failed: %s", exc)
-        _chat.fail_turn(reply_id, f"couldn't get an answer out of the model ({exc})")
+        msg = f"couldn't get an answer out of the model ({exc})"
+        _chat.fail_turn(reply_id, msg)
+        live.finish({"status": "error", "content": msg})
 
 
 @app.post("/api/assistant/ask")
@@ -4448,11 +4508,63 @@ async def assistant_ask(req: AssistantRequest, request: Request):
         return JSONResponse({"error": "still working on your last one"},
                             status_code=409)
     reply_id = await asyncio.to_thread(_chat.start_turn, sub, question)
+    _live_start(sub, reply_id)
     _threading.Thread(
         target=_run_assistant_turn,
         args=(sub, question, reply_id, req.image_b64, req.image_type),
         name=f"assistant-{reply_id}", daemon=True).start()
     return JSONResponse({"status": "queued", "reply_id": reply_id}, status_code=202)
+
+
+@app.get("/api/assistant/stream")
+async def assistant_stream(request: Request, reply_id: int):
+    """Server-sent events for an answer being written: text deltas and tool steps,
+    replayed from the start on every connect, ending with a `done` event that
+    carries the stored answer. 404 once it is long finished: read /history."""
+    from fastapi.responses import StreamingResponse
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    live = _LIVE.get(reply_id)
+    if not live or live.user_sub != session.get("sub", ""):
+        return JSONResponse({"error": "no live answer"}, status_code=404)
+
+    async def events():
+        sent, quiet, checks = 0, 0.0, 0
+        while True:
+            while sent < len(live.events):
+                yield f"data: {json.dumps(live.events[sent])}\n\n"
+                sent += 1
+                quiet = 0.0
+            if live.done and sent >= len(live.events):
+                return
+            checks += 1
+            if checks % 20 == 0 and await request.is_disconnected():
+                return
+            if quiet >= 15:
+                yield ": ping\n\n"
+                quiet = 0.0
+            await asyncio.sleep(0.05)
+            quiet += 0.05
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform",
+                                      "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/assistant/stop")
+def assistant_stop(request: Request):
+    """Stop the answer being written. What was already written is kept."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    sub = session.get("sub", "")
+    stopped = 0
+    for live in list(_LIVE.values()):
+        if live.user_sub == sub and not live.done:
+            live.stop = True
+            stopped += 1
+    return {"status": "stopping" if stopped else "idle"}
 
 
 @app.get("/api/assistant/history")
@@ -4462,9 +4574,12 @@ def assistant_history(request: Request):
     if not session:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     sub = session.get("sub", "")
+    _chat.pending(sub)  # releases a reply left pending past STALE_PENDING_SEC
     messages = _chat.recent(sub)
+    # From the same snapshot: read separately, an answer landing between the two
+    # reads gave a pending row with pending=false, and the page stopped polling.
     return {"messages": messages,
-            "pending": bool(_chat.pending(sub)),
+            "pending": any(m.get("status") == "pending" for m in messages),
             "count": len(messages)}
 
 

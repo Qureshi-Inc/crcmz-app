@@ -113,6 +113,7 @@ const SCREENS = [
   '/app/community/whatsapp',
   '/app/community/giveaways',
   '/app/ai',
+  '/app/ask',
   '/app/settings',
   '/app/admin',
   '/app/watch',

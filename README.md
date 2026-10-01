@@ -272,6 +272,13 @@ Two interfaces are served:
 **`docs/ux/STATUS.md`** for what is migrated, what is not, and why; `docs/ux/RELEASE.md`
 for deploying it and for the gates on switching the default.
 
+Ask AI (`/app/ask`) is [assistant-ui](https://github.com/assistant-ui/assistant-ui) over an
+external store. Answers stream: `POST /api/assistant/ask` queues the turn, then
+`GET /api/assistant/stream?reply_id=N` (SSE) replays text deltas and tool steps from the start
+and ends with the stored answer; `POST /api/assistant/stop` cuts it short and keeps what was
+written. The stored row stays the truth, so history polling is the fallback. The page is
+lazy-loaded, so only it pays for assistant-ui's ~140 kB.
+
 Watch Party and Huddle are **not** migrated: `/app/watch` and `/app/huddle` hand off to the
 classic interface.
 
