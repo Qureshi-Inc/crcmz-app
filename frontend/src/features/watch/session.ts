@@ -94,7 +94,15 @@ export type WatchState = {
 export type Clock = { t: number; dur: number; buf: number; live: boolean }
 
 const MAX_TRIES = 6
-const ICE = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
+// STUN finds a direct path; the server's config adds the TURN relay for people who
+// can't be reached directly (strict NAT, mobile carriers, VPNs).
+let ICE: RTCIceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
+let iceAt = 0
+/** The relay password lasts 12 hours; a page left open longer fetches a fresh one. */
+async function freshIce() {
+  if (!iceAt || Date.now() - iceAt < 6 * 3600_000) return
+  try { const c = await getConfig(); if (c.iceServers?.length) { ICE = c.iceServers; iceAt = Date.now() } } catch { /* keep the old one */ }
+}
 // The orbs are small, so a tiny stream looks identical to a big one and keeps the
 // mesh affordable on phone uplinks.
 const CAM_BITRATE = 260_000
@@ -520,6 +528,7 @@ export async function boot() {
     return
   }
   if (!state.active) return
+  if (cfg.iceServers?.length) { ICE = cfg.iceServers; iceAt = Date.now() }
   set({ cfg, room: cfg.defaultRoom || 'crcmz', myName: cfg.viewer?.name || '', isMod: !!cfg.viewer?.mod })
   try {
     await loadScript(`${cfg.origin || ''}${cfg.socketPath || '/socket.io'}/socket.io.js`)
@@ -933,6 +942,18 @@ function signal(to: string, msg: Signal) { if (sock?.connected) sock.emit('signa
 const camMsg = (on: boolean): Signal => ({ t: 'cam', on, vid: on && !state.call.camOff })
 const announce = (on: boolean) => live().forEach((id) => signal(id, camMsg(on)))
 export const localMedia = () => localStream
+/** How a connected call travels: 'host'/'srflx' are direct, 'relay' goes through TURN. */
+async function routeOf(pc: RTCPeerConnection): Promise<string> {
+  try {
+    const stats = await pc.getStats()
+    let pair: { localCandidateId?: string; remoteCandidateId?: string } | undefined
+    stats.forEach((r) => { if (r.type === 'candidate-pair' && (r.selected || r.nominated) && r.state === 'succeeded') pair = r })
+    if (!pair) return 'unknown'
+    const local = pair.localCandidateId ? stats.get(pair.localCandidateId) : null
+    const remote = pair.remoteCandidateId ? stats.get(pair.remoteCandidateId) : null
+    return `${local?.candidateType ?? '?'}/${remote?.candidateType ?? '?'}${local?.relayProtocol ? ` ${local.relayProtocol}` : ''}`
+  } catch { return 'unknown' }
+}
 export const canCall = () => typeof navigator.mediaDevices?.getUserMedia === 'function' && typeof window.RTCPeerConnection === 'function'
 
 function audioC() {
@@ -953,6 +974,7 @@ export async function joinCall() {
   if (state.call.busy || state.call.on) return
   if (!canCall()) { setCall({ note: "This browser can't share a camera." }); return }
   setCall({ busy: true, note: 'Asking for permission…', micOnly: false })
+  await freshIce()
   try {
     let stream: MediaStream
     let micOnly = false
@@ -1121,6 +1143,7 @@ function peer(id: string, create: boolean): Peer | null {
   pc.onconnectionstatechange = () => {
     const st = pc.connectionState
     log('peer.state', { peer: nameOf(id), st, ice: pc.iceConnectionState }, st === 'failed' || st === 'disconnected' ? 'warn' : 'info')
+    if (st === 'connected') void routeOf(pc).then((via) => log('peer.route', { peer: nameOf(id), via }))
     if (st === 'failed') { window.clearTimeout(p.discT); dropPeer(id) }
     else if (st === 'disconnected') {
       // Five seconds to recover on its own, then an ICE restart.

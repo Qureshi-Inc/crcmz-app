@@ -1890,7 +1890,6 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .wp-orbs-over .wp-orb { width: 52px; }
 .wp-orbs-over .wp-face { width: 48px; height: 48px; box-shadow: 0 2px 10px rgba(0, 0, 0, .6); }
 .wp-orbs-over .wp-orb-name { display: none; }
-.wp-orbs-over .wp-orbs-grid-btn { background: rgba(0, 0, 0, .55); color: #fff; }
 /* Side: a column at the right edge, clear of the top and bottom bars. */
 .wp-orbs-over-side {
   right: var(--space-2); top: 50%; transform: translateY(-50%);

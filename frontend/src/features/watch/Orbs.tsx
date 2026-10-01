@@ -40,7 +40,8 @@ export function Orbs({ variant }: { variant: 'strip' | 'side' | 'top' | 'bottom'
           </li>
         ))}
       </ul>
-      {tiles.length > 1 || s.call.on ? (
+      {/* On the video only the people float; the all-cameras view lives in the strip. */}
+      {variant === 'strip' && (tiles.length > 1 || s.call.on) ? (
         <button type="button" className="wp-ctl wp-orbs-grid-btn" aria-label="All cameras, full screen" title="All cameras" onClick={() => setGrid(true)}>
           <Icon name="grid" />
         </button>

@@ -203,6 +203,25 @@ def t_client_config_has_no_secrets():
     assert "d" not in json.loads(cfg).keys()
 
 
+def t_turn_relay_passwords_expire_and_hide_the_secret():
+    import base64, hashlib, hmac
+    old = watch.TURN_SECRET
+    try:
+        watch.TURN_SECRET = ""
+        assert watch.ice_servers("v1") == [{"urls": watch.STUN_URLS}], "no secret: STUN only"
+        watch.TURN_SECRET = "s3cret-for-tests"
+        stun, turn = watch.ice_servers("v1:../x", now=1000)
+        assert stun == {"urls": watch.STUN_URLS}
+        assert turn["urls"] == [f"turn:{watch.TURN_HOST}:3478?transport=udp", f"turn:{watch.TURN_HOST}:3478?transport=tcp"]
+        assert turn["username"] == f"{1000 + watch.TURN_TTL}:v1x"
+        # coturn's use-auth-secret check: base64(HMAC-SHA1(secret, username))
+        want = base64.b64encode(hmac.new(b"s3cret-for-tests", turn["username"].encode(), hashlib.sha1).digest()).decode()
+        assert turn["credential"] == want
+        assert "s3cret" not in json.dumps(watch.ice_servers("v1"))
+    finally:
+        watch.TURN_SECRET = old
+
+
 def t_short_viewer_is_short_and_hashed():
     v = watch.viewer_id("https://auth.crcmz.me", "u1")
     s = watch.short_viewer(v)

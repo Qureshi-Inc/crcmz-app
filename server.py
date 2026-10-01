@@ -5201,6 +5201,7 @@ async def watch_config(request: Request):
         "psnOnlineId": viewer["psnOnlineId"],
         "mod": await _is_watch_mod(viewer["zitadelSubject"]),
     }
+    cfg["iceServers"] = watch_mod.ice_servers(viewer["viewerId"])
     return JSONResponse(cfg, headers={"Cache-Control": "no-store"})
 
 

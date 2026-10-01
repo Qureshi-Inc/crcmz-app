@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -362,6 +363,29 @@ def mint_ticket(*, viewer: str, room: str, display_name: str, mod: bool = False)
     if isinstance(token, bytes):  # PyJWT < 2 compatibility
         token = token.decode()
     return {"ticket": token, "expires_in": TICKET_TTL, "jti": jti, "kid": key["kid"]}
+
+
+# ── Call relay (TURN) ────────────────────────────────────────────────────────
+# Calls are peer to peer. When two people can't reach each other directly (strict
+# NAT, mobile carriers, VPNs) the coturn relay on the VPS carries the video. Its
+# shared secret stays here; each viewer gets a username/password that expires
+# (coturn's "use-auth-secret" scheme: password = base64(HMAC-SHA1(secret, username))).
+TURN_SECRET = os.environ.get("TURN_SECRET", "")
+TURN_HOST = os.environ.get("TURN_HOST", "45.41.205.64")
+TURN_TTL = int(os.environ.get("TURN_TTL", str(12 * 3600)))
+STUN_URLS = ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]
+
+
+def ice_servers(viewer: str, now: float | None = None) -> list[dict]:
+    """What a browser's RTCPeerConnection should use: STUN, plus the relay when set up."""
+    servers: list[dict] = [{"urls": STUN_URLS}]
+    if TURN_SECRET and TURN_HOST:
+        expires = int((now if now is not None else time.time()) + TURN_TTL)
+        username = f"{expires}:{re.sub(r'[^A-Za-z0-9_-]', '', viewer)[:40] or 'viewer'}"
+        password = base64.b64encode(hmac.new(TURN_SECRET.encode(), username.encode(), hashlib.sha1).digest()).decode()
+        servers.append({"urls": [f"turn:{TURN_HOST}:3478?transport=udp", f"turn:{TURN_HOST}:3478?transport=tcp"],
+                        "username": username, "credential": password})
+    return servers
 
 
 # ── Client config ────────────────────────────────────────────────────────────

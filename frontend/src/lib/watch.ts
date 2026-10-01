@@ -7,6 +7,8 @@ export type WatchViewer = { id: string; name: string; nickname: string; psnOnlin
 export type WatchConfig = {
   authMode: string; origin: string; socketPath: string; rooms: string[]; defaultRoom: string; ticketTtl: number
   viewer: WatchViewer
+  /** STUN plus the TURN relay with a password that expires (absent on old servers). */
+  iceServers?: RTCIceServer[]
 }
 export type Ticket = { ticket: string; expiresIn: number; room: string; viewer: { name: string; mod: boolean } }
 export type HistViewer = { name: string; position: number; finished: boolean; updated_at: number }
