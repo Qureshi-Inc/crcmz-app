@@ -69,6 +69,15 @@ async function newPage({ width, height, mocks = {}, match = null, reducedMotion 
   return { ctx, page }
 }
 
+/** The camera position lives in the player's ⚙ panel: open it, pick, close it again. */
+async function pickPos(page, pos) {
+  await page.hover('.wp-stage')
+  if (!(await page.isVisible('.wp-set'))) await page.click('.wp-stage button[aria-label="Settings"]')
+  await page.click(`.wp-set [role=radio][data-pos=${pos}]`)
+  await page.click('.wp-set button[aria-label="Close settings"]')
+  await page.waitForSelector('.wp-set', { state: 'detached' })
+}
+
 /** What the lock screen shows: title, artist, play state and the buttons it offers. */
 const lock = (page) => page.evaluate(() => {
   const ms = navigator.mediaSession
@@ -1879,15 +1888,18 @@ try {
     await tapTargets(page, 'Watch 375')
     // Camera position: per user, remembered, and the same control in Settings.
     check('watch: cameras default to below the video', (await page.getAttribute('.wp-screen', 'data-orbs')) === 'bottom')
-    await page.click('.wp-actions [role=radio]:has-text("Above")')
+    await pickPos(page, 'top')
     check('watch: Above moves the cameras over the stage', (await page.getAttribute('.wp-screen', 'data-orbs')) === 'top' && (await page.evaluate(() => JSON.parse(localStorage.getItem('watch.orbs.pos')))) === 'top')
     // Rally asks first, then posts once.
-    await page.click('.wp-actions button:has-text("Rally")')
-    await page.waitForSelector('.dialog')
-    check('watch: Rally asks before posting', posts.rally.length === 0 && (await page.textContent('.dialog')).includes('WhatsApp'))
-    await page.click('.dialog button:has-text("Send rally")')
-    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('Rally sent')))
+    // It lives in the player's ⚙ panel.
+    await page.hover('.wp-stage')
+    await page.click('.wp-stage button[aria-label="Settings"]')
+    await page.click('.wp-set button:has-text("Rally the squad")')
+    check('watch: Rally asks before posting', posts.rally.length === 0 && (await page.textContent('.wp-set')).includes('WhatsApp'))
+    await page.click('.wp-set button:has-text("Send rally")')
+    await page.waitForFunction(() => document.querySelector('.wp-set')?.textContent.includes('Rally sent'))
     check('watch: Rally posts once after confirming', posts.rally.length === 1)
+    await page.click('.wp-set button[aria-label="Close settings"]')
     // Leave /watch: the party keeps going in the Watch bar.
     await page.click('.tabbar a[href="/app"]')
     await page.waitForSelector('.watchbar-bar')
@@ -1936,6 +1948,8 @@ try {
     await d.page.hover('.wp-stage')
     await shot(d.page, 'watch-1440')
     await axe(d.page, 'Watch 1440', '.app-main')
+    await d.page.click('.mv-tabs [role=tab]:has-text("Watched")')
+    await d.page.waitForSelector('.wp-card')
     await d.page.click('.wp-card button[aria-label^="Details"]')
     await d.page.waitForSelector('.wp-chat-log')
     check('watch 1440: details show viewers and chat', (await d.page.textContent('.dialog')).includes('Goopy') && (await d.page.textContent('.wp-chat-log')).includes('classic'))
@@ -1954,12 +1968,12 @@ try {
     const below = await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().top >= document.querySelector('.wp-stage').getBoundingClientRect().bottom - 1)
     check('watch 1440: orbs sit below the video by default', below)
     check('watch 1440: camera tiles are rounded squares, not circles', await d.page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.wp-face')).borderTopLeftRadius) < 20))
-    await d.page.click('.wp-actions [role=radio][data-pos=over]')
+    await pickPos(d.page, 'over')
     await d.page.waitForSelector('.wp-stage .wp-orbs-over-side')
     check('watch 1440: Side floats the orbs down the right edge of the video', await d.page.evaluate(() => { const o = document.querySelector('.wp-orbs-over').getBoundingClientRect(), st = document.querySelector('.wp-stage').getBoundingClientRect(); return o.right <= st.right && o.left > st.left + st.width / 2 }))
     // On the video, along the top / bottom: on the edge while the controls hide, past the bars while they show.
     const edge = (sel) => d.page.evaluate((q) => { const o = document.querySelector(q).getBoundingClientRect(), st = document.querySelector('.wp-stage').getBoundingClientRect(); return { top: o.top - st.top, bottom: st.bottom - o.bottom } }, sel)
-    await d.page.click('.wp-actions [role=radio][data-pos=overTop]')
+    await pickPos(d.page, 'overTop')
     await d.page.waitForSelector('.wp-stage .wp-orbs-over-top')
     await d.page.hover('.wp-stage')
     await d.page.waitForTimeout(400)
@@ -1967,7 +1981,7 @@ try {
     const barBottom = await d.page.evaluate(() => document.querySelector('.wp-ov-top').getBoundingClientRect().bottom - document.querySelector('.wp-stage').getBoundingClientRect().top)
     check('watch 1440: On the video, top: a row along the top, below the title bar while it shows', tOn.top >= 40 && tOn.top < 70, JSON.stringify({ tOn, barBottom }))
     await shot(d.page, 'watch-1440-over-top')
-    await d.page.click('.wp-actions [role=radio][data-pos=overBottom]')
+    await pickPos(d.page, 'overBottom')
     await d.page.waitForSelector('.wp-stage .wp-orbs-over-bottom')
     await d.page.hover('.wp-stage')
     await d.page.waitForTimeout(400)
@@ -1975,17 +1989,42 @@ try {
     const seekTop = await d.page.evaluate(() => document.querySelector('.wp-stage').getBoundingClientRect().bottom - document.querySelector('.wp-seek').getBoundingClientRect().top)
     check('watch 1440: On the video, bottom: a row above the seek bar while it shows', bOn.bottom >= seekTop, JSON.stringify({ bOn, seekTop }))
     await shot(d.page, 'watch-1440-over-bottom')
-    await d.page.click('.wp-actions [role=radio][data-pos=over]')
+    // A phone: the cameras stay on the video while the controls show, clear of the bars.
+    {
+      const vp = d.page.viewportSize()
+      await d.page.setViewportSize({ width: 375, height: 800 })
+      for (const pos of ['overTop', 'overBottom']) {
+        await pickPos(d.page, pos)
+        await d.page.hover('.wp-stage')
+        await d.page.waitForTimeout(400)
+        const g = await d.page.evaluate(() => {
+          const r = (q) => document.querySelector(q)?.getBoundingClientRect()
+          const o = r('.wp-orbs-over'), top = r('.wp-ov-top'), seek = r('.wp-seek'), st = r('.wp-stage')
+          const mid = document.querySelector('.wp-ov-mid')
+          return { chrome: document.querySelector('.wp-stage').dataset.chrome, opacity: getComputedStyle(document.querySelector('.wp-orbs-over')).opacity,
+            oTop: o.top, oBottom: o.bottom, titleBottom: top.bottom - 1, seekTop: seek.top + 1, stTop: st.top, stBottom: st.bottom,
+            midShown: !!mid && getComputedStyle(mid).display !== 'none', rowPlay: !!document.querySelector('.wp-ov-row > .wp-ctl:first-child')?.offsetWidth }
+        })
+        const clear = pos === 'overTop' ? g.oTop >= g.titleBottom && g.oBottom < g.seekTop : g.oBottom <= g.seekTop && g.oTop > g.titleBottom
+        check(`watch 375: on the video, ${pos === 'overTop' ? 'top' : 'bottom'}: cameras stay visible with the controls up, clear of the bars`,
+          g.chrome === 'true' && g.opacity === '1' && clear && g.oTop >= g.stTop && g.oBottom <= g.stBottom && !g.midShown && g.rowPlay, JSON.stringify(g))
+        await shot(d.page, `watch-375-${pos}`)
+      }
+      await d.page.setViewportSize(vp)
+    }
+    await pickPos(d.page, 'over')
     await d.page.hover('.wp-stage')
     check('watch 1440: in the call the overlay gets a mic button', await d.page.isVisible('.wp-ov-row button[aria-label="Mute mic"]'))
     await shot(d.page, 'watch-1440-over')
-    await d.page.click('.wp-actions [role=radio]:has-text("Above")')
+    await pickPos(d.page, 'top')
     check('watch 1440: Above puts the orbs over the top of the video', await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().bottom <= document.querySelector('.wp-stage').getBoundingClientRect().top + 1))
     await d.page.click('.wp-orb')
     await d.page.waitForSelector('.wp-orb-menu')
     check('watch 1440: your orb menu has mute, camera, flip, enlarge, leave', (await d.page.locator('.wp-orb-menu [role=menuitem]').count()) === 5)
     await d.page.keyboard.press('Escape')
-    await d.page.click('.wp-actions button:has-text("Leave call")')
+    await d.page.hover('.wp-stage')
+    await d.page.click('.wp-stage button[aria-label="Settings"]')
+    await d.page.click('.wp-set .wp-set-leave')
     await d.page.waitForSelector('.wp-orb', { state: 'detached' })
     check('watch 1440: leaving the call removes your orb', true)
     // Leave party from the page itself: the session ends and nothing shows as live.

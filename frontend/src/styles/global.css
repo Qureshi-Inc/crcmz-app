@@ -1904,11 +1904,17 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .wp-stage[data-chrome="true"] .wp-orbs-over-top { transform: translateY(44px); }
 .wp-stage[data-chrome="true"] .wp-orbs-over-bottom { transform: translateY(-72px); }
 .wp-stage[data-chrome="true"][data-rx="true"] .wp-orbs-over-bottom { transform: translateY(-124px); }
-/* A phone-sized stage has no room for both: the cameras step aside until the controls hide. */
+/* A phone-sized stage is too short for the cameras and the big centre buttons together.
+   The cameras stay (they're why you're on a call): they sit just inside the title bar or
+   the seek bar, and the centre buttons give way to the control row's own play button. */
 @container wpstage (max-width: 560px) {
-  .wp-orbs-over-top .wp-face, .wp-orbs-over-bottom .wp-face { width: 44px; height: 44px; }
-  .wp-orbs-over-top .wp-orb, .wp-orbs-over-bottom .wp-orb { width: 46px; }
-  .wp-stage[data-chrome="true"] .wp-orbs-over-top, .wp-stage[data-chrome="true"] .wp-orbs-over-bottom { transform: none; opacity: 0; pointer-events: none; }
+  .wp-orbs-over-top .wp-face, .wp-orbs-over-bottom .wp-face { width: 40px; height: 40px; }
+  .wp-orbs-over-top .wp-orb, .wp-orbs-over-bottom .wp-orb { width: 42px; }
+  .wp-stage[data-chrome="true"] .wp-orbs-over-top { transform: translateY(54px); }
+  .wp-stage[data-chrome="true"] .wp-orbs-over-bottom { transform: translateY(-62px); }
+  .wp-stage[data-chrome="true"][data-rx="true"] .wp-orbs-over-bottom { transform: translateY(-114px); }
+  .wp-stage:has(.wp-orbs-over-top, .wp-orbs-over-bottom) .wp-ov-mid { display: none; }
+  .wp-stage:has(.wp-orbs-over-top, .wp-orbs-over-bottom) .wp-ov-row > .wp-ctl:first-child { display: inline-flex; }
 }
 @media (prefers-reduced-motion: reduce) { .wp-orbs-over { transition: none; } }
 .menu-item-danger { color: var(--error); }
