@@ -63,7 +63,7 @@ export function NotificationsPage() {
         : !items.length ? (
           <p className="notif-empty dim">
             {source === 'slap' ? 'No one has @mentioned you yet. Tag someone in a Slap comment and it shows up for them here.'
-              : 'Nothing here yet. Rallies, Watch Parties, Huddles, giveaways, clips and @mentions all land here.'}
+              : 'Nothing here yet. Rallies, Watch Parties, Huddles, giveaways, clips, @mentions and new movies all land here.'}
           </p>
         ) : (
           <ul className="rows notif-rows">
@@ -119,12 +119,12 @@ function Delivery() {
   return (
     <section className="glass settings-card notif-delivery" aria-labelledby="notif-where-h">
       <h2 className="section-h2" id="notif-where-h">Where they reach you</h2>
-      <p className="dim">Everything lands here. When someone @mentions you, you can also get a DM:</p>
+      <p className="dim">Everything lands here. When someone @mentions you, or a movie is added or ready to watch, you can also get a DM:</p>
       {ch.isPending ? <SkeletonRows n={2} />
         : ch.isError ? <ErrorStrip text="Couldn't load these" onRetry={() => ch.refetch()} />
         : (
           <fieldset className="push-cats" style={{ border: 0, margin: 0, padding: 0 }}>
-            <legend className="sr-only">Direct messages for @mentions</legend>
+            <legend className="sr-only">Direct messages for @mentions and movies</legend>
             {ch.data.channels.map((c) => (
               <label key={c.id} className="check-row">
                 <input type="checkbox" checked={ch.data.prefs[c.id] !== false} onChange={(e) => { void set(c.id, e.target.checked) }} />

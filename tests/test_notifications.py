@@ -256,10 +256,48 @@ def route_tests():
         notifications.save_channels("u-moiz", {"whatsapp": False})
         assert notifications.test_dm("u-moiz")["whatsapp"] is None
 
+    def a_new_movie_reaches_inbox_push_whatsapp_and_mattermost_with_the_library_link():
+        reset()
+        device("u-moiz", 1); device("u-noor", 1)
+        url = "/app/watch?library=downloaded"
+        out = notifications.route("movies", "Zubair added Dune", "downloading", url, only=["u-moiz", "u-noor"],
+                                  exclude="u-zub", tag="movie-added-tt1", dm_text="🎬 Zubair added Dune")
+        assert out["inbox"] == 2 and sorted(PUSHED) == ["u-moiz", "u-noor"], (out, PUSHED)
+        assert [t for _, t in WA] == ["🎬 Zubair added Dune\nhttps://app.crcmz.me" + url] * 2, WA
+        assert [u for u, _ in MM] == ["moiz"] and MM[0][1].endswith(url)
+        item = notifications.inbox("u-noor")["items"][0]
+        assert item["source"] == "watch" and item["url"] == url and item["personal"]
+
+    def added_then_ready_both_dm_but_a_repeat_does_not():
+        reset()
+        notifications.route("movies", "Zubair added Dune", only=["u-moiz"], exclude="u-zub", tag="movie-added-tt1")
+        notifications.route("movies", "Dune is ready", only=["u-moiz", "u-zub"], tag="movie-ready-tt1")
+        assert len(WA) == 2 and len(MM) == 3, (WA, MM)    # Zubair has Mattermost but no WhatsApp it can reach
+        out = notifications.route("movies", "Dune is ready", only=["u-moiz"], tag="movie-ready-tt1")
+        assert out["dms"]["quiet"] == 1 and len(WA) == 2
+
+    def switching_movies_off_stops_push_and_dms_but_not_the_inbox():
+        reset()
+        device("u-moiz", 1)
+        webpush.save_prefs("u-moiz", {"movies": False})
+        out = notifications.route("movies", "Dune is ready", only=["u-moiz"], tag="movie-ready-tt1")
+        assert PUSHED == [] and WA == [] and MM == [] and out["dms"]["off"] == 1, (out, WA, MM)
+        assert notifications.inbox("u-moiz")["items"][0]["title"] == "Dune is ready"
+        webpush.save_prefs("u-moiz", {"movies": True, "mentions": False})
+        notifications.route("mentions", "x", only=["u-moiz"], exclude="u-zub")
+        assert len(WA) == 1, "a mention's DMs only follow the channel switches"
+
+    def movies_is_a_category_people_can_switch():
+        assert notifications.SOURCES["movies"] == "watch" and "movies" in notifications.DIRECT
+        assert "movies" in webpush.CATEGORIES and webpush.get_prefs("brand-new")["movies"] is True
+
     for fn in (a_test_dm_ignores_the_quiet_window_and_reports_each_channel, a_mention_goes_to_inbox_push_whatsapp_and_mattermost, mattermost_gets_the_email_to_fall_back_on, a_broadcast_never_dms,
                switched_off_channels_are_respected, a_burst_of_mentions_dms_once,
                nobody_is_dmed_about_their_own_mention_or_without_a_contact, whatsapp_targets,
-               a_failing_sender_does_not_stop_the_rest):
+               a_failing_sender_does_not_stop_the_rest,
+               a_new_movie_reaches_inbox_push_whatsapp_and_mattermost_with_the_library_link,
+               added_then_ready_both_dm_but_a_repeat_does_not,
+               switching_movies_off_stops_push_and_dms_but_not_the_inbox, movies_is_a_category_people_can_switch):
         check(fn.__name__, fn)
 
 

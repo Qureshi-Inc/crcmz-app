@@ -1,5 +1,5 @@
 // The notification centre: one inbox for every alert the app raises (rallies,
-// Watch Parties, Huddles, giveaways, clips, Slap @mentions). The server routes each
+// Watch Parties, Huddles, giveaways, clips, Slap @mentions, movies). The server routes each
 // alert to this inbox, to push, and for personal ones to WhatsApp and Mattermost.
 import { useEffect } from 'react'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'

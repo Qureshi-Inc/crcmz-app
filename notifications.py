@@ -9,13 +9,15 @@ A broadcast (a rally, a Watch Party starting) lands in everyone's inbox and on
 their phones. The WhatsApp group and the Mattermost channel already hear about
 those from their own bots, so nobody is DMed for them. A personal alert (someone
 @mentions you on Slap) goes to your inbox, your phone and, unless you switch them
-off, a DM on WhatsApp and Mattermost.
+off, a DM on WhatsApp and Mattermost. Movie alerts ("Zubair added Dune", "Dune is
+ready to watch") are sent to each member by name, so they DM too; switching the
+"movies" category off in Settings stops their push and their DMs.
 
 DB: /data/notifications.db
   items     one row per alert; audience is '*' (everyone) or one Zitadel sub
   reads     (sub, item_id) for alerts opened one at a time
   cursors   sub -> every item at or below this id counts as read ("Mark all read")
-  channels  sub -> {"whatsapp": bool, "mattermost": bool}, default on
+  channels  sub -> {"whatsapp": bool, "mattermost": bool}, default on (personal alerts' DMs)
 """
 
 from __future__ import annotations
@@ -44,13 +46,16 @@ KEEP_ROWS = 5000
 # Where each category came from, for the inbox's filter chips and icons.
 SOURCES: dict[str, str] = {
     "squad": "squad", "watch": "watch", "huddle": "huddle", "giveaway": "giveaway",
-    "clips": "clips", "mentions": "slap",
+    "clips": "clips", "mentions": "slap", "movies": "watch",
 }
 # Personal categories: these can also DM the person on WhatsApp and Mattermost.
-DIRECT = {"mentions"}
+DIRECT = {"mentions", "movies"}
+# Categories whose DMs also obey the person's push switch for that category (Settings):
+# a movie alert goes to everyone, so "off" there has to mean off everywhere but the inbox.
+DM_FOLLOWS_PUSH = {"movies"}
 CHANNELS: dict[str, str] = {
-    "whatsapp": "WhatsApp DM when someone @mentions you",
-    "mattermost": "Mattermost DM when someone @mentions you",
+    "whatsapp": "WhatsApp DM for @mentions and new movies",
+    "mattermost": "Mattermost DM for @mentions and new movies",
 }
 
 # The senders are wired by server.py (which knows the bridge's address); tests swap
@@ -143,7 +148,7 @@ def route(category: str, title: str, body: str = "", url: str = "/app", *,
         logger.exception("notifications: push failed")
         out["push"] = None
     if category in DIRECT and only:
-        out["dms"] = _direct(only, exclude, dm_text or f"{title}\n{body}".strip(), url, tag or category)
+        out["dms"] = _direct(only, exclude, dm_text or f"{title}\n{body}".strip(), url, tag or category, category)
     return out
 
 
@@ -168,13 +173,16 @@ def wa_jid_for(person: dict) -> str:
     return jid if re.fullmatch(r"\d{7,20}@(s\.whatsapp\.net|lid)", jid) else ""
 
 
-def _direct(subs: list[str], exclude: str, text: str, url: str, tag: str) -> dict:
+def _direct(subs: list[str], exclude: str, text: str, url: str, tag: str, category: str = "") -> dict:
     import crcmz_identity
     people = crcmz_identity.by_zitadel_id()
     link = f"{PUBLIC_URL}{url}"
-    sent = {"whatsapp": 0, "mattermost": 0, "quiet": 0}
+    sent = {"whatsapp": 0, "mattermost": 0, "quiet": 0, "off": 0}
     for sub in sorted(set(subs)):
         if not sub or sub == exclude or not (p := people.get(sub)):
+            continue
+        if category in DM_FOLLOWS_PUSH and not webpush.get_prefs(sub).get(category, True):
+            sent["off"] += 1
             continue
         if not _dm_quiet.first(f"{sub}:{tag}"):
             sent["quiet"] += 1
@@ -214,7 +222,7 @@ def test_dm(sub: str) -> dict:
     if not p:
         return {"whatsapp": None, "mattermost": None}
     ch = get_channels(sub)
-    msg = f"🔔 Test from CRCMZ: this is how @mentions reach you.\n{PUBLIC_URL}/app/notifications"
+    msg = f"🔔 Test from CRCMZ: this is how @mentions and new movies reach you.\n{PUBLIC_URL}/app/notifications"
     out: dict[str, bool | None] = {}
     if not ch["whatsapp"] or not wa_send or not (jid := wa_jid_for(p)):
         out["whatsapp"] = None

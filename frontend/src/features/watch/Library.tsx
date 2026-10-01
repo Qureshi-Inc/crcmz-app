@@ -1,8 +1,10 @@
 // Watch · Library, under the player. Downloaded: the films in Jellyfin, ready for the
 // party. Find movies: search the catalogue and add one; the server picks the copy
-// (4K, else 1080p) and the card follows it into the library. Whoever added a film
-// (or an admin) can remove it again. Watched: history.
+// (4K, else 1080p), copies it onto its own disk and the card follows it into the
+// library. Whoever added a film (or an admin) can remove it again. Watched: history.
+// A movie notification links to /watch?library=downloaded: that opens the tab here.
 import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Icon } from '../../components/Icon'
@@ -12,7 +14,7 @@ import { ConfirmDialog } from '../clips/ClipSheet'
 import { ApiError } from '../../lib/http'
 import { useReducedMotion } from '../../lib/media'
 import {
-  addMovie, getLibrary, removeMovie, inFlight, popularMovies, searchMovies, stateText, streamUrl,
+  addMovie, getLibrary, removeMovie, inFlight, measured, popularMovies, searchMovies, stateText, streamUrl,
   type Adding, type Library as LibraryData, type Movie, type Result,
 } from '../../lib/movies'
 import { Watched } from './History'
@@ -20,10 +22,12 @@ import { hostMovie, useWatch } from './session'
 
 type Tab = 'downloaded' | 'find' | 'watched'
 const TAB_KEY = 'watch.library.tab'
+const TABS: Tab[] = ['downloaded', 'find', 'watched']
 
 export function Library() {
   const [tab, setTab] = useState<Tab>(() => (sessionStorage.getItem(TAB_KEY) as Tab) || 'downloaded')
   useEffect(() => { try { sessionStorage.setItem(TAB_KEY, tab) } catch { /* private mode */ } }, [tab])
+  useLibraryLink(setTab)
   return (
     <section className="wp-library" aria-labelledby="wp-lib-h">
       <h2 className="section-h2" id="wp-lib-h">Library</h2>
@@ -39,6 +43,27 @@ export function Library() {
       </Tabs.Root>
     </section>
   )
+}
+
+/** ?library=<tab> (a movie notification): open that tab, bring the library into view,
+ *  fetch it fresh, then drop the parameter so a reload doesn't scroll again. The page
+ *  stays mounted away from /watch, so this only acts on /watch itself. */
+function useLibraryLink(setTab: (t: Tab) => void) {
+  const loc = useLocation()
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  useEffect(() => {
+    if (loc.pathname !== '/watch') return
+    const want = new URLSearchParams(loc.search).get('library')
+    if (want === null) return
+    setTab(TABS.includes(want as Tab) ? (want as Tab) : 'downloaded')
+    void qc.invalidateQueries({ queryKey: ['movies', 'library'] })
+    navigate({ pathname: loc.pathname, search: '' }, { replace: true })
+    const t = window.setTimeout(() => {
+      document.getElementById('wp-lib-h')?.scrollIntoView({ block: 'start' })
+    }, 150)
+    return () => window.clearTimeout(t)
+  }, [loc.pathname, loc.search, navigate, qc, setTab])
 }
 
 function useLibrary() {
@@ -156,8 +181,8 @@ function AddingRow({ a }: { a: Adding }) {
         {a.status === 'failed' && a.error && <span className="meta">{a.error}</span>}
         {busy && (
           <span className="mv-bar" role="progressbar" aria-label={`${a.title} progress`} aria-valuemin={0} aria-valuemax={100}
-            aria-valuenow={a.status === 'downloading' ? Math.floor(a.progress) : undefined} data-indeterminate={a.status !== 'downloading' || undefined}>
-            <i style={a.status === 'downloading' ? { width: `${Math.max(3, a.progress)}%` } : undefined} />
+            aria-valuenow={measured(a.status) ? Math.floor(a.progress) : undefined} data-indeterminate={!measured(a.status) || undefined}>
+            <i style={measured(a.status) ? { width: `${Math.max(3, a.progress)}%` } : undefined} />
           </span>
         )}
       </span>
@@ -235,7 +260,7 @@ function AddButton({ imdb, title, again = false }: { imdb: string; title: string
       qc.setQueryData<LibraryData>(['movies', 'library'], (d) => d && a.status !== 'ready'
         ? { ...d, adding: [a, ...d.adding.filter((x) => x.imdb !== imdb)] } : d)
       void qc.invalidateQueries({ queryKey: ['movies', 'library'] })
-      toast(a.status === 'ready' ? `${title} is already in the library` : `Adding ${title}. We'll tell you when it's ready.`, 'success')
+      toast(a.status === 'ready' ? `${title} is already in the library` : `Adding ${title}. We'll tell everyone when it's ready.`, 'success')
     } catch (e) {
       toast((e instanceof ApiError && e.detail) || "That movie didn't add", 'error')
     } finally { setBusy(false) }

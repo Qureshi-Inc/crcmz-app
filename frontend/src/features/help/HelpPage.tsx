@@ -122,7 +122,7 @@ const SECTIONS: Section[] = [
         <li>In fullscreen, the cameras sit on the video and the chat button lets you type without leaving.</li>
         <li>It keeps playing while you use the rest of the app.</li>
         <li><b>Library</b> (under the player): <b>Downloaded</b> is every movie we have. Press Play and it plays for the whole party. Whoever added a movie (or an admin) can remove it with the bin.</li>
-        <li><b>Find movies</b>: search, then <b>Add to library</b>. We pick the best copy (4K when there is one, else 1080p) and you get a notification when it's ready. Most take a minute or two; a rare one has to download first and shows its progress. Five a day each.</li>
+        <li><b>Find movies</b>: search, then <b>Add to library</b>. We pick the best copy (4K when there is one, else 1080p if the server's disk is getting full) and download it to the server; the card shows how far along it is. Everyone gets a notification when a movie is added and again when it's ready to watch (switch movies off in Settings if you'd rather not). Five a day each.</li>
         <li><b>Watched</b>: what this room (or just you) watched, to pick up where you left off.</li>
       </ul>
     ),
@@ -160,7 +160,7 @@ const SECTIONS: Section[] = [
     id: 'notifications', title: 'Notifications', icon: 'bell', open: '/notifications',
     body: (
       <>
-        <p>The bell at the top shows everything the app told you about: Squad Up rallies, Watch Parties, Huddles, giveaways, new clips and @mentions.</p>
+        <p>The bell at the top shows everything the app told you about: Squad Up rallies, Watch Parties, Huddles, giveaways, new clips, @mentions and new movies.</p>
         <ul>
           <li><b>@mentions:</b> type <b>@</b> and a name in a Slap comment. They get it here, as a push on their phone, and as a WhatsApp and Mattermost DM.</li>
           <li><b>Tap one</b> to go straight to it. <b>Mark all read</b> clears the count.</li>

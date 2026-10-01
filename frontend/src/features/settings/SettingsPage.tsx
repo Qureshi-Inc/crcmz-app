@@ -557,7 +557,7 @@ function NotificationsCard() {
           </button>
         )}
       </div>
-      <p className="dim">Squad Up rallies, parties and huddles starting, giveaways, new clips and @mentions. You choose which below; they apply to every device you turn on. Every one also lands in <Link to="/notifications">Notifications</Link>, where you can switch on WhatsApp and Mattermost DMs for @mentions.</p>
+      <p className="dim">Squad Up rallies, parties and huddles starting, giveaways, new clips, @mentions and new movies. You choose which below; they apply to every device you turn on. Every one also lands in <Link to="/notifications">Notifications</Link>, where you can switch on WhatsApp and Mattermost DMs for @mentions and new movies. Switching movies off here stops their DMs too.</p>
       {iosNeedsInstall ? (
         <p className="settings-note" role="note">On iPhone, notifications only work in the installed app. Add CRCMZ to your Home Screen (above), open it from there, then turn them on.</p>
       ) : !supported ? (

@@ -33,7 +33,7 @@ export const DESTS: Record<DestId, Dest> = {
   ask: { id: 'ask', label: 'Ask AI', path: '/ask', icon: 'ask', classicHref: '/?p=ai', blurb: 'Ask anything about the squad.' },
   notifications: {
     id: 'notifications', label: 'Notifications', path: '/notifications', icon: 'bell', classicHref: '/',
-    blurb: 'Rallies, parties, giveaways, clips and @mentions, in one place.',
+    blurb: 'Rallies, parties, giveaways, clips, @mentions and movies, in one place.',
   },
   portal: { id: 'portal', label: 'Link PSN', path: '/portal', icon: 'link', classicHref: '/portal', blurb: 'Link your PlayStation account so you show up on Squad.' },
   settings: {

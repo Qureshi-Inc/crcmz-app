@@ -1690,8 +1690,11 @@ def _slap_discover(limit: int = 20) -> dict:
 @tool("movie_library",
       "The Watch tab's movie library: films in Jellyfin that a watch party can play (title, "
       "year, quality such as 4K HDR) and movies friends added recently with their state "
-      "(finding a copy, downloading on Real-Debrid with a percent, adding to the library, "
-      "ready, or failed) and who added each. Ask for a title with query.",
+      "(finding a copy, downloading on Real-Debrid with a percent, copying onto the server's "
+      "own disk with a percent, adding to the library, ready, or failed) and who added each. "
+      "on_server_disk means the film is kept on the server, not streamed from Real-Debrid; "
+      "migrating rows are older films being moved onto the server in the background (nobody "
+      "added them just now). Ask for a title with query.",
       {"type": "object", "properties": {
           "query": {"type": "string", "description": "optional words in the title"},
           "limit": {"type": "integer", "description": "1-100, default 20"},

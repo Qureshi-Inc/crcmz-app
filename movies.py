@@ -1,18 +1,35 @@
-"""Watch · Library: find a movie, add it to Jellyfin through Real-Debrid, watch it in a party.
+"""Watch · Library: find a movie, add it through Real-Debrid, keep it on the server, watch it in a party.
 
     search      Cinemeta (Stremio's free catalogue, keyed by IMDb id) for titles,
                 years and posters; "Popular" is its top list
     add         Torrentio lists the copies of that IMDb id; rank() picks the best one:
                 4K (HDR preferred, never a remux, a disc image or a cam), else 1080p.
-                The first copy Real-Debrid already has cached wins, so most adds are
-                ready in a minute. With none cached, the best copy downloads on
-                Real-Debrid and the card shows its progress.
-    library     Real-Debrid -> Zurg (/zurg/movies) -> Jellyfin's Movies library. Once
-                Real-Debrid has the file we ask Jellyfin to rescan, find the film by
-                its IMDb id and tell the person who added it.
+                The disk guard drops any copy that would leave the server with less
+                than MIN_FREE_GB free, so a big 4K gives way to 1080p; if nothing
+                fits, the add fails and says so. The first copy Real-Debrid already
+                has cached wins, so most adds start copying within a minute. With none
+                cached, the best copy downloads on Real-Debrid and the card shows it.
+                Everyone else hears "X added Y" (category "movies").
+    copy        once Real-Debrid has the file, copy_worker() downloads it from a
+                Real-Debrid unrestricted link onto the server's own disk, one film at a
+                time: LOCAL_DIR/.incoming/<imdb>.part (Range-resumed after a restart),
+                size checked, then renamed into "Title (Year) [imdbid-tt…]/file.mkv" so
+                Jellyfin never sees half a file and matches the film by its id. The
+                card says "Downloading to the server… 42%".
+                LOCAL_DIR is the host's /home/opti3/media/movies-local, bind-mounted
+                into this container at /movies-local (a Coolify storage on app 24);
+                Jellyfin reads the same folder, read-only, at /media/movies-local.
+                Without that mount the old flow stands: Jellyfin streams from Zurg.
+    library     Jellyfin's Movies library: /media/movies-local and Real-Debrid via Zurg
+                (/zurg/movies). When Jellyfin lists the local copy, the film's Real-
+                Debrid torrents are deleted (never while someone is playing that copy),
+                so only the local one is left, and everyone hears "Y is ready to watch".
+    migrate     films that were only on Real-Debrid are copied the same way, in the
+                background, one at a time and silently (migrate=1 rows: no card, no
+                notification). Runs once; the flag is in meta.
     remove      the person who added a film (or an admin) can take it out: its copies on
-                Real-Debrid are deleted, so Zurg drops them and Jellyfin forgets the film.
-                Films on the server's own disk (movies-local) stay.
+                Real-Debrid are deleted and its local folder too. Films someone put in
+                movies-local by hand (no [imdbid-…] folder) stay.
     play        a party can't play a raw 4K HDR file, so the stream is Jellyfin's 1080p
                 H.264 HLS transcode, proxied here so the Jellyfin token stays on the
                 server. Each viewer gets their own transcode session.
@@ -21,8 +38,11 @@ The Real-Debrid token is Zurg's (same account, or Jellyfin never sees the file):
 REAL_DEBRID_TOKEN.
 
 DB: /data/movies.db
-  adds     one row per movie someone added: what it is, which copy, its download state
+  adds     one row per movie someone added (or being migrated): what it is, which copy,
+           its state (finding → downloading → copying → adding → ready, or failed)
+           and, once it's on the server, the folder it's in
   removed  Jellyfin ids just removed, hidden until Jellyfin's rescan catches up
+  meta     one-off flags (the migration ran)
 """
 
 from __future__ import annotations
@@ -33,6 +53,7 @@ import logging
 import math
 import os
 import re
+import shutil
 import sqlite3
 import threading
 import time
@@ -67,6 +88,15 @@ ADDING_GIVE_UP_S = 30 * 60
 RESCAN_AFTER_S = 20      # Zurg notices a deleted torrent within seconds
 POLL_S = 1.5            # between Real-Debrid checks while a copy is being tried
 STREAM_PREFIX = "/api/watch/movies/stream/"
+
+# The server's own disk. Containers see it at different paths: this app writes LOCAL_DIR,
+# Jellyfin reads JF_LOCAL.
+LOCAL_DIR = Path(os.environ.get("MOVIES_LOCAL_DIR", "/movies-local"))
+JF_LOCAL = os.environ.get("MOVIES_JELLYFIN_LOCAL", "/media/movies-local").rstrip("/")
+LOCAL_UID = int(os.environ.get("MOVIES_LOCAL_UID", "1000"))
+MIN_FREE_GB = float(os.environ.get("MOVIES_MIN_FREE_GB", "100"))
+MIGRATE = os.environ.get("MOVIES_MIGRATE", "1") != "0"
+CHUNK = 4 << 20
 
 _IMDB = re.compile(r"^tt\d{5,10}$")
 _JF_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -108,7 +138,21 @@ def _conn() -> sqlite3.Connection:
                 jf_id  TEXT PRIMARY KEY,
                 ts     REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS meta (
+                key    TEXT PRIMARY KEY,
+                value  TEXT NOT NULL
+            );
         """)
+        have = {r[1] for r in c.execute("PRAGMA table_info(adds)")}
+        for col, ddl in (("src_file", "TEXT NOT NULL DEFAULT ''"),     # which file of the torrent to copy
+                         ("local_dir", "TEXT NOT NULL DEFAULT ''"),    # its folder under LOCAL_DIR
+                         ("local_file", "TEXT NOT NULL DEFAULT ''"),
+                         ("bytes_total", "INTEGER NOT NULL DEFAULT 0"),
+                         ("bytes_done", "INTEGER NOT NULL DEFAULT 0"),
+                         ("migrate", "INTEGER NOT NULL DEFAULT 0")):   # a film moved off Real-Debrid: silent
+            if col not in have:
+                c.execute(f"ALTER TABLE adds ADD COLUMN {col} {ddl}")
+        c.commit()
         _ready = True
     return c
 
@@ -333,8 +377,11 @@ async def jellyfin_movies(refresh: bool = False) -> list[dict]:
             continue
         tier, hdr = _version(it)
         path = str(it.get("Path") or "")
-        # An upscale is never the version to play; 8K can't be transcoded in time.
-        rank_ = (0 if re.search(r"upscale", path, re.I) or tier > 2160 else 1, tier, hdr)
+        size = int(((it.get("MediaSources") or [{}])[0] or {}).get("Size") or 0)
+        # An upscale is never the version to play; 8K can't be transcoded in time. The copy
+        # on the server's disk beats the same film on Real-Debrid; then the bigger encode.
+        rank_ = (0 if re.search(r"upscale", path, re.I) or tier > 2160 else 1, tier, hdr,
+                 path.startswith(JF_LOCAL + "/"), size)
         imdb = (it.get("ProviderIds") or {}).get("Imdb") or ""
         key = imdb or f"jf:{(it.get('Name') or '').lower()}:{it.get('ProductionYear')}"
         films.setdefault(key, []).append((rank_, {
@@ -417,6 +464,131 @@ async def _try_copy(c: dict, *, keep: bool, wait_s: float = 12) -> tuple[str, st
     return None
 
 
+# ── The server's own disk ────────────────────────────────────────────────────
+class _Refused(Exception):
+    """A copy that can't happen: the add fails with this message."""
+
+
+def local_on() -> bool:
+    """Is the server's movie folder mounted here? Without it Jellyfin streams from Zurg."""
+    return LOCAL_DIR.is_dir()
+
+
+def _gb(n: float) -> str:
+    return f"{n / 2**30:.0f} GB"
+
+
+def _reserved(skip: str = "") -> int:
+    """Bytes still to land for copies already promised, so two adds can't both take the last 100 GB."""
+    with _conn() as db:
+        rows = db.execute("SELECT imdb, size_gb, bytes_total, bytes_done FROM adds "
+                          "WHERE status IN ('downloading', 'copying')").fetchall()
+    return sum(max(0, (r["bytes_total"] or int(r["size_gb"] * 2**30)) - r["bytes_done"]) for r in rows if r["imdb"] != skip)
+
+
+def _room(skip: str = "") -> int:
+    """Bytes a new copy may use without the disk dropping under MIN_FREE_GB free."""
+    return shutil.disk_usage(LOCAL_DIR).free - _reserved(skip) - int(MIN_FREE_GB * 2**30)
+
+
+def _no_room(need: float, room: float) -> str:
+    return (f"There isn't room on the server for this one: it needs {_gb(need)} and only {_gb(max(0, room))} "
+            f"can go before the disk drops under {MIN_FREE_GB:.0f} GB free.")
+
+
+_UNSAFE = re.compile(r'[\x00-\x1f/\\:*?"<>|]+')
+
+
+def _clean_name(s: str, limit: int = 120) -> str:
+    s = re.sub(r"\s+", " ", _UNSAFE.sub(" ", s or "")).strip(" .")
+    return s[:limit].strip(" .")
+
+
+def folder_name(title: str, year: str, imdb: str) -> str:
+    """'Title (Year) [imdbid-tt…]': Jellyfin matches the film by the id in the folder name."""
+    t = _clean_name(title) or imdb
+    return f"{t} ({year}) [imdbid-{imdb}]" if year else f"{t} [imdbid-{imdb}]"
+
+
+def _file_name(name: str, imdb: str) -> str:
+    base = _clean_name(name.rsplit("/", 1)[-1], 160)
+    return base if _VIDEO_EXT.search(base) and not base.startswith(".") else f"{imdb}.mkv"
+
+
+def _local_folder(path: str) -> str:
+    """/media/movies-local/<folder>/<file> -> <folder>, or '' for anything else."""
+    if not path.startswith(JF_LOCAL + "/"):
+        return ""
+    parts = path[len(JF_LOCAL) + 1:].split("/")
+    return parts[0] if len(parts) >= 2 and parts[0] not in ("", ".", "..") else ""
+
+
+def _managed(path: str, imdb: str) -> bool:
+    """A folder this app made (so it may delete it): '… [imdbid-<this film>]'."""
+    return bool(imdb) and _local_folder(path).endswith(f"[imdbid-{imdb}]")
+
+
+def _is_local(path: str) -> bool:
+    return path.startswith(JF_LOCAL + "/")
+
+
+# ── Telling people ───────────────────────────────────────────────────────────
+LIBRARY_URL = "/app/watch?library=downloaded"
+
+
+def _members() -> list[str]:
+    """Every active person in the identity graph (Zitadel ids)."""
+    try:
+        people = crcmz_identity.people()
+    except Exception:  # noqa: BLE001
+        return []
+    return sorted({p["zitadel_id"] for p in people if p.get("zitadel_id") and not p.get("is_bot")
+                   and (not p.get("state") or p["state"] in ("USER_STATE_ACTIVE", "active"))})
+
+
+def _film(r: dict) -> str:
+    return f"{r['title']} ({r['year']})" if r.get("year") else r["title"]
+
+
+async def _announce_added(r: dict) -> None:
+    """Everyone but the person who added it: "Zubair added Dune"."""
+    try:
+        import notifications
+        subs = [s for s in await asyncio.to_thread(_members) if s != r["sub"]]
+        if not subs:
+            return
+        who = r["name"] or "Someone"
+        notifications.route_in_background(
+            "movies", f"{who} added {r['title']}",
+            "It's downloading to the server. You'll hear when it's ready to watch.",
+            url=LIBRARY_URL, only=subs, exclude=r["sub"], tag=f"movie-added-{r['imdb']}",
+            dm_text=f"🎬 {who} added {_film(r)} to the Watch library. It's downloading now; "
+                    "you'll get another message when it's ready to watch.")
+    except Exception:  # noqa: BLE001
+        logger.exception("movies: couldn't announce the add of %s", r["imdb"])
+
+
+async def _announce_ready(r: dict) -> None:
+    """Everyone, the person who added it too: "Dune is ready to watch"."""
+    try:
+        import notifications
+        subs = await asyncio.to_thread(_members) or ([r["sub"]] if r["sub"] else [])
+        if not subs:
+            return
+        notifications.route_in_background(
+            "movies", f"{r['title']} is ready to watch", "It's in the Watch library. Start a party and press Play.",
+            url=LIBRARY_URL, only=subs, tag=f"movie-ready-{r['imdb']}",
+            dm_text=f"🍿 {_film(r)} is ready to watch in the Watch library. Start a party and press Play.")
+    except Exception:  # noqa: BLE001
+        logger.exception("movies: couldn't announce %s", r["imdb"])
+
+
+def _spawn(coro) -> None:
+    task = asyncio.create_task(coro)
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+
+
 # ── Adding a movie ───────────────────────────────────────────────────────────
 _fetch_lock = asyncio.Lock()
 _tasks: set[asyncio.Task] = set()
@@ -437,7 +609,8 @@ async def add(sub: str, name: str, imdb: str, *, admin: bool = False) -> dict:
         return _public(r)
     if not admin:
         with _conn() as db:
-            n = db.execute("SELECT COUNT(*) FROM adds WHERE sub = ? AND created > ?", (sub, time.time() - 86400)).fetchone()[0]
+            n = db.execute("SELECT COUNT(*) FROM adds WHERE sub = ? AND created > ? AND migrate = 0",
+                           (sub, time.time() - 86400)).fetchone()[0]
         if n >= ADDS_PER_DAY:
             raise HTTPException(429, f"that's {ADDS_PER_DAY} movies today. Try again tomorrow.")
     m = await meta(imdb)
@@ -448,13 +621,19 @@ async def add(sub: str, name: str, imdb: str, *, admin: bool = False) -> dict:
         db.execute("""INSERT INTO adds (imdb, title, year, poster, sub, name, status, created, updated)
                       VALUES (?,?,?,?,?,?,'finding',?,?)
                       ON CONFLICT(imdb) DO UPDATE SET sub=excluded.sub, name=excluded.name, status='finding',
-                        progress=0, error='', rd_id='', release='', quality='', size_gb=0,
+                        progress=0, error='', rd_id='', release='', quality='', size_gb=0, src_file='',
+                        local_dir='', local_file='', bytes_total=0, bytes_done=0, migrate=0,
                         created=excluded.created, updated=excluded.updated""",
                    (imdb, m["title"], m["year"], m["poster"], sub, name[:80], now, now))
-    task = asyncio.create_task(fetch(imdb))
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
-    return _public(_row(imdb))
+    row = _row(imdb)
+    _spawn(fetch(imdb))
+    _spawn(_announce_added(row))
+    return _public(row)
+
+
+def _after_rd() -> str:
+    """Where an add goes once Real-Debrid has the whole file."""
+    return "copying" if local_on() else "adding"
 
 
 async def fetch(imdb: str) -> None:
@@ -465,12 +644,23 @@ async def fetch(imdb: str) -> None:
             if not ranked:
                 _set(imdb, status="failed", error="No good copy of this one yet")
                 return
+            if local_on():
+                # The disk guard: a 4K that would leave under MIN_FREE_GB free gives way to 1080p.
+                room = _room(imdb)
+                fits = [c for c in ranked if c["size_gb"] * 2**30 <= room]
+                if not fits:
+                    _set(imdb, status="failed", error=_no_room(min(c["size_gb"] for c in ranked) * 2**30, room))
+                    return
+                if len(fits) < len(ranked):
+                    logger.info("movies: %s: %d copies too big for the disk (%s usable)", imdb,
+                                len(ranked) - len(fits), _gb(room))
+                ranked = fits
             fours = [c for c in ranked if c["tier"] == 2160][:TRY_4K]
             tens = [c for c in ranked if c["tier"] == 1080][:TRY_1080]
             for c in fours + tens:
                 got = await _try_copy(c, keep=False)
                 if got:
-                    _chosen(imdb, c, got[0], "adding")
+                    _chosen(imdb, c, got[0], _after_rd())
                     return
             # Nothing cached: download the best copy with people seeding it.
             c = next((c for c in fours if c["seeders"] >= 5), None) or (tens or fours)[0]
@@ -478,7 +668,7 @@ async def fetch(imdb: str) -> None:
             if not got:
                 _set(imdb, status="failed", error="Real-Debrid couldn't get a copy")
                 return
-            _chosen(imdb, c, got[0], "adding" if got[1] == "downloaded" else "downloading")
+            _chosen(imdb, c, got[0], _after_rd() if got[1] == "downloaded" else "downloading")
         except HTTPException as e:
             _set(imdb, status="failed", error=str(e.detail))
         except Exception:  # noqa: BLE001
@@ -492,6 +682,244 @@ def _chosen(imdb: str, c: dict, tid: str, status: str) -> None:
          size_gb=c["size_gb"], progress=100 if status == "adding" else 0)
 
 
+# ── Copying it onto the server ───────────────────────────────────────────────
+_wake = asyncio.Event()
+_copy_fails: dict[str, int] = {}
+COPY_TRIES = 5
+_streamed: dict[str, float] = {}    # Jellyfin id -> last time a viewer fetched a piece of it
+
+
+def _next_copy() -> dict | None:
+    """The next film to copy: people's adds before the migration, oldest first."""
+    with _conn() as db:
+        r = db.execute("SELECT * FROM adds WHERE status = 'copying' ORDER BY migrate, created LIMIT 1").fetchone()
+    return dict(r) if r else None
+
+
+async def _source(r: dict) -> tuple[str, int, str]:
+    """(download URL, bytes, file name) of the film's file on Real-Debrid."""
+    if not r["rd_id"]:
+        raise _Refused("Lost track of its copy on Real-Debrid")
+    info = await _rd("GET", f"/torrents/info/{r['rd_id']}") or {}
+    if info.get("status") != "downloaded":
+        raise _Refused("Real-Debrid doesn't have the whole file any more")
+    files = sorted((f for f in info.get("files") or [] if f.get("selected")), key=lambda f: f.get("id") or 0)
+    links = list(info.get("links") or [])
+    want = r["src_file"]
+    idx = next((i for i, f in enumerate(files) if want and (f.get("path") or "").rsplit("/", 1)[-1] == want), None)
+    if idx is None and not want:
+        vids = [i for i, f in enumerate(files) if _VIDEO_EXT.search(f.get("path") or "")]
+        idx = max(vids, key=lambda i: files[i].get("bytes") or 0) if vids else None
+    if idx is None or not links:
+        raise _Refused("Its file isn't on Real-Debrid any more")
+    size = int(files[idx].get("bytes") or 0)
+    # Real-Debrid lists one link per selected file, in order; check the size to be sure.
+    for i in [idx] + [i for i in range(len(links)) if i != idx]:
+        if i >= len(links):
+            continue
+        u = await _rd("POST", "/unrestrict/link", data={"link": links[i]}) or {}
+        if u.get("download") and int(u.get("filesize") or 0) == size:
+            return str(u["download"]), size, (files[idx].get("path") or "").rsplit("/", 1)[-1]
+    raise _Refused("Real-Debrid wouldn't hand over the file")
+
+
+def _part(imdb: str) -> Path:
+    return LOCAL_DIR / ".incoming" / f"{imdb}.part"
+
+
+async def _download(url: str, part: Path, size: int, r: dict) -> str:
+    """Append the rest of the file to `part`. Returns 'done', 'paused' (a person's add
+    jumps the migration queue), 'gone' (removed meanwhile) or 'full' (the disk filled up)."""
+    imdb = r["imdb"]
+    done = part.stat().st_size if part.exists() else 0
+    headers = {"User-Agent": _UA}
+    if done:
+        headers["Range"] = f"bytes={done}-"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=True) as c:
+        async with c.stream("GET", url, headers=headers) as resp:
+            if done and resp.status_code == 200:
+                done = 0        # the server ignored the range: start over
+            elif resp.status_code not in (200, 206):
+                raise httpx.HTTPStatusError(f"download answered {resp.status_code}", request=resp.request, response=resp)
+            f = await asyncio.to_thread(open, part, "ab" if done else "wb")
+            try:
+                buf = bytearray()
+                last = time.monotonic()
+                async for chunk in resp.aiter_bytes(1 << 20):
+                    buf += chunk
+                    if len(buf) < CHUNK:
+                        continue
+                    await asyncio.to_thread(f.write, bytes(buf))
+                    done += len(buf)
+                    buf.clear()
+                    if time.monotonic() - last < 2:
+                        continue
+                    last = time.monotonic()
+                    _set(imdb, bytes_done=done, progress=round(done * 100 / size, 1) if size else 0)
+                    now = _row(imdb)
+                    if not now or now["status"] != "copying":
+                        return "gone"
+                    if r["migrate"] and (nxt := _next_copy()) and not nxt["migrate"]:
+                        return "paused"
+                    if _room(imdb) < size - done:
+                        return "full"
+                if buf:
+                    await asyncio.to_thread(f.write, bytes(buf))
+                    done += len(buf)
+                await asyncio.to_thread(f.flush)
+                await asyncio.to_thread(os.fsync, f.fileno())
+            finally:
+                await asyncio.to_thread(f.close)
+    _set(imdb, bytes_done=done, progress=round(done * 100 / size, 1) if size else 0)
+    return "done"
+
+
+def _fail_copy(r: dict, msg: str) -> None:
+    _part(r["imdb"]).unlink(missing_ok=True)
+    _copy_fails.pop(r["imdb"], None)
+    _set(r["imdb"], status="failed", error=msg)
+    logger.warning("movies: copying %s%s failed: %s", r["title"], " (migration)" if r["migrate"] else "", msg)
+
+
+async def copy_one(r: dict) -> str:
+    """Copy one film from Real-Debrid onto the server's disk. Returns what happened."""
+    imdb = r["imdb"]
+    if not local_on():
+        _set(imdb, status="adding", progress=100)
+        return "no-disk"
+    folder = r["local_dir"] or folder_name(r["title"], r["year"], imdb)
+    # Already there (we were restarted between the rename and the save)?
+    if r["local_file"] and r["bytes_total"]:
+        final = LOCAL_DIR / folder / r["local_file"]
+        if final.is_file() and final.stat().st_size == r["bytes_total"]:
+            _set(imdb, status="adding", progress=100, bytes_done=r["bytes_total"], error="")
+            return "done"
+    try:
+        url, size, name = await _source(r)
+        part = _part(imdb)
+        part.parent.mkdir(exist_ok=True)
+        have = part.stat().st_size if part.exists() else 0
+        if have > size:
+            part.unlink()
+            have = 0
+        room = _room(imdb)
+        if size - have > room:
+            _fail_copy(r, _no_room(size - have, room))
+            return "full"
+        fname = r["local_file"] or _file_name(name, imdb)
+        _set(imdb, local_dir=folder, local_file=fname, bytes_total=size, bytes_done=have, error="",
+             progress=round(have * 100 / size, 1) if size else 0)
+        logger.info("movies: copying %s (%s, %s%s) onto the server", r["title"], _gb(size),
+                    f"resuming at {_gb(have)}, " if have else "", "migration" if r["migrate"] else "add")
+        out = await _download(url, part, size, r)
+    except _Refused as e:
+        _fail_copy(r, str(e))
+        return "failed"
+    except (httpx.HTTPError, HTTPException, OSError) as e:
+        if not _row(imdb):
+            _part(imdb).unlink(missing_ok=True)
+            return "gone"
+        n = _copy_fails[imdb] = _copy_fails.get(imdb, 0) + 1
+        logger.warning("movies: copying %s hit a snag (%d/%d): %s", r["title"], n, COPY_TRIES,
+                       getattr(e, "detail", None) or type(e).__name__)
+        if n >= COPY_TRIES:
+            _fail_copy(r, "The copy to the server kept failing")
+            return "failed"
+        return "retry"
+    if out == "gone":
+        _part(imdb).unlink(missing_ok=True)
+        return out
+    if out == "full":
+        _fail_copy(r, _no_room(size, _room(imdb)))
+        return out
+    if out == "paused":
+        logger.info("movies: pausing the migration of %s for someone's add", r["title"])
+        return out
+    got = part.stat().st_size
+    if got != size:
+        _fail_copy(r, f"The copy came out the wrong size ({got} of {size} bytes)")
+        return "failed"
+    dest = LOCAL_DIR / folder
+    dest.mkdir(exist_ok=True)
+    final = dest / fname
+    os.replace(part, final)            # one rename: Jellyfin never sees half a file
+    for p, mode in ((dest, 0o755), (final, 0o644)):
+        try:
+            os.chmod(p, mode)
+            os.chown(p, LOCAL_UID, LOCAL_UID)
+        except OSError:
+            pass
+    _copy_fails.pop(imdb, None)
+    _set(imdb, status="adding", progress=100, bytes_done=size, error="")
+    logger.info("movies: %s is on the server (%s)", r["title"], _gb(size))
+    global _last_scan
+    _last_scan = 0.0
+    return "done"
+
+
+async def copy_worker() -> None:
+    """One copy at a time, for as long as the app runs. Picks up after a restart."""
+    while True:
+        wait = 10.0
+        try:
+            r = _next_copy()
+            if r:
+                out = await copy_one(r)
+                wait = {"retry": 60.0, "done": 0.0, "paused": 0.0, "gone": 0.0}.get(out, 1.0)
+                if out == "done":
+                    await tick(force=True)
+        except Exception:  # noqa: BLE001
+            logger.exception("movies: the copy worker tripped")
+            wait = 60.0
+        if wait:
+            _wake.clear()
+            try:
+                await asyncio.wait_for(_wake.wait(), wait)
+            except asyncio.TimeoutError:
+                pass
+
+
+# ── Moving the films that are only on Real-Debrid ────────────────────────────
+async def migrate_existing() -> int:
+    """Queue every film that's only on Real-Debrid for a silent copy onto the server.
+    Once: the flag lands in meta. Returns how many were queued."""
+    if not (MIGRATE and RD_TOKEN and local_on()):
+        return 0
+    with _conn() as db:
+        if db.execute("SELECT 1 FROM meta WHERE key = 'migrated'").fetchone():
+            return 0
+    cards = await jellyfin_movies(refresh=True)
+    if not cards:
+        return 0    # Jellyfin had a blip; try again next start
+    torrents = [t for t in await _rd("GET", "/torrents", params={"limit": "2500"}) or [] if isinstance(t, dict)]
+    queued = 0
+    now = time.time()
+    for c in cards:
+        if not c["imdb"] or any(_is_local(v["path"]) for v in c["versions"]) or not c["path"].startswith("/zurg/"):
+            continue
+        names = set(_rd_dir(c["path"])) - {""}
+        tid = next((str(t["id"]) for t in torrents if t.get("filename") in names and t.get("status") == "downloaded"), "")
+        if not tid:
+            logger.warning("movies: migration: couldn't find %s on Real-Debrid", c["title"])
+            continue
+        fname = _rd_dir(c["path"])[1]
+        with _lock, _conn() as db:
+            if db.execute("SELECT 1 FROM adds WHERE imdb = ?", (c["imdb"],)).fetchone():
+                db.execute("""UPDATE adds SET status='copying', migrate=1, rd_id=?, src_file=?, progress=0,
+                              bytes_done=0, bytes_total=0, local_dir='', local_file='', error='', updated=?
+                              WHERE imdb=?""", (tid, fname, now, c["imdb"]))
+            else:
+                db.execute("""INSERT INTO adds (imdb, title, year, sub, name, status, rd_id, src_file, quality,
+                              migrate, created, updated) VALUES (?,?,?,'','','copying',?,?,?,1,?,?)""",
+                           (c["imdb"], c["title"], c["year"], tid, fname, c["quality"], now, now))
+        queued += 1
+        logger.info("movies: migration: queued %s", c["title"])
+    with _lock, _conn() as db:
+        db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated', ?)", (str(int(now)),))
+    _wake.set()
+    return queued
+
+
 # ── Following adds until they're in Jellyfin ─────────────────────────────────
 _last_tick = 0.0
 _last_scan = 0.0
@@ -500,6 +928,52 @@ _last_scan = 0.0
 def pending() -> list[dict]:
     with _conn() as db:
         return [dict(r) for r in db.execute("SELECT * FROM adds WHERE status IN ('finding','downloading','adding')")]
+
+
+async def _playing(ids: set[str]) -> bool:
+    """Is anyone watching one of these Jellyfin items right now? Unsure counts as yes."""
+    if any(time.time() - _streamed.get(i, 0) < 180 for i in ids):
+        return True
+    try:
+        sessions = slap._ok(await slap._jf("GET", "/Sessions", params={"ActiveWithinSeconds": "300"})) or []
+    except Exception:  # noqa: BLE001
+        return True
+    return any(((s.get("NowPlayingItem") or {}).get("Id") or "") in ids for s in sessions if isinstance(s, dict))
+
+
+async def _rd_ids(versions: list[dict], rd_id: str = "") -> set[str]:
+    """The Real-Debrid torrents behind these Zurg versions (plus the one we added)."""
+    want = {n for v in versions for n in _rd_dir(v["path"]) if n}
+    ids = {rd_id} if rd_id else set()
+    if want:
+        torrents = await _rd("GET", "/torrents", params={"limit": "2500"}) or []
+        ids |= {str(t["id"]) for t in torrents if isinstance(t, dict) and t.get("filename") in want}
+    return ids
+
+
+async def _settle(r: dict, card: dict, mine: dict) -> bool:
+    """Jellyfin has the local copy: drop the Real-Debrid one(s), so only the local one is left."""
+    debrid = [v for v in card["versions"] if v["path"].startswith("/zurg/")]
+    if debrid and await _playing({v["id"] for v in debrid}):
+        logger.info("movies: %s is playing from Real-Debrid; deleting it there later", r["title"])
+        return False
+    ids = await _rd_ids(debrid, r["rd_id"])
+    for tid in ids:
+        try:
+            await _rd("DELETE", f"/torrents/delete/{tid}")
+        except HTTPException:
+            logger.info("movies: a Real-Debrid copy of %s was already gone", r["title"])
+    now = time.time()
+    with _lock, _conn() as db:
+        db.executemany("INSERT OR REPLACE INTO removed (jf_id, ts) VALUES (?, ?)", [(v["id"], now) for v in debrid])
+    _set(r["imdb"], status="ready", jf_id=mine["id"], progress=100, quality=card["quality"] or r["quality"], rd_id="")
+    _cache.pop("jf:movies", None)
+    logger.info("movies: %s is ready from the server's disk (%d Real-Debrid copies deleted)", r["title"], len(ids))
+    if debrid or ids:
+        _spawn(_rescan_later())
+    if not r["migrate"]:
+        await _announce_ready(r)
+    return True
 
 
 async def tick(force: bool = False) -> int:
@@ -520,7 +994,9 @@ async def tick(force: bool = False) -> int:
                 continue
             st = info.get("status")
             if st == "downloaded":
-                _set(r["imdb"], status="adding", progress=100)
+                nxt = _after_rd()
+                _set(r["imdb"], status=nxt, progress=100 if nxt == "adding" else 0)
+                _wake.set()
             elif st in ("error", "magnet_error", "virus", "dead"):
                 _set(r["imdb"], status="failed", error="Real-Debrid couldn't finish the download")
             else:
@@ -529,16 +1005,27 @@ async def tick(force: bool = False) -> int:
     if not adding:
         return 0
     have = {m["imdb"]: m for m in await jellyfin_movies(refresh=True) if m["imdb"]}
+    waiting = False
     for r in adding:
         hit = have.get(r["imdb"])
-        if hit:
+        if r["local_dir"]:
+            mine = next((v for v in (hit or {}).get("versions", [])
+                         if v["path"].startswith(f"{JF_LOCAL}/{r['local_dir']}/")), None)
+            if mine:
+                if await _settle(r, hit, mine):
+                    ready += 1
+                continue
+        elif hit:
             _set(r["imdb"], status="ready", jf_id=hit["id"], quality=hit["quality"] or r["quality"])
             ready += 1
-            _announce(r, hit["id"])
-        elif time.time() - r["updated"] > ADDING_GIVE_UP_S:
+            if not r["migrate"]:
+                await _announce_ready(r)
+            continue
+        waiting = True
+        if time.time() - r["updated"] > ADDING_GIVE_UP_S:
             _set(r["imdb"], status="failed", error="Jellyfin didn't pick it up")
-    # Zurg lists a new file within seconds; Jellyfin needs telling.
-    if any(not have.get(r["imdb"]) for r in adding) and time.time() - _last_scan > 60:
+    # Zurg lists a new file within seconds, and the copy lands in one rename; Jellyfin needs telling.
+    if waiting and time.time() - _last_scan > 60:
         _last_scan = time.time()
         try:
             await _rescan()
@@ -547,18 +1034,16 @@ async def tick(force: bool = False) -> int:
     return ready
 
 
-def _announce(r: dict, jf_id: str) -> None:
-    try:
-        import notifications
-        notifications.route_in_background(
-            "watch", f"{r['title']} is ready", "It's in the Watch library. Start a party and press Play.",
-            url="/app/watch", only=[r["sub"]], tag=f"movie-{r['imdb']}")
-    except Exception:  # noqa: BLE001
-        logger.exception("movies: couldn't announce %s", r["imdb"])
-
-
 async def loop() -> None:
     await asyncio.sleep(30)
+    _spawn(copy_worker())
+    if MIGRATE:
+        try:
+            n = await migrate_existing()
+            if n:
+                logger.info("movies: migration: %d films to copy onto the server", n)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("movies: migration couldn't start: %s", e)
     while True:
         try:
             if pending():
@@ -573,17 +1058,23 @@ def _on_debrid(card: dict) -> bool:
     return any(v["path"].startswith("/zurg/") for v in card["versions"])
 
 
+def _removable(card: dict) -> bool:
+    return _on_debrid(card) or any(_managed(v["path"], card["imdb"]) for v in card["versions"])
+
+
 async def library(sub: str = "", admin: bool = False) -> dict:
     cards = await jellyfin_movies()
     with _conn() as db:
         rows = [dict(r) for r in db.execute(
-            "SELECT * FROM adds WHERE status != 'ready' AND updated > ? ORDER BY created DESC", (time.time() - 7 * 86400,))]
-        added = {r["imdb"]: (r["name"], r["sub"]) for r in db.execute("SELECT imdb, name, sub FROM adds WHERE status = 'ready'")}
+            "SELECT * FROM adds WHERE status != 'ready' AND migrate = 0 AND updated > ? ORDER BY created DESC",
+            (time.time() - 7 * 86400,))]
+        added = {r["imdb"]: (r["name"], r["sub"]) for r in db.execute(
+            "SELECT imdb, name, sub FROM adds WHERE status = 'ready' OR migrate = 1")}
     movies = []
     for c in cards:
         name, by_sub = added.get(c["imdb"], ("", ""))
         movies.append({**{k: v for k, v in c.items() if k not in ("path", "versions")}, "by": name,
-                       "can_remove": _on_debrid(c) and (admin or (bool(sub) and by_sub == sub))})
+                       "can_remove": _removable(c) and (admin or (bool(sub) and by_sub == sub))})
     return {"movies": movies, "adding": [_public(r) for r in rows], "can_add": bool(RD_TOKEN)}
 
 
@@ -593,8 +1084,20 @@ def _rd_dir(path: str) -> tuple[str, str]:
     return (parts[3] if len(parts) > 4 else "", parts[-1])
 
 
+def _rmtree(folder: str) -> bool:
+    """Delete one folder directly under LOCAL_DIR, and nothing else."""
+    p = LOCAL_DIR / folder
+    if not folder or "/" in folder or folder in (".", "..") or p.resolve().parent != LOCAL_DIR.resolve():
+        return False
+    if p.is_dir():
+        shutil.rmtree(p)
+        return True
+    return False
+
+
 async def remove(sub: str, jf_id: str, *, admin: bool = False) -> dict:
-    """Take a film out of the library: delete its Real-Debrid copies. Returns how many."""
+    """Take a film out of the library: delete its Real-Debrid copies and its folder on the
+    server's disk. Returns how many copies went."""
     if not _JF_ID.match(jf_id or ""):
         raise HTTPException(404, "not found")
     card = next((c for c in await jellyfin_movies(refresh=True) if jf_id in {v["id"] for v in c["versions"]}), None)
@@ -604,32 +1107,32 @@ async def remove(sub: str, jf_id: str, *, admin: bool = False) -> dict:
     if not (admin or (row and row["sub"] == sub)):
         raise HTTPException(403, "only the person who added it, or an admin, can remove it")
     debrid = [v for v in card["versions"] if v["path"].startswith("/zurg/")]
-    if not debrid:
+    local = [v for v in card["versions"] if _managed(v["path"], card["imdb"])]
+    if not debrid and not local:
         raise HTTPException(400, "this one is on the server's own disk, so it can't be removed here")
-    want = {n for v in debrid for n in _rd_dir(v["path"]) if n}
-    torrents = await _rd("GET", "/torrents", params={"limit": "2500"}) or []
-    ids = {str(t["id"]) for t in torrents if isinstance(t, dict) and t.get("filename") in want}
-    if row and row["rd_id"]:
-        ids.add(row["rd_id"])
-    if not ids:
+    ids = await _rd_ids(debrid, row["rd_id"] if row else "") if debrid or (row and row["rd_id"]) else set()
+    if debrid and not ids and not local:
         raise HTTPException(404, "couldn't find its copy on Real-Debrid")
     for tid in ids:
         try:
             await _rd("DELETE", f"/torrents/delete/{tid}")
         except HTTPException:
             logger.info("movies: a copy of %s was already gone", card["title"])
+    folders = {_local_folder(v["path"]) for v in local}
+    gone = sum([await asyncio.to_thread(_rmtree, f) for f in sorted(folders)]) if local_on() else 0
     now = time.time()
     with _lock, _conn() as db:
-        db.executemany("INSERT OR REPLACE INTO removed (jf_id, ts) VALUES (?, ?)", [(v["id"], now) for v in debrid])
+        db.executemany("INSERT OR REPLACE INTO removed (jf_id, ts) VALUES (?, ?)",
+                       [(v["id"], now) for v in debrid + local])
         if card["imdb"]:
             db.execute("DELETE FROM adds WHERE imdb = ?", (card["imdb"],))
+    if card["imdb"]:
+        _part(card["imdb"]).unlink(missing_ok=True)
     _cache.pop("jf:movies", None)
-    logger.info("movies: %s removed %s (%d copies)", "admin" if admin and not (row and row["sub"] == sub) else "adder",
-                card["title"], len(ids))
-    task = asyncio.create_task(_rescan_later())
-    _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
-    return {"title": card["title"], "removed": len(ids)}
+    logger.info("movies: %s removed %s (%d Real-Debrid copies, %d folders on the server)",
+                "admin" if admin and not (row and row["sub"] == sub) else "adder", card["title"], len(ids), gone)
+    _spawn(_rescan_later())
+    return {"title": card["title"], "removed": len(ids) + gone}
 
 
 async def _rescan_later() -> None:
@@ -664,6 +1167,7 @@ def overview(limit: int = 20, query: str = "") -> dict:
         rows = [dict(r) for r in db.execute("SELECT * FROM adds ORDER BY created DESC")]
     added = [{"title": r["title"], "year": r["year"], "status": r["status"], "quality": r["quality"],
               "by": r["name"], "progress": round(r["progress"]),
+              "on_server_disk": bool(r["local_dir"]) and r["status"] == "ready", "migrating": bool(r["migrate"]),
               "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(r["created"]))}
              for r in rows if match(r["title"])][:limit]
     library_: list[dict] = []
@@ -802,6 +1306,7 @@ def build_router(get_session, is_admin) -> APIRouter:
     async def stream(jf_id: str, path: str, request: Request):
         sub = caller_sub(request)
         jf_path, params = hls_request(sub, jf_id, path, request.url.query)
+        _streamed[jf_id] = time.time()   # so the migration never pulls a copy out from under a party
         if path.endswith(".m3u8"):
             r = await slap._jf("GET", jf_path, params=params)
             if r.status_code >= 400:
@@ -825,5 +1330,6 @@ def build_router(get_session, is_admin) -> APIRouter:
     return router
 
 
-__all__ = ["add", "annotate", "build_router", "remove", "configured", "fetch", "hls_request", "history_meta", "library", "loop",
-           "overview", "popular", "rank", "search", "stream_url", "tick"]
+__all__ = ["add", "annotate", "build_router", "remove", "configured", "copy_one", "copy_worker", "fetch", "folder_name",
+           "hls_request", "history_meta", "library", "local_on", "loop", "migrate_existing", "overview", "popular", "rank",
+           "search", "stream_url", "tick"]

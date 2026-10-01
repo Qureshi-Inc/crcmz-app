@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""Watch · Library (movies.py): choosing a copy, adding through Real-Debrid, Jellyfin, streaming.
+"""Watch · Library (movies.py): choosing a copy, adding through Real-Debrid, copying it onto
+the server's disk, Jellyfin, notifications, the migration, streaming.
 
 Plain asserts, no pytest — run inside the app image where the deps live:
 
     tests/run-all.sh test_movies
 
-Nothing leaves the box: Real-Debrid, Torrentio, Cinemeta and Jellyfin are fakes.
+Nothing leaves the box: Real-Debrid, Torrentio, Cinemeta and Jellyfin are fakes, and
+Real-Debrid's download server is a local HTTPServer (so the real httpx download path,
+Range resume included, runs against it).
 """
 
 import asyncio
+import collections
 import os
 import sys
 import tempfile
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 os.environ.setdefault("SESSION_SECRET", "test-secret-for-movies-tests")
@@ -78,11 +84,54 @@ DUNE = [
 
 
 # ── Fakes ────────────────────────────────────────────────────────────────────
+FILE_BYTES = 300_000
+
+
+def blob(n: int) -> bytes:
+    return bytes((i * 7 + i // 251) % 256 for i in range(n))
+
+
+class _DL(BaseHTTPRequestHandler):
+    """Real-Debrid's download host: serves a file, honouring Range like the real one."""
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        data = DL.files.get(self.path.rsplit("/", 1)[1])
+        if data is None:
+            self.send_response(404); self.end_headers(); return
+        DL.ranges.append(self.headers.get("Range") or "")
+        start = 0
+        if (rng := self.headers.get("Range")) and rng.startswith("bytes="):
+            start = int(rng[6:].split("-")[0])
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {start}-{len(data) - 1}/{len(data)}")
+        else:
+            self.send_response(200)
+        body = data[start:]
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class DLServer:
+    def __init__(self):
+        self.files: dict[str, bytes] = {}
+        self.ranges: list[str] = []
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), _DL)
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+
+DL = DLServer()
+
+
 class FakeRD:
     def __init__(self, cached=()):
         self.cached = set(cached)
         self.torrents: dict[str, dict] = {}
         self.calls: list[tuple[str, str]] = []
+        self.filesize: dict[str, int] = {}
 
     async def __call__(self, method, path, **kw):
         self.calls.append((method, path))
@@ -91,21 +140,33 @@ class FakeRD:
             h = data["magnet"].rsplit(":", 1)[1]
             tid = f"T{len(self.torrents) + 1}"
             self.torrents[tid] = {"hash": h, "status": "waiting_files_selection", "progress": 0,
-                                  "files": [{"id": 1, "path": "/Sample/sample.mkv", "bytes": 10},
-                                            {"id": 2, "path": "/Movie.mkv", "bytes": 10_000}]}
+                                  "files": [{"id": 1, "path": "/Sample/sample.mkv", "bytes": 10, "selected": 0},
+                                            {"id": 2, "path": "/Movie.mkv", "bytes": FILE_BYTES, "selected": 0}],
+                                  "links": []}
             return {"id": tid}
         if method == "GET" and path == "/torrents":
-            return [{"id": k, "filename": v.get("filename", "")} for k, v in self.torrents.items()]
+            return [{"id": k, "filename": v.get("filename", ""), "status": v.get("status", "downloaded")}
+                    for k, v in self.torrents.items()]
+        if path == "/unrestrict/link":
+            tid = data["link"].rsplit("/", 1)[1]
+            f = next(f for f in self.torrents[tid]["files"] if f["selected"])
+            DL.files[tid] = DL.files.get(tid) or blob(f["bytes"])
+            return {"download": f"{DL.url}/dl/{tid}", "filesize": self.filesize.get(tid, f["bytes"]),
+                    "filename": f["path"].rsplit("/", 1)[1]}
         tid = path.rsplit("/", 1)[1]
         t = self.torrents.get(tid)
         if path.startswith("/torrents/info/"):
             return {**t, "files": t["files"]}
         if path.startswith("/torrents/selectFiles/"):
             assert data["files"] == "2", data
+            t["files"][1]["selected"] = 1
+            t["links"] = [f"https://real-debrid.com/d/{tid}"]
             t["status"] = "downloaded" if t["hash"] in self.cached else "downloading"
             t["progress"] = 100 if t["status"] == "downloaded" else 3
             return None
         if path.startswith("/torrents/delete/"):
+            if tid not in self.torrents:
+                raise HTTPException(404, "unknown_ressource")
             del self.torrents[tid]
             return None
         raise AssertionError(path)
@@ -115,6 +176,7 @@ class FakeJF:
     def __init__(self):
         self.items: list[dict] = []
         self.calls: list[tuple[str, str, dict]] = []
+        self.sessions: list[dict] = []
 
     async def __call__(self, method, path, **kw):
         self.calls.append((method, path, kw.get("params") or {}))
@@ -126,14 +188,16 @@ class FakeJF:
             return httpx.Response(200, json={"Items": self.items})
         if method == "POST" and path.endswith("/Refresh"):
             return httpx.Response(204)
+        if path == "/Sessions":
+            return httpx.Response(200, json=self.sessions)
         if path.endswith(".m3u8"):
             return httpx.Response(200, text="#EXTM3U\nmain.m3u8?x=1")
         raise AssertionError(path)
 
-    def movie(self, iid, name, imdb, width=3840, rng="HDR10", path="/zurg/movies/x/x.mkv"):
+    def movie(self, iid, name, imdb, width=3840, rng="HDR10", path="/zurg/movies/x/x.mkv", size=0):
         self.items.append({"Id": iid, "Name": name, "ProductionYear": 2024, "ProviderIds": {"Imdb": imdb},
                            "Path": path, "DateCreated": f"2026-10-0{len(self.items) + 1}T00:00:00Z",
-                           "MediaSources": [{"MediaStreams": [{"Type": "Video", "Width": width, "VideoRangeType": rng}]}]})
+                           "MediaSources": [{"Size": size, "MediaStreams": [{"Type": "Video", "Width": width, "VideoRangeType": rng}]}]})
 
 
 RD = FakeRD()
@@ -173,11 +237,23 @@ mv.RESCAN_AFTER_S = 0
 import notifications  # noqa: E402
 notifications.route_in_background = lambda *a, **k: NOTES.append((a, k))
 
+import crcmz_identity  # noqa: E402
+PEOPLE = [{"zitadel_id": "u-zub", "display_name": "Zubair", "state": "USER_STATE_ACTIVE"},
+          {"zitadel_id": "u-noor", "display_name": "Noor", "state": "USER_STATE_ACTIVE"},
+          {"zitadel_id": "u-gone", "display_name": "Gone", "state": "USER_STATE_INACTIVE"},
+          {"zitadel_id": "bot-psn", "display_name": "PSN bot", "is_bot": True}]
+crcmz_identity.people = lambda refresh=False: list(PEOPLE)
+
 
 def reset(cached=()):
     with mv._conn() as db:
         db.execute("DELETE FROM adds")
         db.execute("DELETE FROM removed")
+        db.execute("DELETE FROM meta")
+    mv._streamed.clear()
+    mv._copy_fails.clear()
+    DL.files.clear()
+    DL.ranges.clear()
     RD.__init__(cached)
     JF.__init__()
     mv._cache.clear()
@@ -325,7 +401,9 @@ def follow_tests():
         assert run(mv.tick(force=True)) == 1
         row = mv._row("tt15239678")
         assert row["status"] == "ready" and row["jf_id"] == "c" * 32
-        assert NOTES and NOTES[0][1]["only"] == ["u-zub"] and "Dune" in NOTES[0][0][1], NOTES
+        added, ready = NOTES
+        assert added[1]["only"] == ["u-noor"] and added[1]["exclude"] == "u-zub", added
+        assert ready[1]["only"] == ["u-noor", "u-zub"] and "Dune" in ready[0][1] and ready[0][0] == "movies", ready
 
     def an_add_jellyfin_never_finds_gives_up():
         reset(cached={"a" * 40})
@@ -363,6 +441,239 @@ def follow_tests():
     for fn in (downloading_shows_progress_then_jellyfin_gets_a_rescan_then_it_is_ready, an_add_jellyfin_never_finds_gives_up,
                the_library_shows_the_best_version_and_who_added_it, search_results_say_what_is_in_the_library_or_on_its_way):
         check(fn.__name__, fn)
+
+
+# ── Copying it onto the server's disk ────────────────────────────────────────
+Disk = collections.namedtuple("Disk", "total used free")
+GiB = 2**30
+
+
+def local_tests():
+    print("onto the server's disk")
+    real_dir, real_chunk, real_usage = mv.LOCAL_DIR, mv.CHUNK, mv.shutil.disk_usage
+    loc = TMP / "movies-local"
+    loc.mkdir(exist_ok=True)
+    mv.LOCAL_DIR = loc
+    mv.CHUNK = 64 << 10       # several writes per file, so the loop runs
+    folder = "Dune Part Two (2024) [imdbid-tt15239678]"
+
+    def free(gb):
+        mv.shutil.disk_usage = lambda p: Disk(1000 * GiB, 0, int(gb * GiB))
+
+    def fresh(cached=()):
+        reset(cached)
+        free(500)
+        for p in loc.iterdir():
+            mv.shutil.rmtree(p)
+
+    def copied():
+        fresh(cached={"d" * 40})
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        row = mv._row("tt15239678")
+        assert row["status"] == "copying" and row["progress"] == 0, row
+        assert run(mv.copy_one(row)) == "done"
+        return mv._row("tt15239678")
+
+    def a_cached_add_is_copied_into_a_folder_jellyfin_matches_by_imdb_id():
+        row = copied()
+        assert mv.folder_name("Dune: Part Two", "2024", "tt15239678") == folder
+        f = loc / folder / "Movie.mkv"
+        assert f.read_bytes() == blob(FILE_BYTES), "the whole file, byte for byte"
+        assert list((loc / ".incoming").iterdir()) == [], "no .part left behind"
+        assert row["status"] == "adding" and row["local_dir"] == folder and row["bytes_done"] == FILE_BYTES, row
+        assert DL.ranges == [""], DL.ranges
+        assert RD.torrents, "Real-Debrid's copy stays until Jellyfin lists ours"
+
+    def the_card_shows_the_copy_progress():
+        fresh(cached={"d" * 40})
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        mv._set("tt15239678", bytes_total=1000, bytes_done=420, progress=42.0)
+        lib = run(mv.library("u-zub"))
+        assert [(a["status"], a["progress"]) for a in lib["adding"]] == [("copying", 42.0)], lib["adding"]
+        for leak in ("local_dir", "local_file", "src_file", "rd_id", "sub"):
+            assert leak not in lib["adding"][0], leak
+
+    def a_restart_resumes_the_copy_with_a_range_request():
+        fresh(cached={"d" * 40})
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        part = mv._part("tt15239678")
+        part.parent.mkdir(exist_ok=True)
+        part.write_bytes(blob(FILE_BYTES)[:100_000])
+        assert run(mv.copy_one(mv._row("tt15239678"))) == "done"
+        assert DL.ranges == ["bytes=100000-"], DL.ranges
+        assert (loc / folder / "Movie.mkv").read_bytes() == blob(FILE_BYTES)
+
+    def a_copy_of_the_wrong_size_never_reaches_the_library():
+        fresh(cached={"d" * 40})
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        DL.files[mv._row("tt15239678")["rd_id"]] = blob(FILE_BYTES - 5)
+        assert run(mv.copy_one(mv._row("tt15239678"))) == "failed"
+        row = mv._row("tt15239678")
+        assert row["status"] == "failed" and "wrong size" in row["error"], row
+        assert not (loc / folder).exists() and not mv._part("tt15239678").exists()
+
+    def only_the_local_copy_is_left_and_never_while_someone_watches():
+        row = copied()
+        tid = row["rd_id"]
+        RD.torrents[tid]["filename"] = "Dune.FLUX"
+        JF.movie("c" * 32, "Dune: Part Two", "tt15239678", path="/zurg/movies/Dune.FLUX/Movie.mkv")
+        assert run(mv.tick(force=True)) == 0 and tid in RD.torrents, "not before Jellyfin lists our copy"
+        JF.movie("d" * 32, "Dune: Part Two", "tt15239678", path=f"/media/movies-local/{folder}/Movie.mkv")
+        mv._streamed["c" * 32] = time.time()
+        assert run(mv.tick(force=True)) == 0 and tid in RD.torrents, "someone is streaming the Real-Debrid copy"
+        mv._streamed.clear()
+        JF.sessions = [{"NowPlayingItem": {"Id": "c" * 32}}]
+        assert run(mv.tick(force=True)) == 0 and tid in RD.torrents, "Jellyfin says it's playing"
+        assert mv._row("tt15239678")["status"] == "adding"
+        JF.sessions = []
+        assert run(mv.tick(force=True)) == 1
+        row = mv._row("tt15239678")
+        assert row["status"] == "ready" and row["jf_id"] == "d" * 32 and not RD.torrents, (row, RD.torrents)
+        cards = run(mv.library("u-zub"))["movies"]
+        assert [(c["id"], c["by"], c["can_remove"]) for c in cards] == [("d" * 32, "Zubair", True)], cards
+
+    def everyone_hears_it_was_added_then_that_it_is_ready():
+        row = copied()
+        JF.movie("d" * 32, "Dune: Part Two", "tt15239678", path=f"/media/movies-local/{folder}/Movie.mkv")
+        run(mv.tick(force=True))
+        (a_args, added), (r_args, ready) = NOTES
+        assert a_args[0] == r_args[0] == "movies"
+        assert added["only"] == ["u-noor"] and added["exclude"] == "u-zub", "not the adder, not the inactive or bots"
+        assert ready["only"] == ["u-noor", "u-zub"] and not ready.get("exclude"), "the adder hears it's ready too"
+        assert added["url"] == ready["url"] == mv.LIBRARY_URL == "/app/watch?library=downloaded"
+        assert added["tag"] != ready["tag"] and "tt15239678" in added["tag"], (added["tag"], ready["tag"])
+        assert "Zubair added Dune" in a_args[1] and "Dune: Part Two (2024)" in added["dm_text"]
+        assert "ready to watch" in r_args[1] and "ready to watch" in ready["dm_text"]
+
+    def removing_deletes_the_folder_it_made():
+        copied()
+        JF.movie("d" * 32, "Dune: Part Two", "tt15239678", path=f"/media/movies-local/{folder}/Movie.mkv")
+        run(mv.tick(force=True))
+        try:
+            run(mv.remove("u-noor", "d" * 32))
+        except HTTPException as e:
+            assert e.status_code == 403
+        else:
+            raise AssertionError("someone else removed it")
+        assert run(mv.remove("u-zub", "d" * 32)) == {"title": "Dune: Part Two", "removed": 1}
+        assert not (loc / folder).exists() and (loc / ".incoming").is_dir()
+        assert mv._row("tt15239678") is None
+
+    def removing_mid_copy_drops_the_part_file():
+        fresh(cached={"d" * 40})
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        mv._part("tt15239678").parent.mkdir(exist_ok=True)
+        mv._part("tt15239678").write_bytes(b"x" * 10)
+        tid = mv._row("tt15239678")["rd_id"]
+        RD.torrents[tid]["filename"] = "Dune.FLUX"
+        JF.movie("c" * 32, "Dune: Part Two", "tt15239678", path="/zurg/movies/Dune.FLUX/Movie.mkv")
+        assert run(mv.remove("u-zub", "c" * 32))["removed"] == 1
+        assert not mv._part("tt15239678").exists() and not RD.torrents
+
+    def the_disk_guard_takes_1080p_when_4k_wont_fit_and_refuses_when_nothing_does():
+        TORRENTIO["tt0000002"] = [DUNE[0], DUNE[7]]     # 29.26 GB 4K, 11.2 GB 1080p
+        try:
+            fresh(cached={"a" * 40, "2" * 40})
+            free(100 + 40)
+            run(add_and_wait("u-zub", "Zubair", "tt0000002"))
+            assert mv._row("tt0000002")["quality"] == "4K HDR", "the 4K fits"
+            fresh(cached={"a" * 40, "2" * 40})
+            free(100 + 20)
+            run(add_and_wait("u-zub", "Zubair", "tt0000002"))
+            row = mv._row("tt0000002")
+            assert row["status"] == "copying" and row["quality"] == "1080p", row
+            # A copy already on its way counts against the room.
+            fresh(cached={"a" * 40, "2" * 40})
+            free(100 + 35)
+            with mv._conn() as db:
+                db.execute("INSERT INTO adds (imdb, title, sub, status, bytes_total, bytes_done, created, updated) "
+                           "VALUES ('tt0000003','x','u-noor','copying',?,0,?,?)", (10 * GiB, time.time(), time.time()))
+            run(add_and_wait("u-zub", "Zubair", "tt0000002"))
+            assert mv._row("tt0000002")["quality"] == "1080p"
+            fresh(cached={"a" * 40, "2" * 40})
+            free(100 + 5)
+            run(add_and_wait("u-zub", "Zubair", "tt0000002"))
+            row = mv._row("tt0000002")
+            assert row["status"] == "failed" and "isn't room" in row["error"] and "100 GB" in row["error"], row
+            assert not RD.torrents
+        finally:
+            TORRENTIO.pop("tt0000002")
+
+    def a_copy_that_no_longer_fits_stops_before_filling_the_disk():
+        fresh(cached={"d" * 40})
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        free(100)
+        assert run(mv.copy_one(mv._row("tt15239678"))) == "full"
+        row = mv._row("tt15239678")
+        assert row["status"] == "failed" and "isn't room" in row["error"] and not (loc / folder).exists()
+
+    def peoples_adds_are_copied_before_the_migration():
+        fresh()
+        now = time.time()
+        with mv._conn() as db:
+            for imdb, mig, at in (("tt0000011", 1, now - 99), ("tt0000012", 0, now), ("tt0000013", 1, now - 50)):
+                db.execute("INSERT INTO adds (imdb, title, sub, status, migrate, created, updated) "
+                           "VALUES (?,?,'','copying',?,?,?)", (imdb, imdb, mig, at, at))
+        assert mv._next_copy()["imdb"] == "tt0000012"
+        mv._set("tt0000012", status="ready")
+        assert mv._next_copy()["imdb"] == "tt0000011"
+
+    def the_migration_copies_films_only_on_real_debrid_silently_and_once():
+        fresh()
+        JF.movie("1" * 32, "Back to the Future", "tt0088763", path="/zurg/movies/BTTF.1985.2160p/BTTF.mkv")
+        JF.movie("2" * 32, "Half Baked", "tt0120693", path="/media/movies-local/Half Baked/hb.mkv")
+        JF.movie("3" * 32, "Heat", "tt0113277", path="/zurg/movies/Heat.1995/Heat.mkv")   # not on RD any more
+        JF.movie("4" * 32, "No Id", "", path="/zurg/movies/NoId/n.mkv")
+        RD.torrents["M1"] = {"filename": "BTTF.1985.2160p", "status": "downloaded", "hash": "7" * 40,
+                             "files": [{"id": 1, "path": "/BTTF.mkv", "bytes": FILE_BYTES, "selected": 1}],
+                             "links": ["https://real-debrid.com/d/M1"]}
+        RD.torrents["ODY"] = {"filename": "The.Odyssey.2026", "status": "downloaded", "hash": "6" * 40}
+        assert run(mv.migrate_existing()) == 1
+        row = mv._row("tt0088763")
+        assert row["status"] == "copying" and row["migrate"] == 1 and row["rd_id"] == "M1" and row["src_file"] == "BTTF.mkv"
+        assert run(mv.library())["adding"] == [], "the migration isn't anyone's add"
+        assert run(mv.migrate_existing()) == 0, "once"
+        assert run(mv.copy_one(row)) == "done"
+        bttf = "Back to the Future (2024) [imdbid-tt0088763]"
+        assert (loc / bttf / "BTTF.mkv").read_bytes() == blob(FILE_BYTES)
+        assert run(mv.tick(force=True)) == 0 and "M1" in RD.torrents, "still only on Real-Debrid as far as Jellyfin knows"
+        JF.movie("5" * 32, "Back to the Future", "tt0088763", path=f"/media/movies-local/{bttf}/BTTF.mkv")
+        assert run(mv.tick(force=True)) == 1
+        assert set(RD.torrents) == {"ODY"}, RD.torrents
+        assert NOTES == [], "the migration tells nobody"
+        cards = {c["title"]: c for c in run(mv.library("u-admin", True))["movies"]}
+        assert cards["Back to the Future"]["id"] == "5" * 32 and cards["Back to the Future"]["can_remove"]
+        assert not cards["Half Baked"]["can_remove"], "a folder the app didn't make is never deleted"
+        out = mv.overview()
+        bt = next(a for a in out["added"] if a["title"] == "Back to the Future")
+        assert bt["on_server_disk"] and bt["migrating"], bt
+        # A migrated film doesn't count against anyone's five a day.
+        with mv._conn() as db:
+            assert db.execute("SELECT COUNT(*) FROM adds WHERE migrate = 1").fetchone()[0] == 1
+
+    def without_the_disk_mounted_it_streams_from_real_debrid_as_before():
+        fresh(cached={"d" * 40})
+        mv.LOCAL_DIR = TMP / "not-mounted"
+        try:
+            run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+            assert mv._row("tt15239678")["status"] == "adding"
+            assert run(mv.migrate_existing()) == 0
+        finally:
+            mv.LOCAL_DIR = loc
+
+    try:
+        for fn in (a_cached_add_is_copied_into_a_folder_jellyfin_matches_by_imdb_id, the_card_shows_the_copy_progress,
+                   a_restart_resumes_the_copy_with_a_range_request, a_copy_of_the_wrong_size_never_reaches_the_library,
+                   only_the_local_copy_is_left_and_never_while_someone_watches,
+                   everyone_hears_it_was_added_then_that_it_is_ready, removing_deletes_the_folder_it_made,
+                   removing_mid_copy_drops_the_part_file,
+                   the_disk_guard_takes_1080p_when_4k_wont_fit_and_refuses_when_nothing_does,
+                   a_copy_that_no_longer_fits_stops_before_filling_the_disk, peoples_adds_are_copied_before_the_migration,
+                   the_migration_copies_films_only_on_real_debrid_silently_and_once,
+                   without_the_disk_mounted_it_streams_from_real_debrid_as_before):
+            check(fn.__name__, fn)
+    finally:
+        mv.LOCAL_DIR, mv.CHUNK, mv.shutil.disk_usage = real_dir, real_chunk, real_usage
 
 
 # ── Removing ─────────────────────────────────────────────────────────────────
@@ -502,6 +813,7 @@ if __name__ == "__main__":
     ranking_tests()
     add_tests()
     follow_tests()
+    local_tests()
     remove_tests()
     stream_tests()
     http_tests()
