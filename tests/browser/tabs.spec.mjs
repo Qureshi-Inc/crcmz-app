@@ -1,5 +1,5 @@
 /**
- * Phone tab bar: the user's three slots, the raised Ask AI orb and its flight.
+ * Phone tab bar: the user's three slots, the Ask AI orb and its flight.
  *
  *   tests/browser/run.sh tabs.spec.mjs
  */
@@ -43,9 +43,9 @@ await check('default bar: Squad, Slap, Ask AI, Watch, More', async () => {
   await page.waitForSelector('.tabbar');
   const l = await labels(page);
   assert(l.join(',') === 'Squad,Slap,Ask AI,Watch,More', l.join(','));
-  // The orb rises above the bar.
-  const [orb, bar] = await Promise.all([page.locator('.tab-ask-orb').first().boundingBox(), page.locator('.tabbar').boundingBox()]);
-  assert(orb.y < bar.y - 10, `orb top ${orb.y} vs bar ${bar.y}`);
+  // The orb sits inside the bar, not sticking out of it.
+  const [orb, bar] = await Promise.all([page.locator('.tabbar .tab-ask-orb').boundingBox(), page.locator('.tabbar').boundingBox()]);
+  assert(orb.y >= bar.y && orb.y + orb.height <= bar.y + bar.height, `orb ${orb.y}+${orb.height} vs bar ${bar.y}+${bar.height}`);
   await ctx.close();
 });
 
@@ -91,6 +91,27 @@ await check('reduced motion: Ask AI is a plain link', async () => {
   await page.locator('.tab-ask').click();
   await page.waitForURL('**/app/ask', { timeout: 1500 });
   assert(await page.locator('.ask-fly').count() === 0, 'no flight');
+  await ctx.close();
+});
+
+await check('Squad: the music mini-player sits under the Chat Board handle', async () => {
+  const { ctx, page } = await open();
+  await ctx.addInitScript(() => localStorage.setItem('slap.player.v1', JSON.stringify({
+    queue: [{ id: 't1', title: 'Test song', artist: 'Someone', album: 'A', album_id: 'a', duration: 200, art: null, qid: 'q1' }],
+    index: 0, shuffle: false, repeat: 'off', position: 0, order: null,
+  })));
+  const box = async (sel) => page.locator(sel).first().boundingBox();
+  await page.goto(`${BASE}/app`);
+  await page.locator('.miniplayer-bar').waitFor();
+  await page.locator('.handle-row').waitFor();
+  const [mini, handle, bar] = [await box('.miniplayer-bar'), await box('.handle-row'), await box('.tabbar')];
+  assert(Math.abs(mini.y + mini.height - bar.y) <= 1, `mini bottom ${mini.y + mini.height} vs tab bar ${bar.y}`);
+  assert(Math.abs(handle.y + handle.height - mini.y) <= 1, `handle bottom ${handle.y + handle.height} vs mini ${mini.y}`);
+  // Elsewhere it still sits right on the tab bar.
+  await page.locator('.tabbar .tab', { hasText: 'Watch' }).click();
+  await page.waitForURL(/\/app\/watch/);
+  const [m2, b2] = [await box('.miniplayer-bar'), await box('.tabbar')];
+  assert(Math.abs(m2.y + m2.height - b2.y) <= 1, `watch: mini bottom ${m2.y + m2.height} vs tab bar ${b2.y}`);
   await ctx.close();
 });
 

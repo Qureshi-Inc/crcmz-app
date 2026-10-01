@@ -275,7 +275,7 @@ function TabBar({ current, isAdmin }: { current: DestId | null; isAdmin: boolean
 }
 
 /**
- * Ask AI: a raised orb in the middle of the bar. Tapping it launches the orb up into
+ * Ask AI: a glowing orb in the middle of the bar. Tapping it launches the orb up into
  * the middle of the screen, where it zooms until it fills the screen and opens the chat.
  */
 function AskTab({ active }: { active: boolean }) {

@@ -14,7 +14,7 @@ const PATHS: Record<string, ReactNode> = {
   slap: (<g {...S}><path d="M7 15V5l12-2v10" /><circle cx="4.5" cy="15" r="2.5" /><circle cx="16.5" cy="13" r="2.5" /></g>),
   chat: (<g {...S}><path d="M17 12a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2z" /></g>),
   giveaway: (<g {...S}><polyline points="17,9 17,19 3,19 3,9" /><rect x="1" y="5" width="18" height="4" /><line x1="10" y1="19" x2="10" y2="5" /><path d="M10 5H6.5a2 2 0 0 1 0-4C9 1 10 5 10 5z" /><path d="M10 5h3.5a2 2 0 0 0 0-4C11 1 10 5 10 5z" /></g>),
-  /** Ask AI's raised tab: a chat bubble with a spark. */
+  /** Ask AI's tab orb: a chat bubble with a spark. */
   aiChat: (<g {...S}><path d="M10.5 3H4.5a2 2 0 0 0-2 2v8.5l3-2.5h8a2 2 0 0 0 2-2V8" /><path d="M15 1l.8 2 2 .8-2 .8L15 6.6l-.8-2-2-.8 2-.8z" fill="currentColor" /><path d="M6 7h4" /></g>),
   ask: (<g {...S}><path d="M10 1v3M10 16v3M1 10h3M16 10h3M3.5 3.5l2 2M14.5 14.5l2 2M16.5 3.5l-2 2M5.5 14.5l-2 2" /><circle cx="10" cy="10" r="3.5" /></g>),
   coach: (<g {...S}><circle cx="10" cy="10" r="8" /><circle cx="10" cy="10" r="4.5" /><circle cx="10" cy="10" r="1" fill="currentColor" stroke="none" /></g>),

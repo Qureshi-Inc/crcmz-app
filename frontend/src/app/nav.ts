@@ -50,7 +50,7 @@ export const DESTS: Record<DestId, Dest> = {
 }
 
 /**
- * Mobile tab bar (< 1024 px): three slots the user picks (app/tabs.ts), Ask AI raised
+ * Mobile tab bar (< 1024 px): three slots the user picks (app/tabs.ts), Ask AI
  * in the middle, then More. These are the pages a slot can hold, in sidebar order.
  */
 export const TAB_CHOICES: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach']

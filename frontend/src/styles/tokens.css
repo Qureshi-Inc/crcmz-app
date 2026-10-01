@@ -109,7 +109,7 @@
   --brand-mark-condensed: 40px;   /* mascot in condensed state */
   --topbar-condense-threshold: 8px; /* scroll distance to trigger condense */
   --tabbar-h: 56px;
-  --tabbar-rise: 20px;            /* Ask AI's orb stands this far above the bar */
+  --tabbar-rise: 0px;             /* room above the bar for anything that sticks out of it */
   --tabbar-stack: calc(var(--tabbar-h) + var(--tabbar-rise)); /* what docks above the bar clears */
   --handle-h: 40px;           /* Squad bottom chrome = 96px = 12% of 800 */
   --sidebar-w: 240px;
@@ -266,7 +266,7 @@
   --c-nav-active-mark:  var(--accent-solid);           /* 2px left edge or dot */
   --c-nav-row-h:        var(--tap-min);                /* 44px floor */
   --c-topbar-h:         var(--topbar-h);               /* 72px */
-  --c-tabbar-h:         var(--tabbar-stack);           /* 56px bar + 20px orb rise */
+  --c-tabbar-h:         var(--tabbar-stack);           /* 56px bar + rise */
   --c-sidebar-w:        var(--sidebar-w);              /* 240px */
 
   /* ── Bottom sheet / side-sheet / centred dialog ── */
