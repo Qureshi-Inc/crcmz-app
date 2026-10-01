@@ -207,6 +207,24 @@ const FAKE_WEBAUTHN = () => {
   window.open = () => null
 }
 
+// ── Giveaway fixtures (PS-5). Times are local datetime-local strings, like the admin form sends. ──
+const localIso = (ms) => { const d = new Date(ms); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}` }
+const GW_MEMBERS = [{ id: 'z1', display: 'Goopy' }, { id: 'z2', display: 'Bizzle' }, { id: 'z3', display: 'NoorAmin' }, { id: 'z4', display: 'Shah' }, { id: 'z5', display: 'Moiz' }, { id: 'z6', display: 'Goofy' }]
+const gwEntries = (ids) => GW_MEMBERS.filter((m) => ids.includes(m.id)).map((m) => ({ member_id: m.id, display_name: m.display }))
+function gwData({ status = 'open', revealIn = 2 * 86400e3 + 5 * 3600e3, admin = false, eligible = true, wonCycle = false, draw = null, entries = ['z1', 'z2', 'z3', 'z4'], none = false } = {}) {
+  const won = [{ member_id: 'z5', display_name: 'Moiz', won_at: '2026-09-01T00:00:00+00:00', giveaway_id: 1 }, { member_id: 'z6', display_name: 'Goofy', won_at: '2026-08-01T00:00:00+00:00', giveaway_id: 0 }]
+  return {
+    giveaway: none ? null : { id: 7, title: 'October drop', prize: '$50 PSN card', status, draw_at: localIso(Date.now() + revealIn), reveal_at: localIso(Date.now() + revealIn), drawn_at: null, revealed_at: status === 'revealed' ? new Date().toISOString() : null, entries: gwEntries(entries), draws: [], active_draw: draw },
+    rotation: { cycle: 2, total_members: 6, won_count: 2, eligible_count: 4, eligible: GW_MEMBERS.slice(0, 4), won_members: won, all_members: GW_MEMBERS },
+    is_admin: admin, user_eligible: eligible, user_won_this_cycle: wonCycle,
+  }
+}
+const GW_HISTORY = [
+  { id: 1, title: 'September drop', prize: 'Elden Ring', status: 'closed', revealed_at: '2026-09-01T20:00:00+00:00', entries: [], active_draw: { draw_number: 1, winner_name: 'Moiz', winner_id: 'z5', drawn_at: '2026-09-01T20:00:00+00:00', status: 'active', manifest_hash: 'abc' } },
+  { id: 0, title: 'August drop', prize: '$25 card', status: 'closed', revealed_at: '2026-08-01T20:00:00+00:00', entries: [], active_draw: { draw_number: 1, winner_name: 'Goofy', winner_id: 'z6', drawn_at: '2026-08-01T20:00:00+00:00', status: 'active', manifest_hash: 'def' } },
+]
+const GW_DRAW = { draw_number: 1, winner_id: 'z2', winner_name: 'Bizzle', drawn_at: new Date(Date.now() - 3600e3).toISOString(), status: 'active', manifest_hash: '9f2c1ab04e77d3c1' }
+
 async function ready(page, path = '/app/') {
   await page.goto(BASE + path, { waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => document.fonts.status === 'loaded')
@@ -376,7 +394,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', giveaway: '/?p=giveaway', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai' }
+    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', watch: '/?p=watch', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -1294,6 +1312,225 @@ try {
     await page.waitForSelector('.handoff-lede')
     check('admin: a 403 from users turns into "Admins only"', (await page.textContent('.handoff-lede')) === 'Admins only')
     await page.goto(BASE + '/app/admin')
+    await ctx.close()
+  }
+  // ── 12. Giveaway (PS-5): member view by state. Rendering never mutates. ──
+  {
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { 'GET /api/giveaway': json(200, gwData()), 'GET /api/giveaway/history': json(200, GW_HISTORY) } })
+    await ready(page, '/app/giveaway')
+    await page.waitForSelector('.gw-count')
+    check('giveaway: open hero shows title, prize, Reveal in', (await page.textContent('.gw-hero')).includes('October drop') && (await page.textContent('.gw-hero')).includes('$50 PSN card') && (await page.textContent('.gw-lead')) === 'Reveal in')
+    const label = await page.getAttribute('.gw-count', 'aria-label')
+    check('giveaway: countdown is a silent timer with a spoken label', (await page.getAttribute('.gw-count', 'aria-live')) === 'off' && /^Reveal in 2 days, \d+ hours and \d+ minutes$/.test(label), label)
+    check('giveaway: countdown has D / H / M / S cells', (await page.locator('.gw-count-cell').count()) === 4)
+    check('giveaway: eligibility is said in words', (await page.textContent('.gw-elig-btn')).includes("You're in this draw"))
+    await page.click('.gw-elig-btn')
+    check('giveaway: tapping eligibility explains the rotation rule', (await page.isVisible('#gw-why')) && (await page.textContent('#gw-why')) === 'Everyone wins once before anyone wins twice.')
+    check('giveaway: rotation progress line', (await page.textContent('.gw-rot-line')).replace(/\s+/g, ' ') === 'Cycle 2 · 4 of 6 still eligible')
+    check('giveaway: past winners start collapsed on a phone', !(await page.isVisible('#gw-past-list')))
+    await page.click('button:has-text("Show past winners")')
+    check('giveaway: past winners expand', (await page.locator('#gw-past-list .acct-row').count()) === 2 && (await page.textContent('#gw-past-list')).includes('Moiz'))
+    check('giveaway: members get no admin tools', (await page.locator('.gw-admin').count()) === 0)
+    await shot(page, 'giveaway-375', true)
+    await axe(page, 'Giveaway 375', '.app-main')
+    await tapTargets(page, 'Giveaway 375')
+    check('no unmocked writes and no page errors (Giveaway member)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    let gets = 0
+    const posts = []
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: { 'GET /api/giveaway': (r) => { gets++; return json(200, gwData({ status: 'drawn', revealIn: -60e3, draw: null }))(r) }, 'GET /api/giveaway/history': json(200, []) },
+      match: (key) => (key.startsWith('POST /api/giveaway') ? (r) => { posts.push(key); return json(200, {})(r) } : null),
+    })
+    await ready(page, '/app/giveaway')
+    await page.waitForSelector('.gw-due')
+    check('giveaway: overdue reveal says "The reveal is on its way."', (await page.textContent('.gw-due')) === 'The reveal is on its way.')
+    check('giveaway: drawn never shows a winner to members', !(await page.textContent('.gw-hero')).includes('Bizzle') && !(await page.locator('.gw-count').count()))
+    const before = gets
+    await page.waitForTimeout(6000)
+    check('giveaway: overdue re-fetches on a backoff (5 s first)', gets > before, `${before} → ${gets}`)
+    check('giveaway: overdue page never POSTs', posts.length === 0, posts.join(', '))
+    check('giveaway: empty history hides Past winners', (await page.locator('#gw-past').count()) === 0)
+    await ctx.close()
+  }
+  {
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { 'GET /api/giveaway': json(200, gwData({ status: 'draft' })), 'GET /api/giveaway/history': json(200, GW_HISTORY) } })
+    await ready(page, '/app/giveaway')
+    await page.waitForSelector('.gw-title')
+    check('giveaway: members never see a draft', (await page.textContent('.gw-title')) === 'No giveaway running right now.' && !(await page.textContent('.app-main')).includes('October drop'))
+    await ctx.close()
+  }
+  for (const reducedMotion of ['no-preference', 'reduce']) {
+    const { ctx, page } = await newPage({
+      width: 375, height: 800, reducedMotion,
+      mocks: {
+        'GET /api/giveaway': json(200, gwData({ status: 'revealed', revealIn: -3600e3, draw: { ...GW_DRAW, winner_id: 'z1', winner_name: 'Goopy' }, wonCycle: true })),
+        'GET /api/giveaway/history': json(200, GW_HISTORY),
+        'GET /auth/settings/psn': json(200, { linked: true, online_id: 'Goopy', token_ok: true, refresh_expires_at: NOW + 40 * 86400 }),
+      },
+    })
+    await ready(page, '/app/giveaway')
+    await page.waitForSelector('.gw-winner')
+    await page.waitForFunction(() => document.querySelector('.gw-elig-btn')?.textContent?.includes('You won'))
+    const confetti = await page.locator('.gw-confetti').count()
+    if (reducedMotion === 'reduce') {
+      check('giveaway: no confetti with reduced motion', confetti === 0)
+    } else {
+      check('giveaway: revealed hero shows 🏆 winner + 🎁 prize', (await page.textContent('.gw-winner')).includes('Goopy') && (await page.textContent('.gw-hero')).includes('$50 PSN card'))
+      check('giveaway: the winner sees "You won! 🏆"', (await page.textContent('.gw-elig-btn')).includes('You won! 🏆'))
+      check('giveaway: confetti once per giveaway', confetti === 1 && (await page.evaluate(() => localStorage.getItem('celebrated_gw_7'))) === 'true')
+      await shot(page, 'giveaway-375-revealed')
+      await page.reload()
+      await page.waitForSelector('.gw-winner')
+      check('giveaway: no confetti the second time', (await page.locator('.gw-confetti').count()) === 0)
+    }
+    await ctx.close()
+  }
+  // ── 13. Giveaway admin desk (1440): lifecycle, draw, entries, edit, danger zone ──
+  {
+    const calls = []
+    const rec = (key, res) => (r) => { calls.push({ key, body: r.request().postData() ? r.request().postDataJSON() : null }); return res(r) }
+    let seedTries = 0
+    const { ctx, page } = await newPage({
+      width: 1440, height: 900,
+      mocks: {
+        'GET /api/admin/check': json(200, { admin: true }),
+        'GET /api/giveaway': json(200, gwData({ admin: true })),
+        'GET /api/giveaway/history': json(200, GW_HISTORY),
+        'POST /api/giveaway/7/draw-and-reveal': rec('draw', json(200, { status: 'revealed' })),
+        'DELETE /api/giveaway/7/entries/z4': rec('rm', json(200, { status: 'removed' })),
+        'POST /api/giveaway/7/entries': rec('add', json(200, { status: 'added' })),
+        'PUT /api/giveaway/7': rec('put', json(200, { id: 7 })),
+        'POST /api/giveaway/admin/reset-and-seed': (r) => { seedTries++; calls.push({ key: 'seed', body: r.request().postDataJSON() }); return seedTries === 1 ? json(409, { error: 'ambiguous', matches: [GW_MEMBERS[0], GW_MEMBERS[5]] })(r) : json(200, { status: 'ok', seeded_winner: GW_MEMBERS[5] })(r) },
+      },
+    })
+    await ready(page, '/app/giveaway')
+    await page.waitForSelector('.gw-strip')
+    check('admin desk: open by default on desktop', await page.isVisible('#gw-admin-body'))
+    check('admin desk: lifecycle marks Open as the current step', (await page.textContent('.gw-strip [aria-current=step]')).startsWith('Open') && (await page.locator('.gw-strip [data-past]').count()) === 2)
+    check('admin desk: state line in text', (await page.textContent('.gw-state-line')).replace(/\s+/g, ' ').startsWith('Open · 4 entries · reveal'))
+    check('admin desk: entries header counts entered + eligible', (await page.textContent('#gw-en ~ *, section[aria-labelledby=gw-en] .settings-card-head')).includes('4 entered · 4 eligible'))
+    await shot(page, 'giveaway-1440-admin', true)
+    await axe(page, 'Giveaway admin 1440', '.app-main')
+    await tapTargets(page, 'Giveaway admin 1440')
+
+    await page.click('button:has-text("Draw & reveal now")')
+    await page.waitForSelector('[role=alertdialog]')
+    check('draw & reveal asks first, saying it cannot be undone', (await page.textContent('[role=alertdialog]')).includes('cannot be undone') && !calls.some((c) => c.key === 'draw'))
+    await page.click('[role=alertdialog] button:has-text("Draw & reveal now")')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('Winner revealed')))
+    check('confirmed draw posts once', calls.filter((c) => c.key === 'draw').length === 1)
+
+    await page.click('button[aria-label="Remove Shah"]')
+    await page.waitForSelector('[role=alertdialog]')
+    check('remove entry confirm names the member', (await page.textContent('[role=alertdialog]')).includes('Remove Shah from this draw?'))
+    await page.click('[role=alertdialog] button:has-text("Remove")')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('Removed Shah')))
+
+    await page.click('button:has-text("＋ Add entry")')
+    await page.fill('#ae-q', 'goo')
+    check('add entry lists only rotation members not entered, filtered', (await page.locator('.gw-pick .acct-row').count()) === 1 && (await page.textContent('.gw-pick')).includes('Goofy'))
+    await page.click('button[aria-label="Add Goofy"]')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('Added Goofy')))
+    const add = calls.find((c) => c.key === 'add')
+    check('add entry posts member_id + display_name', add?.body?.member_id === 'z6' && add?.body?.display_name === 'Goofy', JSON.stringify(add))
+    await page.keyboard.press('Escape')
+
+    await page.fill('#gw-f-title', '')
+    await page.locator('#gw-f-title').blur()
+    check('edit validates the title on blur', (await page.textContent('#gw-f-title-err')) === 'Give it a title')
+    await page.fill('#gw-f-title', 'October drop!')
+    await page.fill('#gw-f-when', '2026-10-31T20:00')
+    await page.click('button:has-text("Save")')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent === 'Saved'))
+    const put = calls.find((c) => c.key === 'put')
+    check('edit PUTs title, prize, local reveal time', put?.body?.title === 'October drop!' && put?.body?.reveal_at === '2026-10-31T20:00' && put?.body?.prize === '$50 PSN card', JSON.stringify(put))
+
+    await page.fill('#dz-name', 'goo')
+    await page.click('.gw-danger button:has-text("Reset & seed")')
+    await page.waitForSelector('[role=alertdialog]')
+    check('reset & seed asks first, naming what is wiped', (await page.textContent('[role=alertdialog]')).includes('deletes every giveaway') && seedTries === 0)
+    await page.click('[role=alertdialog] button:has-text("Reset & seed")')
+    await page.waitForSelector('.gw-picklist')
+    check('reset & seed 409 shows "Multiple matches. Pick one:"', (await page.textContent('.gw-picklist')).includes('Multiple matches. Pick one:') && (await page.locator('.gw-picklist button').count()) === 2)
+    await page.click('.gw-picklist button:has-text("Goofy")')
+    check('picking a match fills the name', (await page.inputValue('#dz-name')) === 'Goofy')
+    await page.click('.gw-danger button:has-text("Reset & seed")')
+    await page.click('[role=alertdialog] button:has-text("Reset & seed")')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('Goofy is recorded')))
+    check('reset & seed posts the picked name', calls.filter((c) => c.key === 'seed').map((c) => c.body.winner_query).join(',') === 'goo,Goofy')
+    check('no unmocked writes and no page errors (Giveaway admin)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    const calls = []
+    let role = true
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        'GET /api/admin/check': json(200, { admin: true }),
+        'GET /api/giveaway': (r) => json(200, gwData({ admin: role, status: 'drawn', revealIn: 3600e3, draw: GW_DRAW }))(r),
+        'GET /api/giveaway/history': json(200, GW_HISTORY),
+        'POST /api/giveaway/7/redraw': (r) => { calls.push(r.request().postDataJSON()); return json(200, { status: 'ok', winner: 'NoorAmin' })(r) },
+        'POST /api/giveaway/7/draw-and-reveal': (r) => { role = false; return json(403, { detail: 'admin only' })(r) },
+      },
+    })
+    await ready(page, '/app/giveaway')
+    await page.waitForSelector('.gw-admin')
+    check('admin tools start collapsed on a phone', !(await page.isVisible('#gw-admin-body')) && (await page.getAttribute('.gw-admin-toggle', 'aria-expanded')) === 'false')
+    check('admins see "Winner reveal in" for a drawn giveaway, members-style', (await page.textContent('.gw-lead')) === 'Winner reveal in')
+    await page.click('.gw-admin-toggle')
+    check('winner preview shows draw #, hash, winner (admins only)', (await page.textContent('.gw-preview')).includes('Bizzle') && (await page.textContent('.gw-preview')).includes('9f2c1ab04e77d3c1'))
+    await page.click('button:has-text("More actions")')
+    await page.click('button:has-text("Disqualify & redraw")')
+    await page.waitForSelector('#rd-why')
+    check('redraw dialog names the current winner', (await page.textContent('#rd-desc')).includes('Bizzle'))
+    await page.click('.dialog button[type=submit]')
+    check('redraw needs a reason', calls.length === 0 && (await page.isVisible('#rd-err')))
+    await page.fill('#rd-why', 'Alt account')
+    await page.click('.dialog button[type=submit]')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('New winner: NoorAmin')))
+    check('redraw posts the reason', calls.length === 1 && calls[0].reason === 'Alt account')
+    await shot(page, 'giveaway-375-admin', true)
+    await axe(page, 'Giveaway admin 375', '.app-main')
+    await page.click('button:has-text("Reveal now")')
+    await page.click('[role=alertdialog] button:has-text("Reveal now")')
+    await page.waitForSelector('#gw-admin-body .field-err[role=alert]', { state: 'attached', timeout: 5000 }).catch(() => {})
+    await page.waitForFunction(() => !document.querySelector('.gw-admin'), null, { timeout: 8000 }).catch(() => {})
+    check('a 403 on an admin action re-fetches and the tools hide', (await page.locator('.gw-admin').count()) === 0)
+    check('no unmocked writes and no page errors (Giveaway admin 375)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    const calls = []
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        'GET /api/admin/check': json(200, { admin: true }),
+        'GET /api/giveaway': json(200, gwData({ admin: true, none: true })),
+        'GET /api/giveaway/history': json(200, GW_HISTORY),
+        'POST /api/giveaway': (r) => { calls.push(r.request().postDataJSON()); return json(200, { id: 9, status: 'draft' })(r) },
+        'POST /api/giveaway/9/publish': json(400, { detail: 'no members found in portal' }),
+      },
+    })
+    await ready(page, '/app/giveaway')
+    await page.waitForSelector('.gw-admin')
+    check('no giveaway: hero says so', (await page.textContent('.gw-title')) === 'No giveaway running right now.')
+    await page.click('.gw-admin-toggle')
+    await page.click('button:has-text("Start a giveaway")')
+    check('Start a giveaway jumps to the title field', (await page.evaluate(() => document.activeElement?.id)) === 'gw-f-title')
+    await page.fill('#gw-f-title', 'November drop')
+    await page.fill('#gw-f-when', localIso(Date.now() - 86400e3))
+    await page.click('button:has-text("Create & publish")')
+    check('create refuses a reveal time in the past', calls.length === 0 && (await page.textContent('#gw-f-when-err')) === 'Pick a time in the future')
+    await page.fill('#gw-f-when', localIso(Date.now() + 7 * 86400e3))
+    await page.click('button:has-text("Create & publish")')
+    await page.waitForFunction(() => [...document.querySelectorAll('.toast-text')].some((t) => t.textContent.includes('Saved as a draft')))
+    check('create posts once; a failed publish leaves a visible draft, no retry', calls.length === 1 && calls[0].title === 'November drop' && page.writes.filter((w) => w === 'POST /api/giveaway/9/publish').length === 1)
+    check('no unmocked writes and no page errors (Giveaway create)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 } finally {

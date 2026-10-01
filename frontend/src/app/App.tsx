@@ -11,6 +11,7 @@ import { SettingsPage } from '../features/settings/SettingsPage'
 import { PortalPage } from '../features/portal/PortalPage'
 import { AdminPage } from '../features/admin/AdminPage'
 import { Handoff, NotFound } from '../features/handoff/Handoff'
+import { GiveawayPage } from '../features/giveaway/GiveawayPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -39,7 +40,7 @@ export function App() {
               <Route path="clips/*" element={<Handoff id="clips" />} />
               <Route path="slap" element={<SlapPage />} />
               <Route path="whatsapp" element={<Handoff id="whatsapp" />} />
-              <Route path="giveaway" element={<Handoff id="giveaway" />} />
+              <Route path="giveaway" element={<GiveawayPage />} />
               <Route path="watch" element={<Handoff id="watch" />} />
               <Route path="huddle" element={<Handoff id="huddle" />} />
               <Route path="coach" element={<Handoff id="coach" />} />
