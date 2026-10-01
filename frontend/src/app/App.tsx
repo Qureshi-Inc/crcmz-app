@@ -14,6 +14,7 @@ import { Handoff, NotFound } from '../features/handoff/Handoff'
 import { HuddlePage } from '../features/huddle/HuddlePage'
 import { WhatsAppPage } from '../features/whatsapp/WhatsAppPage'
 import { CoachPage } from '../features/coach/CoachPage'
+import { AskPage } from '../features/ask/AskPage'
 import { GiveawayPage } from '../features/giveaway/GiveawayPage'
 
 const queryClient = new QueryClient({
@@ -48,7 +49,7 @@ export function App() {
               <Route path="watch" element={null} />
               <Route path="huddle" element={<HuddlePage />} />
               <Route path="coach" element={<CoachPage />} />
-              <Route path="ask" element={<Handoff id="ask" />} />
+              <Route path="ask" element={<AskPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="settings/:tab" element={<SettingsPage />} />
               <Route path="admin" element={<AdminPage />} />

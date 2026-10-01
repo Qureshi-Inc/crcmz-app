@@ -300,6 +300,31 @@ function coMocks({ get = (scope) => json(200, coData(scope)), prefs = null, feed
   }
 }
 
+// ── Ask AI fixtures (PS-9). The answer lands in history; the ask itself only queues. ──
+const askMsg = (id, role, content, extra = {}) => ({ id, role, content, status: 'done', tools: [], elapsed_ms: null, created_at: NOW - 600 + id, ...extra })
+const ASK_THREAD = [
+  askMsg(1, 'user', 'who has the best music taste?'),
+  askMsg(2, 'assistant', 'Bizzle — 41 Slap plays this week, mostly UK garage.', { tools: ['slap_top_tracks', 'squad_members'], elapsed_ms: 2310 }),
+  askMsg(3, 'user', 'what time of day is the group most active?'),
+  askMsg(4, 'assistant', '', { status: 'error' }),
+]
+const askFacts = (n = 7) => ({
+  facts: Array.from({ length: n }, (_, i) => ({ id: `f${i}`, subject: i % 2 ? 'Bizzle' : 'Goopy', text: `Fact ${i}: ${i % 2 ? 'always picks Liverpool' : 'hates penalties'}`, author: i < 2 ? 'Goopy' : 'Bizzle', created_at: NOW - i * 3600, mine: i < 2 })),
+  total: n, mine: Math.min(n, 2), max_per_user: 25, max_chars: 280, subjects: ['Goopy', 'Bizzle'],
+})
+function askMocks({ tools = json(200, { available: true, model: 'qwen3-32b', tools: [{ name: 'a', description: '' }, { name: 'b', description: '' }, { name: 'c', description: '' }] }), history = json(200, { messages: ASK_THREAD, pending: false, count: 4 }), facts = json(200, askFacts()), writes = {} } = {}) {
+  return {
+    mocks: {
+      'GET /auth/settings/psn': json(200, { linked: true, online_id: 'Goopy' }),
+      'GET /api/admin/check': json(200, { admin: false }),
+      'GET /api/assistant/tools': tools,
+      'GET /api/assistant/history': history,
+      'GET /api/assistant/facts': facts,
+      ...writes,
+    },
+  }
+}
+
 // ── Giveaway fixtures (PS-5). Times are local datetime-local strings, like the admin form sends. ──
 const localIso = (ms) => { const d = new Date(ms); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}` }
 const GW_MEMBERS = [{ id: 'z1', display: 'Goopy' }, { id: 'z2', display: 'Bizzle' }, { id: 'z3', display: 'NoorAmin' }, { id: 'z4', display: 'Shah' }, { id: 'z5', display: 'Moiz' }, { id: 'z6', display: 'Goofy' }]
@@ -469,7 +494,7 @@ try {
     check('panel collapses to a 60px rail', Math.round(rw) === 60, `${rw}`)
     await shot(page, 'squad-1440-rail')
     await page.click('button[aria-label="Expand Chat Board"]')
-    await page.goto(BASE + '/app/ask')
+    await page.goto(BASE + '/app/clips/x')
     await page.waitForSelector('h1')
     await shot(page, 'handoff-1440')
     await axe(page, 'Handoff 1440')
@@ -487,7 +512,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x': '/?p=pipeline', ask: '/?p=ai' }
+    const classic = { 'clips/x': '/?p=pipeline' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -2371,6 +2396,163 @@ try {
     await shot(page, 'coach-1440-full', true)
     await axe(page, 'Coach 1440', '.app-main')
     check('no unmocked writes and no page errors (Coach 1440)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  // ── 17. Ask AI (PS-9): thread, pending poll, composer limits, clear, facts ──
+  {
+    const asks = []
+    const added = []
+    let thread = ASK_THREAD
+    let pending = false
+    let askMode = 'ok'
+    let cleared = 0
+    const ak = askMocks({
+      history: (r) => json(200, { messages: thread, pending, count: thread.length })(r),
+      writes: {
+        'POST /api/assistant/ask': (r) => {
+          const b = JSON.parse(r.request().postData()); asks.push(b)
+          if (askMode === '429') return json(429, { error: 'Slow down — try again in 7s.' }, { 'Retry-After': '7' })(r)
+          thread = [...thread, askMsg(5, 'user', b.question), askMsg(6, 'assistant', '', { status: 'pending', created_at: NOW })]
+          pending = true
+          return json(202, { status: 'queued', reply_id: 6 })(r)
+        },
+        'POST /api/assistant/clear': (r) => { cleared++; thread = []; return json(200, { status: 'cleared', removed: 6 })(r) },
+        'POST /api/assistant/facts': (r) => { added.push(JSON.parse(r.request().postData())); return json(200, { status: 'added', id: 'f9', total: 8 })(r) },
+        'POST /api/assistant/facts/delete': json(404, { error: 'not your fact, or already gone' }),
+      },
+    })
+    const { ctx, page } = await newPage({ width: 375, height: 800, ...ak })
+    await ready(page, '/app/ask')
+    await page.waitForSelector('.ask-log li')
+    check('ask: header shows model and tool count', (await page.textContent('.ask-model')) === 'qwen3-32b · 3 tools')
+    check('ask: answers carry tools · elapsed', (await page.textContent('.ask-meta')) === 'slap_top_tracks, squad_members · 2,310ms')
+    check('ask: explainer is open on the first visit', await page.$eval('.ask-explain', (e) => e.open))
+    check('ask: suggestions fold away once there is a thread', (await page.locator('details.ask-sugg').count()) === 1)
+    check('ask: a failed answer says so', (await page.textContent('[data-status="error"]')).includes("Couldn't get an answer"))
+    await shot(page, 'ask-375')
+    await axe(page, 'Ask 375', '.app-main')
+    await tapTargets(page, 'Ask 375')
+    const dock = await page.$eval('.ask-dock', (e) => e.getBoundingClientRect().bottom)
+    const bar = await page.$eval('.tabbar', (e) => e.getBoundingClientRect().top)
+    check('ask: composer is pinned above the tab bar', dock <= bar + 1, `${dock} vs ${bar}`)
+
+    // Ask again refills the composer with the question that failed.
+    await page.click('[data-status="error"] button:has-text("Ask again")')
+    check('ask: Ask again refills the composer', (await page.inputValue('#ask-q')) === 'what time of day is the group most active?')
+
+    // Counter shows from 900; over 1000 blocks Send.
+    await page.fill('#ask-q', 'x'.repeat(950))
+    check('ask: counter shows at 900+', (await page.textContent('.ask-count')) === '950/1000')
+    await page.fill('#ask-q', 'x'.repeat(1001))
+    check('ask: over the limit disables Send', await page.isDisabled('.ask-send'))
+
+    // A 429 keeps the draft and counts down.
+    askMode = '429'
+    await page.fill('#ask-q', 'who yaps the most?')
+    await page.click('.ask-send')
+    await page.waitForSelector('.ask-foot:has-text("Try again in")')
+    check('ask: a 429 says when to try again', /Try again in [67]s\./.test(await page.textContent('.ask-foot')), await page.textContent('.ask-foot'))
+    check('ask: a 429 keeps the draft', (await page.inputValue('#ask-q')) === 'who yaps the most?')
+
+    // Send with an image → pending bubble → answer.
+    askMode = 'ok'
+    await page.setInputFiles('.ask-composer input[type=file]', { name: 'shot.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64') })
+    await page.waitForSelector('.ask-img img')
+    check('ask: a picked image shows a thumbnail', (await page.textContent('.ask-img')).includes('shot.png'))
+    await page.waitForFunction(() => !document.querySelector('.ask-send').disabled, null, { timeout: 10000 })
+    await page.click('.ask-send')
+    await page.waitForSelector('[data-status="pending"]')
+    check('ask: the ask carries the image', asks.at(-1).question === 'who yaps the most?' && asks.at(-1).image_type === 'image/png' && asks.at(-1).image_b64.length > 10)
+    check('ask: pending shows thinking… and disables Send', (await page.textContent('[data-status="pending"]')).includes('thinking…') && (await page.isDisabled('.ask-send')))
+    check('ask: pending says why', (await page.textContent('.ask-foot')).includes('Still answering your last one.'))
+    check('ask: the composer cleared after send', (await page.inputValue('#ask-q')) === '' && (await page.locator('.ask-img').count()) === 0)
+    await shot(page, 'ask-375-pending')
+    thread = [...thread.slice(0, -1), askMsg(6, 'assistant', 'Goopy, by a mile: 312 messages this week.', { tools: ['wa_stats'], elapsed_ms: 4100 })]
+    pending = false
+    await page.waitForSelector('.ask-log li:last-child:has-text("Goopy, by a mile")', { timeout: 8000 })
+    check('ask: the poll lands the answer', !(await page.isDisabled('#ask-q')))
+
+    // Clear: confirm first, then the thread empties and the chips come back.
+    await page.click('.ask-head button:has-text("Clear")')
+    await page.waitForSelector('[role=alertdialog]')
+    check('ask: clear confirms', (await page.textContent('[role=alertdialog]')).includes('Your facts stay, just the conversation goes.'))
+    await page.click('[role=alertdialog] button:has-text("Cancel")')
+    check('ask: Cancel keeps the thread', cleared === 0 && (await page.locator('.ask-log li').count()) === 6)
+    await page.click('.ask-head button:has-text("Clear")')
+    await page.click('[role=alertdialog] button:has-text("Clear")')
+    await page.waitForSelector('.ask-chips:not(details .ask-chips)')
+    check('ask: cleared thread shows the 6 suggestions', cleared === 1 && (await page.locator('.ask-chips .chip').count()) === 6 && (await page.locator('.ask-log li').count()) === 0)
+
+    // Facts sheet: counts, filter, add, delete-gone.
+    await page.click('.ask-head button:has-text("Squad facts")')
+    await page.waitForSelector('.ask-facts-sheet .ask-facts li')
+    check('ask: facts header counts', (await page.textContent('.ask-facts-body > .meta')) === 'Total 7 · Yours 2 of 25')
+    check('ask: more than 6 facts shows a filter', (await page.locator('#fact-filter').count()) === 1)
+    check('ask: only your facts can be deleted', (await page.locator('.ask-facts button[aria-label^="Delete fact"]').count()) === 2)
+    await page.fill('#fact-filter', 'Liverpool')
+    check('ask: the filter narrows facts', (await page.locator('.ask-facts li').count()) === 3)
+    await page.fill('#fact-filter', '')
+    await page.fill('#fact-subject', 'Shah')
+    await page.fill('#fact-text', 'Never misses a Friday session')
+    await shot(page, 'ask-375-facts')
+    await axe(page, 'Ask facts sheet 375', '.ask-facts-sheet')
+    await tapTargets(page, 'Ask facts sheet 375')
+    await page.click('.ask-fact-form button:has-text("Add fact")')
+    await page.waitForFunction(() => document.querySelector('#fact-text').value === '')
+    check('ask: Add fact posts {text, subject}', added.length === 1 && added[0].text === 'Never misses a Friday session' && added[0].subject === 'Shah', JSON.stringify(added))
+    await page.click('.ask-facts button[aria-label^="Delete fact"] >> nth=0')
+    await page.waitForSelector('.ask-fact-form .ask-ferr')
+    check('ask: deleting a gone fact says so', (await page.textContent('.ask-fact-form .ask-ferr')) === 'That fact is already gone.')
+    check('no unmocked writes and no page errors (Ask 375)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+  {
+    // Offline, history error + Retry, empty facts, signed out.
+    const off = await newPage({ width: 375, height: 800, ...askMocks({ tools: json(200, { available: false, model: '', tools: [] }), history: json(200, { messages: [], pending: false, count: 0 }), facts: json(200, askFacts(0)) }) })
+    await ready(off.page, '/app/ask')
+    await off.page.waitForSelector('.ask-offline')
+    check('ask: offline explains where the AI runs', (await off.page.textContent('.ask-offline')).includes('The AI is offline (it runs on the Mac at home)') && (await off.page.locator('.ask-offline a').count()) === 3)
+    check('ask: offline disables the composer and chips', (await off.page.isDisabled('#ask-q')) && (await off.page.isDisabled('.ask-chips .chip >> nth=0')))
+    await shot(off.page, 'ask-375-offline')
+    await axe(off.page, 'Ask offline 375', '.app-main')
+    await off.page.click('.ask-head button:has-text("Squad facts")')
+    await off.page.waitForSelector('.ask-facts-empty')
+    check('ask: no facts invites one', (await off.page.textContent('.ask-facts-empty')) === 'Teach it something about the squad' && (await off.page.locator('#fact-filter').count()) === 0)
+    await off.ctx.close()
+
+    let down = true
+    const er = await newPage({ width: 375, height: 800, ...askMocks({ history: (r) => (down ? json(503, { detail: 'down' }) : json(200, { messages: ASK_THREAD, pending: false, count: 4 }))(r) }) })
+    await ready(er.page, '/app/ask')
+    await er.page.waitForSelector('.ask-thread .stat-err')
+    down = false
+    await er.page.click('.ask-thread .stat-err button:has-text("Retry")')
+    await er.page.waitForSelector('.ask-log li')
+    check('ask: Retry recovers the thread', (await er.page.locator('.ask-log li').count()) === 4)
+    await er.ctx.close()
+
+    const so = await newPage({ width: 375, height: 800, ...askMocks({ tools: json(401, { error: 'sign in' }), history: json(401, { error: 'sign in' }), facts: json(401, { error: 'sign in' }) }) })
+    await so.page.addInitScript(() => sessionStorage.setItem('crcmz.ask.draft', 'kept draft'))
+    await ready(so.page, '/app/ask')
+    await so.page.waitForSelector('.banner:has-text("Sign in to keep up")')
+    check('ask: signed out keeps the draft', (await so.page.inputValue('#ask-q')) === 'kept draft')
+    check('ask: signed out says why Send is off', (await so.page.textContent('.ask-foot')).includes('Sign in to ask.'))
+    await so.ctx.close()
+  }
+  {
+    const { ctx, page } = await newPage({ width: 1440, height: 900, ...askMocks() })
+    await ready(page, '/app/ask')
+    await page.waitForSelector('.ask-log li')
+    const w = await page.$eval('.ask-page', (e) => e.getBoundingClientRect().width)
+    check('ask 1440: reading width', w <= 760 && w > 600, `${w}`)
+    await shot(page, 'ask-1440')
+    await axe(page, 'Ask 1440', '.app-main')
+    await page.click('.ask-head button:has-text("Squad facts")')
+    await page.waitForSelector('.ask-facts-side .ask-facts li')
+    const sw = await page.$eval('.ask-facts-side', (e) => e.getBoundingClientRect())
+    check('ask 1440: facts open as a 360px side sheet', Math.round(sw.width) === 360 && Math.round(sw.right) === 1440, JSON.stringify(sw))
+    await shot(page, 'ask-1440-facts')
+    await axe(page, 'Ask facts side 1440', '.ask-facts-side')
+    check('no unmocked writes and no page errors (Ask 1440)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 } finally {
