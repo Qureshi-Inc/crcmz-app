@@ -9,6 +9,7 @@
 //            can re-render (or the page can hide) without touching sound
 import { useSyncExternalStore } from 'react'
 import { toast } from '../../components/toast'
+import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
 import {
@@ -963,6 +964,8 @@ export async function joinCall() {
     stream.getVideoTracks().forEach((t) => t.addEventListener('ended', () => { if (state.call.on) camStop() }))
     stream.getAudioTracks().forEach((t) => t.addEventListener('ended', () => { if (state.call.on) void remountMic() }))
     meter('me', stream)
+    const others = muteOtherCalls('watch')
+    if (others.length) toast(`Muted your ${others.join(' and ')} mic while you're in Watch Party`, 'info')
     announce(true)
     live().forEach((id) => peer(id, true))
     Object.values(peers).forEach(syncTracks)
@@ -1028,6 +1031,7 @@ export function toggleMute() {
   localStream.getAudioTracks().forEach((t) => { t.enabled = !muted })
   setCall({ muted })
 }
+registerCall('watch', { label: 'Watch', live: () => state.call.on && !state.call.muted, mute: toggleMute })
 /** Camera off/on while staying in the call. Before joining, the same control joins. */
 export function toggleVideo() {
   if (!state.call.on) { void joinCall(); return }

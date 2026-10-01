@@ -16,7 +16,7 @@ import { usePanelCollapsed } from '../features/chat/panelState'
 import { MiniPlayer, PlayerSheet } from '../features/slap/NowPlaying'
 import { current as nowPlaying, usePlayer } from '../features/slap/player'
 import { WatchPage } from '../features/watch/WatchPage'
-import { WatchBar, useWatchBar } from '../features/watch/WatchBar'
+import { CallBar, useHuddleBar, useWatchBar } from '../features/watch/WatchBar'
 import { useWatchSelect } from '../features/watch/session'
 import { DESTS, MORE_ACCOUNT, MORE_SQUAD, SIDEBAR_FOOT, SIDEBAR_MAIN, TAB_IDS, destForPath, type DestId } from './nav'
 
@@ -70,16 +70,18 @@ export function Shell() {
   const onWatch = current === 'watch'
   const keepWatch = useWatchSelect((s) => s.active) || onWatch
   const watchBar = useWatchBar(onWatch)
+  const huddleBar = useHuddleBar(current === 'huddle')
+  const callRows = Number(watchBar) + Number(huddleBar)
   useEffect(() => {
-    const d = document.documentElement.dataset
-    if (watchBar && !desktop) d.watchbar = ''
-    else delete d.watchbar
-  }, [watchBar, desktop])
+    const html = document.documentElement
+    if (callRows && !desktop) { html.dataset.watchbar = ''; html.style.setProperty('--callbar-rows', String(callRows)) }
+    else { delete html.dataset.watchbar; html.style.removeProperty('--callbar-rows') }
+  }, [callRows, desktop])
 
   return (
     <>
       <a className="skip-link" href="#main">Skip to content</a>
-      {desktop ? <Sidebar current={current} isAdmin={isAdmin} watchBar={watchBar} /> : <TopBar />}
+      {desktop ? <Sidebar current={current} isAdmin={isAdmin} watchBar={watchBar} huddleBar={huddleBar} /> : <TopBar />}
       <main id="main" className="app-main" data-chat={chatMode} tabIndex={-1} style={{ outline: 'none' }}>
         {signedOut && (
           <div className="banner" role="status" style={{ marginBottom: 'var(--space-5)' }}>
@@ -90,7 +92,7 @@ export function Shell() {
         <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
         {keepWatch && <WatchPage visible={onWatch} />}
       </main>
-      {!desktop && watchBar && <WatchBar variant="bar" />}
+      {!desktop && callRows > 0 && <CallBar variant="bar" watch={watchBar} huddle={huddleBar} />}
       {!desktop && <MiniPlayer variant="bar" />}
       {!desktop && <TabBar current={current} isAdmin={isAdmin} />}
       <PlayerSheet />
@@ -278,7 +280,7 @@ function MoreSheet({ current, isAdmin, onClose }: { current: DestId | null; isAd
 }
 
 // ── Desktop sidebar ──────────────────────────────────────────────────────────
-function Sidebar({ current, isAdmin, watchBar }: { current: DestId | null; isAdmin: boolean; watchBar: boolean }) {
+function Sidebar({ current, isAdmin, watchBar, huddleBar }: { current: DestId | null; isAdmin: boolean; watchBar: boolean; huddleBar: boolean }) {
   const badge = useLiveBadge()
   const row = (id: DestId) => {
     const d = DESTS[id]
@@ -307,7 +309,7 @@ function Sidebar({ current, isAdmin, watchBar }: { current: DestId | null; isAdm
         <div className="sidebar-spacer" />
         <ul className="sidebar-group">{SIDEBAR_FOOT.map(row)}</ul>
       </nav>
-      {watchBar && <WatchBar variant="sidebar" />}
+      {(watchBar || huddleBar) && <CallBar variant="sidebar" watch={watchBar} huddle={huddleBar} />}
       <MiniPlayer variant="sidebar" />
       <div className="sidebar-account">
         <AccountControl variant="sidebar" />

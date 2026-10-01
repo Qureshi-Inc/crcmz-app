@@ -395,7 +395,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', huddle: '/?p=huddle', coach: '/?p=coach', ask: '/?p=ai' }
+    const classic = { 'clips/x': '/?p=pipeline', whatsapp: '/?p=wa', coach: '/?p=coach', ask: '/?p=ai' }
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -1749,6 +1749,263 @@ try {
     check('watch 1440: leaving the call removes your orb', true)
     check('no unmocked writes and no page errors (Watch 1440)', d.page.violations.length === 0, d.page.violations.join(', '))
     await d.ctx.close()
+
+    // ── 14. Huddle (PS-7). LiveKit is a fake client served at the CDN URL: the room,
+    // the participants and their tracks are scripted from the test. Token, AI and
+    // transcribe are fixtures. Nothing reaches a real LiveKit server. ──
+    {
+      const hposts = { token: [], ai: [], tr: 0 }
+      let tokenMode = 'ok'
+      let aiMode = 'ok'
+      const FAKE_LK = `(() => {
+        const Source = { Camera: 'camera', Microphone: 'microphone', ScreenShare: 'screen_share', ScreenShareAudio: 'screen_share_audio' }
+        const E = { TrackSubscribed: 'trackSubscribed', TrackUnsubscribed: 'trackUnsubscribed', ParticipantConnected: 'participantConnected', ParticipantDisconnected: 'participantDisconnected',
+          ActiveSpeakersChanged: 'activeSpeakersChanged', LocalTrackPublished: 'localTrackPublished', LocalTrackUnpublished: 'localTrackUnpublished', TrackMuted: 'trackMuted', TrackUnmuted: 'trackUnmuted',
+          TrackPublished: 'trackPublished', TrackUnpublished: 'trackUnpublished', DataReceived: 'dataReceived', AudioPlaybackStatusChanged: 'audioPlaybackChanged', Reconnecting: 'reconnecting',
+          SignalReconnecting: 'signalReconnecting', Reconnected: 'reconnected', Disconnected: 'disconnected' }
+        const track = (kind, source, mst) => ({ kind, source, isMuted: false, mediaStreamTrack: mst,
+          attach(el) { el = el || document.createElement(kind); el.srcObject = new MediaStream([this.mediaStreamTrack]); return el },
+          detach(el) { if (el) el.srcObject = null; return el },
+          async replaceTrack(t) { this.mediaStreamTrack = t } })
+        const canvasTrack = (color) => { const c = document.createElement('canvas'); c.width = 320; c.height = 240; const g = c.getContext('2d'); g.fillStyle = color; g.fillRect(0, 0, 320, 240); setInterval(() => { g.fillStyle = color; g.fillRect(0, 0, 320, 240) }, 200); return c.captureStream(5).getVideoTracks()[0] }
+        const toneTrack = () => { const ac = new AudioContext(); const o = ac.createOscillator(); const d = ac.createMediaStreamDestination(); o.connect(d); o.start(); return d.stream.getAudioTracks()[0] }
+        const participant = (identity, name) => ({ identity, name, isSpeaking: false, trackPublications: new Map(),
+          getTrackPublication(src) { return [...this.trackPublications.values()].find((p) => p.source === src) } })
+        window.__lkData = []
+        window.__lkConnects = []
+        class Room {
+          constructor(opts) {
+            const room = this
+            this.opts = opts; this.h = {}; this.canPlaybackAudio = true; this.remoteParticipants = new Map()
+            const lp = participant('u1', 'Goopy')
+            const pub = (src, t) => { const p = { kind: t.kind, source: src, trackSid: src, isMuted: false, track: t }; lp.trackPublications.set(src, p); room.fire(E.LocalTrackPublished, p, lp) }
+            const enabled = (src) => { const p = lp.getTrackPublication(src); return !!p && !p.isMuted }
+            Object.defineProperties(lp, {
+              isMicrophoneEnabled: { get: () => enabled(Source.Microphone) },
+              isCameraEnabled: { get: () => enabled(Source.Camera) },
+              isScreenShareEnabled: { get: () => enabled(Source.ScreenShare) },
+            })
+            const toggle = async (src, on, get) => {
+              const p = lp.getTrackPublication(src)
+              if (p && src !== Source.ScreenShare) { p.isMuted = !on; p.track.isMuted = !on; room.fire(on ? E.TrackUnmuted : E.TrackMuted, p, lp); return }
+              if (p && !on) { p.track.mediaStreamTrack.stop(); lp.trackPublications.delete(src); room.fire(E.LocalTrackUnpublished, p, lp); return }
+              if (on) pub(src, track(src === Source.Microphone ? 'audio' : 'video', src, await get()))
+            }
+            lp.setMicrophoneEnabled = (on) => toggle(Source.Microphone, on, async () => (await navigator.mediaDevices.getUserMedia({ audio: true })).getAudioTracks()[0])
+            lp.setCameraEnabled = (on) => toggle(Source.Camera, on, async () => (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0])
+            lp.setScreenShareEnabled = (on) => toggle(Source.ScreenShare, on, async () => canvasTrack('#2244aa'))
+            lp.publishData = async (data, o) => { window.__lkData.push({ ...JSON.parse(new TextDecoder().decode(data)), topic: o.topic, reliable: o.reliable }) }
+            lp.unpublishTrack = async (t, stop) => { for (const [k, p] of lp.trackPublications) if (p.track === t) { lp.trackPublications.delete(k); if (stop) t.mediaStreamTrack.stop(); room.fire(E.LocalTrackUnpublished, p, lp) } }
+            this.localParticipant = lp
+            window.__lkRoom = this
+            window.__lkFire = (ev, ...a) => room.fire(ev, ...a)
+            window.__lkAdd = (id, name) => {
+              const p = participant(id, name)
+              room.remoteParticipants.set(id, p)
+              room.fire(E.ParticipantConnected, p)
+              for (const [src, t] of [[Source.Camera, track('video', Source.Camera, canvasTrack(id === 'p2' ? '#aa2266' : '#22aa66'))], [Source.Microphone, track('audio', Source.Microphone, toneTrack())]]) {
+                const pb = { kind: t.kind, source: src, trackSid: id + src, isMuted: false, isSubscribed: true, track: t }
+                p.trackPublications.set(src, pb)
+                room.fire(E.TrackSubscribed, t, pb, p)
+              }
+            }
+            window.__lkRemove = (id) => { const p = room.remoteParticipants.get(id); if (!p) return; room.remoteParticipants.delete(id); for (const pb of p.trackPublications.values()) room.fire(E.TrackUnsubscribed, pb.track, pb, p); room.fire(E.ParticipantDisconnected, p) }
+            window.__lkSpeak = (ids) => { const all = [lp, ...room.remoteParticipants.values()]; all.forEach((p) => { p.isSpeaking = ids.includes(p.identity) }); room.fire(E.ActiveSpeakersChanged, all.filter((p) => p.isSpeaking)) }
+            window.__lkSay = (id, obj) => room.fire(E.DataReceived, new TextEncoder().encode(JSON.stringify(obj)), room.remoteParticipants.get(id), 0, 'crcmz-huddle')
+          }
+          on(ev, fn) { (this.h[ev] ||= []).push(fn); return this }
+          fire(ev, ...a) { (this.h[ev] || []).forEach((f) => f(...a)) }
+          async connect(url, token) { window.__lkConnects.push([url, token]); this.state = 'connected' }
+          async disconnect() { this.state = 'disconnected'; this.fire(E.Disconnected, 1) }
+          async startAudio() { this.canPlaybackAudio = true }
+        }
+        window.LivekitClient = { Room, RoomEvent: E, Track: { Source }, DisconnectReason: { CLIENT_INITIATED: 1, SERVER_SHUTDOWN: 2 } }
+      })()`
+      const HUDDLE = {
+        ...WATCH,
+        'GET /npm/livekit-client@2/dist/livekit-client.umd.min.js': (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: FAKE_LK }),
+        'POST /api/huddle/token': (r) => {
+          const b = r.request().postDataJSON()
+          hposts.token.push(b)
+          if (tokenMode === '503') return json(503, { error: 'Huddle not configured on this server' })(r)
+          return json(200, { token: 'lk-test-token', url: 'wss://lk.invalid', room: String(b.room || '').toLowerCase().replace(/[^a-z0-9-]/g, '') || 'crcmz' })(r)
+        },
+        'POST /api/huddle/ai': (r) => {
+          hposts.ai.push(r.request().postDataJSON())
+          if (aiMode === '502') return json(502, { error: 'upstream down' })(r)
+          return json(200, { message: { role: 'assistant', content: aiMode === 'notes' ? 'Summary: push B.' : 'Bizzle is carrying.' } })(r)
+        },
+        'POST /api/huddle/transcribe': (r) => { hposts.tr++; return json(200, { text: 'push B site' })(r) },
+      }
+      const hs = (page) => page.evaluate(() => ({ audio: document.querySelectorAll('[data-huddle-audio] audio').length }))
+      const spotName = (page) => page.textContent('.hu-spot .hu-tile-name')
+
+      // Phone
+      const h = await newPage({ width: 375, height: 800, mocks: HUDDLE })
+      await ready(h.page, '/app/huddle')
+      await h.page.waitForSelector('.hu-preview[data-state="on"]')
+      check('huddle: pre-join shows your camera preview', await h.page.evaluate(() => !!document.querySelector('.hu-preview video')?.srcObject))
+      check('huddle: the room defaults to crcmz', (await h.page.inputValue('#hu-room')) === 'crcmz')
+      await shot(h.page, 'huddle-375-pre', true)
+      await axe(h.page, 'Huddle pre-join 375', '.app-main')
+      await tapTargets(h.page, 'Huddle pre-join 375')
+      tokenMode = '503'
+      await h.page.click('.hu-join')
+      await h.page.waitForSelector('.hu-pre-form .banner')
+      check("huddle: 503 says Huddle isn't set up", (await h.page.textContent('.hu-pre-form .banner')).includes("Huddle isn't set up on this server"))
+      tokenMode = 'ok'
+      await h.page.fill('#hu-room', 'Squad Night')
+      await h.page.click('.hu-join')
+      await h.page.waitForSelector('.hu-call')
+      check('huddle: join asks for a token for the typed room (the server strips it to squadnight)', hposts.token.at(-1)?.room === 'Squad Night')
+      check('huddle: connects to the URL and token the server gave', (await h.page.evaluate(() => JSON.stringify(window.__lkConnects.at(-1)))) === JSON.stringify(['wss://lk.invalid', 'lk-test-token']))
+      await h.page.waitForSelector('.hu-spot video')
+      check('huddle: top bar shows the sanitised room and "Just you"', (await h.page.textContent('.hu-room')) === 'squadnight' && (await h.page.textContent('.hu-count')) === 'Just you')
+      check("huddle: alone says you're the only one here", await h.page.isVisible('.hu-alone'))
+      check('huddle: the preview camera is released once in the call', await h.page.evaluate(() => !document.querySelector('.hu-preview')))
+      const ctrls = await h.page.locator('.hu-controls button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')))
+      check('huddle: controls are mic, camera, share, blur, leave', ctrls.join('|') === 'Mute|Turn camera off|Share your screen|Blur background|Leave the call', ctrls.join('|'))
+      await h.page.evaluate(() => { window.__lkAdd('p2', 'Bizzle'); window.__lkAdd('p3', 'Noor') })
+      await h.page.waitForFunction(() => document.querySelector('.hu-count')?.textContent === '3 in call')
+      check('huddle: people joining fill the filmstrip', (await h.page.locator('.hu-strip li').count()) === 3)
+      check('huddle: their audio plays from outside the page', (await hs(h.page)).audio === 2)
+      check('huddle: the spotlight goes to someone else, not you', (await spotName(h.page)).includes('Bizzle'))
+      await h.page.evaluate(() => window.__lkSpeak(['p3']))
+      await h.page.waitForFunction(() => document.querySelector('.hu-spot .hu-tile-name')?.textContent.includes('Noor'))
+      check('huddle: the active speaker takes the spotlight', await h.page.isVisible('.hu-strip .hu-tile[data-speaking="true"]'))
+      await h.page.click('.hu-strip button[aria-label="Pin Goopy (you)"]')
+      check('huddle: pinning puts that tile in the spotlight', (await spotName(h.page)).includes('Goopy (you)') && (await h.page.getAttribute('.hu-strip button[aria-label="Unpin Goopy (you)"]', 'aria-pressed')) === 'true')
+      await h.page.click('.hu-strip button[aria-label="Unpin Goopy (you)"]')
+      await h.page.click('.hu-controls button[aria-label="Mute"]')
+      await h.page.waitForSelector('.hu-controls button[aria-label="Unmute"]')
+      check('huddle: mute shows on your tile', (await h.page.locator('.hu-strip .hu-tile-mic').count()) === 1)
+      await h.page.click('.hu-controls button[aria-label="Unmute"]')
+      await h.page.waitForSelector('.hu-controls button[aria-label="Mute"]')
+      await h.page.click('.hu-topbar button[aria-label="Grid layout"]')
+      check('huddle: grid layout shows everyone the same size', (await h.page.locator('.hu-grid li').count()) === 3)
+      await shot(h.page, 'huddle-375-grid')
+      await h.page.click('.hu-topbar button[aria-label="Spotlight layout"]')
+      await shot(h.page, 'huddle-375-call')
+      await axe(h.page, 'Huddle call 375', '.app-main')
+      await tapTargets(h.page, 'Huddle call 375')
+      await h.page.evaluate(() => window.__lkFire('reconnecting'))
+      await h.page.waitForSelector('.hu-stale')
+      check('huddle: reconnecting covers the stage and disables controls', (await h.page.isDisabled('.hu-controls button[aria-label="Mute"]')) && !(await h.page.isDisabled('.hu-controls button[aria-label="Leave the call"]')))
+      await h.page.evaluate(() => window.__lkFire('reconnected'))
+      await h.page.waitForSelector('.hu-stale', { state: 'detached' })
+      check('huddle: reconnected clears the overlay', true)
+
+      // AI helper: the bottom sheet, ask, transcript, notes, a failure.
+      await h.page.click('.hu-ai-btn')
+      await h.page.waitForSelector('.hu-ai-sheet')
+      check('huddle: the AI opens as a bottom sheet on a phone', await h.page.isVisible('.hu-ai-sheet .hu-ai-log'))
+      await h.page.fill('.hu-ai-sheet input', "who's winning")
+      await h.page.press('.hu-ai-sheet input', 'Enter')
+      await h.page.waitForSelector('.hu-ai-msg[data-role="assistant"]')
+      check('huddle: asking the AI posts the question', hposts.ai.at(-1)?.messages.at(-1)?.content === "who's winning" && (await h.page.textContent('.hu-ai-msg[data-role="assistant"]')) === 'Bizzle is carrying.')
+      await h.page.click('.hu-ai-sheet button:has-text("Transcript")')
+      await h.page.waitForSelector('.hu-rec-chip', { state: 'attached' })
+      check('huddle: transcript on tells the room', await h.page.evaluate(() => window.__lkData.some((d) => d.t === 'rec' && d.on && d.topic === 'crcmz-huddle')))
+      await h.page.waitForFunction(() => window.__lkData.some((d) => d.t === 'line'), null, { timeout: 12000 })
+      check('huddle: transcript chunks go to the transcriber and the room', hposts.tr >= 1 && (await h.page.evaluate(() => window.__lkData.find((d) => d.t === 'line')?.text)) === 'push B site')
+      await h.page.evaluate(() => window.__lkSay('p2', { t: 'line', text: 'rotate A' }))
+      await h.page.evaluate(() => window.__lkSay('p3', { t: 'rec', on: true }))
+      await h.page.waitForSelector('.hu-lines summary:has-text("2 lines")')
+      check("huddle: other people's lines join the transcript", true)
+      aiMode = 'notes'
+      await h.page.click('.hu-ai-sheet button:has-text("Notes")')
+      await h.page.waitForFunction(() => [...document.querySelectorAll('.hu-ai-msg[data-role="assistant"]')].some((m) => m.textContent === 'Summary: push B.'))
+      check('huddle: notes send the whole transcript, with names', /Goopy: push B site[\s\S]*Bizzle: rotate A/.test(hposts.ai.at(-1)?.messages.at(-1)?.content || ''))
+      aiMode = '502'
+      await h.page.fill('.hu-ai-sheet input', 'again?')
+      await h.page.press('.hu-ai-sheet input', 'Enter')
+      await h.page.waitForSelector('.hu-ai-msg[data-role="error"] button:has-text("Try again")')
+      check("huddle: an AI failure says so and offers Try again", (await h.page.textContent('.hu-ai-msg[data-role="error"]')).includes("AI didn't answer"))
+      aiMode = 'ok'
+      await h.page.click('.hu-ai-msg[data-role="error"] button:has-text("Try again")')
+      await h.page.waitForFunction(() => !document.querySelector('.hu-ai-msg[data-role="error"]'))
+      check('huddle: Try again re-asks', hposts.ai.at(-1)?.messages.at(-1)?.content === 'again?')
+      await shot(h.page, 'huddle-375-ai')
+      await axe(h.page, 'Huddle AI sheet 375', '.hu-ai-sheet')
+      await h.page.click('.hu-ai-sheet button:has-text("Stop transcript")')
+      check('huddle: transcript off tells the room', await h.page.evaluate(() => window.__lkData.some((d) => d.t === 'rec' && d.on === false)))
+      await h.page.keyboard.press('Escape')
+      await h.page.waitForSelector('.hu-ai-sheet', { state: 'detached' })
+
+      // Leave the page: the call keeps going in the call bar.
+      await h.page.click('.tabbar a[href="/app/clips"]')
+      await h.page.waitForSelector('.watchbar-bar')
+      check('huddle: leaving /huddle keeps the call in the call bar', (await h.page.textContent('.watchbar-bar')).includes('squadnight · 3 in call') && (await hs(h.page)).audio === 2)
+      check('huddle: the call bar shows the transcript chip while someone records', (await h.page.textContent('.watchbar-bar')).includes('Transcript on'))
+      await h.page.click('.watchbar-bar button[aria-label="Huddle mic live. Mute"]')
+      await h.page.waitForSelector('.watchbar-bar button[aria-label="Huddle mic muted. Unmute"]')
+      check('huddle: the call bar mutes your mic', await h.page.evaluate(() => !window.__lkRoom.localParticipant.isMicrophoneEnabled))
+      await h.page.click('.watchbar-bar button[aria-label="Huddle mic muted. Unmute"]')
+      await h.page.waitForSelector('.watchbar-bar button[aria-label="Huddle mic live. Mute"]')
+      await shot(h.page, 'huddle-375-bar')
+      // Joining the Watch call with a live Huddle mic mutes the Huddle mic (F-5).
+      await h.page.click('.tabbar a[href="/app/watch"]')
+      await h.page.waitForSelector('.wp-pill[data-tone="live"]')
+      await h.page.click('.wp-actions button:has-text("Join with camera + mic")')
+      await h.page.waitForSelector('.toast:has-text("Muted your Huddle mic")')
+      check('huddle: joining the Watch call mutes your Huddle mic, and says so', await h.page.evaluate(() => !window.__lkRoom.localParticipant.isMicrophoneEnabled))
+      await h.page.click('.tabbar a[href="/app"]')
+      await h.page.waitForFunction(() => document.querySelectorAll('.watchbar-bar .miniplayer-row').length === 2)
+      check('huddle: two calls, two rows in the call bar', (await h.page.getAttribute('.watchbar-bar', 'aria-label')) === 'Calls' && (await h.page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--callbar-rows').trim())) === '2')
+      await shot(h.page, 'huddle-375-two-calls')
+      await h.page.click('.watchbar-bar button[aria-label="Leave the watch party"]')
+      await h.page.click('.watchbar-bar a[aria-label^="Return to Huddle"]')
+      await h.page.waitForSelector('.hu-call')
+      check('huddle: Return brings you back to the call', (await h.page.locator('.hu-strip li').count()) === 3 && !(await h.page.isVisible('.watchbar-bar')))
+      await h.page.evaluate(() => window.__lkRemove('p3'))
+      await h.page.waitForFunction(() => document.querySelector('.hu-count')?.textContent === '2 in call')
+      check('huddle: someone leaving drops their tile and their audio', (await hs(h.page)).audio === 1 && !(await h.page.isVisible('.hu-rec-chip')))
+      await h.page.click('.hu-controls button[aria-label="Leave the call"]')
+      await h.page.waitForSelector('.hu-pre')
+      check('huddle: Leave goes back to pre-join, no "dropped" note', !(await h.page.isVisible('.hu-pre-form .banner')) && (await hs(h.page)).audio === 0)
+      await h.page.click('.hu-join')
+      await h.page.waitForSelector('.hu-call')
+      await h.page.evaluate(() => window.__lkFire('disconnected', 2))
+      await h.page.waitForSelector('.hu-pre-form .banner')
+      check('huddle: a dropped call says so and offers Rejoin', (await h.page.textContent('.hu-pre-form .banner')).includes('The call dropped') && (await h.page.textContent('.hu-join')).includes('Rejoin'))
+      check('no unmocked writes and no page errors (Huddle 375)', h.page.violations.length === 0, h.page.violations.join(', '))
+      await h.ctx.close()
+
+      // Desktop: the AI side sheet pushes the stage; blur and screen share.
+      const hd = await newPage({ width: 1440, height: 900, mocks: HUDDLE })
+      await ready(hd.page, '/app/huddle')
+      await hd.page.waitForSelector('.hu-preview[data-state="on"]')
+      await shot(hd.page, 'huddle-1440-pre')
+      await hd.page.click('.hu-join')
+      await hd.page.waitForSelector('.hu-spot video')
+      await hd.page.evaluate(() => { window.__lkAdd('p2', 'Bizzle'); window.__lkAdd('p3', 'Noor') })
+      await hd.page.waitForFunction(() => document.querySelector('.hu-count')?.textContent === '3 in call')
+      const strip = await hd.page.evaluate(() => { const s = document.querySelector('.hu-strip').getBoundingClientRect(), p = document.querySelector('.hu-spot').getBoundingClientRect(); return { stripLeft: s.left, spotRight: p.right, spotW: p.width } })
+      check('huddle 1440: the filmstrip runs down beside the spotlight', strip.stripLeft >= strip.spotRight, JSON.stringify(strip))
+      await shot(hd.page, 'huddle-1440')
+      await hd.page.click('.hu-ai-btn')
+      await hd.page.waitForSelector('.hu-ai-side')
+      const spotW2 = await hd.page.evaluate(() => document.querySelector('.hu-spot').getBoundingClientRect().width)
+      check('huddle 1440: the AI side sheet pushes the stage instead of covering it', spotW2 < strip.spotW - 200 && !(await hd.page.isVisible('.scrim')), `${strip.spotW} → ${spotW2}`)
+      await axe(hd.page, 'Huddle 1440 with AI', '.app-main')
+      await shot(hd.page, 'huddle-1440-ai')
+      await hd.page.click('.hu-controls button[aria-label="Blur background"]')
+      await hd.page.waitForSelector('.hu-controls button[aria-label="Blur background"][aria-pressed="true"]')
+      check('huddle 1440: blur swaps in the canvas track', await hd.page.evaluate(() => window.__lkRoom.localParticipant.getTrackPublication('camera').track.mediaStreamTrack instanceof CanvasCaptureMediaStreamTrack))
+      await hd.page.click('.hu-controls button[aria-label="Blur background"]')
+      await hd.page.waitForSelector('.hu-controls button[aria-label="Blur background"][aria-pressed="false"]')
+      check('huddle 1440: unblur brings back a fresh camera', await hd.page.waitForFunction(() => { const t = window.__lkRoom.localParticipant.getTrackPublication('camera')?.track.mediaStreamTrack; return !!t && !(t instanceof CanvasCaptureMediaStreamTrack) && t.readyState === 'live' }, null, { timeout: 5000 }).then(() => true, () => false))
+      await hd.page.click('.hu-controls button[aria-label="Share your screen"]')
+      await hd.page.waitForSelector('.hu-spot .hu-tile[data-screen="true"]')
+      check('huddle 1440: a shared screen takes the spotlight', (await spotName(hd.page)).includes('Your screen'))
+      await hd.page.click('.hu-controls button[aria-label="Stop sharing your screen"]')
+      await hd.page.waitForSelector('.hu-spot .hu-tile[data-screen="true"]', { state: 'detached' })
+      await hd.page.click('.hu-controls button[aria-label="Turn camera off"]')
+      await hd.page.waitForSelector('.hu-strip .hu-tile-face')
+      check('huddle 1440: camera off shows your initials', (await hd.page.textContent('.hu-strip .hu-tile-face')).length > 0)
+      check('no unmocked writes and no page errors (Huddle 1440)', hd.page.violations.length === 0, hd.page.violations.join(', '))
+      await hd.ctx.close()
+    }
   }
 } finally {
   await browser.close()

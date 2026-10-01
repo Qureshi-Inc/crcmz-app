@@ -63,6 +63,11 @@ const PATHS: Record<string, ReactNode> = {
   kick: (<g {...S}><circle cx="8" cy="6.5" r="3" /><path d="M2 17c.5-3 3-5 6-5 1.2 0 2.3.3 3.2.9M13 13l5 5M18 13l-5 5" /></g>),
   leave: (<g {...S}><path d="M2.5 11.5c4.2-3.6 10.8-3.6 15 0l-1.8 2.6-3-1.1v-2.2a9 9 0 0 0-5.4 0V13l-3 1.1z" /></g>),
   grid: (<g {...S}><rect x="2" y="2" width="7" height="7" rx="1.5" /><rect x="11" y="2" width="7" height="7" rx="1.5" /><rect x="2" y="11" width="7" height="7" rx="1.5" /><rect x="11" y="11" width="7" height="7" rx="1.5" /></g>),
+  screen: (<g {...S}><rect x="1.5" y="2.5" width="17" height="11" rx="2" /><path d="M7 17.5h6M10 13.5v4M10 10.5v-5M7.5 8l2.5-2.5L12.5 8" /></g>),
+  blur: (<g {...S}><circle cx="10" cy="7" r="3" /><path d="M4 17.5a6 6 0 0 1 12 0" /><path d="M1.5 4v.01M1.5 9v.01M1.5 14v.01M18.5 4v.01M18.5 9v.01M18.5 14v.01" strokeWidth="2.2" /></g>),
+  spotlight: (<g {...S}><rect x="1.5" y="2.5" width="17" height="10" rx="1.5" /><rect x="1.5" y="14.5" width="5" height="3" rx="1" /><rect x="7.5" y="14.5" width="5" height="3" rx="1" /><rect x="13.5" y="14.5" width="5" height="3" rx="1" /></g>),
+  notes: (<g {...S}><rect x="3.5" y="2" width="13" height="16" rx="2" /><path d="M7 6.5h6M7 10h6M7 13.5h3.5" /></g>),
+  send: (<g {...S}><path d="M18 2L9 11M18 2l-5.5 16-3.5-7-7-3.5z" /></g>),
   megaphone: (<g {...S}><path d="M3 8v4h2.5L14 16V4L5.5 8zM5.5 12l1 5h2.5l-1-4.2M16.5 7.5a3 3 0 0 1 0 5" /></g>),
 }
 
