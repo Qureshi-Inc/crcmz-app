@@ -325,13 +325,10 @@ _PICKS = re.compile(r"^(.+)'s picks$", re.I)
 _BOT_PICKS = {"slapper"}
 
 
-def _picker_name(name: str, idx: dict[str, dict]) -> str:
-    p = idx.get(name.casefold())
-    return (p.get("display_name") or p.get("username") or name) if p else name
-
-
 async def picked_by() -> dict[str, list[str]]:
-    """track id → the people whose picks playlist holds it. Cached ten minutes."""
+    """track id → the Slap usernames whose picks playlist holds it ("Slap" for the
+    bot). The player shows them by the same short names as the rest of Slap. Cached
+    ten minutes."""
     if (hit := _cached("picks", 600)) is not None:
         return hit
     users = await _jf_users()
@@ -340,7 +337,6 @@ async def picked_by() -> dict[str, list[str]]:
     uid = next(iter(users.values()))["id"]
     data = _ok(await _jf("GET", "/Items", params={
         "userId": uid, "IncludeItemTypes": "Playlist", "Recursive": "true"})) or {}
-    idx = mention_index(await asyncio.to_thread(crcmz_identity.people))
     people: dict[str, list[str]] = {}
     bots: dict[str, list[str]] = {}
     for pl in data.get("Items", []):
@@ -350,7 +346,7 @@ async def picked_by() -> dict[str, list[str]]:
         owner = m.group(1).strip()
         items = _ok(await _jf("GET", f"/Playlists/{pl['Id']}/Items", params={"userId": uid})) or {}
         into = bots if owner.casefold() in _BOT_PICKS else people
-        name = "Slap" if into is bots else _picker_name(owner, idx)
+        name = "Slap" if into is bots else owner.casefold()
         for t in items.get("Items", []):
             if (tid := t.get("Id")) and name not in into.setdefault(tid, []):
                 into[tid].append(name)
@@ -954,7 +950,7 @@ def build_router(get_session, is_admin) -> APIRouter:
         b = await body_of(request)
         f = track_fields(b)
         v = max(-1, min(_int(b.get("thumbs"), 0), 1))
-        await asyncio.to_thread(save_thumb, f["track_id"], me["sub"], me["name"], f["title"], f["artist"], v)
+        await asyncio.to_thread(save_thumb, f["track_id"], me["sub"], me["slap_user"], f["title"], f["artist"], v)
         try:  # slaptastic's taste stats learn from it too; the thumb stands either way
             await _social_write("POST", "thumb", {
                 "username": me["slap_user"], "track_id": f["track_id"], "title": f["title"],

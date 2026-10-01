@@ -2726,7 +2726,7 @@ try {
       width: 375, height: 800,
       mocks: {
         ...SLAP_BASE,
-        'POST /api/slap/thumb': (r) => { const b = r.request().postDataJSON(); thumbed.push(b.thumbs); return json(200, { up: b.thumbs === 1 ? ['Zubair', 'Moiz Qureshi'] : ['Zubair'], down: [], mine: b.thumbs })(r) },
+        'POST /api/slap/thumb': (r) => { const b = r.request().postDataJSON(); thumbed.push(b.thumbs); return json(200, { up: b.thumbs === 1 ? ['zubair221b', 'moiz'] : ['zubair221b'], down: [], mine: b.thumbs })(r) },
       },
       match: slapMatch({
         'POST /api/slap/listen/play': json(200, { ok: true }), 'POST /api/slap/listen/skip': json(200, { ok: true }),
@@ -2734,19 +2734,19 @@ try {
           { id: 'r1', username: 'moiz', title: 'Track 1', artist: 'SZA', text: '🔥', is_reaction: true, created_at: mine },
           { id: 'r2', username: 'nooramin40', title: 'Track 1', artist: 'SZA', text: '🔥', is_reaction: true, created_at: mine },
         ] }),
-        ...Object.fromEntries(SLAP_TRACKS.map(({ id }) => [`GET /api/slap/track/${id}`, json(200, { picked_by: ['Noor Amin'], thumbs: { up: ['Zubair'], down: [], mine: 0 } })])),
+        ...Object.fromEntries(SLAP_TRACKS.map(({ id }) => [`GET /api/slap/track/${id}`, json(200, { picked_by: ['nooramin40', 'themoosecompany'], thumbs: { up: ['zubair221b'], down: [], mine: 0 } })])),
       }),
     })
     await ready(page, '/app/slap')
     await page.waitForSelector('.track-row')
     await page.click('.track-row .track-main >> nth=0')
     await page.waitForSelector('.miniplayer-by')
-    check('slap: the mini-player says whose pick is playing', (await page.textContent('.miniplayer-by')).includes('Noor Amin'))
+    check('slap: the mini-player says whose pick is playing', (await page.textContent('.miniplayer-by')).includes('noor'))
     await page.click('.miniplayer-open')
     await page.waitForSelector('.sheet-player .player-by')
-    check('slap: the player says who added the track', (await page.textContent('.sheet-player .player-by')).includes('Added by Noor Amin'))
+    check('slap: the player says who added the track', (await page.textContent('.sheet-player .player-by')).includes('Added by noor and moose'))
     const up = '.sheet-player button[aria-label^="Thumbs up"]'
-    check('slap: thumbs show how many and who', (await page.getAttribute(up, 'aria-label')) === 'Thumbs up, 1 so far' && (await page.textContent('.sheet-player .track-rated')).includes('Zubair'))
+    check('slap: thumbs show how many and who', (await page.getAttribute(up, 'aria-label')) === 'Thumbs up, 1 so far' && (await page.textContent('.sheet-player .track-rated')).includes('zubair'))
     const fire = '.sheet-player .reaction-btn >> nth=0'
     check('slap: your reaction shows as pressed, with the count', (await page.getAttribute(fire, 'aria-pressed')) === 'true' && (await page.textContent(fire)).includes('2'))
     check('slap: reactions show in the thread', (await page.locator('.sheet-player .comment-item[data-reaction="true"]').count()) === 2)

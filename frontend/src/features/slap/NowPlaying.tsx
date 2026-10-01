@@ -10,7 +10,7 @@ import { useDesktop } from '../../lib/media'
 import { useSwipeDown } from '../../lib/gestures'
 import { CommentBox, CommentThread } from './Comments'
 import {
-  artUrl, fmtTime, names, sendComment, slapName, sendThumb, setFavorite, useSlapMe, useTrackComments, useTrackSocial,
+  artUrl, fmtTime, names, sendComment, slapName, slapNames, sendThumb, setFavorite, useSlapMe, useTrackComments, useTrackSocial,
   type Library, type QueueItem, type TrackSocial,
 } from '../../lib/slap'
 import {
@@ -158,7 +158,7 @@ const REACTIONS = ['🔥', '😂', '💀', '😍', '🫡']
 /** "Added by Noor" (from the picks playlists) and, in the room, who queued it. */
 function AddedBy({ item, together }: { item: QueueItem | null | undefined; together: boolean }) {
   const q = useTrackSocial(item?.id)
-  const by = q.data?.picked_by ?? []
+  const by = slapNames(q.data?.picked_by ?? [])
   const queued = together && item?.added_by
   if (!by.length && !queued) return null
   return (
@@ -171,7 +171,7 @@ function AddedBy({ item, together }: { item: QueueItem | null | undefined; toget
 }
 
 function MiniAddedBy({ id }: { id: string | undefined }) {
-  const by = useTrackSocial(id).data?.picked_by ?? []
+  const by = slapNames(useTrackSocial(id).data?.picked_by ?? [])
   return by.length ? <span className="miniplayer-by">· {names(by, 1)}</span> : null
 }
 
@@ -180,7 +180,8 @@ function TrackActions({ item }: { item: QueueItem }) {
   const lib = qc.getQueryData<Library>(['slap', 'library'])
   const fav = lib?.tracks.find((t) => t.id === item.id)?.fav ?? false
   const social = useTrackSocial(item.id)
-  const thumbs = social.data?.thumbs ?? { up: [], down: [], mine: 0 as const }
+  const raw = social.data?.thumbs ?? { up: [], down: [], mine: 0 as const }
+  const thumbs = { ...raw, up: slapNames(raw.up), down: slapNames(raw.down) }
   const me = useSlapMe().data?.slap_user?.toLowerCase()
   const comments = useTrackComments(item.id).data?.comments ?? []
   const [busy, setBusy] = useState<string | null>(null)

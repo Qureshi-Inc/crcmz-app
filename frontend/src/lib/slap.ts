@@ -110,6 +110,9 @@ export function useTrackSocial(id: string | null | undefined) {
 export const sendThumb = (t: Pick<Track, 'id' | 'title' | 'artist' | 'album'>, thumbs: -1 | 0 | 1) =>
   request<Thumbs>('/api/slap/thumb', { body: { ...trackBody(t), thumbs } })
 
+/** Slap usernames as the short names Slap shows, each once. */
+export const slapNames = (list: string[]) => [...new Set(list.map((u) => slapName(u) || u))]
+
 /** "Moiz", "Moiz and Noor", "Moiz, Noor and 2 more". */
 export function names(list: string[], max = 2): string {
   if (list.length <= max) return list.length === 2 ? `${list[0]} and ${list[1]}` : list.join('')

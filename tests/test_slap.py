@@ -346,19 +346,19 @@ def t_thumbs_persist_and_show_who():
         db.execute("DELETE FROM thumbs")
     t = {"track_id": "1" * 32, "title": "Breezeblocks", "artist": "alt-J"}
     r = client.post("/api/slap/thumb", json={**t, "thumbs": 1}).json()
-    assert r == {"up": ["Moiz"], "down": [], "mine": 1}, r
+    assert r == {"up": ["moiz"], "down": [], "mine": 1}, r
     assert SOCIAL_LOG[-1][2]["thumbs"] == 1, "slaptastic still hears about it"
     as_("200")
     client.post("/api/slap/thumb", json={**t, "thumbs": -1})
     r = client.get("/api/slap/track/" + "1" * 32).json()["thumbs"]
-    assert r == {"up": ["Moiz"], "down": ["Zubair"], "mine": -1}, r
+    assert r == {"up": ["moiz"], "down": ["ace"], "mine": -1}, r
     client.post("/api/slap/thumb", json={**t, "thumbs": 1})
     client.post("/api/slap/thumb", json={**t, "thumbs": 0})
     as_("100")
     r = client.get("/api/slap/track/" + "1" * 32).json()["thumbs"]
-    assert r == {"up": ["Moiz"], "down": [], "mine": 1}, "one thumb each, and 0 takes it back"
+    assert r == {"up": ["moiz"], "down": [], "mine": 1}, "one thumb each, and 0 takes it back"
     out = slap.thumbs_overview("alt")
-    assert out["tracks"][0]["thumbs_up"] == ["Moiz"] and "100" not in json.dumps(out)
+    assert out["tracks"][0]["thumbs_up"] == ["moiz"] and "100" not in json.dumps(out)
     assert client.get("/api/slap/track/nope").status_code == 404
     as_(None)
     assert client.get("/api/slap/track/" + "1" * 32).status_code == 401
@@ -369,7 +369,7 @@ def t_who_added_comes_from_picks_playlists():
     EXTRA_PLAYLISTS.append({"Id": "6" * 32, "Name": "slapper's picks"})
     try:
         r = client.get("/api/slap/track/" + "1" * 32).json()
-        assert r["picked_by"] == ["Moiz", "Imposter"], "people by their display names, the bot dropped"
+        assert r["picked_by"] == ["moiz", "shahraiz"], "Slap usernames, the bot dropped"
         assert client.get("/api/slap/track/" + "3" * 32).json()["picked_by"] == ["Slap"], "the bot only when nobody else"
         assert client.get("/api/slap/track/" + "f" * 32).json()["picked_by"] == []
     finally:
