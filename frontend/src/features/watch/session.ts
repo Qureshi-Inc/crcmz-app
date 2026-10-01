@@ -729,6 +729,15 @@ export async function setVideo(raw: string): Promise<boolean> {
     set({ extracting: false })
   }
 }
+/** Play a film from the library for the whole room. */
+export function hostMovie(url: string, title: string): boolean {
+  if (!sock?.connected) { set({ error: 'Connecting to the party…' }); return false }
+  srcOf[url] = url
+  titleOf[url] = title
+  set({ error: '' })
+  sock.emit('CMD:host', url)
+  return true
+}
 export function clearVideo() { set({ error: '' }); sock?.emit('CMD:host', '') }
 
 export function sendChat(msg: string): boolean {

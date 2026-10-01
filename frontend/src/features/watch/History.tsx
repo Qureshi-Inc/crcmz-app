@@ -1,5 +1,5 @@
-// What the room has watched, or just me: resume where you left off, name an
-// untitled video, forget one. Opening a card's details shows its chat.
+// Library · Watched: what the room has watched, or just me. Resume where you left
+// off, name an untitled video, forget one. Opening a card's details shows its chat.
 import { useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Tabs from '@radix-ui/react-tabs'
@@ -16,7 +16,7 @@ type Scope = 'room' | 'mine'
 const KIND: Record<string, string> = { movie: 'Movie', episode: 'Episode', show: 'Show', series: 'Show', youtube: 'YouTube' }
 const kindLabel = (it: HistItem) => (ytId(it.url) ? 'YouTube' : KIND[String(it.kind || '').toLowerCase()] || 'Video')
 
-export function History() {
+export function Watched() {
   const s = useWatch()
   const [scope, setScope] = useState<Scope>('room')
   const room = s.room || s.cfg?.defaultRoom || ''
@@ -28,10 +28,7 @@ export function History() {
   })
   const items = q.data?.items ?? []
   return (
-    <section className="wp-history" aria-labelledby="wp-hist-h">
-      <div className="wp-hist-head">
-        <h2 className="section-h2" id="wp-hist-h">Watched</h2>
-      </div>
+    <div className="wp-history">
       <Tabs.Root value={scope} onValueChange={(v) => setScope(v as Scope)}>
         <Tabs.List className="seg wp-hist-tabs" aria-label="Whose history">
           <Tabs.Trigger value="room" className="seg-tab">This room</Tabs.Trigger>
@@ -51,7 +48,7 @@ export function History() {
           </Tabs.Content>
         ))}
       </Tabs.Root>
-    </section>
+    </div>
   )
 }
 

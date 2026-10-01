@@ -121,6 +121,9 @@ const SECTIONS: Section[] = [
         <li>Tap ⚙ in the player for camera position, flip camera, mic and speaker, your display name, and <b>Rally</b> (tells the WhatsApp group to join).</li>
         <li>In fullscreen, the cameras sit on the video and the chat button lets you type without leaving.</li>
         <li>It keeps playing while you use the rest of the app.</li>
+        <li><b>Library</b> (under the player): <b>Downloaded</b> is every movie we have. Press Play and it plays for the whole party.</li>
+        <li><b>Find movies</b>: search, then <b>Add to library</b>. We pick the best copy (4K when there is one, else 1080p) and you get a notification when it's ready. Most take a minute or two; a rare one has to download first and shows its progress. Five a day each.</li>
+        <li><b>Watched</b>: what this room (or just you) watched, to pick up where you left off.</li>
       </ul>
     ),
   },

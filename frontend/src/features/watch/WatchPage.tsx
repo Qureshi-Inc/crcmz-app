@@ -9,7 +9,7 @@ import { Icon } from '../../components/Icon'
 import { ErrorStrip } from '../../components/states'
 import { useDesktop } from '../../lib/media'
 import { loginUrl } from '../../lib/session'
-import { History } from './History'
+import { Library } from './Library'
 import { Orbs } from './Orbs'
 import { Chat, PresencePill, ReactionsTray, Roster } from './Social'
 import { Stage, usePlayerKeys } from './Stage'
@@ -62,7 +62,7 @@ export function WatchPage({ visible }: { visible: boolean }) {
           <Chat />
         </aside>
       </div>
-      <History />
+      <Library />
     </div>
   )
 }

@@ -6688,6 +6688,8 @@ import reels as _reels
 app.include_router(_reels.build_router(_get_session, _is_iam_admin))
 import slap as _slap
 app.include_router(_slap.build_router(_get_session, _is_iam_admin))
+import movies as _movies
+app.include_router(_movies.build_router(_get_session, _is_iam_admin))
 
 
 @app.on_event("startup")
@@ -6713,6 +6715,13 @@ async def _start_slap_discover():
     import slap_discover
     if _slap.configured() and _slap.SLAP_ADMIN_TOKEN:
         asyncio.create_task(slap_discover.loop())
+
+
+@app.on_event("startup")
+async def _start_movies():
+    """Follow movies people added until Jellyfin has them."""
+    if _movies.configured():
+        asyncio.create_task(_movies.loop())
 
 import whatsapp_analytics as _wa
 import giveaway as _giveaway

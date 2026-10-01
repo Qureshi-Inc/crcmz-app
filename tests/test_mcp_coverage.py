@@ -71,6 +71,7 @@ STORES: dict[str, list[str] | None] = {
     "/data/watch_diag.db": ["watch_diagnostics"],
     "/data/slap_thumbs.db": ["slap_thumbs"],
     "/data/slap_discover.db": ["slap_discover"],
+    "/data/movies.db": ["movie_library"],
     "/data/slap_playlists.json": None,  # which Zitadel id made a Slap playlist, only
                                         # used to allow edits; the playlists themselves
                                         # are served by slap_library_search.

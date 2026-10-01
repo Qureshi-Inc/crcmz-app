@@ -114,7 +114,8 @@ def _clean_url(url: str) -> str:
     if not url or len(url) > 4000:
         return ""
     if not (url.startswith("http://") or url.startswith("https://")
-            or url.startswith("/api/watch/proxy?")):
+            or url.startswith("/api/watch/proxy?")
+            or re.match(r"^/api/watch/movies/stream/[0-9a-f]{32}/master\.m3u8$", url)):
         return ""
     return url
 
@@ -626,6 +627,9 @@ def lookup_meta(url: str, hint: str = "") -> dict:
     viewer/the source gave. Never raises; {} when nothing matched."""
     import httpx
 
+    if url.startswith("/api/watch/movies/stream/"):
+        import movies   # a film from our own library: Jellyfin knows exactly what it is
+        return movies.history_meta(url)
     try:
         with httpx.Client(timeout=8, headers={"User-Agent": _UA},
                           follow_redirects=True) as c:

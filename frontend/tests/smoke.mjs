@@ -1771,6 +1771,19 @@ try {
       'POST /api/watch/history': (r) => { posts.hist.push(1); return json(200, { ok: true })(r) },
       'POST /api/watch/history/title': (r) => { posts.title.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
       'DELETE /api/watch/history': (r) => { posts.del.push(r.request().postDataJSON()); return json(200, { ok: true, removed: 1 })(r) },
+      'GET /api/watch/movies/library': json(200, {
+        can_add: true,
+        movies: [{ id: 'c'.repeat(32), imdb: 'tt0113277', title: 'Heat', year: '1995', quality: '4K HDR', overview: '', poster: '', added: '2026-10-01T00:00:00Z', by: 'Goopy' }],
+        adding: [{ imdb: 'tt0137523', title: 'Fight Club', year: '1999', poster: '', status: 'downloading', progress: 40, quality: '4K HDR', size_gb: 14, by: 'Bizzle', error: '', id: null, at: NOW * 1000 }],
+      }),
+      'GET /api/watch/movies/popular': json(200, { results: [
+        { imdb: 'tt0113277', title: 'Heat', year: '1995', poster: '', overview: '', state: 'ready', id: 'c'.repeat(32), quality: '4K HDR', progress: 0, error: '' },
+        { imdb: 'tt0110912', title: 'Pulp Fiction', year: '1994', poster: '', overview: '', state: 'new', id: null, quality: '', progress: 0, error: '' },
+      ] }),
+      'GET /api/watch/movies/search': json(200, { results: [
+        { imdb: 'tt15239678', title: 'Dune: Part Two', year: '2024', poster: '', overview: '', state: 'new', id: null, quality: '', progress: 0, error: '' },
+      ] }),
+      'POST /api/watch/movies/add': (r) => { posts.movies = [...(posts.movies || []), r.request().postDataJSON()]; return json(200, { imdb: 'tt15239678', title: 'Dune: Part Two', year: '2024', poster: '', status: 'finding', progress: 0, quality: '', size_gb: 0, by: 'Goopy', error: '', id: null, at: NOW * 1000 })(r) },
       'POST /api/watch/log': (r) => { posts.log++; return json(200, { ok: true })(r) },
       'POST /api/watch/extract': json(200, { url: WATCH_VIDEO, title: 'Heat' }),
       'GET /api/watch/history': json(200, { items: HIST }),
@@ -1789,6 +1802,24 @@ try {
     check('watch: joins with a ticket and goes live', page.writes.includes('POST /api/watch/join') && (await page.textContent('.wp-pill')) === '3 watching')
     check('watch: asks for presence and the host on connect', (await emits(page)).includes('watch:presence:get') && (await emits(page)).includes('CMD:askHost'))
     check('watch: empty stage invites a link', (await page.isVisible('.wp-empty')) && !(await page.isVisible('.wp-overlay')))
+    // Library: Downloaded first, then Find movies, then Watched (history).
+    await page.waitForSelector('.mv-card')
+    check('library: Downloaded shows the film with Play for the party', (await page.textContent('.mv-card .mv-title')).includes('Heat') && (await page.locator('.mv-card button:has-text("Play")').count()) === 1)
+    check('library: an add on its way shows its progress', (await page.textContent('.mv-add')).includes('Downloading · 40%') && (await page.getAttribute('.mv-bar', 'aria-valuenow')) === '40')
+    await page.locator('.wp-library').scrollIntoViewIfNeeded()
+    await shot(page, 'watch-375-library')
+    await page.click('.mv-tabs [role=tab]:has-text("Find movies")')
+    await page.waitForSelector('.mv-card:has-text("Pulp Fiction")')
+    check('library: Find opens on popular movies, marking the ones we have', (await page.locator('.mv-card:has-text("Pulp Fiction") button:has-text("Add to library")').count()) === 1 && (await page.locator('.mv-card:has-text("Heat") button:has-text("Play")').count()) === 1)
+    await page.fill('#mv-q', 'dune')
+    await page.waitForSelector('.mv-card:has-text("Dune: Part Two")')
+    await page.click('.mv-card:has-text("Dune: Part Two") button:has-text("Add to library")')
+    await page.waitForSelector('.mv-card:has-text("Dune: Part Two") .find-chip')
+    check('library: Add posts once and the card says it is finding a copy', (posts.movies || []).length === 1 && posts.movies[0].imdb === 'tt15239678' && (await page.textContent('.mv-card:has-text("Dune: Part Two") .find-chip')).includes('Finding'))
+    await page.locator('.wp-library').scrollIntoViewIfNeeded()
+    await shot(page, 'watch-375-library-find')
+    await tapTargets(page, 'Watch library 375')
+    await page.click('.mv-tabs [role=tab]:has-text("Watched")')
     await page.waitForSelector('.wp-card')
     check('watch: history lists the room', (await page.locator('.wp-card').count()) === 2 && (await page.textContent('.wp-card .wp-card-title')).includes('Heat'))
     await shot(page, 'watch-375-empty', true)

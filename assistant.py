@@ -1686,6 +1686,20 @@ def _slap_discover(limit: int = 20) -> dict:
     return slap_discover.overview(max(1, min(int(limit or 20), 100)))
 
 
+
+@tool("movie_library",
+      "The Watch tab's movie library: films in Jellyfin that a watch party can play (title, "
+      "year, quality such as 4K HDR) and movies friends added recently with their state "
+      "(finding a copy, downloading on Real-Debrid with a percent, adding to the library, "
+      "ready, or failed) and who added each. Ask for a title with query.",
+      {"type": "object", "properties": {
+          "query": {"type": "string", "description": "optional words in the title"},
+          "limit": {"type": "integer", "description": "1-100, default 20"},
+      }})
+def _movie_library(query: str = "", limit: int = 20) -> dict:
+    import movies
+    return movies.overview(max(1, min(int(limit or 20), 100)), query=str(query or ""))
+
 def tool_specs() -> list[dict]:
     """The registry in OpenAI function-calling form."""
     return [
