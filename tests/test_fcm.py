@@ -250,6 +250,11 @@ def http_tests():
         t = r.json()[0]["target"]
         assert t["package_name"] == "me.crcmz.app" and t["namespace"] == "android_app"
         assert len(t["sha256_cert_fingerprints"]) == 1 and t["sha256_cert_fingerprints"][0].count(":") == 31
+        r = client.get("/.well-known/apple-app-site-association")
+        assert r.status_code == 200 and r.headers["content-type"].startswith("application/json"), r.status_code
+        a = r.json()
+        assert a["webcredentials"]["apps"] == ["CF6R3NUAP7.me.crcmz.app"]
+        assert a["applinks"]["details"][0]["appIDs"] == ["CF6R3NUAP7.me.crcmz.app"]
 
     def native_needs_a_session_and_same_origin():
         assert client.post("/api/push/native", json={"token": TOKEN}, headers=origin).status_code == 401

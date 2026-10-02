@@ -143,6 +143,20 @@ def android_asset_links():
     }])
 
 
+# The iOS app (me.crcmz.app, team CF6R3NUAP7): passkeys made on app.crcmz.me work in it
+# (webcredentials) and app.crcmz.me/app links open it (applinks). Served as JSON, no
+# redirect, no extension: Apple fetches it through its CDN.
+IOS_APP_ID = os.environ.get("IOS_APP_ID", "CF6R3NUAP7.me.crcmz.app")
+
+
+@app.get("/.well-known/apple-app-site-association")
+def apple_app_site_association():
+    return JSONResponse({
+        "webcredentials": {"apps": [IOS_APP_ID]},
+        "applinks": {"details": [{"appIDs": [IOS_APP_ID], "components": [{"/": "/app/*"}, {"/": "/app"}]}]},
+    })
+
+
 @app.get("/.well-known/webauthn")
 def webauthn_related_origins():
     """Declare auth.crcmz.me as a related origin so passkeys registered there work here."""
@@ -744,6 +758,7 @@ MACHINE_TOKEN = os.environ.get("CRCMZ_MACHINE_TOKEN", "")
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/auth/logout", "/auth/passkey/begin", "/auth/passkey/complete",
                "/.well-known/webauthn", "/.well-known/assetlinks.json",
+               "/.well-known/apple-app-site-association",
                # Public key material only — WatchParty fetches this to verify
                # Watch Tickets. Never contains a private key.
                "/api/watch/jwks.json",
