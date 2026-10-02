@@ -813,7 +813,7 @@ try {
     check('player points at the session-cookie media URL', (await page.getAttribute('.sheet-clip video', 'src')) === '/api/clips/media?uid=m0')
     await page.click('.sheet-clip button:has-text("Re-send to WhatsApp")')
     await page.waitForSelector('[role=alertdialog]')
-    check('re-send asks first and names the group', (await page.textContent('[role=alertdialog]')).includes('to the Goopers group'))
+    check('re-send asks first and names the group', (await page.textContent('[role=alertdialog]')).includes('to the CRCMZ BOYZ group'))
     check('nothing sent before confirming', resends.length === 0)
     await page.waitForTimeout(450)
     await shot(page, 'clips-375-resend-confirm')
