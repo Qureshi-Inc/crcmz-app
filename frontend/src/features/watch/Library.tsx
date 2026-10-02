@@ -1,10 +1,8 @@
-// Watch · Library, under the player. Downloaded: the films in Jellyfin, ready for the
-// party. Find movies: search the catalogue and add one; the server picks the copy
-// (4K, else 1080p), copies it onto its own disk and the card follows it into the
-// library. Whoever added a film (or an admin) can remove it again. Watched: history.
-// A movie notification links to /watch?library=downloaded: that opens the tab here.
+// Watch party · Library, under the player. Downloaded: the films in Jellyfin, ready for
+// the party, and what's on its way. Whoever added a film (or an admin) can remove it
+// again. Watched: history. Finding and adding movies is the Movies home (/watch).
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Icon } from '../../components/Icon'
@@ -14,56 +12,38 @@ import { ConfirmDialog } from '../clips/ClipSheet'
 import { ApiError } from '../../lib/http'
 import { useReducedMotion } from '../../lib/media'
 import {
-  addMovie, getLibrary, removeMovie, inFlight, measured, popularMovies, searchMovies, stateText, streamUrl,
+  addMovie, getLibrary, removeMovie, inFlight, measured, stateText, streamUrl,
   type Adding, type Library as LibraryData, type Movie, type Result,
 } from '../../lib/movies'
 import { Watched } from './History'
 import { hostMovie, useWatch } from './session'
 
-type Tab = 'downloaded' | 'find' | 'watched'
+type Tab = 'downloaded' | 'watched'
 const TAB_KEY = 'watch.library.tab'
-const TABS: Tab[] = ['downloaded', 'find', 'watched']
+const TABS: Tab[] = ['downloaded', 'watched']
 
 export function Library() {
-  const [tab, setTab] = useState<Tab>(() => (sessionStorage.getItem(TAB_KEY) as Tab) || 'downloaded')
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = sessionStorage.getItem(TAB_KEY) as Tab
+    return TABS.includes(t) ? t : 'downloaded'
+  })
   useEffect(() => { try { sessionStorage.setItem(TAB_KEY, tab) } catch { /* private mode */ } }, [tab])
-  useLibraryLink(setTab)
   return (
     <section className="wp-library" aria-labelledby="wp-lib-h">
-      <h2 className="section-h2" id="wp-lib-h">Library</h2>
+      <div className="mv-row-head">
+        <h2 className="section-h2" id="wp-lib-h">Library</h2>
+        <Link className="btn btn-ghost mv-see" to="/watch"><Icon name="search" />Browse all movies</Link>
+      </div>
       <Tabs.Root value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <Tabs.List className="seg mv-tabs" aria-label="Library">
           <Tabs.Trigger value="downloaded" className="seg-tab">Downloaded</Tabs.Trigger>
-          <Tabs.Trigger value="find" className="seg-tab">Find movies</Tabs.Trigger>
           <Tabs.Trigger value="watched" className="seg-tab">Watched</Tabs.Trigger>
         </Tabs.List>
-        <Tabs.Content value="downloaded" className="mv-panel"><Downloaded onFind={() => setTab('find')} /></Tabs.Content>
-        <Tabs.Content value="find" className="mv-panel"><Find /></Tabs.Content>
+        <Tabs.Content value="downloaded" className="mv-panel"><Downloaded /></Tabs.Content>
         <Tabs.Content value="watched" className="mv-panel"><Watched /></Tabs.Content>
       </Tabs.Root>
     </section>
   )
-}
-
-/** ?library=<tab> (a movie notification): open that tab, bring the library into view,
- *  fetch it fresh, then drop the parameter so a reload doesn't scroll again. The page
- *  stays mounted away from /watch, so this only acts on /watch itself. */
-function useLibraryLink(setTab: (t: Tab) => void) {
-  const loc = useLocation()
-  const navigate = useNavigate()
-  const qc = useQueryClient()
-  useEffect(() => {
-    if (loc.pathname !== '/watch') return
-    const want = new URLSearchParams(loc.search).get('library')
-    if (want === null) return
-    setTab(TABS.includes(want as Tab) ? (want as Tab) : 'downloaded')
-    void qc.invalidateQueries({ queryKey: ['movies', 'library'] })
-    navigate({ pathname: loc.pathname, search: '' }, { replace: true })
-    const t = window.setTimeout(() => {
-      document.getElementById('wp-lib-h')?.scrollIntoView({ block: 'start' })
-    }, 150)
-    return () => window.clearTimeout(t)
-  }, [loc.pathname, loc.search, navigate, qc, setTab])
 }
 
 function useLibrary() {
@@ -89,7 +69,7 @@ function usePlay() {
 }
 
 // ── Downloaded ──────────────────────────────────────────────────────────────
-function Downloaded({ onFind }: { onFind: () => void }) {
+function Downloaded() {
   const q = useLibrary()
   const p = usePlay()
   if (q.isError && !q.data) return <ErrorStrip text="The library didn't load" onRetry={() => q.refetch()} />
@@ -106,7 +86,7 @@ function Downloaded({ onFind }: { onFind: () => void }) {
         <div className="glass empty">
           <p className="empty-title">No movies yet</p>
           <p className="meta">Find one and add it. It shows up here when it's ready to watch together.</p>
-          <button type="button" className="btn btn-primary" onClick={onFind}><Icon name="search" />Find a movie</button>
+          <Link className="btn btn-primary" to="/watch"><Icon name="search" />Find a movie</Link>
         </div>
       ) : (
         <>
@@ -188,62 +168,6 @@ function AddingRow({ a }: { a: Adding }) {
       </span>
       {a.status === 'failed' && <TryAgain imdb={a.imdb} title={a.title} />}
     </div>
-  )
-}
-
-// ── Find movies ─────────────────────────────────────────────────────────────
-function Find() {
-  const [text, setText] = useState('')
-  const [q, setQ] = useState('')
-  useEffect(() => { const t = window.setTimeout(() => setQ(text.trim()), 350); return () => window.clearTimeout(t) }, [text])
-  const searching = q.length >= 2
-  const res = useQuery({
-    queryKey: ['movies', searching ? 'search' : 'popular', searching ? q.toLowerCase() : ''],
-    queryFn: ({ signal }) => (searching ? searchMovies(q, signal) : popularMovies(signal)),
-    placeholderData: (prev) => prev,
-    staleTime: 60_000,
-  })
-  const lib = useLibrary()
-  const p = usePlay()
-  const rows = res.data?.results ?? []
-  return (
-    <>
-      <form className="mv-search" role="search" onSubmit={(e) => { e.preventDefault(); setQ(text.trim()) }}>
-        <label htmlFor="mv-q" className="sr-only">Search movies</label>
-        <Icon name="search" className="mv-search-icon" />
-        <input id="mv-q" type="search" className="input" placeholder="Search movies" value={text}
-          onChange={(e) => setText(e.target.value)} autoComplete="off" enterKeyHint="search" />
-      </form>
-      <p className="meta mv-hint">{searching ? `Results for “${q}”` : 'Popular right now'}. Add one and we find the best copy: 4K when there is one, else 1080p.</p>
-      {lib.data && !lib.data.can_add && <p className="meta mv-hint">Adding movies isn't switched on yet.</p>}
-      {res.isError && !res.data ? <ErrorStrip text="The catalogue didn't load" onRetry={() => res.refetch()} />
-        : res.isPending ? <SkeletonRows n={2} height={120} />
-        : rows.length === 0 ? <p className="dim">Nothing found for “{q}”.</p>
-        : (
-          <ul className="mv-grid" aria-busy={res.isFetching || undefined}>
-            {rows.map((r) => <li key={r.imdb}><ResultCard r={r} live={p.live} playing={!!r.id && p.playing(r.id)} onPlay={() => r.id && p.play(r.id, r.title)} canAdd={!!lib.data?.can_add} /></li>)}
-          </ul>
-        )}
-    </>
-  )
-}
-
-function ResultCard({ r, live, playing, onPlay, canAdd }: { r: Result; live: boolean; playing: boolean; onPlay: () => void; canAdd: boolean }) {
-  return (
-    <article className="glass mv-card" aria-label={r.year ? `${r.title} (${r.year})` : r.title}>
-      <Poster src={r.poster} title={r.title} badge={r.state === 'ready' ? r.quality || 'In library' : ''} />
-      <div className="mv-body">
-        <h3 className="mv-title">{r.title}{r.year && <span className="dim"> ({r.year})</span>}</h3>
-        {r.state === 'ready' && r.id ? (
-          playing ? <span className="wp-playing"><span className="wp-live-dot" aria-hidden="true" />Playing</span>
-            : <button type="button" className="btn btn-primary mv-act" onClick={onPlay} disabled={!live} aria-label={`Play ${r.title} for the party`}><Icon name="play" />Play</button>
-        ) : inFlight(r.state) ? (
-          <span className="find-chip" data-tone="live" role="status">{stateText(r.state, r.progress)}</span>
-        ) : canAdd ? (
-          <AddButton imdb={r.imdb} title={r.title} again={r.state === 'failed'} />
-        ) : null}
-      </div>
-    </article>
   )
 }
 

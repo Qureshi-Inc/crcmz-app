@@ -3,7 +3,7 @@
 // pauses), so leaving /watch keeps the video and the call going; the Watch bar
 // brings you back.
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { ErrorStrip } from '../../components/states'
@@ -37,7 +37,8 @@ export function WatchPage({ visible }: { visible: boolean }) {
     <div className="page watch-page" data-hidden={!visible} inert={!visible} aria-hidden={!visible || undefined}>
       {visible && <WatchTitle />}
       <div className="wp-head">
-        <h1 className="page-h1" tabIndex={-1}>Watch<HelpLink id="watch" /></h1>
+        <Link className="btn btn-ghost wp-movies" to="/watch" aria-label="Back to Movies"><Icon name="left" />Movies</Link>
+        <h1 className="page-h1" tabIndex={-1}>Watch Party<HelpLink id="watch" /></h1>
         <PresencePill s={s} />
         <Roster s={s} max={desktop ? 8 : 4} />
         {s.active && s.status !== 'idle' && (
@@ -119,6 +120,18 @@ function VideoForm({ s }: { s: WatchState }) {
   // phone it would pop the keyboard over the video).
   const desktop = useDesktop()
   useEffect(() => { if (live && !s.video && desktop) urlRef.current?.focus({ preventScroll: true }) }, [live, s.video, desktop])
+  // "Paste a link" on the Movies home lands here with ?paste=1: go straight to the box.
+  const loc = useLocation()
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (!/^\/watch\/party/.test(loc.pathname) || !new URLSearchParams(loc.search).has('paste')) return
+    navigate({ pathname: loc.pathname, search: '' }, { replace: true })
+    const t = window.setTimeout(() => {
+      urlRef.current?.scrollIntoView({ block: 'center' })
+      urlRef.current?.focus({ preventScroll: true })
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [loc.pathname, loc.search, navigate])
   async function submit(e: FormEvent) {
     e.preventDefault()
     if (wait) return

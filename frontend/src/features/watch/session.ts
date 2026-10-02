@@ -617,6 +617,8 @@ function bind(s: Sock) {
     set({ status: 'live', error: '' })
     s.emit('watch:presence:get')
     s.emit('CMD:askHost')
+    // After askHost, so the room's current video can't arrive after the one picked.
+    if (pendingHost) { s.emit('CMD:host', pendingHost); pendingHost = null }
     set({ histTick: state.histTick + 1 })
     window.clearInterval(tsTimer)
     tsTimer = window.setInterval(() => { if (!s.connected) return; const t = time(); if (t !== null) s.emit('CMD:ts', t) }, 1000)
@@ -747,6 +749,22 @@ export function hostMovie(url: string, title: string): boolean {
   sock.emit('CMD:host', url)
   return true
 }
+/** "Watch together" from the Movies home: play it for the party now, or as soon as
+ *  the party page has connected. */
+let pendingHost: string | null = null
+export function watchTogether(url: string, title: string, resumeAt = 0) {
+  srcOf[url] = url
+  titleOf[url] = title
+  // Continue watching: seek once the video knows its length (the same path as history's Resume).
+  resume = resumeAt > 5 ? { t: resumeAt, url, prev: state.video, at: Date.now() } : null
+  if (sock?.connected) {
+    set({ error: '' })
+    if (state.video === url) { if (resumeAt > 5) userSeek(resumeAt); return }
+    sock.emit('CMD:host', url)
+    return
+  }
+  pendingHost = url
+}
 export function clearVideo() { set({ error: '' }); sock?.emit('CMD:host', '') }
 
 export function sendChat(msg: string): boolean {
@@ -781,7 +799,7 @@ export function videoLabel(typedOnly = false): string {
 export async function rally() {
   const names = state.presence.viewers.map((v) => v.name).filter(Boolean)
   const label = videoLabel()
-  const msg = `@all ${names.length ? names.join(', ') : 'We'} are on CRCMZ app ${label ? `watching ${label}` : 'in the watch party'}. Join now fuckers! ${location.origin}/watch`
+  const msg = `@all ${names.length ? names.join(', ') : 'We'} are on CRCMZ app ${label ? `watching ${label}` : 'in the watch party'}. Join now fuckers! ${location.origin}/app/watch/party`
   return postRally(msg)
 }
 

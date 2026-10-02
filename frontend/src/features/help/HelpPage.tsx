@@ -115,15 +115,17 @@ const SECTIONS: Section[] = [
     id: 'watch', title: 'Watch', icon: 'watch', open: '/watch',
     body: (
       <ul>
-        <li>Paste a YouTube link or a video link. Everyone sees it at the same time.</li>
-        <li>Tap the camera button in the player to join with your camera. You start muted and your mic stays off until you tap Unmute, so the movie keeps its full sound. Tap the camera again to turn it off; the red phone leaves the call.</li>
+        <li><b>Movies</b> is the first thing Watch shows: today's featured film, then rows of posters. <b>Continue watching</b> and <b>In our library</b> are ours; Trending, New, Highest rated and the genres are everything else. Tap a genre to turn every row into it, or <b>See all</b> for the whole list.</li>
+        <li>Search finds any movie. Tap a poster for its details, cast and trailer.</li>
+        <li><b>Add to library</b> brings a movie in: we pick the best copy (4K when there is one, else 1080p) and keep it on our server. Everyone gets a notification when it's added and when it's ready. Five a day each. Whoever added a movie (or an admin) can remove it with the bin.</li>
+        <li><b>Watch together</b> on a movie we have starts the party with it, or switches the party to it (it asks first if everyone is watching something else).</li>
+        <li>The banner at the top shows when a party is on: tap <b>Join</b>. With nothing on, <b>Start</b> opens the party and <b>Paste a link</b> takes a YouTube link or a video link. Everyone sees it at the same time.</li>
+        <li>In the party, tap the camera button in the player to join with camera + mic. Tap it again to turn your camera off; the red phone leaves the call.</li>
         <li>Tap 😀 in the player to react. Three of the same in a row sets off a party.</li>
         <li>Tap ⚙ in the player for camera position, flip camera, mic and speaker, your display name, and <b>Rally</b> (tells the WhatsApp group to join).</li>
         <li>In fullscreen, the cameras sit on the video and the chat button lets you type without leaving.</li>
         <li>It keeps playing while you use the rest of the app.</li>
-        <li><b>Library</b> (under the player): <b>Downloaded</b> is every movie we have. Press Play and it plays for the whole party. Whoever added a movie (or an admin) can remove it with the bin.</li>
-        <li><b>Find movies</b>: search, then <b>Add to library</b>. We pick the best copy (4K when there is one, else 1080p if the server's disk is getting full) and download it to the server; the card shows how far along it is. Everyone gets a notification when a movie is added and again when it's ready to watch (switch movies off in Settings if you'd rather not). Five a day each.</li>
-        <li><b>Watched</b>: what this room (or just you) watched, to pick up where you left off.</li>
+        <li>Under the player, <b>Library</b> has our movies and <b>Watched</b>: what this room (or just you) watched, to pick up where you left off.</li>
       </ul>
     ),
   },

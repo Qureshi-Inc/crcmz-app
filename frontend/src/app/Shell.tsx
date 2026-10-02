@@ -78,7 +78,8 @@ export function Shell() {
   }, [hasPlayer])
 
   // Watch Party stays mounted once started, so the video and call survive navigation.
-  const onWatch = current === 'watch'
+  // /watch is the Movies home; the party itself is /watch/party.
+  const onWatch = /^\/watch\/party\/?$/.test(location.pathname)
   const keepWatch = useWatchSelect((s) => s.active) || onWatch
   const watchBar = useWatchBar(onWatch)
   const huddleBar = useHuddleBar(current === 'huddle')

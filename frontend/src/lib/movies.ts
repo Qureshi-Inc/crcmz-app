@@ -7,8 +7,25 @@ import { request } from './http'
 export type MovieState = 'new' | 'finding' | 'downloading' | 'copying' | 'adding' | 'ready' | 'failed'
 export type Movie = { id: string; imdb: string; title: string; year: string; quality: string; overview: string; poster: string; added: string; by: string; can_remove: boolean }
 export type Adding = { imdb: string; title: string; year: string; poster: string; status: MovieState; progress: number; quality: string; size_gb: number; by: string; error: string; id: string | null; at: number }
-export type Result = { imdb: string; title: string; year: string; poster: string; overview: string; state: MovieState; id: string | null; quality: string; progress: number; error: string }
+export type Result = { imdb: string; title: string; year: string; poster: string; background?: string; rating?: string; genres?: string[]; overview: string; state: MovieState; id: string | null; quality: string; progress: number; error: string }
 export type Library = { movies: Movie[]; adding: Adding[]; can_add: boolean }
+
+export type ListKind = 'popular' | 'new' | 'top'
+export type Row = { id: string; title: string; kind: ListKind; genre: string; items: Result[] }
+export type Home = { featured: Result | null; rows: Row[]; genres: string[] }
+export type Details = Result & {
+  logo: string; runtime: number; director: string[]; cast: string[]; writer: string[]; awards: string; country: string
+  trailers: string[]; can_add: boolean; by: string; can_remove: boolean; library_quality: string; adding: Adding | null
+}
+export type NowPlaying = { room: string; watching: number; video: string; title: string; poster: string; id: string | null; paused: boolean }
+
+export const getHome = (genre: string, signal?: AbortSignal) =>
+  request<Home>(`/api/watch/movies/home${genre ? `?genre=${encodeURIComponent(genre)}` : ''}`, { signal, timeoutMs: 25_000 })
+export const getCatalog = (kind: ListKind, genre: string, skip: number, signal?: AbortSignal) =>
+  request<{ results: Result[]; next: number }>(`/api/watch/movies/catalog?kind=${kind}&genre=${encodeURIComponent(genre)}&skip=${skip}`, { signal, timeoutMs: 25_000 })
+export const getDetails = (imdb: string, signal?: AbortSignal) => request<Details>(`/api/watch/movies/meta/${encodeURIComponent(imdb)}`, { signal, timeoutMs: 25_000 })
+export const getNow = (signal?: AbortSignal) => request<NowPlaying>('/api/watch/movies/now', { signal })
+export const isMovieStream = (url: string) => /^\/api\/watch\/movies\/stream\/[0-9a-f]{32}\//.test(url)
 
 export const getLibrary = (signal?: AbortSignal) => request<Library>('/api/watch/movies/library', { signal })
 export const searchMovies = (q: string, signal?: AbortSignal) =>

@@ -16,6 +16,7 @@ import { WhatsAppPage } from '../features/whatsapp/WhatsAppPage'
 import { CoachPage } from '../features/coach/CoachPage'
 import { GiveawayPage } from '../features/giveaway/GiveawayPage'
 import { HelpPage } from '../features/help/HelpPage'
+import { MoviesHome } from '../features/watch/MoviesHome'
 import { NotificationsPage } from '../features/notifications/NotificationsPage'
 
 // assistant-ui and the markdown renderer are ~140 kB gzipped, so only Ask AI pays for them.
@@ -49,8 +50,9 @@ export function App() {
               <Route path="slap" element={<SlapPage />} />
               <Route path="whatsapp" element={<WhatsAppPage />} />
               <Route path="giveaway" element={<GiveawayPage />} />
-              {/* The Shell renders the Watch page itself, so it can stay mounted across routes. */}
-              <Route path="watch" element={null} />
+              <Route path="watch" element={<MoviesHome />} />
+              {/* The Shell renders the party itself, so it can stay mounted across routes. */}
+              <Route path="watch/party" element={null} />
               <Route path="huddle" element={<HuddlePage />} />
               <Route path="coach" element={<CoachPage />} />
               <Route path="ask" element={<Suspense fallback={null}><AskPage /></Suspense>} />

@@ -530,7 +530,7 @@ try {
   // ── 3. Routing: legacy ?p=, handoffs, not found, admin gating ──────────────
   {
     const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { 'GET /': classicStub, ...CLIP_READS } })
-    const map = { squad: '/app', pipeline: '/app/clips', upload: '/app/clips?upload', slap: '/app/slap', wa: '/app/whatsapp', giveaway: '/app/giveaway', watch: '/app/watch', huddle: '/app/huddle', coach: '/app/coach', ai: '/app/ask', nope: '/app', '../../etc': '/app' }
+    const map = { squad: '/app', pipeline: '/app/clips', upload: '/app/clips?upload', slap: '/app/slap', wa: '/app/whatsapp', giveaway: '/app/giveaway', watch: '/app/watch/party', huddle: '/app/huddle', coach: '/app/coach', ai: '/app/ask', nope: '/app', '../../etc': '/app' }
     for (const [k, want] of Object.entries(map)) {
       await page.goto(`${BASE}${process.env.LEGACY_PREFIX || "/app/"}?p=${encodeURIComponent(k)}`)
       await page.waitForSelector('h1')
@@ -1771,6 +1771,15 @@ try {
         return s
       }
     })()`
+    const film = (imdb, title, year, extra = {}) => ({ imdb, title, year, poster: '', background: '', rating: '8.0', genres: ['Drama'], overview: `${title}, the film.`, state: 'new', id: null, quality: '', progress: 0, error: '', ...extra })
+    const INCEPTION = film('tt1375666', 'Inception', '2010', { state: 'ready', id: 'd'.repeat(32), quality: '4K HDR', rating: '8.8' })
+    const MOVIES_HOME = {
+      featured: INCEPTION, genres: ['Action', 'Horror'],
+      rows: [
+        { id: 'popular', title: 'Trending now', kind: 'popular', genre: '', items: [INCEPTION, film('tt0110912', 'Pulp Fiction', '1994')] },
+        { id: 'g-Horror', title: 'Horror', kind: 'popular', genre: 'Horror', items: [film('tt7784604', 'Hereditary', '2018')] },
+      ],
+    }
     const WATCH = {
       'GET /api/watch/config': json(200, { authMode: 'zitadel', origin: '', socketPath: '/wp/socket.io', rooms: ['crcmz'], defaultRoom: 'crcmz', ticketTtl: 60, viewer: { id: 'u1', name: 'Goopy', nickname: '', psnOnlineId: 'Goopy', mod: true } }),
       'GET /wp/socket.io/socket.io.js': (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: FAKE_IO }),
@@ -1792,6 +1801,10 @@ try {
       'GET /api/watch/movies/search': json(200, { results: [
         { imdb: 'tt15239678', title: 'Dune: Part Two', year: '2024', poster: '', overview: '', state: 'new', id: null, quality: '', progress: 0, error: '' },
       ] }),
+      'GET /api/watch/movies/home': json(200, MOVIES_HOME),
+      'GET /api/watch/movies/now': json(200, { room: 'crcmz', watching: 0, video: '', title: '', poster: '', id: null, paused: true }),
+      'GET /api/watch/movies/meta/tt0110912': (r) => json(200, { ...MOVIES_HOME.rows[0].items[1], state: (posts.movies || []).some((m) => m.imdb === 'tt0110912') ? 'finding' : 'new', logo: '', runtime: 154, director: ['Quentin Tarantino'], cast: ['John Travolta', 'Uma Thurman'], writer: [], awards: 'Won 1 Oscar', country: 'United States', trailers: [], can_add: true, by: '', can_remove: false, library_quality: '', adding: null })(r),
+      'GET /api/watch/movies/meta/tt1375666': json(200, { ...MOVIES_HOME.featured, logo: '', runtime: 148, director: ['Christopher Nolan'], cast: ['Leonardo DiCaprio'], writer: [], awards: '', country: '', trailers: [], can_add: true, by: 'Goopy', can_remove: false, library_quality: '4K HDR', adding: null }),
       'POST /api/watch/movies/remove': (r) => { posts.removed = [...(posts.removed || []), r.request().postDataJSON()]; return json(200, { title: 'Heat', removed: 1 })(r) },
       'POST /api/watch/movies/add': (r) => { posts.movies = [...(posts.movies || []), r.request().postDataJSON()]; return json(200, { imdb: 'tt15239678', title: 'Dune: Part Two', year: '2024', poster: '', status: 'finding', progress: 0, quality: '', size_gb: 0, by: 'Goopy', error: '', id: null, at: NOW * 1000 })(r) },
       'POST /api/watch/log': (r) => { posts.log++; return json(200, { ok: true })(r) },
@@ -1807,15 +1820,15 @@ try {
     // Phone
     const { ctx, page } = await newPage({ width: 375, height: 800, mocks: WATCH })
     await page.addInitScript(() => { if (!sessionStorage.getItem('wp-t')) { sessionStorage.setItem('wp-t', '1'); localStorage.removeItem('watch.orbs.pos') } })
-    await ready(page, '/app/watch')
+    await ready(page, '/app/watch/party')
     await page.waitForSelector('.wp-pill[data-tone="live"]')
     check('watch: joins with a ticket and goes live', page.writes.includes('POST /api/watch/join') && (await page.textContent('.wp-pill')) === '3 watching')
     check('watch: asks for presence and the host on connect', (await emits(page)).includes('watch:presence:get') && (await emits(page)).includes('CMD:askHost'))
     check('watch: empty stage invites a link', (await page.isVisible('.wp-empty')) && !(await page.isVisible('.wp-overlay')))
-    // Library: Downloaded first, then Find movies, then Watched (history).
+    // The party's Library: Downloaded, then Watched (history). Finding movies is the Movies home.
     await page.waitForSelector('.mv-card')
     check('library: Downloaded shows the film with Play for the party', (await page.textContent('.mv-card .mv-title')).includes('Heat') && (await page.locator('.mv-card button:has-text("Play")').count()) === 1)
-    check('library: an add on its way shows its progress', (await page.textContent('.mv-add')).includes('Downloading · 40%') && (await page.getAttribute('.mv-bar', 'aria-valuenow')) === '40')
+    check('library: an add on its way shows its progress', (await page.textContent('.mv-add')).includes('40%') && (await page.getAttribute('.mv-bar', 'aria-valuenow')) === '40')
     await page.locator('.wp-library').scrollIntoViewIfNeeded()
     await shot(page, 'watch-375-library')
     await page.click('.mv-card button[aria-label="Remove Heat from the library"]')
@@ -1824,16 +1837,7 @@ try {
     await page.locator('[role=alertdialog] button:has-text("Remove"), [role=dialog] button:has-text("Remove")').last().click()
     await page.waitForFunction(() => !document.querySelector('.mv-card'))
     check('library: confirming removes it once and the card goes', (posts.removed || []).length === 1 && posts.removed[0].id === 'c'.repeat(32))
-    await page.click('.mv-tabs [role=tab]:has-text("Find movies")')
-    await page.waitForSelector('.mv-card:has-text("Pulp Fiction")')
-    check('library: Find opens on popular movies, marking the ones we have', (await page.locator('.mv-card:has-text("Pulp Fiction") button:has-text("Add to library")').count()) === 1 && (await page.locator('.mv-card:has-text("Heat") button:has-text("Play")').count()) === 1)
-    await page.fill('#mv-q', 'dune')
-    await page.waitForSelector('.mv-card:has-text("Dune: Part Two")')
-    await page.click('.mv-card:has-text("Dune: Part Two") button:has-text("Add to library")')
-    await page.waitForSelector('.mv-card:has-text("Dune: Part Two") .find-chip')
-    check('library: Add posts once and the card says it is finding a copy', (posts.movies || []).length === 1 && posts.movies[0].imdb === 'tt15239678' && (await page.textContent('.mv-card:has-text("Dune: Part Two") .find-chip')).includes('Finding'))
-    await page.locator('.wp-library').scrollIntoViewIfNeeded()
-    await shot(page, 'watch-375-library-find')
+    check('library: the party links to the Movies home to find more', (await page.getAttribute('.wp-library a:has-text("Browse all movies")', 'href')) === '/app/watch')
     await tapTargets(page, 'Watch library 375')
     await page.click('.mv-tabs [role=tab]:has-text("Watched")')
     await page.waitForSelector('.wp-card')
@@ -1900,6 +1904,34 @@ try {
     await page.waitForFunction(() => document.querySelector('.wp-set')?.textContent.includes('Rally sent'))
     check('watch: Rally posts once after confirming', posts.rally.length === 1)
     await page.click('.wp-set button[aria-label="Close settings"]')
+    // Movies home: Watch opens on movies; a poster opens its sheet; Add; Watch together.
+    await page.click('.wp-head a:has-text("Movies")')
+    await page.waitForSelector('.mv-hero-h')
+    check('movies: Watch opens on a featured film, the library row and catalogue rows', (await page.textContent('.mv-hero-h')) === 'Inception' && (await page.locator('.mv-row').count()) >= 3 && (await page.locator('#mv-library').count()) === 1)
+    check('movies: a party banner offers to start one or paste a link', (await page.getAttribute('.mv-party a:has-text("Paste a link")', 'href')) === '/app/watch/party?paste=1')
+    await page.click('#mv-row-popular .mv-tile:has-text("Pulp Fiction")')
+    await page.waitForSelector('.mv-sheet .mv-sheet-h')
+    check('movies: a poster opens its sheet with the details', (await page.textContent('.mv-sheet-h')) === 'Pulp Fiction' && new URL(page.url()).searchParams.get('m') === 'tt0110912' && (await page.textContent('.mv-facts')).includes('Quentin Tarantino'))
+    await shot(page, 'movies-375-sheet')
+    await tapTargets(page, 'Movie sheet 375')
+    const adds = (posts.movies || []).length
+    await page.click('.mv-sheet button:has-text("Add to library")')
+    await page.waitForSelector('.mv-sheet .mv-sheet-progress')
+    check('movies: Add posts once and the sheet follows it in', (posts.movies || []).length === adds + 1 && posts.movies.at(-1).imdb === 'tt0110912' && (await page.textContent('.mv-sheet-progress')).includes('Finding'))
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !document.querySelector('.mv-sheet') && !new URL(location.href).searchParams.get('m'))
+    await page.click('.mv-genres .chip:has-text("Horror")')
+    await page.waitForSelector('.mv-genres .chip[aria-pressed="true"]:has-text("Horror")', { timeout: 3000 }).catch(() => {})
+    check('movies: a genre chip turns the rows into that genre', new URL(page.url()).searchParams.get('genre') === 'Horror' && (await page.getAttribute('.mv-genres .chip:has-text("Horror")', 'aria-pressed')) === 'true', `${page.url()} ${await page.getAttribute('.mv-genres .chip:has-text("Horror")', 'aria-pressed')}`)
+    await page.click('.mv-genres .chip:has-text("All")')
+    await shot(page, 'movies-375-home')
+    await tapTargets(page, 'Movies home 375')
+    await axe(page, 'Movies home 375', '.app-main')
+    await page.click('#mv-row-popular .mv-tile:has-text("Inception")')
+    await page.click('.mv-sheet button:has-text("Watch together")')
+    await page.waitForFunction(() => location.pathname === '/app/watch/party')
+    await page.waitForFunction((u) => window.__wpEmits.some((e) => e[0] === 'CMD:host' && e[1] === u), `/api/watch/movies/stream/${'d'.repeat(32)}/master.m3u8`, { timeout: 5000 }).catch(() => {})
+    check('movies: Watch together opens the party and plays it for everyone', await page.evaluate((u) => window.__wpEmits.some((e) => e[0] === 'CMD:host' && e[1] === u), `/api/watch/movies/stream/${'d'.repeat(32)}/master.m3u8`))
     // Leave /watch: the party keeps going in the Watch bar.
     await page.click('.tabbar a[href="/app"]')
     await page.waitForSelector('.watchbar-bar')
@@ -1924,7 +1956,7 @@ try {
 
     // Desktop
     const d = await newPage({ width: 1440, height: 900, mocks: WATCH })
-    await ready(d.page, '/app/watch')
+    await ready(d.page, '/app/watch/party')
     await d.page.waitForSelector('.wp-pill[data-tone="live"]')
     await host(d.page)
     await d.page.waitForSelector('.wp-overlay')
@@ -2251,6 +2283,7 @@ try {
       // The Watch call joins muted, so the Huddle mic stays live; unmuting Watch
       // mutes the Huddle mic (F-5: one live mic at a time).
       await h.page.click('.tabbar a[href="/app/watch"]')
+      await h.page.click('.mv-party a[href="/app/watch/party"] >> nth=0')
       await h.page.waitForSelector('.wp-pill[data-tone="live"]')
       await h.page.click('.wp-actions button:has-text("Join with camera")')
       await h.page.waitForSelector('.wp-orb')

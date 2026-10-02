@@ -271,14 +271,25 @@ def _cached(key: str, ttl: float) -> Any:
     return hit[1] if hit and time.time() - hit[0] < ttl else None
 
 
+def _img(url: object, size: str = "medium") -> str:
+    """Cinemeta images (metahub) at the size we want; anything not https is dropped."""
+    u = str(url or "")
+    if not u.startswith("https://"):
+        return ""
+    return re.sub(r"/(small|medium|large)/(tt\d+)/", f"/{size}/\\2/", u)
+
+
 def _meta_row(m: dict) -> dict | None:
     imdb = str(m.get("imdb_id") or m.get("id") or "")
     if not _IMDB.match(imdb) or not m.get("name"):
         return None
     year = str(m.get("releaseInfo") or m.get("year") or "")[:4]
-    poster = str(m.get("poster") or "")
+    genres = m.get("genres") or m.get("genre") or []
+    rating = str(m.get("imdbRating") or "")
     return {"imdb": imdb, "title": str(m["name"])[:200], "year": year if year.isdigit() else "",
-            "poster": poster if poster.startswith("https://") else "",
+            "poster": _img(m.get("poster")), "background": _img(m.get("background")),
+            "rating": rating if re.match(r"^\d{1,2}(\.\d)?$", rating) else "",
+            "genres": [str(g)[:30] for g in genres if isinstance(g, str)][:4] if isinstance(genres, list) else [],
             "overview": str(m.get("description") or "")[:600]}
 
 
@@ -325,6 +336,142 @@ async def popular() -> list[dict]:
 async def meta(imdb: str) -> dict | None:
     data = await _cinemeta(f"meta/movie/{imdb}.json")
     return _meta_row(data.get("meta") or {}) if data else None
+
+
+# Browsing. Cinemeta's movie catalogues: "top" is what's popular now, "year" what came
+# out in a year, "imdbRating" the best rated; the first and last split by genre.
+GENRES = ["Action", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama", "Family",
+          "Fantasy", "History", "Horror", "Mystery", "Romance", "Sci-Fi", "Sport", "Thriller", "War", "Western"]
+_CATALOGS = {"popular": "top", "new": "year", "top": "imdbRating"}
+_YT = re.compile(r"^[A-Za-z0-9_-]{11}$")
+PAGE = 50
+
+
+def _this_year() -> str:
+    return time.strftime("%Y")
+
+
+async def catalog(kind: str, genre: str = "", skip: int = 0) -> list[dict]:
+    """One page of a catalogue. `genre` is a genre (popular, top) or a year (new)."""
+    if kind not in _CATALOGS:
+        raise HTTPException(400, "which list?")
+    if kind == "new":
+        genre = genre or _this_year()
+        if not re.match(r"^(19|20)\d\d$", genre):
+            raise HTTPException(400, "which year?")
+    elif genre and genre not in GENRES:
+        raise HTTPException(400, "which genre?")
+    skip = max(0, min(int(skip or 0), 1000))
+    extra = "&".join(x for x in (f"genre={quote(genre, safe='')}" if genre else "", f"skip={skip}" if skip else "") if x)
+    path = f"catalog/movie/{_CATALOGS[kind]}" + (f"/{extra}" if extra else "") + ".json"
+    key = f"cat:{path}"
+    if (hit := _cached(key, 6 * 3600)) is not None:
+        return hit
+    data = await _cinemeta(path)
+    rows = [r for m in (data.get("metas") or []) if (r := _meta_row(m))]
+    if kind == "top":
+        # Cinemeta's "Featured" list isn't in rating order and has unrated new releases.
+        rows = sorted((r for r in rows if r["rating"] and float(r["rating"]) >= 7.0),
+                      key=lambda r: -float(r["rating"]))
+    _cache[key] = (time.time(), rows)
+    return rows
+
+
+HOME_GENRES = ["Action", "Comedy", "Horror", "Sci-Fi", "Animation", "Thriller", "Romance", "Crime"]
+
+
+async def home(genre: str = "") -> dict:
+    """The Movies home: a featured film and rows of posters. With a genre, every row is that genre."""
+    if genre and genre not in GENRES:
+        raise HTTPException(400, "which genre?")
+    if genre:
+        plan = [("popular", f"Popular {genre}", "popular", genre), ("top", f"Highest rated {genre}", "top", genre)]
+    else:
+        y = _this_year()
+        plan = [("popular", "Trending now", "popular", ""), ("new", f"New in {y}", "new", y),
+                ("top", "Highest rated", "top", "")] + [(f"g-{g}", g, "popular", g) for g in HOME_GENRES]
+
+    async def one(kind: str, g: str) -> list[dict]:
+        try:
+            return await catalog(kind, g)
+        except HTTPException as e:
+            logger.info("movies: home row %s/%s failed: %s", kind, g, e.detail)
+            return []
+
+    lists = await asyncio.gather(*(one(kind, g) for _, _, kind, g in plan))
+    rows, seen = [], set()
+    for (rid, title, kind, g), items in zip(plan, lists):
+        # Genre rows skip films already shown higher up, so the page doesn't repeat itself.
+        fresh = [m for m in items if m["imdb"] not in seen] if rid.startswith("g-") else items
+        pick = (fresh if len(fresh) >= 8 else items)[:20]
+        if pick:
+            rows.append({"id": rid, "title": title, "kind": kind, "genre": g, "items": pick})
+            seen.update(m["imdb"] for m in pick[:10])
+    pool = [m for m in (lists[0] if lists else [])[:12] if m["background"]]
+    # The same featured film all day, a different one tomorrow.
+    featured = pool[int(time.time() // 86400) % len(pool)] if pool else None
+    flat = [m for r in rows for m in r["items"]] + ([featured] if featured else [])
+    states = {m["imdb"]: m for m in await annotate(flat)}
+    for r in rows:
+        r["items"] = [states[m["imdb"]] for m in r["items"]]
+    return {"featured": states[featured["imdb"]] if featured else None, "rows": rows, "genres": GENRES}
+
+
+async def details(imdb: str) -> dict:
+    """Everything the movie sheet shows."""
+    if not _IMDB.match(imdb or ""):
+        raise HTTPException(404, "not found")
+    key = f"meta:{imdb}"
+    m = _cached(key, 24 * 3600)
+    if m is None:
+        m = (await _cinemeta(f"meta/movie/{imdb}.json")).get("meta") or {}
+        _cache[key] = (time.time(), m)
+    row = _meta_row(m)
+    if not row:
+        raise HTTPException(404, "that movie isn't in the catalogue")
+    trailers = []
+    for t in m.get("trailers") or []:
+        yt = str((t or {}).get("source") or "")
+        if _YT.match(yt) and yt not in trailers:
+            trailers.append(yt)
+    runtime = re.match(r"^(\d{1,3})", str(m.get("runtime") or ""))
+    lst = lambda v: [str(x)[:60] for x in (v or []) if isinstance(x, str)][:8]  # noqa: E731
+    return {**row, "overview": str(m.get("description") or "")[:2000], "poster": _img(m.get("poster"), "large"),
+            "background": _img(m.get("background"), "large"), "logo": _img(m.get("logo")),
+            "runtime": int(runtime.group(1)) if runtime else 0, "director": lst(m.get("director")),
+            "cast": lst(m.get("cast")), "writer": lst(m.get("writer")), "awards": str(m.get("awards") or "")[:200],
+            "country": str(m.get("country") or "").split(",")[0][:60], "trailers": trailers[:3]}
+
+
+# What the party is on right now, from the Watch Party server's room list (server.py's
+# chat poller hands it over every few seconds).
+_rooms: dict[str, dict] = {}
+
+
+def set_rooms(rooms: list) -> None:
+    now = time.time()
+    for rm in rooms if isinstance(rooms, list) else []:
+        rid = str((rm or {}).get("roomId") or "").strip("/")
+        if rid:
+            _rooms[rid] = {"video": str(rm.get("video") or ""), "paused": bool(rm.get("paused")),
+                           "watching": int(rm.get("participantCount") or 0), "at": now}
+
+
+def now_playing(room: str) -> dict:
+    r = _rooms.get(room) or {}
+    if not r or time.time() - r["at"] > 60:
+        return {"room": room, "watching": 0, "video": "", "title": "", "poster": "", "id": None, "paused": True}
+    url = r["video"]
+    m = re.match(re.escape(STREAM_PREFIX) + r"([0-9a-f]{32})/", url)
+    info: dict = {}
+    if url:
+        try:
+            import watch_history
+            info = watch_history.item_info(url) or {}
+        except Exception:  # noqa: BLE001
+            info = {}
+    return {"room": room, "watching": r["watching"], "video": url, "paused": r["paused"],
+            "title": info.get("title") or "", "poster": info.get("poster") or "", "id": m.group(1) if m else None}
 
 
 async def _torrentio(imdb: str) -> list[dict]:
@@ -1268,6 +1415,35 @@ def build_router(get_session, is_admin) -> APIRouter:
             raise HTTPException(400, "expected JSON")
         jf_id = str((b or {}).get("id") or "") if isinstance(b, dict) else ""
         return await remove(sub, jf_id, admin=await is_admin(sub))
+
+    @router.get("/home")
+    async def home_get(request: Request, genre: str = ""):
+        caller_sub(request)
+        return await home(genre)
+
+    @router.get("/catalog")
+    async def catalog_get(request: Request, kind: str = "popular", genre: str = "", skip: int = 0):
+        caller_sub(request)
+        return {"results": await annotate(await catalog(kind, genre, skip)), "next": skip + PAGE}
+
+    @router.get("/meta/{imdb}")
+    async def details_get(imdb: str, request: Request):
+        sub = caller_sub(request)
+        d = await details(imdb)
+        state = (await annotate([d]))[0]
+        lib = await library(sub, await is_admin(sub))
+        card = next((m for m in lib["movies"] if m["imdb"] == imdb), None)
+        adding = next((a for a in lib["adding"] if a["imdb"] == imdb), None)
+        return {**state, "can_add": lib["can_add"], "by": (card or adding or {}).get("by", ""),
+                "can_remove": bool(card and card["can_remove"]), "library_quality": (card or {}).get("quality", ""),
+                "adding": adding}
+
+    @router.get("/now")
+    async def now_get(request: Request, room: str = "crcmz"):
+        caller_sub(request)
+        import watch as watch_mod
+        room = watch_mod.canonical_room(room) or "crcmz"
+        return now_playing(room)
 
     @router.get("/search")
     async def search_get(request: Request, q: str = ""):

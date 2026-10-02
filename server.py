@@ -5325,7 +5325,7 @@ async def watch_join(request: Request):
     if _push_room_quiet.first(f"watch:{room}"):
         _notify.route_in_background(
             "watch", f"📺 {viewer['displayName']} started a Watch Party", "Tap to join them.",
-            "/app/watch", exclude=viewer["zitadelSubject"], tag=f"watch-{room}", urgency="high", ttl=1800)
+            "/app/watch/party", exclude=viewer["zitadelSubject"], tag=f"watch-{room}", urgency="high", ttl=1800)
 
     return JSONResponse(
         {
@@ -5470,6 +5470,7 @@ async def _watch_chat_poller() -> None:
                 r = await c.get(f"{_WP_INTERNAL}/internal/rooms")
                 if r.status_code == 200:
                     rooms = r.json()
+                    _movies.set_rooms(rooms)   # the Movies home shows what the party is on
                     for rm in rooms if isinstance(rooms, list) else []:
                         if rm.get("chat"):
                             await asyncio.to_thread(

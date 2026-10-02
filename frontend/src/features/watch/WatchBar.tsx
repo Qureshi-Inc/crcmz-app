@@ -31,7 +31,7 @@ function WatchRow() {
     : `${others.slice(0, 2).join(', ')}${others.length > 2 ? ` +${others.length - 2}` : ''}`
   return (
     <div className="miniplayer-row">
-      <Link to="/watch" className="miniplayer-open" aria-label={`Return to Watch Party: ${sub}`}>
+      <Link to="/watch/party" className="miniplayer-open" aria-label={`Return to Watch Party: ${sub}`}>
         <span className="watchbar-icon" data-playing={s.playing}><Icon name="watch" /></span>
         <span className="miniplayer-text">
           <span className="miniplayer-title">Watch Party</span>

@@ -88,7 +88,7 @@ const LEGACY_P: Record<string, string> = {
   slap: '/app/slap',
   wa: '/app/whatsapp',
   giveaway: '/app/giveaway',
-  watch: '/app/watch',
+  watch: '/app/watch/party',
   huddle: '/app/huddle',
   coach: '/app/coach',
   ai: '/app/ask',

@@ -272,6 +272,16 @@ def _item(row: sqlite3.Row) -> dict:
     return d
 
 
+def item_info(url: str) -> dict | None:
+    """Title, year and poster we know for a video (for "now playing")."""
+    with _lock, _conn() as db:
+        row = db.execute("SELECT * FROM watch_items WHERE url = ?", (url,)).fetchone()
+    if not row:
+        return None
+    it = _item(row)
+    return {"title": it.get("title") or "", "year": it.get("year") or "", "poster": it.get("poster") or ""}
+
+
 def list_history(*, room: str | None = None, user_id: str | None = None,
                  limit: int = 20, include_finished: bool = True) -> list[dict]:
     """Videos, most recently watched first, each with who watched and where

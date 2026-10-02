@@ -214,9 +214,24 @@ async def fake_cinemeta(path):
     if path.startswith("meta/movie/tt15239678"):
         return {"meta": {"imdb_id": "tt15239678", "name": "Dune: Part Two", "releaseInfo": "2024",
                          "poster": "https://images.metahub.space/poster/medium/tt15239678/img"}}
+    if path.startswith("meta/movie/tt7777777"):
+        return {"meta": {"imdb_id": "tt7777777", "name": "Trailer Test", "releaseInfo": "2020", "runtime": "123 min",
+                         "imdbRating": "7.9", "genres": ["Drama"], "cast": ["A", "B"], "director": ["D"],
+                         "poster": "https://images.metahub.space/poster/small/tt7777777/img",
+                         "background": "http://insecure.example/bg.jpg", "logo": "https://images.metahub.space/logo/medium/tt7777777/img",
+                         "trailers": [{"source": "U2Qp5pL3ovA"}, {"source": "U2Qp5pL3ovA"}, {"source": "<script>"}]}}
     if path.startswith("meta/movie/"):
         imdb = path.split("/")[2].split(".")[0]
         return {"meta": {"imdb_id": imdb, "name": f"Film {imdb}", "releaseInfo": "2001"}}
+    if path.startswith("catalog/movie/") and "search=" not in path:
+        CATALOG_CALLS.append(path)
+        # Each list: a page of films, some shared with the others, one unrated.
+        base = [("tt1000001", "Shared One", "6.1"), ("tt1000002", "Shared Two", ""), ("tt1000003", "Great", "9.1"),
+                ("tt1000004", "Good", "7.4"), ("tt1000005", "Meh", "5.0")]
+        extra = [(f"tt2{abs(hash(path)) % 10**5:05d}{i}", f"{path.split('/')[2]} {i}", f"{6 + i % 4}.{i}") for i in range(12)]
+        return {"metas": [{"imdb_id": i, "name": n, "releaseInfo": "2026", "imdbRating": r, "genres": ["Horror"],
+                           "poster": f"https://images.metahub.space/poster/small/{i}/img",
+                           "background": f"https://images.metahub.space/background/medium/{i}/img"} for i, n, r in base + extra]}
     if path.startswith("catalog/movie/top/search="):
         return {"metas": [{"imdb_id": "tt15239678", "name": "Dune: Part Two", "releaseInfo": "2024"},
                           {"imdb_id": "tt1160419", "name": "Dune", "releaseInfo": "2021"},
@@ -224,6 +239,7 @@ async def fake_cinemeta(path):
     raise AssertionError(path)
 
 
+CATALOG_CALLS: list[str] = []
 mv._rd = RD
 mv._torrentio = fake_torrentio
 mv._cinemeta = fake_cinemeta
@@ -728,6 +744,75 @@ def remove_tests():
         check(fn.__name__, fn)
 
 
+# ── Browsing ─────────────────────────────────────────────────────────────────
+def browse_tests():
+    print("browsing")
+
+    def catalogues_build_cinemeta_paths_and_refuse_anything_else():
+        reset(); CATALOG_CALLS.clear()
+        run(mv.catalog("popular"))
+        run(mv.catalog("popular", "Sci-Fi", 50))
+        run(mv.catalog("new"))
+        assert CATALOG_CALLS == ["catalog/movie/top.json", "catalog/movie/top/genre=Sci-Fi&skip=50.json",
+                                 f"catalog/movie/year/genre={mv._this_year()}.json"], CATALOG_CALLS
+        for bad in (("popular", "Nope", 0), ("new", "abcd", 0), ("trending", "", 0), ("top", "../x", 0)):
+            try:
+                run(mv.catalog(*bad))
+            except HTTPException as e:
+                assert e.status_code == 400, bad
+            else:
+                raise AssertionError(f"{bad} accepted")
+        assert "skip=1000" in (run(mv.catalog("popular", "", 99999)) and CATALOG_CALLS[-1])
+
+    def highest_rated_is_in_rating_order_with_no_unrated_films():
+        reset()
+        top = run(mv.catalog("top"))
+        ratings = [float(m["rating"]) for m in top]
+        assert ratings == sorted(ratings, reverse=True) and min(ratings) >= 7.0, ratings
+        assert "Shared Two" not in [m["title"] for m in top] and "Meh" not in [m["title"] for m in top]
+
+    def home_has_a_featured_film_rows_without_repeats_and_library_state():
+        reset()
+        JF.movie("c" * 32, "Great", "tt1000003")
+        h = run(mv.home())
+        assert h["featured"] and h["featured"]["background"].startswith("https://") and h["genres"][0] == "Action"
+        ids = [r["id"] for r in h["rows"]]
+        assert ids[:3] == ["popular", "new", "top"] and all(i.startswith("g-") for i in ids[3:]), ids
+        genre_rows = [r for r in h["rows"] if r["id"].startswith("g-")]
+        assert "tt1000001" not in [m["imdb"] for m in genre_rows[0]["items"]], "genre rows skip films shown above"
+        great = next(m for r in h["rows"] for m in r["items"] if m["imdb"] == "tt1000003")
+        assert great["state"] == "ready" and great["id"] == "c" * 32
+        assert "/medium/" in great["poster"]
+        g = run(mv.home("Horror"))
+        assert [r["title"] for r in g["rows"]] == ["Popular Horror", "Highest rated Horror"]
+
+    def details_bring_trailers_cast_and_safe_images():
+        reset()
+        d = run(mv.details("tt7777777"))
+        assert d["trailers"] == ["U2Qp5pL3ovA"] and d["runtime"] == 123 and d["cast"] == ["A", "B"]
+        assert d["poster"].endswith("/large/tt7777777/img") and d["background"] == "", d
+        try:
+            run(mv.details("../etc"))
+        except HTTPException as e:
+            assert e.status_code == 404
+        else:
+            raise AssertionError("bad id accepted")
+
+    def now_playing_names_the_film_and_forgets_a_quiet_room():
+        jf = "c" * 32
+        mv.set_rooms([{"roomId": "/crcmz", "video": mv.stream_url(jf), "paused": False, "participantCount": 3}])
+        n = mv.now_playing("crcmz")
+        assert n["watching"] == 3 and n["id"] == jf and not n["paused"], n
+        mv._rooms["crcmz"]["at"] -= 120
+        assert mv.now_playing("crcmz")["watching"] == 0
+        assert mv.now_playing("nope")["video"] == ""
+
+    for fn in (catalogues_build_cinemeta_paths_and_refuse_anything_else, highest_rated_is_in_rating_order_with_no_unrated_films,
+               home_has_a_featured_film_rows_without_repeats_and_library_state, details_bring_trailers_cast_and_safe_images,
+               now_playing_names_the_film_and_forgets_a_quiet_room):
+        check(fn.__name__, fn)
+
+
 # ── Streaming ────────────────────────────────────────────────────────────────
 def stream_tests():
     print("streaming")
@@ -785,9 +870,15 @@ def http_tests():
 
     def the_library_needs_a_session_and_adds_credit_the_caller():
         reset(cached={"a" * 40})
-        for path in ("/api/watch/movies/library", "/api/watch/movies/search?q=dune",
+        for path in ("/api/watch/movies/library", "/api/watch/movies/search?q=dune", "/api/watch/movies/home",
+                     "/api/watch/movies/catalog?kind=top", "/api/watch/movies/meta/tt15239678", "/api/watch/movies/now",
                      f"/api/watch/movies/stream/{'c' * 32}/master.m3u8", f"/api/watch/movies/poster/{'c' * 32}"):
             assert client.get(path).status_code == 401, path
+        r = client.get("/api/watch/movies/meta/tt15239678", cookies=cookie)
+        assert r.status_code == 200 and r.json()["title"] == "Dune: Part Two" and r.json()["can_add"] is True, r.text
+        assert "sub" not in r.text and "u-zub" not in r.text
+        assert client.get("/api/watch/movies/catalog?kind=nope", cookies=cookie).status_code == 400
+        assert client.get("/api/watch/movies/now?room=crcmz", cookies=cookie).json()["room"] == "crcmz"
         r = client.get("/api/watch/movies/search?q=dune", cookies=cookie)
         assert r.status_code == 200 and r.json()["results"][0]["state"] == "new", r.text
         r = client.post("/api/watch/movies/add", json={"imdb": "tt15239678"}, cookies=cookie, headers=origin)
@@ -815,6 +906,7 @@ if __name__ == "__main__":
     follow_tests()
     local_tests()
     remove_tests()
+    browse_tests()
     stream_tests()
     http_tests()
     print(f"\n{PASSED} passed, {len(FAILED)} failed")
