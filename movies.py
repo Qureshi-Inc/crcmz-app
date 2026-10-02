@@ -758,13 +758,27 @@ def _is_local(path: str) -> bool:
 LIBRARY_URL = "/app/watch?library=downloaded"
 
 
+def is_review(person: dict | None) -> bool:
+    """An app-store review account (Zitadel metadata review=true): Watch is just the party
+    for it, with no movie library, catalogue or adding."""
+    tags = (person or {}).get("tags") or {}
+    return str(tags.get("review") or person.get("review") or "").strip().lower() in ("1", "true", "yes") if person else False
+
+
+def review_sub(sub: str) -> bool:
+    try:
+        return is_review(crcmz_identity.by_zitadel_id().get(sub))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _members() -> list[str]:
-    """Every active person in the identity graph (Zitadel ids)."""
+    """Every active person in the identity graph (Zitadel ids), review accounts aside."""
     try:
         people = crcmz_identity.people()
     except Exception:  # noqa: BLE001
         return []
-    return sorted({p["zitadel_id"] for p in people if p.get("zitadel_id") and not p.get("is_bot")
+    return sorted({p["zitadel_id"] for p in people if p.get("zitadel_id") and not p.get("is_bot") and not is_review(p)
                    and (not p.get("state") or p["state"] in ("USER_STATE_ACTIVE", "active"))})
 
 
@@ -1575,9 +1589,16 @@ def build_router(get_session, is_admin) -> APIRouter:
             raise HTTPException(401, "sign in to use the library")
         return sub
 
+    def library_sub(request: Request) -> str:
+        """The movie library itself: not for an app-store review account."""
+        sub = caller_sub(request)
+        if review_sub(sub):
+            raise HTTPException(403, "movies_off")
+        return sub
+
     @router.get("/library")
     async def library_get(request: Request):
-        sub = caller_sub(request)
+        sub = library_sub(request)
         try:
             await tick()
         except HTTPException as e:
@@ -1586,7 +1607,7 @@ def build_router(get_session, is_admin) -> APIRouter:
 
     @router.post("/remove")
     async def remove_post(request: Request):
-        sub = caller_sub(request)
+        sub = library_sub(request)
         try:
             b = await request.json()
         except ValueError:
@@ -1596,17 +1617,17 @@ def build_router(get_session, is_admin) -> APIRouter:
 
     @router.get("/home")
     async def home_get(request: Request, genre: str = ""):
-        caller_sub(request)
+        library_sub(request)
         return await home(genre)
 
     @router.get("/catalog")
     async def catalog_get(request: Request, kind: str = "popular", genre: str = "", skip: int = 0):
-        caller_sub(request)
+        library_sub(request)
         return {"results": await annotate(await catalog(kind, genre, skip)), "next": skip + PAGE}
 
     @router.get("/meta/{imdb}")
     async def details_get(imdb: str, request: Request):
-        sub = caller_sub(request)
+        sub = library_sub(request)
         d = await details(imdb)
         state = (await annotate([d]))[0]
         lib = await library(sub, await is_admin(sub))
@@ -1625,17 +1646,17 @@ def build_router(get_session, is_admin) -> APIRouter:
 
     @router.get("/search")
     async def search_get(request: Request, q: str = ""):
-        caller_sub(request)
+        library_sub(request)
         return {"results": await annotate(await search(q))}
 
     @router.get("/popular")
     async def popular_get(request: Request):
-        caller_sub(request)
+        library_sub(request)
         return {"results": await annotate(await popular())}
 
     @router.post("/add")
     async def add_post(request: Request):
-        sub = caller_sub(request)
+        sub = library_sub(request)
         try:
             b = await request.json()
         except ValueError:

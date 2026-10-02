@@ -23,6 +23,19 @@ const TAB_KEY = 'watch.library.tab'
 const TABS: Tab[] = ['downloaded', 'watched']
 
 export function Library() {
+  const off = useMoviesOff()
+  if (off) {
+    return (
+      <section className="wp-library" aria-labelledby="wp-lib-h">
+        <h2 className="section-h2" id="wp-lib-h">Watched</h2>
+        <Watched />
+      </section>
+    )
+  }
+  return <LibraryTabs />
+}
+
+function LibraryTabs() {
   const [tab, setTab] = useState<Tab>(() => {
     const t = sessionStorage.getItem(TAB_KEY) as Tab
     return TABS.includes(t) ? t : 'downloaded'
@@ -46,12 +59,19 @@ export function Library() {
   )
 }
 
-function useLibrary() {
+export function useLibrary() {
   return useQuery({
     queryKey: ['movies', 'library'],
     queryFn: ({ signal }) => getLibrary(signal),
     refetchInterval: (q) => (q.state.data?.adding.some((a) => inFlight(a.status)) ? 8000 : false),
+    retry: (n, e) => !(e instanceof ApiError && e.status === 403) && n < 2,
   })
+}
+
+/** An app-store review account: Watch is only the party (the server says movies_off). */
+export function useMoviesOff(): boolean {
+  const q = useLibrary()
+  return q.error instanceof ApiError && q.error.status === 403
 }
 
 function usePlay() {

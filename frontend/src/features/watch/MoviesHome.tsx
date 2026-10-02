@@ -5,7 +5,7 @@
 // movie's sheet (?m=<imdb id>), where it's added to the library or played for the party.
 // The party itself lives at /watch/party.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useTitle } from '../../app/title'
 import { HelpLink } from '../../components/HelpLink'
@@ -16,6 +16,7 @@ import {
   getCatalog, getHome, getLibrary, inFlight, isMovieStream, measured, searchMovies, stateText,
   type Adding, type ListKind, type Movie, type Result, type Row,
 } from '../../lib/movies'
+import { useMoviesOff } from './Library'
 import { MovieSheet, useNow, usePartyPlay } from './MovieSheet'
 
 const LIST_TITLES: Record<ListKind, (g: string) => string> = {
@@ -26,6 +27,12 @@ const LIST_TITLES: Record<ListKind, (g: string) => string> = {
 
 export function MoviesHome() {
   useTitle('Watch')
+  // An app-store review account has no movie library: Watch is the party.
+  if (useMoviesOff()) return <Navigate to="/watch/party" replace />
+  return <Movies />
+}
+
+function Movies() {
   const [params, setParams] = useSearchParams()
   const genre = params.get('genre') || ''
   const list = params.get('list') as ListKind | null

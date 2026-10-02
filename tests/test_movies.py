@@ -979,6 +979,24 @@ def http_tests():
         r = client.get(f"/api/watch/movies/stream/{'c' * 32}/master.m3u8", cookies=cookie)
         assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.apple.mpegurl")
 
+    def an_app_review_account_gets_the_party_but_no_movies():
+        review = {"zitadel_id": "u-review", "display_name": "App Review", "tags": {"review": "true"}}
+        saved = crcmz_identity.by_zitadel_id
+        crcmz_identity.by_zitadel_id = lambda refresh=False: {"u-zub": {"zitadel_id": "u-zub", "display_name": "Zubair"},
+                                                              "u-review": review}
+        rc = {server._SESSION_COOKIE: server._signer().dumps(server._make_session("u-review", "appreview@crcmz.me"))}
+        try:
+            for path in ("/api/watch/movies/home", "/api/watch/movies/library", "/api/watch/movies/search?q=dune",
+                         "/api/watch/movies/catalog?kind=top", "/api/watch/movies/meta/tt15239678", "/api/watch/movies/popular"):
+                r = client.get(path, cookies=rc)
+                assert r.status_code == 403 and r.json()["detail"] == "movies_off", (path, r.status_code)
+            assert client.post("/api/watch/movies/add", json={"imdb": "tt15239678"}, cookies=rc, headers=origin).status_code == 403
+            assert client.get("/api/watch/movies/now", cookies=rc).status_code == 200, "the party is still theirs"
+            assert client.get("/api/watch/movies/home", cookies=cookie).status_code == 200, "everyone else keeps movies"
+            assert mv.is_review(review) and not mv.is_review({"tags": {}}) and not mv.is_review(None)
+        finally:
+            crcmz_identity.by_zitadel_id = saved
+
     def assistant_tool_lists_movies_without_ids():
         assert "movie_library" in assistant.tool_names()
         out, ok = assistant.call_tool("movie_library", {"limit": 5000})
@@ -986,7 +1004,8 @@ def http_tests():
         for leak in ("u-zub", "test-rd", "test-jf", "rd_id"):
             assert leak not in out, leak
 
-    for fn in (the_library_needs_a_session_and_adds_credit_the_caller, assistant_tool_lists_movies_without_ids):
+    for fn in (the_library_needs_a_session_and_adds_credit_the_caller, an_app_review_account_gets_the_party_but_no_movies,
+               assistant_tool_lists_movies_without_ids):
         check(fn.__name__, fn)
 
 

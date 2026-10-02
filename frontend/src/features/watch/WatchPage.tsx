@@ -10,7 +10,7 @@ import { ErrorStrip } from '../../components/states'
 import { useDesktop } from '../../lib/media'
 import { ringSquad } from '../../lib/ring'
 import { loginUrl } from '../../lib/session'
-import { Library } from './Library'
+import { Library, useMoviesOff } from './Library'
 import { Orbs } from './Orbs'
 import { Chat, PresencePill, ReactionsTray, Roster } from './Social'
 import { Stage, usePlayerKeys } from './Stage'
@@ -24,6 +24,7 @@ export function WatchPage({ visible }: { visible: boolean }) {
   const s = useWatch()
   const desktop = useDesktop()
   const [rxOpen, setRxOpen] = useState(false)
+  const moviesOff = useMoviesOff()
   const [slot, setSlot] = useState<HTMLDivElement | null>(null)
   useEffect(() => { if (visible) start() }, [visible])
   // Fullscreen belongs to this page; navigating away ends it.
@@ -38,7 +39,7 @@ export function WatchPage({ visible }: { visible: boolean }) {
     <div className="page watch-page" data-hidden={!visible} inert={!visible} aria-hidden={!visible || undefined}>
       {visible && <WatchTitle />}
       <div className="wp-head">
-        <Link className="btn btn-ghost wp-movies" to="/watch" aria-label="Back to Movies"><Icon name="left" />Movies</Link>
+        {!moviesOff && <Link className="btn btn-ghost wp-movies" to="/watch" aria-label="Back to Movies"><Icon name="left" />Movies</Link>}
         <h1 className="page-h1" tabIndex={-1}>Watch Party<HelpLink id="watch" /></h1>
         <PresencePill s={s} />
         <Roster s={s} max={desktop ? 8 : 4} />
