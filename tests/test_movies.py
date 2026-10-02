@@ -869,23 +869,33 @@ def browse_tests():
 
     def the_party_is_announced_when_something_plays_not_when_someone_opens_it():
         said: list[tuple] = []
-        real = mv._in_background
+        real, started = mv._in_background, mv._started
         mv._in_background = lambda fn, *a: said.append(a)
         try:
             mv._last_playing.clear()
+            mv._last_channel.clear()
             room = lambda video, paused=False, n=1: [{"roomId": "/crcmz", "video": video, "paused": paused, "participantCount": n}]
+            v = mv.stream_url("c" * 32)
             t = time.time()
+            mv._started = t                                   # just restarted...
             mv.set_rooms(room("", n=1))                       # someone opened the party page: nothing on
-            mv.set_rooms(room(mv.stream_url("c" * 32)))      # first sight of a playing room (a restart): primes only
+            mv.set_rooms(room(v))                             # ...a room already playing only primes
             assert said == [], said
             mv._last_playing["crcmz"] = t - mv.PARTY_QUIET_S - 60   # it went quiet a while ago...
-            mv.set_rooms(room(mv.stream_url("c" * 32), n=2))  # ...and now it plays again: a party starting
-            assert said == [("crcmz", mv.stream_url("c" * 32), 2)], said
-            mv.set_rooms(room(mv.stream_url("c" * 32), paused=True, n=2))
-            mv.set_rooms(room(mv.stream_url("c" * 32), n=2))  # a pause and resume isn't a new party
+            mv._last_channel["crcmz"] = t - mv.CHANNEL_QUIET_S - 60
+            mv.set_rooms(room(v, n=2))                        # ...and now it plays again: a party starting
+            assert said == [("crcmz", v, 2, True)], said
+            mv.set_rooms(room(v, paused=True, n=2))
+            mv.set_rooms(room(v, n=2))                        # a pause and resume isn't a new party
             assert len(said) == 1, said
+            mv._last_playing["crcmz"] = t - mv.PARTY_QUIET_S - 60   # off for a bit, then back on:
+            mv.set_rooms(room(v, n=2))                        # phones ring again, ~watchparty doesn't
+            assert said[-1] == ("crcmz", v, 2, False), said
+            mv._started = t - mv.PRIME_S - 1                  # long after a restart, a new room...
+            mv.set_rooms([{"roomId": "/late", "video": v, "paused": False, "participantCount": 1}])
+            assert said[-1] == ("late", v, 1, True), said     # ...is a party starting, not a prime
         finally:
-            mv._in_background = real
+            mv._in_background, mv._started = real, started
 
     for fn in (catalogues_build_cinemeta_paths_and_refuse_anything_else, the_party_is_announced_when_something_plays_not_when_someone_opens_it, highest_rated_is_in_rating_order_with_no_unrated_films,
                home_has_a_featured_film_rows_without_repeats_and_library_state, details_bring_trailers_cast_and_safe_images,

@@ -456,8 +456,12 @@ async def details(imdb: str) -> dict:
 _rooms: dict[str, dict] = {}
 
 
-PARTY_QUIET_S = 30 * 60   # a room that's been off this long is "starting" when it plays again
+PARTY_QUIET_S = 10 * 60     # a room that's been off this long is "starting" when it plays again: phones ring
+CHANNEL_QUIET_S = 30 * 60   # ~watchparty's @channel waits for a longer break, so it isn't spammed
+PRIME_S = 120               # just after a restart, a playing room is a party already running
 _last_playing: dict[str, float] = {}
+_last_channel: dict[str, float] = {}
+_started = time.time()
 
 
 def set_rooms(rooms: list) -> None:
@@ -471,12 +475,19 @@ def set_rooms(rooms: list) -> None:
         _rooms[rid] = r
         if not (r["video"] and not r["paused"] and r["watching"] > 0):
             continue
-        # Playing. After a quiet spell that's a party starting: tell everyone. The first time
-        # we see a room (a restart) it only primes, so a running party isn't announced twice.
+        # Playing. After a quiet spell that's a party starting: tell everyone. A room already
+        # playing when we come up (a restart) only primes, so a running party isn't announced twice.
         last = _last_playing.get(rid)
         _last_playing[rid] = now
-        if last is not None and now - last > PARTY_QUIET_S:
-            _in_background(announce_party, rid, r["video"], r["watching"])
+        if last is None and now - _started < PRIME_S:
+            _last_channel[rid] = now
+            continue
+        if last is None or now - last > PARTY_QUIET_S:
+            ch = _last_channel.get(rid)
+            to_channel = ch is None or now - ch > CHANNEL_QUIET_S
+            if to_channel:
+                _last_channel[rid] = now
+            _in_background(announce_party, rid, r["video"], r["watching"], to_channel)
 
 
 def _in_background(fn, *args) -> None:
@@ -493,8 +504,8 @@ def _video_title(url: str) -> str:
         return ""
 
 
-def announce_party(room: str, video: str, watching: int) -> None:
-    """A Watch Party has something playing: push + inbox for everyone, and ~watchparty."""
+def announce_party(room: str, video: str, watching: int, to_channel: bool = True) -> None:
+    """A Watch Party has something playing: a ring/push + inbox for everyone, and ~watchparty."""
     title = _video_title(video)
     what = f"**{title}**" if title else "something"
     n = f"{watching} watching"
@@ -504,8 +515,9 @@ def announce_party(room: str, video: str, watching: int) -> None:
                             "/app/watch/party", tag=f"watch-{room}", urgency="high", ttl=1800)
     except Exception:  # noqa: BLE001
         logger.exception("movies: couldn't push the party start")
-    announce_channel(f"@channel 📺 The Watch Party is on: {what} is playing ({n}). "
-                     f"Join: {PUBLIC_URL}/app/watch/party")
+    if to_channel:
+        announce_channel(f"@channel 📺 The Watch Party is on: {what} is playing ({n}). "
+                         f"Join: {PUBLIC_URL}/app/watch/party")
 
 
 def now_playing(room: str) -> dict:

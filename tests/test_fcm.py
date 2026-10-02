@@ -242,7 +242,40 @@ def http_tests():
         assert r.status_code == 200, r.text
         assert fcm.device_count("393") == 1
 
-    for fn in (asset_links_are_public, native_needs_a_session_and_same_origin, native_registers_the_phone):
+    def huddle_rings_when_the_room_is_empty_not_on_every_join():
+        rang: list[str] = []
+        others = {"n": 0}
+
+        async def fake_others(room, identity):
+            return others["n"]
+
+        real_route, real_others, key = server._notify.route_in_background, server._huddle_others, server.LIVEKIT_API_KEY
+        server._notify.route_in_background = lambda cat, title, *a, **k: rang.append(title)
+        server._huddle_others = fake_others
+        server.LIVEKIT_API_KEY, secret = "k", server.LIVEKIT_API_SECRET
+        server.LIVEKIT_API_SECRET = "s" * 32
+        server._huddle_ring_guard._seen.clear()
+        join = lambda room: client.post("/api/huddle/token", json={"room": room}, cookies=cookie, headers=origin)
+        try:
+            assert join("ringtest").status_code == 200 and len(rang) == 1, rang  # first in: ring
+            others["n"] = 1
+            join("ringtest")                     # someone's already in there: no ring
+            assert len(rang) == 1, rang
+            others["n"] = 0
+            join("ringtest")                     # everyone left and came straight back: a reconnect
+            assert len(rang) == 1, rang
+            server._huddle_ring_guard._seen["ringtest"] -= 200
+            join("ringtest")                     # the room emptied, a new Huddle a few minutes later
+            assert len(rang) == 2, rang
+            others["n"] = None                   # LiveKit down: the old 30-minute rule
+            join("ringtest")
+            assert len(rang) == 2, rang
+        finally:
+            server._notify.route_in_background, server._huddle_others = real_route, real_others
+            server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET = key, secret
+
+    for fn in (asset_links_are_public, native_needs_a_session_and_same_origin, native_registers_the_phone,
+               huddle_rings_when_the_room_is_empty_not_on_every_join):
         check(fn.__name__, fn)
 
 
