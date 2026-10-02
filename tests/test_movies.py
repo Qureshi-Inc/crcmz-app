@@ -254,6 +254,8 @@ mv.RESCAN_AFTER_S = 0
 
 import notifications  # noqa: E402
 notifications.route_in_background = lambda *a, **k: NOTES.append((a, k))
+CHANNEL: list[str] = []
+mv.announce_channel = lambda text: CHANNEL.append(text) or True
 
 import crcmz_identity  # noqa: E402
 PEOPLE = [{"zitadel_id": "u-zub", "display_name": "Zubair", "state": "USER_STATE_ACTIVE"},
@@ -277,6 +279,7 @@ def reset(cached=()):
     mv._cache.clear()
     mv._last_tick = mv._last_scan = 0.0
     NOTES.clear()
+    CHANNEL.clear()
 
 
 async def add_and_wait(sub, name, imdb, **kw):
@@ -414,6 +417,7 @@ def add_tests():
         assert row["status"] == "failed" and "blocked" in row["error"], row
         assert len(NOTES) == 1 and NOTES[0][1]["only"] == ["u-zub"] and NOTES[0][1]["dms"] is False, NOTES
         assert "Couldn't add Dune" in NOTES[0][0][1] and NOTES[0][1]["url"] == "/app/watch?m=tt15239678"
+        assert CHANNEL == [], "a failed add isn't posted to the channel"
 
     for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_copy_real_debrid_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
                a_cached_1080p_beats_an_uncached_4k, no_copy_says_so, already_in_the_library_is_not_added_again,
@@ -587,6 +591,10 @@ def local_tests():
         assert added["url"] == ready["url"] == mine["url"] == mv.LIBRARY_URL == "/app/watch?library=downloaded"
         assert added["tag"] != ready["tag"] and "tt15239678" in added["tag"], (added["tag"], ready["tag"])
         assert "Zubair added Dune" in a_args[1] and "ready to watch" in r_args[1] and "ready to watch" in mine["dm_text"]
+        # And the ~watchparty channel hears both, with @channel so everyone in it is alerted.
+        assert len(CHANNEL) == 2 and all(t.startswith("@channel") for t in CHANNEL), CHANNEL
+        assert "Zubair" in CHANNEL[0] and "added **Dune: Part Two (2024)**" in CHANNEL[0] and "ready to watch" in CHANNEL[1]
+        assert CHANNEL[1].endswith("https://app.crcmz.me/app/watch?m=tt15239678"), CHANNEL[1]
 
     def removing_deletes_the_folder_it_made():
         copied()

@@ -708,6 +708,38 @@ def _film(r: dict) -> str:
     return f"{r['title']} ({r['year']})" if r.get("year") else r["title"]
 
 
+# The squad's Mattermost channel for Watch: every add, every film that's ready and every
+# party that starts is posted there with @channel, so the whole channel is alerted.
+WATCH_CHANNEL = os.environ.get("WATCH_MM_CHANNEL", "watchparty")
+PUBLIC_URL = "https://" + os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
+_channel_id: str | None = None
+
+
+def announce_channel(text: str) -> bool:
+    """Post to the Watch channel (blocking; call from a thread). Best-effort."""
+    global _channel_id
+    if not WATCH_CHANNEL:
+        return False
+    try:
+        import mattermost
+        if not mattermost.available():
+            return False
+        _channel_id = _channel_id or mattermost.find_channel_id(WATCH_CHANNEL)
+        if not _channel_id:
+            logger.warning("movies: no Mattermost channel %r the bot is in", WATCH_CHANNEL)
+            return False
+        ok = mattermost.post_channel(_channel_id, text)
+        logger.info("movies: posted to ~%s: %s", WATCH_CHANNEL, ok)
+        return ok
+    except Exception:  # noqa: BLE001
+        logger.exception("movies: couldn't post to ~%s", WATCH_CHANNEL)
+        return False
+
+
+def _movie_link(r: dict) -> str:
+    return f"{PUBLIC_URL}/app/watch?m={r['imdb']}"
+
+
 async def _announce_added(r: dict) -> None:
     """Squad news, once a copy is on its way: "Zubair added Dune". Inbox and push for
     everyone but them; no WhatsApp or Mattermost DMs (it isn't a message to you)."""
@@ -723,6 +755,10 @@ async def _announce_added(r: dict) -> None:
             url=LIBRARY_URL, only=subs, exclude=r["sub"], tag=f"movie-added-{r['imdb']}", dms=False)
     except Exception:  # noqa: BLE001
         logger.exception("movies: couldn't announce the add of %s", r["imdb"])
+    who = r["name"] or "Someone"
+    quality = f" ({r['quality']})" if r.get("quality") else ""
+    await asyncio.to_thread(announce_channel, f"@channel 🎬 **{who}** added **{_film(r)}**{quality} to the "
+                            f"Watch library. It's on its way; you'll hear when it's ready.\n{_movie_link(r)}")
 
 
 async def _announce_ready(r: dict) -> None:
@@ -741,6 +777,9 @@ async def _announce_ready(r: dict) -> None:
                         "Start a party and press Play.")
     except Exception:  # noqa: BLE001
         logger.exception("movies: couldn't announce %s", r["imdb"])
+    by = f", added by {r['name']}" if r.get("name") else ""
+    await asyncio.to_thread(announce_channel, f"@channel 🍿 **{_film(r)}** is ready to watch{by}. "
+                            f"Open it and press Watch together:\n{_movie_link(r)}")
 
 
 async def _announce_failed(r: dict) -> None:
