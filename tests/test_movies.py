@@ -138,6 +138,8 @@ class FakeRD:
         data = kw.get("data") or {}
         if path == "/torrents/addMagnet":
             h = data["magnet"].rsplit(":", 1)[1]
+            if h in getattr(self, "blocked", set()):
+                raise HTTPException(451, "Real-Debrid has that copy blocked")
             tid = f"T{len(self.torrents) + 1}"
             self.torrents[tid] = {"hash": h, "status": "waiting_files_selection", "progress": 0,
                                   "files": [{"id": 1, "path": "/Sample/sample.mkv", "bytes": 10, "selected": 0},
@@ -391,7 +393,29 @@ def add_tests():
         finally:
             TORRENTIO.pop("tt0000001")
 
-    for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, with_nothing_cached_the_best_seeded_4k_downloads,
+    def a_copy_real_debrid_has_blocked_is_skipped_not_fatal():
+        reset(cached={"d" * 40})
+        RD.blocked = {"a" * 40}
+        try:
+            run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        finally:
+            RD.blocked = set()
+        row = mv._row("tt15239678")
+        assert row["status"] != "failed" and "Tigole" in row["release"], row
+
+    def when_every_copy_is_blocked_only_the_adder_hears_why():
+        reset()
+        RD.blocked = {c["hash"] for c in mv.rank(DUNE)}
+        try:
+            run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        finally:
+            RD.blocked = set()
+        row = mv._row("tt15239678")
+        assert row["status"] == "failed" and "blocked" in row["error"], row
+        assert len(NOTES) == 1 and NOTES[0][1]["only"] == ["u-zub"] and NOTES[0][1]["dms"] is False, NOTES
+        assert "Couldn't add Dune" in NOTES[0][0][1] and NOTES[0][1]["url"] == "/app/watch?m=tt15239678"
+
+    for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_copy_real_debrid_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
                a_cached_1080p_beats_an_uncached_4k, no_copy_says_so, already_in_the_library_is_not_added_again,
                a_second_press_joins_the_first_and_bad_ids_are_refused, five_a_day_unless_admin,
                a_failed_add_can_be_tried_again):
@@ -417,9 +441,10 @@ def follow_tests():
         assert run(mv.tick(force=True)) == 1
         row = mv._row("tt15239678")
         assert row["status"] == "ready" and row["jf_id"] == "c" * 32
-        added, ready = NOTES
-        assert added[1]["only"] == ["u-noor"] and added[1]["exclude"] == "u-zub", added
-        assert ready[1]["only"] == ["u-noor", "u-zub"] and "Dune" in ready[0][1] and ready[0][0] == "movies", ready
+        added, ready, mine = NOTES
+        assert added[1]["only"] == ["u-noor"] and added[1]["exclude"] == "u-zub" and added[1]["dms"] is False, added
+        assert ready[1]["only"] == ["u-noor"] and ready[1]["dms"] is False and "Dune" in ready[0][1] and ready[0][0] == "movies", ready
+        assert mine[1]["only"] == ["u-zub"] and mine[1].get("dms", True) and "you added" in mine[1]["dm_text"], mine
 
     def an_add_jellyfin_never_finds_gives_up():
         reset(cached={"a" * 40})
@@ -552,14 +577,16 @@ def local_tests():
         row = copied()
         JF.movie("d" * 32, "Dune: Part Two", "tt15239678", path=f"/media/movies-local/{folder}/Movie.mkv")
         run(mv.tick(force=True))
-        (a_args, added), (r_args, ready) = NOTES
-        assert a_args[0] == r_args[0] == "movies"
+        (a_args, added), (r_args, ready), (m_args, mine) = NOTES
+        assert a_args[0] == r_args[0] == m_args[0] == "movies"
+        # Squad news (added, ready) is inbox + push for everyone else, never a DM to them.
         assert added["only"] == ["u-noor"] and added["exclude"] == "u-zub", "not the adder, not the inactive or bots"
-        assert ready["only"] == ["u-noor", "u-zub"] and not ready.get("exclude"), "the adder hears it's ready too"
-        assert added["url"] == ready["url"] == mv.LIBRARY_URL == "/app/watch?library=downloaded"
+        assert added["dms"] is False and ready["dms"] is False and ready["only"] == ["u-noor"]
+        # Whoever added it gets the one DM: theirs is ready.
+        assert mine["only"] == ["u-zub"] and mine.get("dms", True) and "Dune: Part Two (2024)" in mine["dm_text"]
+        assert added["url"] == ready["url"] == mine["url"] == mv.LIBRARY_URL == "/app/watch?library=downloaded"
         assert added["tag"] != ready["tag"] and "tt15239678" in added["tag"], (added["tag"], ready["tag"])
-        assert "Zubair added Dune" in a_args[1] and "Dune: Part Two (2024)" in added["dm_text"]
-        assert "ready to watch" in r_args[1] and "ready to watch" in ready["dm_text"]
+        assert "Zubair added Dune" in a_args[1] and "ready to watch" in r_args[1] and "ready to watch" in mine["dm_text"]
 
     def removing_deletes_the_folder_it_made():
         copied()

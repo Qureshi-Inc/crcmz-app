@@ -84,6 +84,7 @@ _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ch
 ADDS_PER_DAY = 5        # per person; admins aren't capped
 TRY_4K = 5              # cached-copy attempts before settling
 TRY_1080 = 3
+BLOCKED_TRIES = 8        # copies tried after the cached ones, skipping any Real-Debrid has blocked
 ADDING_GIVE_UP_S = 30 * 60
 RESCAN_AFTER_S = 20      # Zurg notices a deleted torrent within seconds
 POLL_S = 1.5            # between Real-Debrid checks while a copy is being tried
@@ -569,6 +570,9 @@ async def _rd(method: str, path: str, **kw) -> Any:
         raise HTTPException(502, "Real-Debrid is unreachable")
     if r.status_code >= 400:
         logger.warning("movies: real-debrid %s answered %s: %s", path.split("/")[1:3], r.status_code, r.text[:200])
+        if r.status_code == 451:
+            # "infringing_file": Real-Debrid has this one torrent blocked (a takedown). Others may be fine.
+            raise HTTPException(451, "Real-Debrid has that copy blocked")
         raise HTTPException(502, "Real-Debrid refused the request")
     return r.json() if r.content else None
 
@@ -576,7 +580,14 @@ async def _rd(method: str, path: str, **kw) -> Any:
 async def _try_copy(c: dict, *, keep: bool, wait_s: float = 12) -> tuple[str, str] | None:
     """Add one copy to Real-Debrid. Returns (torrent id, status) when it's cached (or
     `keep` is set); otherwise deletes it again and returns None."""
-    added = await _rd("POST", "/torrents/addMagnet", data={"magnet": f"magnet:?xt=urn:btih:{c['hash']}"})
+    try:
+        added = await _rd("POST", "/torrents/addMagnet", data={"magnet": f"magnet:?xt=urn:btih:{c['hash']}"})
+    except HTTPException as e:
+        if e.status_code != 451:
+            raise
+        c["blocked"] = True
+        logger.info("movies: Real-Debrid has %s blocked; trying the next copy", c["release"][:60])
+        return None
     tid = str((added or {}).get("id") or "")
     if not tid:
         return None
@@ -698,7 +709,8 @@ def _film(r: dict) -> str:
 
 
 async def _announce_added(r: dict) -> None:
-    """Everyone but the person who added it: "Zubair added Dune"."""
+    """Squad news, once a copy is on its way: "Zubair added Dune". Inbox and push for
+    everyone but them; no WhatsApp or Mattermost DMs (it isn't a message to you)."""
     try:
         import notifications
         subs = [s for s in await asyncio.to_thread(_members) if s != r["sub"]]
@@ -707,27 +719,41 @@ async def _announce_added(r: dict) -> None:
         who = r["name"] or "Someone"
         notifications.route_in_background(
             "movies", f"{who} added {r['title']}",
-            "It's downloading to the server. You'll hear when it's ready to watch.",
-            url=LIBRARY_URL, only=subs, exclude=r["sub"], tag=f"movie-added-{r['imdb']}",
-            dm_text=f"🎬 {who} added {_film(r)} to the Watch library. It's downloading now; "
-                    "you'll get another message when it's ready to watch.")
+            "It's on its way to the server. You'll hear when it's ready to watch.",
+            url=LIBRARY_URL, only=subs, exclude=r["sub"], tag=f"movie-added-{r['imdb']}", dms=False)
     except Exception:  # noqa: BLE001
         logger.exception("movies: couldn't announce the add of %s", r["imdb"])
 
 
 async def _announce_ready(r: dict) -> None:
-    """Everyone, the person who added it too: "Dune is ready to watch"."""
+    """"Dune is ready to watch": inbox and push for everyone; a DM only for whoever added it."""
     try:
         import notifications
-        subs = await asyncio.to_thread(_members) or ([r["sub"]] if r["sub"] else [])
-        if not subs:
-            return
-        notifications.route_in_background(
-            "movies", f"{r['title']} is ready to watch", "It's in the Watch library. Start a party and press Play.",
-            url=LIBRARY_URL, only=subs, tag=f"movie-ready-{r['imdb']}",
-            dm_text=f"🍿 {_film(r)} is ready to watch in the Watch library. Start a party and press Play.")
+        title, body = f"{r['title']} is ready to watch", "It's in the Watch library. Start a party and press Play."
+        others = [s for s in await asyncio.to_thread(_members) if s != r["sub"]]
+        if others:
+            notifications.route_in_background(
+                "movies", title, body, url=LIBRARY_URL, only=others, tag=f"movie-ready-{r['imdb']}", dms=False)
+        if r["sub"]:
+            notifications.route_in_background(
+                "movies", title, body, url=LIBRARY_URL, only=[r["sub"]], tag=f"movie-ready-{r['imdb']}",
+                dm_text=f"🍿 {_film(r)}, the movie you added, is ready to watch in the Watch library. "
+                        "Start a party and press Play.")
     except Exception:  # noqa: BLE001
         logger.exception("movies: couldn't announce %s", r["imdb"])
+
+
+async def _announce_failed(r: dict) -> None:
+    """Only the person who pressed Add hears that it didn't work, and why."""
+    if not r["sub"]:
+        return
+    try:
+        import notifications
+        notifications.route_in_background(
+            "movies", f"Couldn't add {r['title']}", r["error"] or "Something went wrong finding a copy.",
+            url=f"/app/watch?m={r['imdb']}", only=[r["sub"]], tag=f"movie-failed-{r['imdb']}", dms=False)
+    except Exception:  # noqa: BLE001
+        logger.exception("movies: couldn't report the failed add of %s", r["imdb"])
 
 
 def _spawn(coro) -> None:
@@ -774,7 +800,6 @@ async def add(sub: str, name: str, imdb: str, *, admin: bool = False) -> dict:
                    (imdb, m["title"], m["year"], m["poster"], sub, name[:80], now, now))
     row = _row(imdb)
     _spawn(fetch(imdb))
-    _spawn(_announce_added(row))
     return _public(row)
 
 
@@ -784,6 +809,18 @@ def _after_rd() -> str:
 
 
 async def fetch(imdb: str) -> None:
+    """Find the best copy and start it on Real-Debrid, then tell people how it went."""
+    await _fetch(imdb)
+    r = _row(imdb)
+    if not r:
+        return
+    if r["status"] == "failed":
+        await _announce_failed(r)
+    elif r["status"] != "finding":
+        await _announce_added(r)
+
+
+async def _fetch(imdb: str) -> None:
     """Find the best copy and start it on Real-Debrid. One movie at a time."""
     async with _fetch_lock:
         try:
@@ -809,11 +846,23 @@ async def fetch(imdb: str) -> None:
                 if got:
                     _chosen(imdb, c, got[0], _after_rd())
                     return
-            # Nothing cached: download the best copy with people seeding it.
-            c = next((c for c in fours if c["seeders"] >= 5), None) or (tens or fours)[0]
-            got = await _try_copy(c, keep=True, wait_s=20)
+            # Nothing cached: download the best copy with people seeding it. Copies Real-Debrid
+            # has blocked are skipped, and the rest of the list gets a turn.
+            tried = {id(c) for c in fours + tens}
+            rest = [c for c in fours if not c.get("blocked")] + [c for c in ranked if id(c) not in tried]
+            rest = sorted(rest, key=lambda c: (c["seeders"] < 5, -c["tier"], -c["score"])) + \
+                [c for c in tens if not c.get("blocked")]
+            got = c = None
+            for c in rest[:BLOCKED_TRIES]:
+                got = await _try_copy(c, keep=True, wait_s=20)
+                if got:
+                    break
             if not got:
-                _set(imdb, status="failed", error="Real-Debrid couldn't get a copy")
+                blocked = sum(1 for x in ranked if x.get("blocked"))
+                _set(imdb, status="failed", error=(
+                    "Real-Debrid has every copy of this one blocked (a takedown claim). New releases often are; "
+                    "try again in a few days." if blocked and blocked >= min(len(ranked), BLOCKED_TRIES)
+                    else "Real-Debrid couldn't get a copy"))
                 return
             _chosen(imdb, c, got[0], _after_rd() if got[1] == "downloaded" else "downloading")
         except HTTPException as e:

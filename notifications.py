@@ -133,11 +133,12 @@ def record(category: str, title: str, body: str = "", url: str = "/app", *,
 
 def route(category: str, title: str, body: str = "", url: str = "/app", *,
           exclude: str = "", only: list[str] | None = None, tag: str = "",
-          ttl: int = 3600, urgency: str = "normal", dm_text: str = "") -> dict:
+          ttl: int = 3600, urgency: str = "normal", dm_text: str = "", dms: bool = True) -> dict:
     """Send one alert everywhere it should go. Same arguments as webpush.notify.
 
     ``dm_text`` is the WhatsApp/Mattermost wording for a personal alert; the
-    title and body are used when it is empty.
+    title and body are used when it is empty. ``dms=False`` keeps a personal
+    category's alert to the inbox and push (squad news, not a message to you).
     """
     url = _clean_url(url)
     out: dict = {"category": category, "inbox": len(record(category, title, body, url, only=only, exclude=exclude))}
@@ -147,7 +148,7 @@ def route(category: str, title: str, body: str = "", url: str = "/app", *,
     except Exception:  # noqa: BLE001 - push failing must not lose the DMs
         logger.exception("notifications: push failed")
         out["push"] = None
-    if category in DIRECT and only:
+    if dms and category in DIRECT and only:
         out["dms"] = _direct(only, exclude, dm_text or f"{title}\n{body}".strip(), url, tag or category, category)
     return out
 
