@@ -22,6 +22,8 @@ os.environ.setdefault("WA_INGEST_SECRET", "test-ingest")
 os.environ.setdefault("NPSSO_TOKEN", "test-npsso")
 os.environ.setdefault("GROUP_ID", "test-group")
 os.environ.setdefault("PORTAL_PUBLIC_HOST", "app.crcmz.me")
+# The bot lives in CRCMZ BOYZ; Professional Goopers is stats-only.
+os.environ.setdefault("WA_MAIN_JID", "120363334247249772@g.us")
 os.environ.setdefault("WA_GOOPERS_JID", "120363406504549565@g.us")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,7 +34,7 @@ BRIDGE_SENT: list[dict] = []
 MODEL_SEEN: list[dict] = []
 REPLY = {"content": "Mutasif, 2,943 — types more than he plays."}
 SCRIPT: list[dict] = []      # queued assistant messages, popped per model call
-GROUP = "120363406504549565@g.us"
+GROUP = "120363334247249772@g.us"   # CRCMZ BOYZ
 
 
 def check(name, fn):
@@ -245,7 +247,7 @@ def http_tests():
     server._chat._DB_PATH = tmp / "chat.db"
     server._chat.init()
     server.WA_BRIDGE_URL = BASE
-    server.WA_GOOPERS_JID = GROUP
+    server.WA_MAIN_JID = GROUP
 
     client = TestClient(server.app, base_url="https://app.crcmz.me")
     HDR = {"Content-Type": "application/json", "x-ingest-secret": server.WA_INGEST_SECRET}

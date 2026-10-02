@@ -62,7 +62,7 @@ def test_rev_clip_is_archived_but_not_forwarded_or_montaged():
     # These are module constants read at import time, so setting os.environ here
     # would be too late — server is already imported by the time this runs.
     server.WA_BRIDGE_URL = "http://stub"
-    server.WA_GOOPERS_JID = "g@g.us"
+    server.WA_MAIN_JID = "g@g.us"
     clips.init()
     real = [r for r in clips.list_clips(limit=300)
             if r.get("archive_status") == "archived"
@@ -116,7 +116,7 @@ def test_coaching_clip_does_not_need_whatsapp_config():
     import server
     src = inspect.getsource(server._process_clip_job)
     assert "coaching_only = _wants_coaching(body)" in src
-    guard = src.index("WA_BRIDGE_URL or WA_GOOPERS_JID not configured")
+    guard = src.index("WA_BRIDGE_URL or WA_MAIN_JID not configured")
     flag = src.index("coaching_only = _wants_coaching(body)")
     assert flag < guard, \
         "the coaching check must precede the WhatsApp config guard"
@@ -312,7 +312,7 @@ def test_coaching_notification_is_tagged_with_the_service():
     import assistant, wa_ai, crcmz_identity, coach_prefs, mcp_server
     import os as _os
     _os.environ["WA_BRIDGE_URL"] = "http://stub"
-    _os.environ["WA_GOOPERS_JID"] = "group@g.us"
+    _os.environ["WA_MAIN_JID"] = "group@g.us"
     sent = {}
     orig_send, orig_res = wa_ai.send_reply, crcmz_identity.resolve
     wa_ai.send_reply = lambda u, j, t: (sent.update({"jid": j, "text": t}) or True)
@@ -489,7 +489,7 @@ def test_detail_preference_controls_the_message_body():
                                         "display_name": "Soup", "wa_jid": "me@s.w"}
     import os as _os
     _os.environ["WA_BRIDGE_URL"] = "http://stub"
-    _os.environ["WA_GOOPERS_JID"] = "g@g.us"
+    _os.environ["WA_MAIN_JID"] = "g@g.us"
     review = {"overall_assessment": "B — solid aim", "game": "Warzone",
               "summary": "Rotated late.", "strengths": ["Crisp first shot"],
               "mistakes": [], "coaching_tips": [], "notable_moments": [],
@@ -884,7 +884,7 @@ def test_fire_clip_is_archived_but_not_forwarded_montage_eligible():
     via the WA bridge; but it MUST stay montage-eligible (it's a highlight)."""
     import server, clips, clip_store
     server.WA_BRIDGE_URL = "http://stub"
-    server.WA_GOOPERS_JID = "g@g.us"
+    server.WA_MAIN_JID = "g@g.us"
     clips.init()
     real = [r for r in clips.list_clips(limit=300)
             if r.get("archive_status") == "archived"
@@ -929,7 +929,7 @@ def test_fire_clip_does_not_need_whatsapp_config():
     import server
     src = inspect.getsource(server._process_clip_job)
     assert "ig_only = not coaching_only and _wants_ig_post(body)" in src
-    guard = src.index("WA_BRIDGE_URL or WA_GOOPERS_JID not configured")
+    guard = src.index("WA_BRIDGE_URL or WA_MAIN_JID not configured")
     flag = src.index("ig_only = not coaching_only and _wants_ig_post(body)")
     assert flag < guard, "the ig check must precede the WhatsApp config guard"
 

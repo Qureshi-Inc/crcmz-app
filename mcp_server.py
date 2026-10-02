@@ -151,6 +151,19 @@ def resolve_caller(header: str) -> dict | None:
         return None
 
 
+def _founder_sub(caller: dict | None) -> str | None:
+    """Zitadel id whose founder tag may open the Professional Goopers view.
+
+    Only a personal OAuth token identifies a person. The shared MCP_TOKEN
+    (caller None) and service tokens (which carry `scopes` and a synthetic
+    "service:" id) never do, so they stay on the public CRCMZ BOYZ view.
+    """
+    if not caller or caller.get("scopes") is not None:
+        return None
+    sub = str(caller.get("zitadel_id") or "")
+    return sub if sub and not sub.startswith("service:") else None
+
+
 def _tools() -> list[dict]:
     """The assistant read registry in MCP's shape (`inputSchema`, not `parameters`)."""
     import assistant
@@ -241,7 +254,10 @@ def handle(message: dict, caller: dict | None = None) -> dict | None:
         return _result(rid, {})
 
     if method == "tools/list":
-        tools = _tools()
+        import assistant
+        # Schemas narrow to what this caller may read (the WhatsApp `group` enum).
+        with assistant.wa_viewer(_founder_sub(caller)):
+            tools = _tools()
         if caller:
             wt = _write_tools()
             # Advertise only what this caller may actually call, so a scoped service
@@ -286,7 +302,10 @@ def handle(message: dict, caller: dict | None = None) -> dict | None:
             finally:
                 _caller.reset(tok)
         else:
-            text, ok = assistant.call_tool(name, args)
+            # Read tools: WhatsApp visibility follows the caller -- founder view only
+            # for a founder's personal token, CRCMZ BOYZ for everything else.
+            with assistant.wa_viewer(_founder_sub(caller)):
+                text, ok = assistant.call_tool(name, args)
 
         # A failed tool is a *result* with isError, not a JSON-RPC error: the
         # model is meant to read the message and recover, not see a dead channel.

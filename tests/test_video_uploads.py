@@ -43,7 +43,7 @@ class _Bridge(BaseHTTPRequestHandler):
 _srv = HTTPServer(("127.0.0.1", 0), _Bridge)
 threading.Thread(target=_srv.serve_forever, daemon=True).start()
 os.environ["WA_BRIDGE_URL"] = f"http://127.0.0.1:{_srv.server_port}"
-os.environ["WA_GOOPERS_JID"] = "group@g.us"
+os.environ["WA_MAIN_JID"] = "group@g.us"
 
 import assistant  # noqa: E402
 import clip_store  # noqa: E402

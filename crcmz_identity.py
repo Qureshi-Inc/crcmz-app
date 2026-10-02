@@ -67,7 +67,11 @@ ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
 # the tag is a list.
 # jellyfin_user is the person's account on the music server (see slap.py); it is
 # written by the app itself the first time someone opens Slap without one.
-TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone", "wa_names", "jellyfin_user")
+# founder ("true") marks the six people who see founder-only features, e.g. the
+# Professional Goopers WhatsApp stats. Console-only: set_tag() refuses it, so
+# nobody can grant it to themselves through the app. Read it via is_founder().
+TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone", "wa_names", "jellyfin_user",
+            "founder")
 
 # Separators accepted inside a multi-value tag.
 _TAG_SPLIT = ",;|"
@@ -103,6 +107,7 @@ def bot_person() -> dict:
         "wa_phone": "",
         "wa_names": [],
         "jellyfin_user": "",
+        "founder": False,
         "tags": {},
         "is_bot": True,
     }
@@ -133,6 +138,10 @@ def _decode_tag(raw: str) -> str:
         return base64.b64decode(raw, validate=True).decode("utf-8").strip()
     except (binascii.Error, ValueError, UnicodeDecodeError):
         return raw.strip()
+
+
+def _truthy(raw: str) -> bool:
+    return (raw or "").strip().casefold() in ("true", "1", "yes")
 
 
 def _split_tag(raw: str) -> list[str]:
@@ -258,6 +267,7 @@ def _fetch_people() -> list[dict]:
                 "wa_phone": tags.get("wa_phone", ""),
                 "wa_names": _split_tag(tags.get("wa_names", "")),
                 "jellyfin_user": tags.get("jellyfin_user", ""),
+                "founder": _truthy(tags.get("founder", "")),
                 "tags": tags,
             })
 
@@ -461,6 +471,33 @@ def by_psn_id(*, refresh: bool = False) -> dict[str, dict]:
 def by_zitadel_id(*, refresh: bool = False) -> dict[str, dict]:
     """Zitadel id -> person, for soundboards, giveaways, facts and chat history."""
     return {p["zitadel_id"]: p for p in people(refresh=refresh)}
+
+
+def is_founder(sub_or_person: str | dict | None, *, refresh: bool = False) -> bool:
+    """True only for a person carrying the Zitadel `founder=true` tag.
+
+    The gate for every founder-only feature. Takes a Zitadel id or a person dict.
+    A string is looked up by Zitadel id ONLY -- never through resolve(), whose
+    display-name matching would let a lookalike name pass as a founder. Anything
+    unknown, the bot, a service caller, or Zitadel being unreachable is False:
+    founder access fails closed.
+    """
+    if not sub_or_person:
+        return False
+    if isinstance(sub_or_person, dict):
+        if sub_or_person.get("is_bot"):
+            return False
+        sub = str(sub_or_person.get("zitadel_id") or "")
+    else:
+        sub = str(sub_or_person).strip()
+    if not sub:
+        return False
+    # Re-read the person from the graph rather than trusting a passed-in dict:
+    # the tag must come from Zitadel, not from whoever built the dict.
+    person = by_zitadel_id(refresh=refresh).get(sub)
+    if not person:
+        return False
+    return bool(person.get("founder")) or _truthy((person.get("tags") or {}).get("founder", ""))
 
 
 def identify_jid(jid: str, *, refresh: bool = False) -> dict | None:

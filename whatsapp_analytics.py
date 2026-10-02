@@ -64,6 +64,94 @@ MAX_ZIP_UNCOMPRESSED = 150 * 1024 * 1024
 MAX_ZIP_FILES = 10
 
 
+# ── Groups ─────────────────────────────────────────────────────────────────────
+# Two WhatsApp groups feed this table, and they are not equally visible:
+#
+#   crcmz_boyz            the clan's main group (WA_MAIN_JID). Everything the bot
+#                         posts or answers goes here, and everyone can see its stats.
+#   professional_goopers  the founders' group (WA_GOOPERS_JID). Its stats are kept
+#                         and still grow, but only founders may read them -- see
+#                         crcmz_identity.is_founder().
+#
+# Every read below is scoped to exactly one group_jid. There is no "all groups"
+# read: a forgotten argument must give the public group, never a union that leaks
+# the founders' chat. The bot's own DMs are stored too (group_jid = the DM peer),
+# and the group filter keeps them out of every number.
+GROUP_MAIN = "crcmz_boyz"
+GROUP_FOUNDERS = "professional_goopers"
+_GROUP_LABELS = {GROUP_MAIN: "CRCMZ BOYZ", GROUP_FOUNDERS: "Professional Goopers"}
+# Matches no row: what a read filters on when its group is not configured.
+_NO_GROUP = "\x00no-group"
+
+
+def group_jid(key: str) -> str:
+    """The JID behind a group key, "" when unknown or unconfigured.
+
+    The main group's JID is refused when it equals the founders' group: with
+    WA_MAIN_JID unset or mis-set to the Goopers JID, "public" stats would
+    otherwise be the founders' chat.
+    """
+    goopers = os.environ.get("WA_GOOPERS_JID", "").strip()
+    if key == GROUP_FOUNDERS:
+        return goopers
+    if key == GROUP_MAIN:
+        main = os.environ.get("WA_MAIN_JID", "").strip()
+        return main if main and main != goopers else ""
+    return ""
+
+
+def group_key_for_jid(jid: str) -> str:
+    """Inverse of group_jid(): "" for a JID that is not one of the two groups."""
+    jid = (jid or "").strip()
+    if not jid:
+        return ""
+    for key in (GROUP_MAIN, GROUP_FOUNDERS):
+        if group_jid(key) == jid:
+            return key
+    return ""
+
+
+def group_label(key: str) -> str:
+    return _GROUP_LABELS.get(key, key)
+
+
+def visible_groups(founder: bool) -> list[str]:
+    """Group keys a viewer may read. Founders get both, everyone else the main one."""
+    return [GROUP_MAIN, GROUP_FOUNDERS] if founder else [GROUP_MAIN]
+
+
+def groups_for(founder: bool) -> list[dict]:
+    """Switcher-shaped list for the UI: key + label only, never a JID."""
+    return [{"key": k, "label": group_label(k), "founders_only": k == GROUP_FOUNDERS}
+            for k in visible_groups(founder)]
+
+
+class GroupForbidden(PermissionError):
+    """A non-founder asked for the founders' group."""
+
+
+def resolve_group(key: str | None, founder: bool) -> str:
+    """Group key from a request -> the JID to filter on.
+
+    Empty means the main group. An unknown key is a ValueError; the founders'
+    group without founder rights is GroupForbidden. Callers turn those into a 400
+    and a 403 (HTTP) or a tool error -- never a silent fall back to Goopers.
+    """
+    key = (key or "").strip().lower() or GROUP_MAIN
+    if key not in _GROUP_LABELS:
+        raise ValueError(f"unknown group {key!r}; use one of {sorted(_GROUP_LABELS)}")
+    if key not in visible_groups(founder):
+        raise GroupForbidden(f"{group_label(key)} stats are founders-only")
+    return group_jid(key) or _NO_GROUP
+
+
+def _g(jid: str | None) -> str:
+    """The group a read is scoped to: None means the main group."""
+    if jid is None:
+        jid = group_jid(GROUP_MAIN)
+    return jid or _NO_GROUP
+
+
 # ── Database ───────────────────────────────────────────────────────────────────
 
 def _conn() -> sqlite3.Connection:
@@ -122,6 +210,19 @@ def init() -> None:
             imported_by_sub TEXT NOT NULL
         );
         """)
+    # Every row carries its group. History (the .txt import and live ingest) all
+    # came from Professional Goopers before a second group existed, so a row with
+    # no group is a Goopers row. Idempotent: only NULL/blank rows are touched.
+    goopers = os.environ.get("WA_GOOPERS_JID", "").strip()
+    with _lock, _conn() as db:
+        db.execute("CREATE INDEX IF NOT EXISTS idx_wa_group ON whatsapp_messages(group_jid, timestamp)")
+        if goopers:
+            n = db.execute(
+                "UPDATE whatsapp_messages SET group_jid=? WHERE group_jid IS NULL OR group_jid=''",
+                (goopers,)).rowcount
+            if n:
+                logger.info("whatsapp_analytics: backfilled %d rows with no group as Professional Goopers", n)
+        db.commit()
     # Patch existing records for any configured name aliases
     if _NAME_ALIASES:
         with _lock, _conn() as db:
@@ -335,21 +436,35 @@ def _dedupe_key(sender: str, ts: int, text: str) -> tuple[str, int, str]:
     return (sender.strip().lower(), ts // 60, (text or "").strip()[:120])
 
 
-def _existing_keys(db) -> set[tuple[str, int, str]]:
+def _existing_keys(db, group_jid: str) -> set[tuple[str, int, str]]:
+    """Dedupe keys already stored for one group.
+
+    Scoped to the group being imported: the same person saying "gg" in both
+    groups in the same minute is two messages, and a CRCMZ BOYZ export must not
+    be thinned out by Goopers rows (or vice versa).
+    """
     return {
         _dedupe_key(r["sender_name"] or "", r["timestamp"], r["text"] or "")
-        for r in db.execute("SELECT sender_name, timestamp, text FROM whatsapp_messages")
+        for r in db.execute(
+            "SELECT sender_name, timestamp, text FROM whatsapp_messages WHERE group_jid=?",
+            (group_jid,))
     }
 
 
 def import_messages(content: bytes, filename: str, group_jid: str, imported_by_sub: str) -> dict:
-    """Parse and ingest a WhatsApp export (bytes). Returns import summary."""
+    """Parse and ingest a WhatsApp export (bytes) into one group.
+
+    `group_jid` is required: an export carries no group of its own, and a row
+    without one would be invisible to every (group-scoped) read.
+    """
+    if not (group_jid or "").strip():
+        raise ValueError("an import needs a target group")
     file_sha = hashlib.sha256(content).hexdigest()
 
     with _lock, _conn() as db:
         existing = db.execute(
             "SELECT message_count, duplicate_count FROM whatsapp_imports WHERE file_sha256=?",
-            (file_sha,),
+            (_import_key(file_sha, group_jid),),
         ).fetchone()
     if existing:
         return {
@@ -372,9 +487,13 @@ def import_messages(content: bytes, filename: str, group_jid: str, imported_by_s
     inserted = 0
     duplicates = 0
     batch_tag = file_sha[:16]
+    if group_jid != os.environ.get("WA_GOOPERS_JID", "").strip():
+        # Goopers keeps its historical batch ids; any other group gets its own so
+        # one file imported into two groups yields two sets of row ids.
+        batch_tag = hashlib.sha256(f"{file_sha}|{group_jid}".encode()).hexdigest()[:16]
 
     with _lock, _conn() as db:
-        seen = _existing_keys(db)
+        seen = _existing_keys(db, group_jid)
         for msg in messages:
             key = _dedupe_key(msg["sender_name"], msg["timestamp"], msg.get("text") or "")
             if key in seen:
@@ -387,7 +506,7 @@ def import_messages(content: bytes, filename: str, group_jid: str, imported_by_s
                 "(id, message_id, group_jid, sender_jid, sender_name, timestamp, text, "
                 "message_type, has_photo, has_video, has_audio, has_document, is_media_omitted, "
                 "reply_to, from_me, source, import_batch, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (mid, None, group_jid or None, None,
+                (mid, None, group_jid, None,
                  msg["sender_name"], msg["timestamp"],
                  msg.get("text"), msg.get("message_type", "text"),
                  msg.get("has_photo", 0), msg.get("has_video", 0),
@@ -402,7 +521,7 @@ def import_messages(content: bytes, filename: str, group_jid: str, imported_by_s
         db.execute(
             "INSERT INTO whatsapp_imports (file_sha256, filename, imported_at, message_count, duplicate_count, imported_by_sub) "
             "VALUES (?,?,?,?,?,?)",
-            (file_sha, filename, now, inserted, duplicates, imported_by_sub),
+            (_import_key(file_sha, group_jid), filename, now, inserted, duplicates, imported_by_sub),
         )
         db.commit()
 
@@ -413,7 +532,16 @@ def import_messages(content: bytes, filename: str, group_jid: str, imported_by_s
         "message_count": inserted,
         "duplicate_count": duplicates,
         "total_parsed": len(messages),
+        "group": group_key_for_jid(group_jid),
     }
+
+
+def _import_key(file_sha: str, group_jid: str) -> str:
+    """whatsapp_imports key. Goopers keeps the bare sha its history was logged
+    under; another group's import of the same bytes is a different import."""
+    if group_jid == os.environ.get("WA_GOOPERS_JID", "").strip():
+        return file_sha
+    return f"{file_sha}:{group_jid}"
 
 
 def _extract_txt_from_zip(content: bytes) -> str:
@@ -536,8 +664,13 @@ def _ts_bounds(range_str: str, start: str = "", end: str = "") -> tuple[int | No
     return None, None
 
 
-def _where_ts(s: int | None, e: int | None) -> tuple[str, list]:
-    parts, p = [], []
+def _where_ts(s: int | None, e: int | None, gj: str | None = None) -> tuple[str, list]:
+    """Time window plus the group, as " AND ..." for a query aliasing m.
+
+    The group clause is always present: `gj` None means the main group, and an
+    unconfigured group matches nothing (see _g).
+    """
+    parts, p = ["m.group_jid = ?"], [_g(gj)]
     if s:
         parts.append("m.timestamp >= ?"); p.append(s)
     if e:
@@ -553,7 +686,8 @@ def _q(sql: str, params=()) -> list[dict]:
 # ── Search ─────────────────────────────────────────────────────────────────────
 
 def search(query: str = "", sender: str = "", range_str: str = "all_time",
-           start: str = "", end: str = "", limit: int = 20) -> dict:
+           start: str = "", end: str = "", limit: int = 20,
+           group_jid: str | None = None) -> dict:
     """Find actual messages. Substring match, newest first.
 
     Written for the assistant's whatsapp_search tool: it needs to quote real
@@ -562,7 +696,7 @@ def search(query: str = "", sender: str = "", range_str: str = "all_time",
     """
     limit = max(1, min(int(limit or 20), 50))
     s, e = _ts_bounds(range_str, start, end)
-    w, p = _where_ts(s, e)
+    w, p = _where_ts(s, e, group_jid)
     if query.strip():
         w += " AND m.text LIKE ?"
         p = p + [f"%{query.strip()}%"]
@@ -588,9 +722,10 @@ def search(query: str = "", sender: str = "", range_str: str = "all_time",
 
 # ── Stats ──────────────────────────────────────────────────────────────────────
 
-def stats(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
+def stats(range_str: str = "all_time", start: str = "", end: str = "",
+          group_jid: str | None = None) -> dict:
     s, e = _ts_bounds(range_str, start, end)
-    w, p = _where_ts(s, e)
+    w, p = _where_ts(s, e, group_jid)
     total   = _q(f"SELECT COUNT(*) n FROM whatsapp_messages m WHERE 1=1{w}", p)[0]["n"]
     members = _q(f"SELECT COUNT(DISTINCT sender_name) n FROM whatsapp_messages m WHERE 1=1{w}", p)[0]["n"]
     videos  = _q(f"SELECT COUNT(*) n FROM whatsapp_messages m WHERE has_video=1{w}", p)[0]["n"]
@@ -614,9 +749,10 @@ def stats(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
 
 # ── Activity ───────────────────────────────────────────────────────────────────
 
-def activity(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
+def activity(range_str: str = "all_time", start: str = "", end: str = "",
+             group_jid: str | None = None) -> dict:
     s, e = _ts_bounds(range_str, start, end)
-    w, p = _where_ts(s, e)
+    w, p = _where_ts(s, e, group_jid)
     rows = _q(f"SELECT timestamp, sender_name FROM whatsapp_messages m WHERE 1=1{w} ORDER BY timestamp", p)
 
     hour_c: Counter = Counter()
@@ -647,9 +783,10 @@ def activity(range_str: str = "all_time", start: str = "", end: str = "") -> dic
 
 # ── Heatmap ────────────────────────────────────────────────────────────────────
 
-def heatmap(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
+def heatmap(range_str: str = "all_time", start: str = "", end: str = "",
+            group_jid: str | None = None) -> dict:
     s, e = _ts_bounds(range_str, start, end)
-    w, p = _where_ts(s, e)
+    w, p = _where_ts(s, e, group_jid)
     rows = _q(f"SELECT timestamp FROM whatsapp_messages m WHERE 1=1{w}", p)
     cells: dict = defaultdict(int)
     for r in rows:
@@ -701,9 +838,10 @@ def _tokenize(text: str) -> list[str]:
     return [w for w in text.lower().split() if len(w) >= 3 and w not in _SW]
 
 
-def words(range_str: str = "all_time", start: str = "", end: str = "", limit: int = 50) -> dict:
+def words(range_str: str = "all_time", start: str = "", end: str = "", limit: int = 50,
+          group_jid: str | None = None) -> dict:
     s, e = _ts_bounds(range_str, start, end)
-    w, p = _where_ts(s, e)
+    w, p = _where_ts(s, e, group_jid)
     rows = _q(f"SELECT sender_name, text FROM whatsapp_messages m WHERE text IS NOT NULL AND is_media_omitted=0{w}", p)
     all_w: Counter = Counter()
     per: dict = defaultdict(Counter)
@@ -755,9 +893,10 @@ def _extract_emoji(text: str) -> list[str]:
     return result
 
 
-def emojis(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
+def emojis(range_str: str = "all_time", start: str = "", end: str = "",
+           group_jid: str | None = None) -> dict:
     s, e = _ts_bounds(range_str, start, end)
-    w, p = _where_ts(s, e)
+    w, p = _where_ts(s, e, group_jid)
     rows = _q(f"SELECT sender_name, text FROM whatsapp_messages m WHERE text IS NOT NULL{w}", p)
     all_e: Counter = Counter()
     per: dict = defaultdict(Counter)
@@ -775,9 +914,10 @@ def emojis(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
 
 # ── Response Times ─────────────────────────────────────────────────────────────
 
-def response_times(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
+def response_times(range_str: str = "all_time", start: str = "", end: str = "",
+                   group_jid: str | None = None) -> dict:
     s, e = _ts_bounds(range_str, start, end)
-    w, p = _where_ts(s, e)
+    w, p = _where_ts(s, e, group_jid)
     rows = _q(f"SELECT sender_name, timestamp FROM whatsapp_messages m WHERE 1=1{w} ORDER BY timestamp", p)
     if len(rows) < 10:
         return {"member_avg_minutes": [], "distribution": [], "fastest_responder": None}
@@ -815,9 +955,10 @@ def response_times(range_str: str = "all_time", start: str = "", end: str = "") 
 
 # ── Members ────────────────────────────────────────────────────────────────────
 
-def members(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
+def members(range_str: str = "all_time", start: str = "", end: str = "",
+            group_jid: str | None = None) -> dict:
     s, e = _ts_bounds(range_str, start, end)
-    w, p = _where_ts(s, e)
+    w, p = _where_ts(s, e, group_jid)
     rows = _q(
         f"SELECT sender_name, COUNT(*) msgs, SUM(has_photo) photos, SUM(has_video) videos, "
         f"SUM(has_audio) audios, SUM(is_media_omitted) media_omit, MIN(timestamp) first_ts, MAX(timestamp) last_ts "
@@ -843,9 +984,10 @@ def members(range_str: str = "all_time", start: str = "", end: str = "") -> dict
 
 # ── Awards ─────────────────────────────────────────────────────────────────────
 
-def awards(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
+def awards(range_str: str = "all_time", start: str = "", end: str = "",
+           group_jid: str | None = None) -> dict:
     s, e = _ts_bounds(range_str, start, end)
-    w, p = _where_ts(s, e)
+    w, p = _where_ts(s, e, group_jid)
 
     def _top(extra: str = "", ep: list | None = None):
         ep = ep or []
@@ -889,10 +1031,10 @@ def awards(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
 
     # Ghost of the month (always current month)
     gms, gme = _ts_bounds("this_month")
-    gw, gp = _where_ts(gms, gme)
+    gw, gp = _where_ts(gms, gme, group_jid)
     ghost_row = _q(f"SELECT sender_name, COUNT(*) cnt FROM whatsapp_messages m WHERE 1=1{gw} GROUP BY sender_name ORDER BY cnt ASC LIMIT 1", gp)
 
-    rt = response_times(range_str, start, end)
+    rt = response_times(range_str, start, end, group_jid)
     react_rows = _q(
         f"SELECT m.sender_name, COUNT(r.id) cnt FROM whatsapp_messages m "
         f"JOIN whatsapp_reactions r ON r.target_msg_id=m.message_id "
@@ -938,7 +1080,8 @@ def awards(range_str: str = "all_time", start: str = "", end: str = "") -> dict:
 
 # ── Excel Export ───────────────────────────────────────────────────────────────
 
-def export_xlsx(range_str: str = "all_time", start: str = "", end: str = "") -> bytes:
+def export_xlsx(range_str: str = "all_time", start: str = "", end: str = "",
+                group_jid: str | None = None) -> bytes:
     try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill
@@ -947,7 +1090,7 @@ def export_xlsx(range_str: str = "all_time", start: str = "", end: str = "") -> 
         raise RuntimeError("openpyxl not installed — add it to requirements.txt") from exc
 
     s, e = _ts_bounds(range_str, start, end)
-    wq, p = _where_ts(s, e)
+    wq, p = _where_ts(s, e, group_jid)
     wb = openpyxl.Workbook()
 
     hf = Font(color="FF2FD6", bold=True)
@@ -972,12 +1115,12 @@ def export_xlsx(range_str: str = "all_time", start: str = "", end: str = "") -> 
              r["has_photo"], r["has_video"], r["has_audio"], r["source"]) for r in msgs])
 
     ws2 = wb.create_sheet("Member Stats")
-    md = members(range_str, start, end)["members"]
+    md = members(range_str, start, end, group_jid)["members"]
     _sheet(ws2, ["Name","Messages","Photos","Videos","Words","Avg Words/Msg"],
            [(m["name"], m["messages"], m["photos"], m["videos"], m["total_words"], m["avg_words_per_msg"]) for m in md])
 
     ws3 = wb.create_sheet("Activity by Hour")
-    act = activity(range_str, start, end)
+    act = activity(range_str, start, end, group_jid)
     _sheet(ws3, ["Hour","Messages"], [(r["hour"], r["count"]) for r in act["by_hour"]])
 
     ws4 = wb.create_sheet("Activity by Day")
@@ -987,15 +1130,15 @@ def export_xlsx(range_str: str = "all_time", start: str = "", end: str = "") -> 
     _sheet(ws5, ["Month","Messages"], [(r["month"], r["count"]) for r in act["monthly"]])
 
     ws6 = wb.create_sheet("Top Words")
-    wd = words(range_str, start, end, limit=100)
+    wd = words(range_str, start, end, limit=100, group_jid=group_jid)
     _sheet(ws6, ["Word","Count"], [(r["word"], r["count"]) for r in wd["top_words"]])
 
     ws7 = wb.create_sheet("Top Emoji")
-    ed = emojis(range_str, start, end)
+    ed = emojis(range_str, start, end, group_jid)
     _sheet(ws7, ["Emoji","Count","Percent"], [(r["emoji"], r["count"], r["pct"]) for r in ed["top_emoji"]])
 
     ws8 = wb.create_sheet("Response Times")
-    rt = response_times(range_str, start, end)
+    rt = response_times(range_str, start, end, group_jid)
     _sheet(ws8, ["Responder","Avg Min","Count"],
            [(r["name"], r["avg_minutes"], r["count"]) for r in rt.get("member_avg_minutes", [])])
 

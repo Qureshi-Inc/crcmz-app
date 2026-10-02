@@ -2001,60 +2001,105 @@ def _wa_params(request: Request) -> tuple[str, str, str]:
     return q.get("range", "all_time"), q.get("start", ""), q.get("end", "")
 
 
+def _wa_is_founder(request: Request) -> bool:
+    """Founder rights for this request: the session's Zitadel `founder` tag.
+
+    No session (the stats pages are reachable without one off the portal host),
+    an unknown user or Zitadel being down all mean "not a founder".
+    """
+    session = _get_session(request)
+    sub = (session or {}).get("sub") or ""
+    if not sub:
+        return False
+    try:
+        return crcmz_identity.is_founder(sub)
+    except Exception as exc:  # noqa: BLE001 -- fail closed
+        logger.warning("wa founder check failed: %s", exc)
+        return False
+
+
+def _wa_group_jid(request: Request, key: str | None = None) -> str:
+    """The group a stats request reads, from ?group=<key> (default CRCMZ BOYZ).
+
+    Professional Goopers is founders-only: anyone else gets a 403, an unknown
+    key a 400. Never falls back to the founders' group.
+    """
+    if key is None:
+        key = request.query_params.get("group", "")
+    founder = _wa_is_founder(request) if (key or "").strip() else False
+    try:
+        return _wa.resolve_group(key, founder)
+    except _wa.GroupForbidden as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/whatsapp/groups")
+def wa_groups(request: Request):
+    """The chats this viewer may switch between (founders get both)."""
+    return JSONResponse({"groups": _wa.groups_for(_wa_is_founder(request)),
+                         "default": _wa.GROUP_MAIN},
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/whatsapp/stats")
 def wa_stats(request: Request):
     rng, s, e = _wa_params(request)
-    return JSONResponse(_wa.stats(rng, s, e))
+    return JSONResponse(_wa.stats(rng, s, e, group_jid=_wa_group_jid(request)))
 
 
 @app.get("/api/whatsapp/activity")
 def wa_activity(request: Request):
     rng, s, e = _wa_params(request)
-    return JSONResponse(_wa.activity(rng, s, e))
+    return JSONResponse(_wa.activity(rng, s, e, group_jid=_wa_group_jid(request)))
 
 
 @app.get("/api/whatsapp/heatmap")
 def wa_heatmap(request: Request):
     rng, s, e = _wa_params(request)
-    return JSONResponse(_wa.heatmap(rng, s, e))
+    return JSONResponse(_wa.heatmap(rng, s, e, group_jid=_wa_group_jid(request)))
 
 
 @app.get("/api/whatsapp/words")
 def wa_words(request: Request):
     rng, s, e = _wa_params(request)
-    return JSONResponse(_wa.words(rng, s, e))
+    return JSONResponse(_wa.words(rng, s, e, group_jid=_wa_group_jid(request)))
 
 
 @app.get("/api/whatsapp/emojis")
 def wa_emojis(request: Request):
     rng, s, e = _wa_params(request)
-    return JSONResponse(_wa.emojis(rng, s, e))
+    return JSONResponse(_wa.emojis(rng, s, e, group_jid=_wa_group_jid(request)))
 
 
 @app.get("/api/whatsapp/response-times")
 def wa_response_times(request: Request):
     rng, s, e = _wa_params(request)
-    return JSONResponse(_wa.response_times(rng, s, e))
+    return JSONResponse(_wa.response_times(rng, s, e, group_jid=_wa_group_jid(request)))
 
 
 @app.get("/api/whatsapp/members")
 def wa_members(request: Request):
     rng, s, e = _wa_params(request)
-    return JSONResponse(_wa.members(rng, s, e))
+    return JSONResponse(_wa.members(rng, s, e, group_jid=_wa_group_jid(request)))
 
 
 @app.get("/api/whatsapp/awards")
 def wa_awards(request: Request):
     rng, s, e = _wa_params(request)
-    return JSONResponse(_wa.awards(rng, s, e))
+    return JSONResponse(_wa.awards(rng, s, e, group_jid=_wa_group_jid(request)))
 
 
 @app.get("/api/whatsapp/can-import")
 async def wa_can_import(request: Request):
     session = _get_session(request)
     if not session:
-        return JSONResponse({"can_import": False})
-    return JSONResponse({"can_import": await _is_whatsapp_importer(session)})
+        return JSONResponse({"can_import": False, "groups": []})
+    can = await _is_whatsapp_importer(session)
+    founder = await asyncio.to_thread(_wa_is_founder, request) if can else False
+    return JSONResponse({"can_import": can,
+                         "groups": _wa.groups_for(founder) if can else []})
 
 
 @app.get("/api/whatsapp/export")
@@ -2063,8 +2108,9 @@ async def wa_export(request: Request):
     if not session:
         raise HTTPException(status_code=401, detail="authentication required")
     rng, s, e = _wa_params(request)
+    gj = await asyncio.to_thread(_wa_group_jid, request)
     try:
-        data = await asyncio.to_thread(_wa.export_xlsx, rng, s, e)
+        data = await asyncio.to_thread(_wa.export_xlsx, rng, s, e, group_jid=gj)
     except RuntimeError as exc:
         raise HTTPException(status_code=501, detail=str(exc))
     return Response(
@@ -2078,9 +2124,15 @@ async def wa_export(request: Request):
 async def wa_import(
     request: Request,
     file: UploadFile = File(...),
+    group: str = Form(default=""),
     group_jid: str = Form(default=""),
 ):
-    """Import a WhatsApp export. Requires WHATSAPP_IMPORT_ALLOWED_ROLE."""
+    """Import a WhatsApp export into one group. Requires WHATSAPP_IMPORT_ALLOWED_ROLE.
+
+    `group` is a group key (default CRCMZ BOYZ); importing into Professional
+    Goopers also needs the founder tag. A legacy `group_jid` is accepted only
+    when it is one of the two known groups.
+    """
     session = _get_session(request)
     if not session:
         raise HTTPException(status_code=401, detail="authentication required")
@@ -2096,11 +2148,18 @@ async def wa_import(
     if len(content) > _wa.MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="file too large (max 50 MB)")
 
+    key = (group or "").strip()
+    if not key and group_jid.strip():
+        key = _wa.group_key_for_jid(group_jid)
+        if not key:
+            raise HTTPException(status_code=400, detail="unknown group_jid; pass group=<key>")
+    target = await asyncio.to_thread(_wa_group_jid, request, key)
+    if target == _wa._NO_GROUP:
+        raise HTTPException(status_code=503, detail="that group is not configured")
+
     try:
         result = await asyncio.to_thread(
-            _wa.import_messages, content, fname,
-            group_jid or WA_GOOPERS_JID or "",
-            session["sub"],
+            _wa.import_messages, content, fname, target, session["sub"],
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -2160,7 +2219,7 @@ async def wa_ingest(request: Request):
         # not left holding this request open for the length of a model run.
         if WA_AI_ENABLED:
             wa_ai.learn_member(msg)
-            prompt = wa_ai.trigger_from(msg, WA_GOOPERS_JID)
+            prompt = wa_ai.trigger_from(msg, WA_MAIN_JID)
             logger.info("wa_ingest: type=%s from_me=%s reply_to=%s msg_id=%r sent_ids=%s prompt=%r",
                         msg.get("message_type") or msg.get("type"),
                         msg.get("from_me") or msg.get("fromMe"),
@@ -2171,7 +2230,7 @@ async def wa_ingest(request: Request):
                 _threading.Thread(
                     target=_answer_whatsapp, name="wa-ai",
                     args=(prompt, wa_ai.sender_name(msg),
-                          msg.get("group_jid") or msg.get("groupJid") or WA_GOOPERS_JID,
+                          msg.get("group_jid") or msg.get("groupJid") or WA_MAIN_JID,
                           msg.get("image_b64", ""), msg.get("image_type", "image/jpeg"),
                           msg.get("message_id", ""), msg.get("sender_jid", "")),
                     daemon=True).start()
@@ -4487,7 +4546,10 @@ def _run_assistant_turn(user_sub: str, question: str, reply_id: int,
             asker = {}
         result = assistant.ask(question, history,
                                image_b64=image_b64, image_type=image_type,
-                               on_event=live.emit, asker=asker)
+                               on_event=live.emit, asker=asker,
+                               # The Ask AI tab is the person's own: founders
+                               # may see Professional Goopers stats here.
+                               wa_viewer_sub=user_sub)
         answer = result.get("answer", "")
         tools = result.get("tools_used") or []
         elapsed = result.get("elapsed_ms", 0)
@@ -6037,7 +6099,7 @@ async def watch_rally(request: Request):
             r = await c.post(f"{WA_BRIDGE_URL}/send", json={
                 "message": message,
                 "mentionAll": True,
-                **({"groupJid": WA_GOOPERS_JID} if WA_GOOPERS_JID else {}),
+                **({"groupJid": WA_MAIN_JID} if WA_MAIN_JID else {}),
             })
         r.raise_for_status()
         return JSONResponse({"status": "sent"}, headers={"Cache-Control": "no-store"})
@@ -6631,7 +6693,11 @@ def _check_arc_alert(squad: list[dict]) -> None:
 # === PSN → WhatsApp / Discord video forwarder ================================
 WA_BRIDGE_URL  = os.environ.get("WA_BRIDGE_URL", "")
 WA_TTS_URL     = os.environ.get("WA_TTS_URL", "http://100.76.195.46:8880")
-WA_GOOPERS_JID = os.environ.get("WA_GOOPERS_JID", "")
+WA_GOOPERS_JID = os.environ.get("WA_GOOPERS_JID", "")  # stats only (founders group)
+# Every bot interaction (clips, forwards, coaching, reactions, the AI bot,
+# typing, announcements) lives in CRCMZ BOYZ. Falls back to the old group so
+# an unset WA_MAIN_JID keeps the bot where it was rather than going silent.
+WA_MAIN_JID = os.environ.get("WA_MAIN_JID", "").strip() or WA_GOOPERS_JID
 DISCORD_BOT_TOKEN       = os.environ.get("DISCORD_BOT_TOKEN", "")
 DISCORD_CLIPS_CHANNEL_ID = os.environ.get("DISCORD_CLIPS_CHANNEL_ID", "")
 
@@ -6899,7 +6965,7 @@ async def _forward_screenshot(uid: str, ugc_id: str, sender: str, body: str, wm)
     import base64
     import httpx as _httpx
 
-    if not WA_BRIDGE_URL or not WA_GOOPERS_JID:
+    if not WA_BRIDGE_URL or not WA_MAIN_JID:
         return
     try:
         logger.info("screenshot_forward_started uid=%s ugcId=%s sender=%s", uid, ugc_id, sender)
@@ -6907,7 +6973,7 @@ async def _forward_screenshot(uid: str, ugc_id: str, sender: str, body: str, wm)
         caption = f"{sender}: {body}" if body else sender
         payload = {
             "imageBase64": base64.b64encode(image_bytes).decode(),
-            "groupJid": WA_GOOPERS_JID,
+            "groupJid": WA_MAIN_JID,
             "caption": caption,
             "idempotencyKey": f"psn-img:{uid}",
         }
@@ -6923,7 +6989,7 @@ async def _forward_image(uid: str, image_url: str, sender: str, body: str, wm) -
     import base64
     import httpx as _httpx
 
-    if not WA_BRIDGE_URL or not WA_GOOPERS_JID:
+    if not WA_BRIDGE_URL or not WA_MAIN_JID:
         return
     try:
         logger.info("image_forward_started uid=%s sender=%s", uid, sender)
@@ -6931,7 +6997,7 @@ async def _forward_image(uid: str, image_url: str, sender: str, body: str, wm) -
         caption = f"{sender}: {body}" if body else sender
         payload = {
             "imageBase64": base64.b64encode(image_bytes).decode(),
-            "groupJid": WA_GOOPERS_JID,
+            "groupJid": WA_MAIN_JID,
             "caption": caption,
             "idempotencyKey": f"psn-img:{uid}",
         }
@@ -6968,7 +7034,7 @@ def _send_to_wa(message_uid: str, video_bytes: bytes, sender: str, body: str = "
 
     payload = {
         "videoBase64": base64.b64encode(video_bytes).decode(),
-        "groupJid": WA_GOOPERS_JID,
+        "groupJid": WA_MAIN_JID,
         "caption": caption,
         "idempotencyKey": idempotency_key,
     }
@@ -7034,8 +7100,8 @@ def _process_clip_job(message_uid: str, job: dict) -> str | None:
     # both "rev" and "🔥" appear in the same caption.
     coaching_only = _wants_coaching(body)
     ig_only = not coaching_only and _wants_ig_post(body)
-    if not coaching_only and not ig_only and (not WA_BRIDGE_URL or not WA_GOOPERS_JID):
-        raise ClipError("WA_BRIDGE_URL or WA_GOOPERS_JID not configured")
+    if not coaching_only and not ig_only and (not WA_BRIDGE_URL or not WA_MAIN_JID):
+        raise ClipError("WA_BRIDGE_URL or WA_MAIN_JID not configured")
 
     # ── Resume from archive if available ──────────────────────────────────────
     storage_key = job.get("storage_key_original")
@@ -7184,7 +7250,7 @@ async def _start_squad_poller():
                     " + ".join(f'"{n}"' for n, _, _ in _ai_groups),
                     PSN_AI_POLL_SECONDS)
 
-    if WA_BRIDGE_URL and WA_GOOPERS_JID:
+    if WA_BRIDGE_URL and WA_MAIN_JID:
         global _watched_messengers, _video_queue
         _watched_messengers = [m for m in [psn_messenger, _squad_messenger] if m is not None]
         _video_queue = asyncio.Queue()
@@ -7501,7 +7567,7 @@ async def _start_squad_poller():
                         else:
                             _clips.set_delivered(uid, wa_msg_id)
                             if wa_msg_id:
-                                _wa_react.track_clip(uid, wa_msg_id, WA_GOOPERS_JID)
+                                _wa_react.track_clip(uid, wa_msg_id, WA_MAIN_JID)
                         continue
 
                     kind, error_msg, extra = exc_info
@@ -7814,7 +7880,7 @@ def status():
     s = _clips.stats()
     return {
         "psn": "connected" if _v2_available else "unavailable",
-        "whatsapp": "configured" if (WA_BRIDGE_URL and WA_GOOPERS_JID) else "not_configured",
+        "whatsapp": "configured" if (WA_BRIDGE_URL and WA_MAIN_JID) else "not_configured",
         "clip_store": _cstore.backend(),
         "groups": len(_watched_messengers),
         "queue_depth": q_depth,
@@ -7869,7 +7935,7 @@ def api_clip_detail(message_uid: str):
 async def api_clip_resend(message_uid: str, request: Request):
     """Force-resend a delivered clip to WhatsApp with a new idempotency key.
 
-    Admins only (B-3): it posts to the real Goopers group, and a new key means
+    Admins only (B-3): it posts to the real CRCMZ BOYZ group, and a new key means
     WhatsApp shows it again even if it was delivered before.
     """
     session = _get_session(request)
@@ -7884,7 +7950,7 @@ def _clip_resend(message_uid: str) -> dict:
     job = _clips.get(message_uid)
     if not job:
         raise HTTPException(status_code=404, detail="clip not found")
-    if not WA_BRIDGE_URL or not WA_GOOPERS_JID:
+    if not WA_BRIDGE_URL or not WA_MAIN_JID:
         raise HTTPException(status_code=503, detail="WA bridge not configured")
     storage_key = job.get("storage_key_original")
     if not storage_key:
@@ -7900,7 +7966,7 @@ def _clip_resend(message_uid: str) -> dict:
     import httpx as _httpx
     payload = {
         "videoBase64": _b64.b64encode(video_bytes).decode(),
-        "groupJid": WA_GOOPERS_JID,
+        "groupJid": WA_MAIN_JID,
         "caption": caption,
         "idempotencyKey": f"psn:{message_uid}:r{int(_t.time())}",
     }
@@ -10433,7 +10499,8 @@ _DASHBOARD_TMPL = r"""<!doctype html>
   </div>
   <div class="panel" id="p-wa">
     <div class="wa-top">
-      <div class="pip-title" style="margin:8px 0 4px">Professional Goopers</div>
+      <div class="pip-title" id="waTitle" style="margin:8px 0 4px">CRCMZ BOYZ</div>
+      <div class="wa-range" id="waGroups" style="display:none;margin-bottom:6px"></div>
       <div class="wa-range" id="waRange">
         <button class="wa-rb on" data-r="all_time" onclick="waSetRange(this)">All Time</button>
         <button class="wa-rb" data-r="this_year" onclick="waSetRange(this)">This Year</button>
@@ -10452,6 +10519,7 @@ _DASHBOARD_TMPL = r"""<!doctype html>
     <div id="wa-import-section" style="display:none;margin-top:18px">
       <div style="border-top:1px solid var(--line);padding-top:14px">
         <p class="pip-title">Import WhatsApp History</p>
+          <p style="font-size:12.5px;color:var(--dim);margin:0 0 8px">Imports into the chat shown above — pick it first.</p>
         <div class="card" style="padding:14px 16px">
           <p style="font-size:12.5px;color:var(--dim);margin:0 0 12px">Upload a WhatsApp export (.txt or .zip) to fill in history. Export
             <b>without media</b> — a with-media export is far over the 50&nbsp;MB limit, and the media is not used. Re-importing is safe: only new messages are added.</p>
@@ -12476,7 +12544,7 @@ async function loadPipeline() {
   <div class="pip-build">
     <div class="pb-label">Scheduled</div>
     <div class="pb-date">${d.next_build_label || '—'}</div>
-    <div class="pb-countdown">${fmtCountdown(d.next_build_ts)} · auto-send to Goopers</div>
+    <div class="pb-countdown">${fmtCountdown(d.next_build_ts)} · auto-send to CRCMZ BOYZ</div>
   </div>
 ${lm ? `<p class="lm-sub">Last montage</p>
   <div class="last-montage">
@@ -14305,6 +14373,10 @@ function copyMcpCfg(){
 let _waLoaded = false;
 let _waRange = 'all_time';
 let _waStart = '', _waEnd = '';
+// Which chat the stats are for. Only founders get more than one (the server
+// decides and enforces it); everyone else just sees CRCMZ BOYZ.
+let _waGroup = 'crcmz_boyz';
+let _waGroups = null;
 // Bumped on every load. "All time" is nine queries over ~10k messages and can
 // easily outlive a "Last 7 days" started after it, so whoever finishes last used
 // to win regardless of which range the buttons say is selected. A response only
@@ -14319,6 +14391,22 @@ function waSetRange(btn){
   if(custom) custom.style.display = _waRange==='custom' ? 'flex' : 'none';
   if(_waRange !== 'custom') waReload();
 }
+function waSetGroup(btn){
+  document.querySelectorAll('.wa-gb').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  _waGroup = btn.dataset.g;
+  waReload();
+}
+function _waRenderGroups(){
+  const box = $('waGroups');
+  const gs = _waGroups || [];
+  const cur = gs.find(g=>g.key===_waGroup) || gs[0];
+  if(cur && $('waTitle')) $('waTitle').textContent = cur.label;
+  if(!box) return;
+  if(gs.length < 2){ box.style.display='none'; box.innerHTML=''; return; }
+  box.innerHTML = gs.map(g=>`<button class="wa-rb wa-gb${g.key===_waGroup?' on':''}" data-g="${g.key}" onclick="waSetGroup(this)">${esc(g.label)}${g.founders_only?' 🔒':''}</button>`).join('');
+  box.style.display='flex';
+}
 function waReload(){
   if(_waRange==='custom'){
     _waStart = ($('waStart')||{}).value||'';
@@ -14332,7 +14420,7 @@ function waReload(){
 }
 
 function _waQs(){
-  let qs = '?range='+_waRange;
+  let qs = '?range='+_waRange+'&group='+encodeURIComponent(_waGroup);
   if(_waRange==='custom') qs += '&start='+_waStart+'&end='+_waEnd;
   return qs;
 }
@@ -14342,6 +14430,12 @@ async function loadWa(){
   _waLoaded = true;
   const gen = ++_waGen;
   try {
+    if(!_waGroups){
+      try { _waGroups = (await fetch('/api/whatsapp/groups').then(r=>r.json())).groups || []; }
+      catch(e){ _waGroups = []; }
+      if(!_waGroups.some(g=>g.key===_waGroup)) _waGroup = 'crcmz_boyz';
+    }
+    _waRenderGroups();
     const qs = _waQs();
     const [sR,aR,hmR,wdR,emR,rtR,mbR,awR,ciR] = await Promise.all([
       fetch('/api/whatsapp/stats'+qs).then(r=>r.json()),
@@ -14698,6 +14792,7 @@ async function waDoImport(){
   try {
     const fd = new FormData();
     fd.append('file', file);
+    fd.append('group', _waGroup);   // lands in the chat being viewed
     const r = await fetch('/api/whatsapp/import', {method:'POST', body:fd});
     // Never assume JSON: an edge 413 or a proxy error is an HTML page.
     const raw = await r.text();

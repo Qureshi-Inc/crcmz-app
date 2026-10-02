@@ -186,7 +186,8 @@ Requires: Baileys bridge (`whatsapp-worker`) redeployed with DM forwarding enabl
 | `ZITADEL_CLIENT_ID` | OIDC client ID registered in Zitadel |
 | `ZITADEL_SERVICE_TOKEN` | Zitadel service account PAT for user management API |
 | `WA_INGEST_SECRET` | Shared secret between this app and the Baileys bridge |
-| `WA_GOOPERS_JID` | WhatsApp group JID for the squad group |
+| `WA_MAIN_JID` | CRCMZ BOYZ group JID: every bot interaction (clips, forwards, coaching, reactions, the AI bot, announcements) and the stats everyone sees. Falls back to `WA_GOOPERS_JID` for posting if unset |
+| `WA_GOOPERS_JID` | Professional Goopers group JID: stats only, readable by founders (Zitadel tag `founder=true`) |
 | `WA_BRIDGE_URL` | Internal URL of the Baileys bridge (e.g. `http://10.0.1.1:3100`) |
 | `MCP_TOKEN` | Shared bearer token for read-only MCP access |
 

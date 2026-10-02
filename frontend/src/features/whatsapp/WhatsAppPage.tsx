@@ -1,5 +1,6 @@
-// PS-4 · WhatsApp: the "Professional Goopers" chat analytics (J6). The range lives in
-// the URL; every panel loads, fails and empties on its own. Reading never mutates:
+// PS-4 · WhatsApp: chat analytics (J6) for CRCMZ BOYZ, plus Professional Goopers
+// for founders (server-enforced). The range and chat live in the URL; every panel
+// loads, fails and empties on its own. Reading never mutates:
 // the only write is an importer's explicit upload.
 import { Fragment, useEffect, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -13,8 +14,8 @@ import { useAccount } from '../../lib/api'
 import { useDesktop } from '../../lib/media'
 import { loginUrl, markSignedOut } from '../../lib/session'
 import {
-  EXPORT_HINT, MAX_IMPORT_BYTES, parseRange, RANGES, rangeLabel, rangeQuery, useCanImport, useWa,
-  type Range, type RangeId, type WaAwards, type WaImport, type WaMember,
+  DEFAULT_GROUP, EXPORT_HINT, MAX_IMPORT_BYTES, parseRange, RANGES, rangeLabel, rangeQuery, useCanImport, useWa, useWaGroups,
+  type GroupKey, type Range, type RangeId, type WaAwards, type WaGroup, type WaImport, type WaMember,
 } from '../../lib/whatsapp'
 import { HelpLink } from '../../components/HelpLink'
 
@@ -29,9 +30,14 @@ const mins = (v: number) => (v < 1 ? '<1 min' : `${Math.round(v * 10) / 10} min`
 export function WhatsAppPage() {
   useTitle('WhatsApp')
   const [sp, setSp] = useSearchParams()
-  const range = parseRange(sp)
+  const asked = parseRange(sp)
   const account = useAccount()
   const signedIn = account.data?.state === 'signed-in'
+  const groups = useWaGroups(signedIn).data?.groups
+  // A chat this viewer may not see (a shared founders' link) falls back to CRCMZ BOYZ
+  // rather than showing a wall of 403s.
+  const range: Range = asked.group && groups && !groups.some((g) => g.key === asked.group) ? { ...asked, group: undefined } : asked
+  const groupKey: GroupKey = range.group ?? DEFAULT_GROUP
   const stats = useWa('stats', range)
   const { stale, minutes } = useStale(stats, 5 * 60_000)
   const [signInFor, setSignInFor] = useState<'export' | 'import' | null>(null)
@@ -42,12 +48,19 @@ export function WhatsAppPage() {
     if (r.id !== 'all_time') for (const [k, v] of new URLSearchParams(rangeQuery(r))) next.set(k, v)
     setSp(next, { replace: true })
   }
+  function pickGroup(g: GroupKey) {
+    const next = new URLSearchParams(sp)
+    if (g === DEFAULT_GROUP) next.delete('group')
+    else next.set('group', g)
+    setSp(next, { replace: true })
+  }
 
   const s = stats.data
   const none = s && s.total_messages === 0
   return (
     <div className="page wa-page">
       <h1 className="page-h1" tabIndex={-1}>WhatsApp<HelpLink id="whatsapp" /></h1>
+      <GroupBar groups={groups} active={groupKey} onPick={pickGroup} />
       <RangeBar range={range} onPick={pick} signedIn={signedIn} onSignIn={() => setSignInFor('export')} />
       {signInFor && !signedIn && (
         <div className="banner" role="alert">
@@ -82,7 +95,7 @@ export function WhatsAppPage() {
           </>
         )}
       </div>
-      <Import signedIn={signedIn} onSignedOut={() => setSignInFor('import')} />
+      <Import signedIn={signedIn} viewing={groupKey} onSignedOut={() => setSignInFor('import')} />
     </div>
   )
 }
@@ -100,6 +113,24 @@ function NoMessages({ signedIn }: { signedIn: boolean }) {
       <p className="wa-empty-h">No WhatsApp messages yet.</p>
       <p className="dim">{can ? 'Import the chat to get started.' : 'Ask Moiz to import the chat.'}</p>
       {can && <a className="btn btn-secondary" href="#wa-import">Import</a>}
+    </div>
+  )
+}
+
+// ── Chat switcher (founders only see more than one) ─────────────────────────
+function GroupBar({ groups, active, onPick }: { groups: WaGroup[] | undefined; active: GroupKey; onPick: (g: GroupKey) => void }) {
+  if (!groups || groups.length === 0) return null
+  if (groups.length < 2) return <p className="meta">{groups[0]?.label}</p>
+  return (
+    <div className="wa-range" role="group" aria-label="Chat">
+      {groups.map((g) => (
+        <button
+          key={g.key} type="button" className="seg-tab" aria-pressed={active === g.key} data-state={active === g.key ? 'active' : undefined}
+          onClick={() => onPick(g.key)} title={g.founders_only ? 'Founders only' : undefined}
+        >
+          {g.label}{g.founders_only ? ' 🔒' : ''}
+        </button>
+      ))}
     </div>
   )
 }
@@ -565,8 +596,12 @@ function MemberRow({ m, open, onToggle, fav }: { m: WaMember; open: boolean; onT
 }
 
 // ── Import (WA-14) ──────────────────────────────────────────────────────────
-function Import({ signedIn, onSignedOut }: { signedIn: boolean; onSignedOut: () => void }) {
+function Import({ signedIn, viewing, onSignedOut }: { signedIn: boolean; viewing: GroupKey; onSignedOut: () => void }) {
   const can = useCanImport(signedIn)
+  const targets = can.data?.groups ?? []
+  const [picked, setPicked] = useState<GroupKey | null>(null)
+  // Default to the chat on screen, as long as this importer may write to it.
+  const target: GroupKey = picked ?? (targets.some((g) => g.key === viewing) ? viewing : DEFAULT_GROUP)
   const qc = useQueryClient()
   const desktop = useDesktop()
   const input = useRef<HTMLInputElement>(null)
@@ -605,6 +640,7 @@ function Import({ signedIn, onSignedOut }: { signedIn: boolean; onSignedOut: () 
     setErr(null)
     const fd = new FormData()
     fd.append('file', file, file.name)
+    fd.append('group', target)
     try {
       const r = await fetch('/api/whatsapp/import', { method: 'POST', body: fd, credentials: 'same-origin' })
       const body = (await r.json().catch(() => ({}))) as WaImport & { detail?: string }
@@ -630,6 +666,16 @@ function Import({ signedIn, onSignedOut }: { signedIn: boolean; onSignedOut: () 
     <section id="wa-import" className="glass wa-import" aria-labelledby="wa-import-h">
       <h2 className="section-h2" id="wa-import-h">Import chat history</h2>
       <form onSubmit={submit} aria-busy={busy}>
+        {targets.length > 1 ? (
+          <div>
+            <label className="field-label" htmlFor="wa-target">Import into</label>
+            <select id="wa-target" className="input" value={target} disabled={busy} onChange={(e) => setPicked(e.target.value as GroupKey)}>
+              {targets.map((g) => <option key={g.key} value={g.key}>{g.label}{g.founders_only ? ' (founders only)' : ''}</option>)}
+            </select>
+          </div>
+        ) : (
+          <p className="meta">Imports into {targets[0]?.label ?? 'CRCMZ BOYZ'}.</p>
+        )}
         <div
           className="wa-drop" data-drag={drag || undefined}
           onDragOver={desktop ? (e) => { e.preventDefault(); setDrag(true) } : undefined}

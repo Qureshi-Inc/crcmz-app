@@ -57,8 +57,8 @@ _RANGES = ["today", "last_7_days", "last_30_days", "last_90_days",
            "this_month", "prev_month", "this_year", "all_time"]
 
 SYSTEM_PROMPT = (
-    "You are Hasaan, the 8th member of Professional Goopers — a WhatsApp group "
-    "of 7 boys who play Arc Raiders, Call of Duty, and whatever else they're "
+    "You are Hasaan, one of the boys in CRCMZ BOYZ — the CRCMZ clan's WhatsApp "
+    "group, a squad who play Arc Raiders, Call of Duty, and whatever else they're "
     "hooked on. You're one of the boys: witty, quick, slightly unhinged, never "
     "holding back when the moment calls for it, and you actually know your stuff.\n"
     "\n"
@@ -237,6 +237,116 @@ def _wa():
     return whatsapp_analytics
 
 
+def wa_main_jid() -> str:
+    """The WhatsApp group the bot posts into and answers in: CRCMZ BOYZ.
+
+    WA_MAIN_JID, falling back to WA_GOOPERS_JID only so a deploy that has not set
+    the new variable keeps posting where it used to. Professional Goopers is
+    stats-only once WA_MAIN_JID is set.
+    """
+    return (os.environ.get("WA_MAIN_JID", "").strip()
+            or os.environ.get("WA_GOOPERS_JID", "").strip())
+
+
+# ── Which WhatsApp group the caller may read ──────────────────────────────────
+# Two groups are stored (see whatsapp_analytics "Groups"): CRCMZ BOYZ, which
+# everyone may read, and Professional Goopers, which only founders may read.
+# The rule is enforced HERE, on every tool that reads chat, from a per-call
+# context -- never from anything the model says. The default is the public view,
+# so every caller that does not opt in (the WhatsApp group bot, the PSN group bot,
+# the shared MCP token, a service token) can only ever see CRCMZ BOYZ.
+#
+# Only a private surface may open the founder view, and only for a founder:
+#   * the app's Ask AI tab -> ask(..., wa_viewer=<session sub>)
+#   * MCP with a personal OAuth token -> mcp_server wraps the call in wa_viewer()
+# A group chat never does, even when a founder is the one asking: the answer is
+# posted where non-founders read it.
+_WA_FOUNDER_VIEW = contextvars.ContextVar("crcmz_wa_founder_view", default=False)
+
+
+@contextlib.contextmanager
+def wa_viewer(sub_or_person: Any = None):
+    """Run the block with the WhatsApp visibility of this viewer.
+
+    Founder view only when crcmz_identity says the Zitadel id carries
+    founder=true; anything else (None, unknown, Zitadel down) is the public view.
+    """
+    founder = False
+    if sub_or_person:
+        try:
+            founder = bool(_ident().is_founder(sub_or_person))
+        except Exception as e:  # noqa: BLE001 - fail closed
+            logger.warning("assistant: founder check failed, public view: %s", e)
+    token = _WA_FOUNDER_VIEW.set(founder)
+    try:
+        yield founder
+    finally:
+        _WA_FOUNDER_VIEW.reset(token)
+
+
+@contextlib.contextmanager
+def wa_public_view():
+    """Force the public view, e.g. while answering inside a group chat."""
+    token = _WA_FOUNDER_VIEW.set(False)
+    try:
+        yield
+    finally:
+        _WA_FOUNDER_VIEW.reset(token)
+
+
+def wa_founder_view() -> bool:
+    return bool(_WA_FOUNDER_VIEW.get())
+
+
+def _wa_visible_jids() -> set[str]:
+    wa = _wa()
+    return {j for j in (wa.group_jid(k) for k in wa.visible_groups(wa_founder_view())) if j}
+
+
+def _wa_group(group: str = "") -> tuple[str, str]:
+    """(jid, key) for a tool's `group` argument under the current view.
+
+    Raises PermissionError for the founders' group outside a founder view, so the
+    tool call fails visibly instead of quietly answering about the other group.
+    """
+    wa = _wa()
+    jid = wa.resolve_group(group, wa_founder_view())
+    return jid, (str(group or "").strip().lower() or wa.GROUP_MAIN)
+
+
+def _wa_tag(result: dict, key: str) -> dict:
+    """Say which group the numbers are for, so the model never mixes them up."""
+    if isinstance(result, dict):
+        result = {"group": _wa().group_label(key), **result}
+    return result
+
+
+_GROUP_PROP = "group"
+
+
+def _group_param(extra: dict | None = None, base: dict | None = None) -> dict:
+    """Parameters with the WhatsApp `group` selector added.
+
+    The enum and description here are the founder view; tool_specs() narrows
+    them to crcmz_boyz for everyone else, so the model is not even offered the
+    founders' group where it may not use it.
+    """
+    params = base if base is not None else _range_param(extra)
+    params["properties"][_GROUP_PROP] = {
+        "type": "string",
+        "enum": ["crcmz_boyz", "professional_goopers"],
+        "description": ("Which WhatsApp group. Default crcmz_boyz (CRCMZ BOYZ, the "
+                        "main group). professional_goopers is the founders' private "
+                        "group: only pass it when the person asks about Professional "
+                        "Goopers by name."),
+    }
+    return params
+
+
+_PUBLIC_GROUP_DESC = ("Which WhatsApp group. Only crcmz_boyz (CRCMZ BOYZ, the main "
+                      "group) is available here.")
+
+
 # ── External sources (Slapshare, the public site) ─────────────────────────────
 # Both live outside this app, so they are fetched server-side and cached: a
 # question can trigger several tool calls, and nobody needs eight HTTP round
@@ -357,13 +467,13 @@ def _overview() -> dict:
     except Exception as e:  # noqa: BLE001
         out["squad_facts_count"] = {"error": str(e)}
     try:
-        s = _wa().stats("all_time")
+        s = _wa().stats("all_time")          # the main group, whoever is asking
         span = ""
         if s.get("first_ts") and s.get("last_ts"):
             span = (f'{datetime.fromtimestamp(s["first_ts"]).date()} to '
                     f'{datetime.fromtimestamp(s["last_ts"]).date()}')
         out["whatsapp"] = {
-            "group": "Professional Goopers",
+            "group": _wa().group_label(_wa().GROUP_MAIN),
             "messages": s.get("total_messages"),
             "chatters": s.get("total_members"),
             "date_span": span,
@@ -579,79 +689,92 @@ def _web_search(query: str, limit: int = 6) -> Any:
     return data
 
 
+_WA_SCOPE_NOTE = (" Defaults to CRCMZ BOYZ, the main group. The result's `group` "
+                  "field names the group the numbers are for.")
+
+
 @tool("whatsapp_stats",
-      "Totals for the WhatsApp group: message count, member count, active days, "
+      "Totals for a WhatsApp group: message count, member count, active days, "
       "and messages per member. total_media counts messages that carried an "
       "attachment; total_photos/total_videos are only known for messages "
       "received live (an export just says '<Media omitted>'), so a 0 there does "
-      "not mean nothing was shared -- quote total_media instead.",
-      _range_param())
-def _wa_stats(range: str = "all_time") -> dict:  # noqa: A002
-    return _wa().stats(range)
+      "not mean nothing was shared -- quote total_media instead." + _WA_SCOPE_NOTE,
+      _group_param())
+def _wa_stats(range: str = "all_time", group: str = "") -> dict:  # noqa: A002
+    jid, key = _wa_group(group)
+    return _wa_tag(_wa().stats(range, group_jid=jid), key)
 
 
 @tool("whatsapp_activity",
       "When the group talks: counts by hour of day, by weekday, by month, and "
-      "the busiest single days.",
-      _range_param())
-def _wa_activity(range: str = "all_time") -> dict:  # noqa: A002
-    a = _wa().activity(range)
+      "the busiest single days." + _WA_SCOPE_NOTE,
+      _group_param())
+def _wa_activity(range: str = "all_time", group: str = "") -> dict:  # noqa: A002
+    jid, key = _wa_group(group)
+    a = _wa().activity(range, group_jid=jid)
     # `daily` and `member_monthly` are hundreds of rows; the model does not need
     # them to answer "when is the group most active".
-    return {k: a[k] for k in ("by_hour", "by_dow", "monthly", "top_days") if k in a}
+    return _wa_tag({k: a[k] for k in ("by_hour", "by_dow", "monthly", "top_days") if k in a}, key)
 
 
 @tool("whatsapp_search",
       "Find real WhatsApp messages by text and/or sender, newest first. Use this "
-      "to quote what someone actually said. Returns at most 50 messages.",
-      {"type": "object",
+      "to quote what someone actually said. Returns at most 50 messages." + _WA_SCOPE_NOTE,
+      _group_param(base={"type": "object",
        "properties": {
            "query": {"type": "string", "description": "Text to look for, e.g. 'iced cap'."},
            "sender": {"type": "string", "description": "Sender name, partial match."},
            "range": {"type": "string", "enum": _RANGES},
            "limit": {"type": "integer", "description": "1-50, default 20."},
        },
-       "required": []})
+       "required": []}))
 def _wa_search(query: str = "", sender: str = "", range: str = "all_time",  # noqa: A002
-               limit: int = 20) -> dict:
-    return _wa().search(query=query, sender=sender, range_str=range, limit=limit)
+               limit: int = 20, group: str = "") -> dict:
+    jid, key = _wa_group(group)
+    return _wa_tag(_wa().search(query=query, sender=sender, range_str=range, limit=limit,
+                                group_jid=jid), key)
 
 
 @tool("whatsapp_members",
       "Per-member WhatsApp breakdown: message counts, media sent, average "
-      "message length, first and last seen.",
-      _range_param())
-def _wa_members(range: str = "all_time") -> dict:  # noqa: A002
-    return _wa().members(range)
+      "message length, first and last seen." + _WA_SCOPE_NOTE,
+      _group_param())
+def _wa_members(range: str = "all_time", group: str = "") -> dict:  # noqa: A002
+    jid, key = _wa_group(group)
+    return _wa_tag(_wa().members(range, group_jid=jid), key)
 
 
 @tool("whatsapp_words",
-      "Most used words in the group chat, with counts.",
-      _range_param({"limit": {"type": "integer", "description": "How many words, default 25."}}))
-def _wa_words(range: str = "all_time", limit: int = 25) -> dict:  # noqa: A002
-    return _wa().words(range, limit=max(1, min(int(limit or 25), 100)))
+      "Most used words in the group chat, with counts." + _WA_SCOPE_NOTE,
+      _group_param({"limit": {"type": "integer", "description": "How many words, default 25."}}))
+def _wa_words(range: str = "all_time", limit: int = 25, group: str = "") -> dict:  # noqa: A002
+    jid, key = _wa_group(group)
+    return _wa_tag(_wa().words(range, limit=max(1, min(int(limit or 25), 100)), group_jid=jid), key)
 
 
 @tool("whatsapp_emojis",
-      "Most used emojis in the group chat, overall and per member.",
-      _range_param())
-def _wa_emojis(range: str = "all_time") -> dict:  # noqa: A002
-    return _wa().emojis(range)
+      "Most used emojis in the group chat, overall and per member." + _WA_SCOPE_NOTE,
+      _group_param())
+def _wa_emojis(range: str = "all_time", group: str = "") -> dict:  # noqa: A002
+    jid, key = _wa_group(group)
+    return _wa_tag(_wa().emojis(range, group_jid=jid), key)
 
 
 @tool("whatsapp_awards",
       "The group's computed awards/superlatives (biggest yapper, night owl, "
-      "ghost, etc.) with the numbers behind each one.",
-      _range_param())
-def _wa_awards(range: str = "all_time") -> dict:  # noqa: A002
-    return _wa().awards(range)
+      "ghost, etc.) with the numbers behind each one." + _WA_SCOPE_NOTE,
+      _group_param())
+def _wa_awards(range: str = "all_time", group: str = "") -> dict:  # noqa: A002
+    jid, key = _wa_group(group)
+    return _wa_tag(_wa().awards(range, group_jid=jid), key)
 
 
 @tool("whatsapp_response_times",
-      "How fast each member replies, and the group's average response time.",
-      _range_param())
-def _wa_response_times(range: str = "all_time") -> dict:  # noqa: A002
-    return _wa().response_times(range)
+      "How fast each member replies, and the group's average response time." + _WA_SCOPE_NOTE,
+      _group_param())
+def _wa_response_times(range: str = "all_time", group: str = "") -> dict:  # noqa: A002
+    jid, key = _wa_group(group)
+    return _wa_tag(_wa().response_times(range, group_jid=jid), key)
 
 
 @tool("psn_squad_status",
@@ -1113,15 +1236,17 @@ def _squad_roster() -> dict:
       "recorded about them, and how many times they have asked the bot something. "
       "Accepts any identifier -- display name, PSN id, WhatsApp name, or Zitadel "
       "id. Prefer this over calling four separate tools. If `found` is false the "
-      "name is not linked to an account; say so rather than guessing.",
-      {"type": "object",
+      "name is not linked to an account; say so rather than guessing. The "
+      "WhatsApp totals are for one group, CRCMZ BOYZ unless `group` says otherwise.",
+      _group_param(base={"type": "object",
        "properties": {
            "who": {"type": "string", "description": "Name, PSN id, or WhatsApp name."},
            "range": {"type": "string", "enum": _RANGES,
                      "description": "Window for the WhatsApp numbers. Defaults to all_time."},
        },
-       "required": ["who"]})
-def _person_profile(who: str, range: str = "all_time") -> dict:  # noqa: A002
+       "required": ["who"]}))
+def _person_profile(who: str, range: str = "all_time", group: str = "") -> dict:  # noqa: A002
+    wa_jid, wa_key = _wa_group(group)
     ident = _ident()
     person = ident.resolve(who)
     if not person:
@@ -1133,11 +1258,12 @@ def _person_profile(who: str, range: str = "all_time") -> dict:  # noqa: A002
     # WhatsApp: one person can post under several names ("Zubair", "Zubair
     # CRCMZ"), so roll the per-name rows up through the identity graph rather
     # than matching a single string.
-    wa: dict[str, Any] = {"messages": 0, "photos": 0, "videos": 0, "audios": 0,
+    wa: dict[str, Any] = {"group": _wa().group_label(wa_key),
+                          "messages": 0, "photos": 0, "videos": 0, "audios": 0,
                           "media_omitted": 0, "total_words": 0,
                           "names_seen": [], "first_ts": None, "last_ts": None}
     try:
-        for row in _wa().members(range).get("members", []):
+        for row in _wa().members(range, group_jid=wa_jid).get("members", []):
             hit = ident.identify_sender_name(row.get("name", ""))
             if not hit or hit["zitadel_id"] != sub:
                 continue
@@ -1243,7 +1369,9 @@ def _person_profile(who: str, range: str = "all_time") -> dict:  # noqa: A002
            "before_ts": {"type": "number",
                          "description": "Only return results before this epoch-seconds."},
            "group_id": {"type": "string",
-                        "description": "Filter WhatsApp results to a specific group JID."},
+                        "description": "Narrow WhatsApp results to one group: "
+                                       "crcmz_boyz (default view). WhatsApp results "
+                                       "only ever come from groups the asker may see."},
            "limit":    {"type": "integer",
                         "description": "Max results to return. 1-30, default 10."},
        },
@@ -1252,13 +1380,25 @@ def _memory_search(query: str, sources: list | None = None,
                    after_ts: float | None = None, before_ts: float | None = None,
                    group_id: str = "", limit: int = 10) -> dict:
     import memory_store
+    wa = _wa()
+    narrow = ""
+    if group_id:
+        # Accept a group key (or, for old callers, a JID) -- but only a group this
+        # view may see; anything else is refused rather than ignored.
+        gid = str(group_id).strip()
+        key = gid.lower() if gid.lower() in (wa.GROUP_MAIN, wa.GROUP_FOUNDERS) \
+            else wa.group_key_for_jid(gid)
+        if not key:
+            raise ValueError("group_id must be crcmz_boyz")
+        narrow, _ = _wa_group(key)
     return memory_store.search(
         query,
         sources=sources,
         after_ts=after_ts,
         before_ts=before_ts,
-        group_id=group_id or "",
+        group_id=narrow,
         limit=max(1, min(int(limit or 10), 30)),
+        allowed_wa_groups=_wa_visible_jids(),
     )
 
 
@@ -1274,7 +1414,7 @@ def _memory_search(query: str, sources: list | None = None,
        "required": ["memory_id"]})
 def _memory_get(memory_id: str) -> dict:
     import memory_store
-    return memory_store.get(memory_id)
+    return memory_store.get(memory_id, allowed_wa_groups=_wa_visible_jids())
 
 
 @tool("memory_context",
@@ -1299,6 +1439,7 @@ def _memory_context(memory_id: str, before_count: int = 3,
         memory_id,
         before_count=max(0, min(int(before_count or 3), 20)),
         after_count=max(0, min(int(after_count or 3), 20)),
+        allowed_wa_groups=_wa_visible_jids(),
     )
 
 
@@ -1703,12 +1844,24 @@ def _movie_library(query: str = "", limit: int = 20) -> dict:
     import movies
     return movies.overview(max(1, min(int(limit or 20), 100)), query=str(query or ""))
 
+def _scoped_parameters(params: dict) -> dict:
+    """Narrow a `group` selector to the public group outside a founder view."""
+    prop = (params.get("properties") or {}).get(_GROUP_PROP)
+    if not prop or wa_founder_view():
+        return params
+    import copy
+    out = copy.deepcopy(params)
+    out["properties"][_GROUP_PROP] = {"type": "string", "enum": ["crcmz_boyz"],
+                                      "description": _PUBLIC_GROUP_DESC}
+    return out
+
+
 def tool_specs() -> list[dict]:
-    """The registry in OpenAI function-calling form."""
+    """The registry in OpenAI function-calling form, as the current viewer sees it."""
     return [
         {"type": "function",
          "function": {"name": name, "description": t["description"],
-                      "parameters": t["parameters"]}}
+                      "parameters": _scoped_parameters(t["parameters"])}}
         for name, t in _TOOLS.items()
     ]
 
@@ -2983,8 +3136,8 @@ def _announce_member_video(video_post_id: str, links: dict, caller: dict | None,
     if not new:
         return [], None
     bridge = os.environ.get("WA_BRIDGE_URL", "")
-    jid = os.environ.get("WA_GOOPERS_JID", "")
-    note = None if bridge and jid else "WhatsApp bridge or WA_GOOPERS_JID not configured"
+    jid = wa_main_jid()
+    note = None if bridge and jid else "WhatsApp bridge or WA_MAIN_JID not configured"
     if not note:
         try:
             import httpx as _hx
@@ -3018,9 +3171,9 @@ def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
     bridge = os.environ.get("WA_BRIDGE_URL", "")
     if not bridge:
         return False, "WhatsApp bridge not configured"
-    jid = os.environ.get("WA_GOOPERS_JID", "")
+    jid = wa_main_jid()
     if not jid:
-        return False, "WA_GOOPERS_JID not configured"
+        return False, "WA_MAIN_JID not configured"
 
     if reel_type == "daily":
         text = "@all Daily highlights have dropped! \U0001f525\n" + ig_url
@@ -3099,9 +3252,9 @@ def _notify_coaching_ready(psn_user: str, caller: dict | None = None,
         text = (f"{tag}\U0001f9e0 Your clip review is ready.{body}"
                 f"\nFull report: {link}")
     else:
-        jid = os.environ.get("WA_GOOPERS_JID", "")
+        jid = wa_main_jid()
         if not jid:
-            return False, "WA_GOOPERS_JID not configured for group posting"
+            return False, "WA_MAIN_JID not configured for group posting"
         # @Name is resolved to a real WhatsApp mention by the bridge helper.
         text = (f"{tag}\U0001f9e0 @{name} your clip review is ready.{body}"
                 f"\nFull report: {link}")
@@ -3206,7 +3359,7 @@ def _send_wa_group_message(message: str, caller: dict) -> dict:
         return {"ok": False, "error": "rate limit: 3 messages per 10 minutes"}
 
     bridge_url = os.environ.get("WA_BRIDGE_URL", "")
-    group_jid  = os.environ.get("WA_GOOPERS_JID", "")
+    group_jid  = wa_main_jid()
     if not bridge_url or not group_jid:
         return {"ok": False,
                 "error": "WhatsApp bridge not configured on this server"}
@@ -3848,8 +4001,26 @@ def ask(question: str, history: list[dict] | None = None,
         image_b64: str = "", image_type: str = "image/jpeg",
         on_tool: Callable[[str], None] | None = None,
         on_event: Callable[[dict], None] | None = None,
-        asker: dict | None = None) -> dict:
+        asker: dict | None = None,
+        wa_viewer_sub: str | None = None) -> dict:
     """Answer `question` with tools. Returns answer + the trail of tool calls.
+
+    `wa_viewer_sub` is the Zitadel id of the person the answer is shown to, and
+    must only be passed by a PRIVATE surface (the app's Ask AI tab). A founder
+    there may read Professional Goopers; every other call -- group chats above
+    all -- runs in the public view and can only see CRCMZ BOYZ.
+    """
+    with wa_viewer(wa_viewer_sub):
+        return _ask(question, history, image_b64=image_b64, image_type=image_type,
+                    on_tool=on_tool, on_event=on_event, asker=asker)
+
+
+def _ask(question: str, history: list[dict] | None = None,
+         image_b64: str = "", image_type: str = "image/jpeg",
+         on_tool: Callable[[str], None] | None = None,
+         on_event: Callable[[dict], None] | None = None,
+         asker: dict | None = None) -> dict:
+    """The tool loop behind ask(); the WhatsApp view is already set.
 
     `image_b64` is an optional base64-encoded image for vision-capable models.
     The image travels with the current question only; history turns stay text.

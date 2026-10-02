@@ -42,7 +42,7 @@ os.environ["WA_BRIDGE_URL"] = f"http://127.0.0.1:{_srv.server_port}"
 # The stub also plays reel-review, so force-post clearing hits a real HTTP path.
 os.environ["REEL_REVIEW_URL"] = f"http://127.0.0.1:{_srv.server_port}"
 os.environ["REEL_REVIEW_TOKEN"] = "rr-test-token"
-os.environ["WA_GOOPERS_JID"] = "group@g.us"
+os.environ["WA_MAIN_JID"] = "group@g.us"
 
 import assistant  # noqa: E402
 import clips  # noqa: E402

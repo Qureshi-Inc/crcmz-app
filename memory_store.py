@@ -1188,10 +1188,16 @@ def search(
     group_id: str = "",
     user_id: str = "",
     limit: int = 10,
+    allowed_wa_groups: set[str] | None = None,
 ) -> dict:
     """Embed `query` and return the top-N nearest memory items.
 
     Returns a dict suitable for JSON serialisation by the MCP tool.
+
+    `allowed_wa_groups` is the set of WhatsApp group JIDs the caller may read
+    (see assistant.wa_viewer). WhatsApp items from any other group -- the
+    founders' group for a non-founder, the bot's DMs for everyone -- are dropped
+    before ranking. None means no restriction and is only for internal callers.
     """
     limit = max(1, min(int(limit) if limit is not None else 10, MAX_RESULTS))
 
@@ -1288,6 +1294,9 @@ def search(
             continue
         if group_id and meta.get("group_id", meta.get("group_jid", "")) != group_id:
             continue
+        if (allowed_wa_groups is not None and row["source"] == "whatsapp"
+                and _wa_item_group(meta) not in allowed_wa_groups):
+            continue
         if user_id:
             uid = meta.get("author", meta.get("sender", meta.get("author_sub", "")))
             if uid != user_id:
@@ -1336,8 +1345,16 @@ def search(
             "search_latency_ms": elapsed_ms}
 
 
-def get(memory_id: str) -> dict:
-    """Return metadata for a single memory item by UUID.  Never returns text credentials."""
+def _wa_item_group(meta: dict) -> str:
+    return str(meta.get("group_id", meta.get("group_jid", "")) or "")
+
+
+def get(memory_id: str, allowed_wa_groups: set[str] | None = None) -> dict:
+    """Return metadata for a single memory item by UUID.  Never returns text credentials.
+
+    A WhatsApp item outside `allowed_wa_groups` answers exactly like a missing
+    one, so a memory_id from the founders' group reveals nothing.
+    """
     if not memory_id:
         return {"error": "memory_id required"}
 
@@ -1355,6 +1372,9 @@ def get(memory_id: str) -> dict:
 
     import datetime as _dt
     meta = json.loads(row["metadata_json"] or "{}")
+    if (allowed_wa_groups is not None and row["source"] == "whatsapp"
+            and _wa_item_group(meta) not in allowed_wa_groups):
+        return {"error": "not found", "memory_id": memory_id}
     ts_s = _to_epoch_s(row["source_ts"])
 
     return {
@@ -1376,6 +1396,7 @@ def context(
     memory_id: str,
     before_count: int = 3,
     after_count: int = 3,
+    allowed_wa_groups: set[str] | None = None,
 ) -> dict:
     """Return the original source records surrounding a matched memory item.
 
@@ -1386,12 +1407,18 @@ def context(
     before_count = max(0, min(int(before_count or 3), 20))
     after_count  = max(0, min(int(after_count  or 3), 20))
 
-    item = get(memory_id)
+    item = get(memory_id, allowed_wa_groups=allowed_wa_groups)
     if "error" in item:
         return item
 
     if item["source"] == "whatsapp":
-        return _wa_context(item, before_count, after_count)
+        out = _wa_context(item, before_count, after_count)
+        # The item's metadata passed the check; the source row's group is what the
+        # surrounding messages are drawn from, so check that too.
+        if (allowed_wa_groups is not None and "error" not in out
+                and (out.get("group_jid") or "") not in allowed_wa_groups):
+            return {"error": "not found", "memory_id": memory_id}
+        return out
 
     # For other sources, return the item itself.
     return {

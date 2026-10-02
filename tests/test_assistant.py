@@ -22,6 +22,7 @@ from pathlib import Path
 os.environ.setdefault("SESSION_SECRET", "test-secret-for-assistant")
 os.environ.setdefault("NPSSO_TOKEN", "test-npsso")
 os.environ.setdefault("GROUP_ID", "test-group")
+os.environ.setdefault("WA_MAIN_JID", "g@g.us")   # the seed import below is the main chat
 os.environ.setdefault("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

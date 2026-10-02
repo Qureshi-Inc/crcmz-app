@@ -209,7 +209,7 @@ function Resend({ clip }: { clip: Clip }) {
         open={confirm}
         onOpenChange={setConfirm}
         title="Re-send to WhatsApp?"
-        body={<p style={{ margin: 0 }}>Re-send '{title}' to the Goopers group? It will appear again even if it was already sent. The send can take up to 3 minutes.</p>}
+        body={<p style={{ margin: 0 }}>Re-send '{title}' to the CRCMZ BOYZ group? It will appear again even if it was already sent. The send can take up to 3 minutes.</p>}
         action="Re-send"
         onConfirm={go}
       />

@@ -44,7 +44,7 @@ const SECTIONS: Section[] = [
       <>
         <p><b>Share a clip to the "The Squad" group on PSN and add ONE of these in the message:</b></p>
         <Table head={['Add', 'What happens']} rows={[
-          ['nothing', 'Sent to the WhatsApp group (Professional Goopers).'],
+          ['nothing', 'Sent to the WhatsApp group (CRCMZ BOYZ).'],
           ['🔥', 'Fire reel: posted to Instagram @crcmzclan. Not sent to WhatsApp.'],
           ['😂 or fail', 'Fail reel: sent to WhatsApp, posted to Instagram once 2 people react to it there.'],
           ['rev', 'The AI Coach grades it. Not sent to WhatsApp.'],
@@ -87,7 +87,7 @@ const SECTIONS: Section[] = [
     id: 'whatsapp', title: 'WhatsApp', icon: 'chat', open: '/whatsapp',
     body: (
       <>
-        <p>Stats for the Professional Goopers group: awards, top words and emoji, busiest hours.</p>
+        <p>Stats for the CRCMZ BOYZ group: awards, top words and emoji, busiest hours. Founders can also switch to Professional Goopers.</p>
         <p><b>Talk to the bot in the WhatsApp group:</b></p>
         <Table head={['Type', 'What happens']} rows={[
           ['ai <question>', 'The bot answers. @mentioning it or replying to its message works too.'],
