@@ -2049,6 +2049,36 @@ def _caller_name(caller: dict) -> str:
 
 
 @write_tool(
+    "ring_squad",
+    "Ring every squad member's phone like an incoming call, inviting them into a "
+    "Huddle (voice/video call) or the Watch Party, on behalf of the caller. Android "
+    "app phones ring full-screen; everyone else gets a high-priority push and an inbox "
+    "entry. People who switched that notification type off aren't rung. Only use it "
+    "when the caller explicitly asks to ring/call everyone. kind: huddle | watch; room "
+    "is the Huddle room (default crcmz). Returns phones_rang and pushed counts. "
+    "Rate limit: once a minute per kind, 10 per hour.",
+    {"type": "object", "required": ["kind"],
+     "properties": {
+         "kind": {"type": "string", "description": "huddle | watch"},
+         "room": {"type": "string", "description": "Huddle room name; ignored for watch."},
+     }})
+def _ring_squad(kind: str, room: str = "", caller: dict | None = None) -> dict:
+    import json as _json
+    import mcp_oauth
+    import notifications
+    caller = caller or {}
+    zid = caller.get("zitadel_id", "")
+    args = _json.dumps({"kind": kind, "room": room})
+    if not mcp_oauth.within_rate_limit(zid, "ring_squad", 10, 3600):
+        mcp_oauth.audit_write(zid, "ring_squad", args, "rate_limited")
+        return {"error": "rate limit exceeded", "limit": "10 per hour"}
+    result = notifications.ring_squad(str(kind or ""), zid, f"{_caller_name(caller)} (via AI)", str(room or ""))
+    mcp_oauth.audit_write(zid, "ring_squad", args,
+                          f"rang:{result.get('phones_rang', 0)}" if result.get("ok") else f"error:{result.get('error', '')}")
+    return result
+
+
+@write_tool(
     "coach_review_record",
     "Submit a finished AI coaching review for one clip. `clip_id` comes from "
     "coach_reviews(status='pending') or recent_clips. Pass the analysis as "

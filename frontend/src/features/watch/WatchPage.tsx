@@ -8,6 +8,7 @@ import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { ErrorStrip } from '../../components/states'
 import { useDesktop } from '../../lib/media'
+import { ringSquad } from '../../lib/ring'
 import { loginUrl } from '../../lib/session'
 import { Library } from './Library'
 import { Orbs } from './Orbs'
@@ -178,15 +179,22 @@ function useCountdown(until: number): number {
 function CallRow({ s }: { s: WatchState }) {
   const live = s.status === 'live'
   const c = s.call
+  const [ringing, setRinging] = useState(false)
   return (
     <section className="glass wp-actions" aria-label="Call">
-      {!c.on && (
-        <div className="wp-action-row">
+      <div className="wp-action-row">
+        {!c.on && (
           <button type="button" className="btn btn-primary" disabled={!live || c.busy || !canCall()} onClick={() => void joinCall()}>
             <Icon name="cam" />{c.busy ? 'Starting…' : 'Join with camera'}
           </button>
-        </div>
-      )}
+        )}
+        <button
+          type="button" className="btn btn-secondary" disabled={!live || ringing} title="Ring everyone's phone into the Watch Party"
+          onClick={() => { setRinging(true); void ringSquad('watch').finally(() => setRinging(false)) }}
+        >
+          <Icon name="phone" />{ringing ? 'Ringing…' : 'Ring everyone'}
+        </button>
+      </div>
       {c.note && <p className="meta wp-call-note" role="status">{c.note}</p>}
       {!c.on && live && !canCall() && <p className="meta">This browser can't share a camera.</p>}
       <p className="meta">Camera, mic, reactions and <Icon name="settings" className="nav-icon wp-inline-icon" /> settings (camera position, name, rally) are in the player.</p>

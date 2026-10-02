@@ -74,6 +74,7 @@ const PATHS: Record<string, ReactNode> = {
   download: (<g {...S}><path d="M10 2.5v10M5.5 8.5 10 13l4.5-4.5M3 17h14" /></g>),
   send: (<g {...S}><path d="M18 2L9 11M18 2l-5.5 16-3.5-7-7-3.5z" /></g>),
   bell: (<g {...S}><path d="M5 8a5 5 0 0 1 10 0c0 4.5 2 6 2 6H3s2-1.5 2-6M8.3 17a1.9 1.9 0 0 0 3.4 0" /></g>),
+  phone: (<g {...S}><path d="M4.5 2.5h3l1.5 4-2 1.5a9 9 0 0 0 5 5l1.5-2 4 1.5v3a2 2 0 0 1-2 2A15 15 0 0 1 2.5 4.5a2 2 0 0 1 2-2z" /></g>),
   megaphone: (<g {...S}><path d="M3 8v4h2.5L14 16V4L5.5 8zM5.5 12l1 5h2.5l-1-4.2M16.5 7.5a3 3 0 0 1 0 5" /></g>),
 }
 

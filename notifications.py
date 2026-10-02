@@ -177,6 +177,41 @@ def route_in_background(*args, **kwargs) -> None:
     threading.Thread(target=run, name="notify", daemon=True).start()
 
 
+RING_COOLDOWN_S = 60
+_rang_by: dict[str, float] = {}
+
+
+def ring_squad(kind: str, caller_sub: str, caller_name: str, room: str = "") -> dict:
+    """Someone pressed Ring: call everyone else's phone into a Huddle or the Watch Party.
+
+    One ring a minute per person per kind, whoever asks (the app's button or a tool).
+    People who switched that category off aren't rung (same switches as push).
+    """
+    if kind not in fcm.RING:
+        return {"error": "kind must be huddle or watch"}
+    if not caller_sub:
+        return {"error": "no caller"}
+    room = re.sub(r"[^a-z0-9\-]", "", (room or "crcmz").lower())[:64] or "crcmz"
+    who = (caller_name or "Someone").strip()[:60] or "Someone"
+    now = time.time()
+    with _lock:
+        last = _rang_by.get(f"{caller_sub}:{kind}")
+        if last is not None and now - last < RING_COOLDOWN_S:
+            return {"error": "cooldown", "retry_in": int(RING_COOLDOWN_S - (now - last)) + 1}
+        _rang_by[f"{caller_sub}:{kind}"] = now
+    if kind == "huddle":
+        out = route("huddle", f"📞 {who} is calling you to a Huddle", f"Room {room}. Tap to jump in.",
+                    f"/app/huddle?room={room}", exclude=caller_sub, tag=f"huddle-{room}",
+                    urgency="high", ttl=600, caller=who)
+    else:
+        out = route("watch", f"📞 {who} is calling you to the Watch Party", "Tap to join.",
+                    "/app/watch/party", exclude=caller_sub, tag="watch-ring", urgency="high", ttl=600, caller=who)
+    ring = out.get("ring") or {}
+    push = out.get("push") or {}
+    return {"ok": True, "kind": kind, "room": room if kind == "huddle" else "",
+            "phones_rang": ring.get("delivered", 0), "pushed": push.get("delivered", 0)}
+
+
 def wa_jid_for(person: dict) -> str:
     """A JID the bridge can DM: the phone tag first (it never changes), then wa_jid."""
     digits = re.sub(r"\D", "", person.get("wa_phone") or "")

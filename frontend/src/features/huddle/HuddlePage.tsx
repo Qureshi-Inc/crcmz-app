@@ -7,6 +7,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { useDesktop } from '../../lib/media'
+import { ringSquad } from '../../lib/ring'
 import { loginUrl } from '../../lib/session'
 import { useSwipeDown } from '../../lib/gestures'
 import { initials, tint } from '../../lib/watch'
@@ -145,6 +146,7 @@ function JoinError({ s }: { s: HuddleState }) {
 // ── In the call (HU-02 … HU-07) ─────────────────────────────────────────────
 function CallView({ s }: { s: HuddleState }) {
   const desktop = useDesktop()
+  const [ringing, setRinging] = useState(false)
   const stale = s.phase === 'reconnecting'
   const people = new Set(s.tiles.map((t) => t.pid)).size
   return (
@@ -165,6 +167,13 @@ function CallView({ s }: { s: HuddleState }) {
             onClick={() => setLayout(s.layout === 'grid' ? 'spotlight' : 'grid')}
           >
             <Icon name={s.layout === 'grid' ? 'spotlight' : 'grid'} />
+          </button>
+          <button
+            type="button" className="btn btn-secondary hu-ai-btn" disabled={ringing}
+            title="Ring everyone's phone into this call"
+            onClick={() => { setRinging(true); void ringSquad('huddle', s.room).finally(() => setRinging(false)) }}
+          >
+            <Icon name="phone" />{ringing ? 'Ringing…' : 'Ring'}
           </button>
           <button type="button" className="btn btn-secondary hu-ai-btn" aria-pressed={s.aiOpen} aria-expanded={s.aiOpen} onClick={() => setAiOpen(!s.aiOpen)}>
             <Icon name="ask" />AI

@@ -207,7 +207,29 @@ def route_tests():
         out = notifications.route("squad", "Squad Up", "", "/app/squad")
         assert "ring" not in out and SENT == [] and PUSHED == [web_sub(1)["endpoint"]]
 
-    for fn in (a_phone_that_rang_is_not_also_pushed, a_failed_ring_still_pushes, other_categories_never_ring):
+    def ring_button_rings_everyone_but_the_caller_once_a_minute():
+        reset()
+        notifications._rang_by.clear()
+        fcm.register("u1", "1" * 40)
+        fcm.register("u2", "2" * 40)
+        webpush.subscribe("u3", web_sub(3))  # no app, just a browser
+        out = notifications.ring_squad("huddle", "u1", "Moiz", "Late Night!")
+        assert out["ok"] and out["room"] == "latenight" and out["phones_rang"] == 1 and out["pushed"] == 1, out
+        assert [t for t, _ in SENT] == ["2" * 40] and SENT[0][1]["url"] == "/app/huddle?room=latenight"
+        assert SENT[0][1]["caller"] == "Moiz"
+        again = notifications.ring_squad("huddle", "u1", "Moiz")
+        assert again["error"] == "cooldown" and 0 < again["retry_in"] <= notifications.RING_COOLDOWN_S
+        assert notifications.ring_squad("watch", "u1", "Moiz")["ok"]  # a different kind isn't held back
+        assert SENT[-1][1]["url"] == "/app/watch/party"
+        assert notifications.ring_squad("squad", "u1", "Moiz") == {"error": "kind must be huddle or watch"}
+        assert notifications.ring_squad("huddle", "", "Moiz") == {"error": "no caller"}
+
+    def the_ring_tool_is_write_only_and_audited():
+        import assistant
+        assert "ring_squad" in assistant.write_tool_names() and "ring_squad" not in assistant.tool_names()
+
+    for fn in (a_phone_that_rang_is_not_also_pushed, a_failed_ring_still_pushes, other_categories_never_ring,
+               ring_button_rings_everyone_but_the_caller_once_a_minute, the_ring_tool_is_write_only_and_audited):
         check(fn.__name__, fn)
 
 
@@ -274,8 +296,19 @@ def http_tests():
             server._notify.route_in_background, server._huddle_others = real_route, real_others
             server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET = key, secret
 
+    def ring_route_needs_a_session_and_says_when_to_retry():
+        notifications._rang_by.clear()
+        assert client.post("/api/ring", json={"kind": "huddle"}, headers=origin).status_code == 401
+        assert client.post("/api/ring", json={"kind": "huddle"}, cookies=cookie,
+                           headers={"Origin": "https://evil.io"}).status_code == 403
+        assert client.post("/api/ring", json={"kind": "nope"}, cookies=cookie, headers=origin).status_code == 400
+        r = client.post("/api/ring", json={"kind": "watch"}, cookies=cookie, headers=origin)
+        assert r.status_code == 200 and r.json()["ok"], r.text
+        r = client.post("/api/ring", json={"kind": "watch"}, cookies=cookie, headers=origin)
+        assert r.status_code == 429 and int(r.headers["Retry-After"]) > 0, r.status_code
+
     for fn in (asset_links_are_public, native_needs_a_session_and_same_origin, native_registers_the_phone,
-               huddle_rings_when_the_room_is_empty_not_on_every_join):
+               huddle_rings_when_the_room_is_empty_not_on_every_join, ring_route_needs_a_session_and_says_when_to_retry):
         check(fn.__name__, fn)
 
 

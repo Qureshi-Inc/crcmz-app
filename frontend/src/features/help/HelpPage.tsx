@@ -121,6 +121,7 @@ const SECTIONS: Section[] = [
         <li><b>Watch together</b> on a movie we have starts the party with it, or switches the party to it (it asks first if everyone is watching something else).</li>
         <li>The banner at the top shows when a party is on: tap <b>Join</b>. With nothing on, <b>Start</b> opens the party and <b>Paste a link</b> takes a YouTube link or a video link. Everyone sees it at the same time.</li>
         <li>In the party, tap the camera button in the player to join with camera + mic. Tap it again to turn your camera off; the red phone leaves the call.</li>
+        <li><b>Ring everyone</b> under the player rings the squad's phones into the party (the Android app rings like a phone call). Once a minute.</li>
         <li>Tap 😀 in the player to react. Three of the same in a row sets off a party.</li>
         <li>Tap ⚙ in the player for camera position, flip camera, mic and speaker, your display name, and <b>Rally</b> (tells the WhatsApp group to join).</li>
         <li>In fullscreen, the cameras sit on the video and the chat button lets you type without leaving.</li>
@@ -135,6 +136,7 @@ const SECTIONS: Section[] = [
       <ul>
         <li>A voice and video call. Everyone in the same room name is in the same call (the default is <code>crcmz</code>).</li>
         <li>Share your screen, blur your background, turn on the transcript, or get AI meeting notes.</li>
+        <li>Starting a call in an empty room rings everyone. In a call, <b>Ring</b> rings them again: the Android app rings like a phone call, everyone else gets a notification. Once a minute.</li>
       </ul>
     ),
   },
