@@ -6,6 +6,8 @@
     <!-- Huddle / Watch Party rings show over the lock screen, like a phone call. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Asked once, so Doze doesn't hold a ring back. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <queries>
         <intent>
@@ -41,10 +43,17 @@
             <meta-data android:name="android.support.customtabs.trusted.FALLBACK_STRATEGY" android:value="customtabs" />
             <meta-data android:name="android.support.customtabs.trusted.SCREEN_ORIENTATION" android:value="any" />
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
+            <!-- Share → CRCMZ: a link from YouTube or any app opens the Watch Party with it ready. -->
+            <meta-data android:name="android.support.customtabs.trusted.METADATA_SHARE_TARGET" android:resource="@string/share_target" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
             <!-- app.crcmz.me/app links open here instead of the browser. -->
             <intent-filter android:autoVerify="true">

@@ -10,6 +10,14 @@
     <string name="s_watch">Watch Party</string>
     <string name="s_huddle">Huddle</string>
     <string name="s_clips">Clips</string>
+    <string name="s_party">Watch Party</string>
+    <string name="s_movies">Movies</string>
+    <string name="share_target" translatable="false">{\"action\": \"https://app.crcmz.me/app/watch/party\", \"method\": \"GET\", \"params\": {\"title\": \"title\", \"text\": \"text\", \"url\": \"url\"}}</string>
+    <string name="setup_title">Ring like a phone call</string>
+    <string name="setup_fsi">So a Huddle or Watch Party can ring full screen over the lock screen, turn on \"Allow full screen notifications\" for CRCMZ on the next screen.</string>
+    <string name="setup_battery">So rings arrive right away even when your phone is idle, let CRCMZ run without battery restrictions on the next screen.</string>
+    <string name="setup_go">Open settings</string>
+    <string name="setup_skip">Not now</string>
     <string name="join">Join</string>
     <string name="decline">Decline</string>
 </resources>

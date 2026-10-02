@@ -121,11 +121,16 @@ function VideoForm({ s }: { s: WatchState }) {
   // phone it would pop the keyboard over the video).
   const desktop = useDesktop()
   useEffect(() => { if (live && !s.video && desktop) urlRef.current?.focus({ preventScroll: true }) }, [live, s.video, desktop])
-  // "Paste a link" on the Movies home lands here with ?paste=1: go straight to the box.
+  // "Paste a link" on the Movies home lands here with ?paste=1, and the Android app's
+  // Share → CRCMZ with ?url= / ?text= (a YouTube or video link shared from another app):
+  // go straight to the box, with the shared link already in it.
   const loc = useLocation()
   const navigate = useNavigate()
   useEffect(() => {
-    if (!/^\/watch\/party/.test(loc.pathname) || !new URLSearchParams(loc.search).has('paste')) return
+    const q = new URLSearchParams(loc.search)
+    if (!/^\/watch\/party/.test(loc.pathname) || !['paste', 'url', 'text'].some((k) => q.has(k))) return
+    const shared = [q.get('url'), q.get('text')].map((v) => /https?:\/\/\S+/i.exec(v || '')?.[0]).find(Boolean)
+    if (shared) setUrl(shared.replace(/[)\].,!?'"]+$/, ''))
     navigate({ pathname: loc.pathname, search: '' }, { replace: true })
     const t = window.setTimeout(() => {
       urlRef.current?.scrollIntoView({ block: 'center' })

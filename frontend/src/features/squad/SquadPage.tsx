@@ -74,7 +74,7 @@ function SquadUpButton() {
       aria-busy={ctl.busy || undefined}
       aria-disabled={(ctl.locked && !ctl.busy) || undefined}
       aria-describedby="squad-up-desc"
-      onClick={() => { if (!ctl.locked) void ctl.fire('/v2/squad', { message: SQUAD_UP_MSG }, { sentAnnouncement: 'Squad Up sent' }) }}
+      onClick={() => { if (!ctl.locked) void ctl.fire('/v2/squad', { message: SQUAD_UP_MSG, notify: true }, { sentAnnouncement: 'Squad Up sent' }) }}
     >
       {label}
       <span id="squad-up-desc" className="sr-only">Posts to the PSN group: {SQUAD_UP_MSG}</span>
@@ -215,7 +215,7 @@ function TogetherCard({ game, icon, who }: Together) {
         aria-busy={ctl.busy || undefined}
         aria-disabled={(ctl.locked && !ctl.busy) || undefined}
         aria-describedby="rally-desc"
-        onClick={() => { if (!ctl.locked) void ctl.fire('/v2/squad', { message }, { sentAnnouncement: 'Rally sent' }) }}
+        onClick={() => { if (!ctl.locked) void ctl.fire('/v2/squad', { message, notify: true }, { sentAnnouncement: 'Rally sent' }) }}
       >
         {label}
       </button>

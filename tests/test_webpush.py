@@ -300,13 +300,32 @@ def http_tests():
         assert cat == "giveaway" and url == "/app/giveaway" and "October drop" in title and "PS Plus" in body
         assert "won" not in title.lower(), title
 
+    def a_chat_board_tile_is_silent_and_squad_up_alerts():
+        class Mod:
+            sent: list = []
+            def send_message(self, m):
+                self.sent.append(m)
+                return True
+        seen = []
+        orig_n, orig_m = server._notify.route_in_background, server._squad_messenger
+        server._notify.route_in_background = lambda *a, **k: seen.append((a, k))
+        server._squad_messenger = Mod()
+        server._push_squad_once._seen.clear()
+        try:
+            r = client.post("/v2/squad", json={"message": "gg ez"}, cookies=cookie, headers=origin)
+            assert r.status_code == 200 and seen == [], ("a tile posts but alerts nobody", r.text, seen)
+            r = client.post("/v2/squad", json={"message": "SQUAD UP", "notify": True}, cookies=cookie, headers=origin)
+            assert r.status_code == 200 and len(seen) == 1 and seen[0][0][0] == "squad", seen
+        finally:
+            server._notify.route_in_background, server._squad_messenger = orig_n, orig_m
+
     def assistant_tool_is_registered_and_safe():
         assert "push_notifications_log" in assistant.tool_names()
         out, ok = assistant.call_tool("push_notifications_log", {"limit": 5000})
         assert ok, out
         assert "fcm.googleapis.com" not in out
 
-    for fn in (pwa_files_are_public, pwa_icons_do_not_leak_other_files, the_app_document_is_still_gated,
+    for fn in (a_chat_board_tile_is_silent_and_squad_up_alerts, pwa_files_are_public, pwa_icons_do_not_leak_other_files, the_app_document_is_still_gated,
                push_api_needs_a_session, config_has_key_and_categories,
                subscribe_rejects_cross_origin_and_bad_endpoints, subscribe_prefs_test_unsubscribe,
                giveaway_reveal_push_does_not_name_the_winner, assistant_tool_is_registered_and_safe):

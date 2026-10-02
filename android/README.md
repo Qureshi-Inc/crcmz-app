@@ -7,6 +7,17 @@ one native piece: a Huddle or Watch Party starting **rings** like a phone call
 Everything else (pages, sign-in, passkeys, Web Push, calls, background audio) is the
 website, so a site deploy updates the app. Rebuild only for changes in this folder.
 
+## What's native
+
+- **Rings** (above): CallStyle notification, full screen over the lock screen.
+- **Ring setup**, once each on launch: full-screen notifications (off by default since
+  Android 14, without it a ring is only a heads-up) and no battery restrictions (so
+  Doze doesn't hold a ring back). Skippable; asked only once.
+- **Share → CRCMZ**: a link shared from YouTube or any app opens
+  `/app/watch/party?url=…&text=…` with the link already in the video box
+  (`METADATA_SHARE_TARGET` + a `SEND text/plain` filter).
+- **Shortcuts** (long-press the icon): Watch Party, Movies, Slap, Huddle, Clips.
+
 ## How the pieces connect
 
 - `LauncherActivity.kt` asks for notification permission once, gets the FCM token and

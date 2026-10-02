@@ -323,6 +323,9 @@ _push_squad_once = _push.Debounce(120)
 
 class SquadRequest(BaseModel):
     message: str | None = None
+    # Only the Squad Up button and the "N in <game>" rally alert the app. A Chat Board tile
+    # posts to the same group but is just a message: no push, no inbox.
+    notify: bool = False
 
 
 @app.post("/v2/squad")
@@ -338,7 +341,7 @@ def v2_squad(request: Request, req: SquadRequest | None = None):
             logger.info(f"squad: sent -> {text[:60]}")
             s = _get_session(request) or {}
             who = s.get("name") or s.get("preferred_username") or "The squad"
-            if _push_squad_once.first(s.get("sub") or "machine"):
+            if req and req.notify and _push_squad_once.first(s.get("sub") or "machine"):
                 _notify.route_in_background("squad", f"{who}: Squad Up", text, "/app/squad",
                                            exclude=s.get("sub", ""), urgency="high", ttl=900)
             return {"status": "sent", "group": SQUAD_GROUP_ID, "message": text}

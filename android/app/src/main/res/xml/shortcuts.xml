@@ -3,7 +3,10 @@
     <shortcut android:shortcutId="slap" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/s_slap">
         <intent android:action="android.intent.action.VIEW" android:targetPackage="me.crcmz.app" android:targetClass="me.crcmz.app.LauncherActivity" android:data="https://app.crcmz.me/app/slap" />
     </shortcut>
-    <shortcut android:shortcutId="watch" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/s_watch">
+    <shortcut android:shortcutId="party" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/s_party">
+        <intent android:action="android.intent.action.VIEW" android:targetPackage="me.crcmz.app" android:targetClass="me.crcmz.app.LauncherActivity" android:data="https://app.crcmz.me/app/watch/party" />
+    </shortcut>
+    <shortcut android:shortcutId="watch" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/s_movies">
         <intent android:action="android.intent.action.VIEW" android:targetPackage="me.crcmz.app" android:targetClass="me.crcmz.app.LauncherActivity" android:data="https://app.crcmz.me/app/watch" />
     </shortcut>
     <shortcut android:shortcutId="huddle" android:enabled="true" android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/s_huddle">

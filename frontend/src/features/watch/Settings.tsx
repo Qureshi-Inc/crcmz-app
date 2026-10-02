@@ -4,7 +4,8 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Icon } from '../../components/Icon'
 import { ApiError } from '../../lib/http'
-import { changeName, flipCam, leaveCall, rally, setMic, setOrbPos, setSpeaker, useWatch, videoLabel, type OrbPos, type WatchState } from './session'
+import { rallyEveryone } from './rally'
+import { changeName, flipCam, leaveCall, setMic, setOrbPos, setSpeaker, useWatch, videoLabel, type OrbPos, type WatchState } from './session'
 
 export function PlayerSettings({ s, onClose, inline }: { s: WatchState; onClose: () => void; inline?: boolean }) {
   const panel = useRef<HTMLDivElement>(null)
@@ -70,11 +71,8 @@ function RallyField({ s }: { s: WatchState }) {
   async function send() {
     setBusy(true)
     try {
-      await rally()
-      setNote('Rally sent to the squad')
+      setNote(await rallyEveryone())
       setAsk(false)
-    } catch (e) {
-      setNote((e instanceof ApiError && e.detail) || "Couldn't send the rally")
     } finally {
       setBusy(false)
     }
@@ -84,9 +82,9 @@ function RallyField({ s }: { s: WatchState }) {
       <span className="field-label">Rally</span>
       {ask ? (
         <>
-          <p className="meta">Posts to the squad's WhatsApp group: “@all … are on CRCMZ app {videoLabel() ? `watching ${videoLabel()}` : 'in the watch party'}. Join now!”</p>
+          <p className="meta">Rings everyone's phone into the party, and posts to the squad's WhatsApp group: “@all … are on CRCMZ app {videoLabel() ? `watching ${videoLabel()}` : 'in the watch party'}. Join now!”</p>
           <div className="wp-action-row">
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void send()}><Icon name="megaphone" />{busy ? 'Sending…' : 'Send rally'}</button>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void send()}><Icon name="phone" />{busy ? 'Rallying…' : 'Rally now'}</button>
             <button type="button" className="btn btn-secondary" onClick={() => setAsk(false)}>Cancel</button>
           </div>
         </>
