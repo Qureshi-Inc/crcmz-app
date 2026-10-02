@@ -37,7 +37,7 @@ _lock = threading.Lock()
 
 # Push categories (webpush.CATEGORIES) that ring instead of buzzing once.
 RING = {"huddle", "watch"}
-_PLATFORMS = {"android"}
+_PLATFORMS = {"android", "ios", "ios-voip"}   # iPhones: apns.py sends to "ios" / "ios-voip"
 _MAX_DEVICES = 10
 _RING_TTL = "30s"  # a ring that can't arrive within half a minute is a missed call
 
@@ -172,7 +172,7 @@ def ring(category: str, title: str, body: str = "", url: str = "/app", *,
         return out
     import webpush  # the same per-person switches decide both
     with _conn() as db:
-        rows = db.execute("SELECT * FROM devices").fetchall()
+        rows = db.execute("SELECT * FROM devices WHERE platform='android'").fetchall()
     wanted: dict[str, bool] = {}
     targets = []
     for r in rows:

@@ -95,7 +95,7 @@ def store_tests():
         reset()
         assert fcm.register("u1", "short") == {"error": "bad token"}
         assert fcm.register("u1", "a b" * 10) == {"error": "bad token"}
-        assert fcm.register("u1", TOKEN, "ios") == {"error": "unknown platform"}
+        assert fcm.register("u1", TOKEN, "windows") == {"error": "unknown platform"}
         assert fcm.register("", TOKEN) == {"error": "bad token"}
         assert fcm.register("u1", TOKEN) == {"ok": True}
         assert fcm.device_count("u1") == 1

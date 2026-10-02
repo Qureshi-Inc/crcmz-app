@@ -33,6 +33,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+import apns
 import fcm
 import webpush
 
@@ -147,6 +148,7 @@ def route(category: str, title: str, body: str = "", url: str = "/app", *,
     url = _clean_url(url)
     out: dict = {"category": category, "inbox": len(record(category, title, body, url, only=only, exclude=exclude))}
     rang: set[str] = set()
+    rang_ios: set[str] = set()
     if category in fcm.RING:
         try:
             r = fcm.ring(category, title, body, url, exclude=exclude, only=only, tag=tag, caller=caller)
@@ -154,6 +156,18 @@ def route(category: str, title: str, body: str = "", url: str = "/app", *,
             out["ring"] = r
         except Exception:  # noqa: BLE001 - a failed ring falls back to plain push
             logger.exception("notifications: ring failed")
+        try:
+            r = apns.ring(category, title, body, url, exclude=exclude, only=only, tag=tag, caller=caller)
+            rang_ios = r.pop("subs")
+            out["ring_ios"] = r
+        except Exception:  # noqa: BLE001
+            logger.exception("notifications: iPhone ring failed")
+    try:
+        # The iOS app is a web view with no Web Push: iPhones get every alert through APNs
+        # (those that just rang excepted).
+        out["ios"] = apns.alert(category, title, body, url, exclude=exclude, only=only, tag=tag, skip=rang_ios)
+    except Exception:  # noqa: BLE001
+        logger.exception("notifications: iPhone alert failed")
     try:
         out["push"] = webpush.notify(category, title, body, url, exclude=exclude, only=only,
                                      tag=tag, ttl=ttl, urgency=urgency, skip=rang)

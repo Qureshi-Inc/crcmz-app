@@ -6199,7 +6199,7 @@ async def push_subscribe(request: Request):
 
 @app.post("/api/push/native")
 async def push_native(request: Request):
-    """The Android app's FCM token. Body: {token, platform: "android", endpoint?: this phone's Web Push endpoint}."""
+    """A phone app's push token. Body: {token, platform: "android" (FCM) | "ios" (APNs alerts) | "ios-voip" (APNs rings), endpoint?: the phone's Web Push endpoint}."""
     sub = _push_sub(request)
     body = await _push_body(request)
     _rate_limit("push_subscribe", sub)
