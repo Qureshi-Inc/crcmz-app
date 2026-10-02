@@ -867,7 +867,27 @@ def browse_tests():
         assert mv.now_playing("crcmz")["watching"] == 0
         assert mv.now_playing("nope")["video"] == ""
 
-    for fn in (catalogues_build_cinemeta_paths_and_refuse_anything_else, highest_rated_is_in_rating_order_with_no_unrated_films,
+    def the_party_is_announced_when_something_plays_not_when_someone_opens_it():
+        said: list[tuple] = []
+        real = mv._in_background
+        mv._in_background = lambda fn, *a: said.append(a)
+        try:
+            mv._last_playing.clear()
+            room = lambda video, paused=False, n=1: [{"roomId": "/crcmz", "video": video, "paused": paused, "participantCount": n}]
+            t = time.time()
+            mv.set_rooms(room("", n=1))                       # someone opened the party page: nothing on
+            mv.set_rooms(room(mv.stream_url("c" * 32)))      # first sight of a playing room (a restart): primes only
+            assert said == [], said
+            mv._last_playing["crcmz"] = t - mv.PARTY_QUIET_S - 60   # it went quiet a while ago...
+            mv.set_rooms(room(mv.stream_url("c" * 32), n=2))  # ...and now it plays again: a party starting
+            assert said == [("crcmz", mv.stream_url("c" * 32), 2)], said
+            mv.set_rooms(room(mv.stream_url("c" * 32), paused=True, n=2))
+            mv.set_rooms(room(mv.stream_url("c" * 32), n=2))  # a pause and resume isn't a new party
+            assert len(said) == 1, said
+        finally:
+            mv._in_background = real
+
+    for fn in (catalogues_build_cinemeta_paths_and_refuse_anything_else, the_party_is_announced_when_something_plays_not_when_someone_opens_it, highest_rated_is_in_rating_order_with_no_unrated_films,
                home_has_a_featured_film_rows_without_repeats_and_library_state, details_bring_trailers_cast_and_safe_images,
                now_playing_names_the_film_and_forgets_a_quiet_room):
         check(fn.__name__, fn)

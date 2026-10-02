@@ -5322,13 +5322,8 @@ async def watch_join(request: Request):
     # Log-safe: hashed viewer prefix + jti, never the ticket itself.
     logger.info("watch ticket issued room=%s viewer=%s jti=%s kid=%s",
                 room, watch_mod.short_viewer(viewer["viewerId"]), minted["jti"], minted["kid"])
-    if _push_room_quiet.first(f"watch:{room}"):
-        _notify.route_in_background(
-            "watch", f"📺 {viewer['displayName']} started a Watch Party", "Tap to join them.",
-            "/app/watch/party", exclude=viewer["zitadelSubject"], tag=f"watch-{room}", urgency="high", ttl=1800)
-        _threading.Thread(target=_movies.announce_channel, name="watch-channel", daemon=True, args=(
-            f"@channel 📺 **{viewer['displayName']}** started a Watch Party. Join them: "
-            f"https://{_PUBLIC_HOST}/app/watch/party",)).start()
+    # "The Watch Party is on" is announced by movies.set_rooms() once something is actually
+    # playing; opening the party page alone announces nothing.
 
     return JSONResponse(
         {

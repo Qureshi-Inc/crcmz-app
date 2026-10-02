@@ -456,13 +456,56 @@ async def details(imdb: str) -> dict:
 _rooms: dict[str, dict] = {}
 
 
+PARTY_QUIET_S = 30 * 60   # a room that's been off this long is "starting" when it plays again
+_last_playing: dict[str, float] = {}
+
+
 def set_rooms(rooms: list) -> None:
     now = time.time()
     for rm in rooms if isinstance(rooms, list) else []:
         rid = str((rm or {}).get("roomId") or "").strip("/")
-        if rid:
-            _rooms[rid] = {"video": str(rm.get("video") or ""), "paused": bool(rm.get("paused")),
-                           "watching": int(rm.get("participantCount") or 0), "at": now}
+        if not rid:
+            continue
+        r = {"video": str(rm.get("video") or ""), "paused": bool(rm.get("paused")),
+             "watching": int(rm.get("participantCount") or 0), "at": now}
+        _rooms[rid] = r
+        if not (r["video"] and not r["paused"] and r["watching"] > 0):
+            continue
+        # Playing. After a quiet spell that's a party starting: tell everyone. The first time
+        # we see a room (a restart) it only primes, so a running party isn't announced twice.
+        last = _last_playing.get(rid)
+        _last_playing[rid] = now
+        if last is not None and now - last > PARTY_QUIET_S:
+            _in_background(announce_party, rid, r["video"], r["watching"])
+
+
+def _in_background(fn, *args) -> None:
+    threading.Thread(target=fn, args=args, name="party-on", daemon=True).start()
+
+
+def _video_title(url: str) -> str:
+    if url.startswith(STREAM_PREFIX):
+        return history_meta(url).get("title") or ""
+    try:
+        import watch_history
+        return (watch_history.item_info(url) or {}).get("title") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def announce_party(room: str, video: str, watching: int) -> None:
+    """A Watch Party has something playing: push + inbox for everyone, and ~watchparty."""
+    title = _video_title(video)
+    what = f"**{title}**" if title else "something"
+    n = f"{watching} watching"
+    try:
+        import notifications
+        notifications.route("watch", f"📺 Watch Party: {title or 'on now'}", f"{n}. Tap to join.",
+                            "/app/watch/party", tag=f"watch-{room}", urgency="high", ttl=1800)
+    except Exception:  # noqa: BLE001
+        logger.exception("movies: couldn't push the party start")
+    announce_channel(f"@channel 📺 The Watch Party is on: {what} is playing ({n}). "
+                     f"Join: {PUBLIC_URL}/app/watch/party")
 
 
 def now_playing(room: str) -> dict:
