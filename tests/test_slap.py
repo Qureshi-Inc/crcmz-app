@@ -454,6 +454,34 @@ def t_who_added_comes_from_picks_playlists():
         EXTRA_PLAYLISTS.clear()
 
 
+def t_a_comment_tells_whoever_added_the_song():
+    sent: list[tuple] = []
+    orig = slap.notifications.route_in_background
+    slap.notifications.route_in_background = lambda *a, **k: sent.append((a, k))
+    slap._cache.pop("picks", None)
+    try:
+        song = {"track_id": "1" * 32, "title": "Breezeblocks", "artist": "alt-J"}   # in moiz's and shahraiz's picks
+        as_("200")
+        r = client.post("/api/slap/comment", json={**song, "text": "this goes hard"})
+        assert len(sent) == 1, (r.status_code, r.text[:200], sent, slap._cache.get("picks"))
+        assert len(sent) == 1 and sent[0][0][1] == "Zubair commented on your song", sent
+        assert sorted(sent[0][1]["only"]) == ["100", "300"] and sent[0][1]["exclude"] == "200", sent
+        assert "a song you added" in sent[0][1]["dm_text"] and sent[0][0][3] == "/app/slap?track=" + "1" * 32, sent
+        sent.clear()
+        client.post("/api/slap/comment", json={**song, "text": "@moiz this goes hard"})
+        kinds = {a[1]: k["only"] for a, k in sent}
+        assert kinds == {"Zubair mentioned you on Slap": ["100"], "Zubair commented on your song": ["300"]}, kinds
+        sent.clear()
+        as_("100")
+        client.post("/api/slap/comment", json={**song, "text": "my own pick"})
+        assert [k["only"] for a, k in sent] == [["300"]], "not yourself"
+        sent.clear()
+        client.post("/api/slap/comment", json={**song, "text": "🔥", "is_reaction": True})
+        assert sent == [], "a reaction isn't a comment"
+    finally:
+        slap.notifications.route_in_background = orig
+
+
 # ── Listen Together ──────────────────────────────────────────────────────────
 def room():
     r = slap.Room()

@@ -330,6 +330,29 @@ _PICKS = re.compile(r"^(.+)'s picks$", re.I)
 _BOT_PICKS = {"slapper"}
 
 
+async def song_adders(track_id: str, people: list[dict]) -> list[dict]:
+    """The people whose picks playlist holds this track (identity-graph people, not the bot)."""
+    if not _ID.match(track_id or ""):
+        return []
+    try:
+        names = {n.casefold() for n in (await picked_by()).get(track_id, []) if n != "Slap"}
+    except HTTPException:
+        return []
+    if not names:
+        return []
+    out = []
+    for p in people:
+        # Names the system gave them (Mattermost, Jellyfin, their login), never a name they
+        # picked for themselves: anyone can claim "moiz" as a chosen name.
+        tags = p.get("tags") or {}
+        login = p.get("username") or ""
+        mine = {str(v).casefold() for v in (p.get("mm_username"), tags.get("mm_username"), p.get("jellyfin_user"),
+                                             tags.get("jellyfin_user"), "" if "@" in login else login) if v}
+        if mine & names and p.get("zitadel_id"):
+            out.append(p)
+    return out
+
+
 async def picked_by() -> dict[str, list[str]]:
     """track id → the Slap usernames whose picks playlist holds it ("Slap" for the
     bot). The player shows them by the same short names as the rest of Slap. Cached
@@ -1202,16 +1225,26 @@ def build_router(get_session, is_admin) -> APIRouter:
         res = await _social_write("POST", "comment", {
             "username": me["slap_user"], "track_id": f["track_id"], "title": f["title"],
             "artist": f["artist"], "text": text, "is_reaction": reaction})
-        tagged = [] if reaction else [
-            p for p in mentioned(text, await asyncio.to_thread(crcmz_identity.people)) if p["zitadel_id"] != me["sub"]]
+        people = await asyncio.to_thread(crcmz_identity.people)
+        tagged = [] if reaction else [p for p in mentioned(text, people) if p["zitadel_id"] != me["sub"]]
+        song = f["title"] or "a track"
+        by = f" by {f['artist']}" if f["artist"] else ""
+        url = f"/app/slap?track={f['track_id']}" if _ID.match(f["track_id"] or "") else "/app/slap"
         if tagged:
-            song = f["title"] or "a track"
-            by = f" by {f['artist']}" if f["artist"] else ""
             notifications.route_in_background(
                 "mentions", f"{me['name']} mentioned you on Slap", f"“{text[:200]}” · {song}{by}",
-                f"/app/slap?track={f['track_id']}" if _ID.match(f["track_id"] or "") else "/app/slap",
-                exclude=me["sub"], only=[p["zitadel_id"] for p in tagged], tag=f"slap-{f['track_id']}",
+                url, exclude=me["sub"], only=[p["zitadel_id"] for p in tagged], tag=f"slap-{f['track_id']}",
                 dm_text=f"🎵 {me['name']} mentioned you on Slap: “{text[:300]}” on {song}{by}")
+        # Whoever added the song hears about a comment on it, @mention or not (once: a
+        # mention already told them). Emoji reactions don't count.
+        adders = [] if reaction else await song_adders(f["track_id"], people)
+        told = {p["zitadel_id"] for p in tagged} | {me["sub"]}
+        adders = [p for p in adders if p["zitadel_id"] not in told]
+        if adders:
+            notifications.route_in_background(
+                "mentions", f"{me['name']} commented on your song", f"“{text[:200]}” · {song}{by}",
+                url, exclude=me["sub"], only=[p["zitadel_id"] for p in adders], tag=f"slap-{f['track_id']}",
+                dm_text=f"🎵 {me['name']} commented on {song}{by}, a song you added on Slap: “{text[:300]}”")
         if isinstance(res, dict):
             res = {**res, "mentioned": [p.get("display_name") or handle_of(p) for p in tagged]}
         return res
