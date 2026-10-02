@@ -1580,13 +1580,16 @@ def _watchparty_events_list(limit: int = 10, event_type: str | None = None,
       "and devices have them on, which categories (squad, watch, huddle, giveaway, "
       "clips) each person switched off, and the most recent notifications with how "
       "many devices received each. recipients is devices targeted, delivered is how "
-      "many the push service accepted, gone is dead devices dropped. Read-only.",
+      "many the push service accepted, gone is dead devices dropped. android_app lists "
+      "who has the CRCMZ Android app ringing for Huddle and Watch Party starts, when "
+      "they last opened it and when it last rang. Read-only.",
       {"type": "object", "properties": {
           "limit": {"type": "integer", "description": "recent notifications, 1-100, default 20"},
       }})
 def _push_notifications_log(limit: int = 20) -> dict:
+    import fcm
     import webpush
-    return webpush.stats(limit=max(1, min(int(limit or 20), 100)))
+    return {**webpush.stats(limit=max(1, min(int(limit or 20), 100))), "android_app": fcm.stats()}
 
 
 @tool("notification_inbox",

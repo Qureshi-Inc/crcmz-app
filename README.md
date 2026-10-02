@@ -65,6 +65,7 @@ JSON for small config. See the table below.
 | `/data/psn_tokens.json` | Live PSN access/refresh tokens | — never exposed |
 | `/data/video_jobs.db` | Clip forwarding work queue | — internal |
 | `/data/push.db` | Push subscriptions per device, per-person category toggles, sent log (no endpoints in the tool) | `push_notifications_log` |
+| `/data/fcm.db` | Android app phones registered for Huddle / Watch Party rings (FCM tokens never leave it) | `push_notifications_log` |
 | `/data/vapid_private.pem` | VAPID key that signs Web Push | — secret, never exposed |
 | `/data/vip_invites.db` | VIP Clan Member invites sent to app.crcmz.me (emails stay out of the tool) | `vip_invites_recent` |
 

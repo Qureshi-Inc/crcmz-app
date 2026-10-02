@@ -59,6 +59,9 @@ STORES: dict[str, list[str] | None] = {
     "/data/wa_reactions.db":   ["whatsapp_clip_reactions"],
     "/data/video_uploads.db":  ["pending_video_uploads"],
     "/data/push.db":           ["push_notifications_log"],
+    "/data/fcm.db":            ["push_notifications_log"],  # Android app phones (no tokens)
+    # Firebase service account that sends Android rings. A secret, never exposed.
+    "/data/fcm_service_account.json": None,
     "/data/notifications.db":  ["notification_inbox"],
     # The VAPID private key that signs push requests. A secret, never exposed.
     "/data/vapid_private.pem": None,
@@ -174,7 +177,7 @@ def main():
     def secrets_are_not_exposed():
         # The two stores holding live credentials must never gain a tool, however
         # convenient it seems at the time.
-        for path in ("/data/psn_tokens.json",):
+        for path in ("/data/psn_tokens.json", "/data/fcm_service_account.json"):
             assert STORES[path] is None, f"{path} must not be exposed through a tool"
     check("credential stores stay unexposed", secrets_are_not_exposed)
 

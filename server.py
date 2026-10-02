@@ -58,6 +58,7 @@ import threading as _threading
 import time as _time
 
 import webpush as _push  # init() runs with the other stores, below
+import fcm as _fcm  # Android app rings (Huddle / Watch Party); init() below too
 import crcmz_identity
 import notifications as _notify  # the inbox + routing over push, WhatsApp and Mattermost
 
@@ -123,6 +124,23 @@ class _DirectAuth:
 
 class MessageRequest(BaseModel):
     message: str
+
+
+# The Android app (android/) opens this site full screen only if the site vouches
+# for the key that signed it. Comma-separated, for a second key later.
+ANDROID_CERT_SHA256 = os.environ.get(
+    "ANDROID_CERT_SHA256",
+    "9F:99:EC:CA:62:F7:5B:C2:B2:FB:67:CE:D5:AE:72:02:7A:B5:77:85:AF:9C:59:6C:96:CE:00:5D:F2:1E:A9:29")
+
+
+@app.get("/.well-known/assetlinks.json")
+def android_asset_links():
+    """Digital Asset Links: me.crcmz.app may show this origin with no browser bar."""
+    return JSONResponse([{
+        "relation": ["delegate_permission/common.handle_all_urls"],
+        "target": {"namespace": "android_app", "package_name": "me.crcmz.app",
+                   "sha256_cert_fingerprints": [f.strip() for f in ANDROID_CERT_SHA256.split(",") if f.strip()]},
+    }])
 
 
 @app.get("/.well-known/webauthn")
@@ -722,7 +740,7 @@ MACHINE_TOKEN = os.environ.get("CRCMZ_MACHINE_TOKEN", "")
 # Paths that must be reachable before authentication.
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                "/auth/logout", "/auth/passkey/begin", "/auth/passkey/complete",
-               "/.well-known/webauthn",
+               "/.well-known/webauthn", "/.well-known/assetlinks.json",
                # Public key material only — WatchParty fetches this to verify
                # Watch Tickets. Never contains a private key.
                "/api/watch/jwks.json",
@@ -6159,6 +6177,19 @@ async def push_subscribe(request: Request):
     return JSONResponse(r, headers={"Cache-Control": "no-store"})
 
 
+@app.post("/api/push/native")
+async def push_native(request: Request):
+    """The Android app's FCM token. Body: {token, platform: "android", endpoint?: this phone's Web Push endpoint}."""
+    sub = _push_sub(request)
+    body = await _push_body(request)
+    _rate_limit("push_subscribe", sub)
+    r = await asyncio.to_thread(_fcm.register, sub, str(body.get("token") or ""),
+                                str(body.get("platform") or "android"), str(body.get("endpoint") or ""))
+    if "error" in r:
+        raise HTTPException(status_code=400, detail=r["error"])
+    return JSONResponse(r, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/push/unsubscribe")
 async def push_unsubscribe(request: Request):
     sub = _push_sub(request)
@@ -6299,7 +6330,8 @@ async def huddle_token(request: Request):
     if _push_room_quiet.first(f"huddle:{room}"):
         _notify.route_in_background(
             "huddle", f"🎧 {name} started a Huddle", f"Room {room}. Tap to jump in.",
-            f"/app/huddle?room={room}", exclude=identity, tag=f"huddle-{room}", urgency="high", ttl=1800)
+            f"/app/huddle?room={room}", exclude=identity, tag=f"huddle-{room}", urgency="high", ttl=1800,
+            caller=name)
     return JSONResponse({"token": token, "url": ws_url, "room": room})
 
 
@@ -6739,6 +6771,7 @@ from psn_messaging import ClipNotReady, ClipUnauthorized, ClipRateLimited, ClipE
 _clips.init()
 _vip.init()
 _push.init()
+_fcm.init()
 _notify.init()
 
 

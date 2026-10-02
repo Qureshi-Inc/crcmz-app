@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CRCMZ</string>
+    <string name="launch_url">https://app.crcmz.me/app</string>
+    <string name="provider_authority">me.crcmz.app.fileprovider</string>
+    <string name="asset_statements" translatable="false">[{\"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": {\"namespace\": \"web\", \"site\": \"https://app.crcmz.me\"}}]</string>
+    <string name="ring_channel">Huddle and Watch Party calls</string>
+    <string name="ring_channel_desc">Rings when someone starts a Huddle or a Watch Party.</string>
+    <string name="s_slap">Slap</string>
+    <string name="s_watch">Watch Party</string>
+    <string name="s_huddle">Huddle</string>
+    <string name="s_clips">Clips</string>
+    <string name="join">Join</string>
+    <string name="decline">Decline</string>
+</resources>

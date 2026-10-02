@@ -4,9 +4,13 @@ import './styles/global.css'
 import { App } from './app/App'
 import { applyLegacyDeepLink } from './app/nav'
 import { startPwa } from './lib/pwa'
+import { takeNativeLaunch } from './lib/native'
 
 // /app?p=<legacy key> → the mapped route, before the router reads the URL (G-03).
 applyLegacyDeepLink()
+
+// The Android app's launch params (FCM token for rings), off the URL before routing.
+takeNativeLaunch()
 
 // Installable app: service worker, install prompt, push (lib/pwa.ts).
 startPwa()

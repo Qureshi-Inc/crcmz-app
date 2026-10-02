@@ -223,11 +223,12 @@ def _send_one(row: sqlite3.Row, payload: str, *, ttl: int, urgency: str) -> int:
 
 def notify(category: str, title: str, body: str = "", url: str = "/app", *,
            exclude: str = "", only: list[str] | None = None, tag: str = "",
-           ttl: int = 3600, urgency: str = "normal") -> dict:
+           ttl: int = 3600, urgency: str = "normal", skip: set[str] | None = None) -> dict:
     """Fan one notification out to everyone who wants ``category``.
 
     ``exclude`` is the person who caused it (nobody is told about their own rally);
-    ``only`` limits it to these subs. Dead subscriptions (404/410) are dropped.
+    ``only`` limits it to these subs; ``skip`` is endpoints already told another
+    way (an Android app that rang). Dead subscriptions (404/410) are dropped.
     """
     if category not in CATEGORIES and category != "test":  # "test": a person's own check
         raise ValueError(f"unknown push category {category!r}")
@@ -241,7 +242,7 @@ def notify(category: str, title: str, body: str = "", url: str = "/app", *,
             continue
         if r["sub"] not in wanted:
             wanted[r["sub"]] = get_prefs(r["sub"]).get(category, True)
-    targets = [r for r in rows if wanted.get(r["sub"])]
+    targets = [r for r in rows if wanted.get(r["sub"]) and r["endpoint"] not in (skip or ())]
     payload = json.dumps({"title": title[:120], "body": body[:300], "url": url,
                           "tag": tag or category, "category": category})
     delivered, gone = 0, []

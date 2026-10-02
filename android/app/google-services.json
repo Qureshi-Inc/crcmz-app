@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "337356137348",
+    "project_id": "crcmz-app",
+    "storage_bucket": "crcmz-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:337356137348:android:330c964fe3ee9d408c33d1",
+        "android_client_info": {
+          "package_name": "me.crcmz.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSUa24_phZZfTt2u-Ah3au-HObcEXX-kc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

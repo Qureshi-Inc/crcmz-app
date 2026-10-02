@@ -108,6 +108,7 @@ export async function enablePush(): Promise<'on' | 'denied' | 'unsupported'> {
   if (sub && !sameKey(sub, publicKey)) { await sub.unsubscribe(); sub = null }
   sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) })
   await request('/api/push/subscribe', { body: { subscription: sub.toJSON() } })
+  window.dispatchEvent(new Event('crcmz:push-on')) // lib/native.ts pairs it with the app's ring token
   return 'on'
 }
 
@@ -124,7 +125,9 @@ async function syncPush() {
   try {
     if (!pushSupported() || Notification.permission !== 'granted') return
     const sub = await currentSubscription()
-    if (!sub) return
+    // The Android app asks for notification permission itself on first launch, so
+    // there is no tap to subscribe from: do it here.
+    if (!sub) { if (localStorage.getItem('crcmz.native') === 'android') await enablePush(); return }
     // quiet401: a signed-out launch is the Shell's call to make, not this one's.
     const { publicKey } = await request<PushConfig>('/api/push/config', { quiet401: true })
     if (!sameKey(sub, publicKey)) { await enablePush(); return }

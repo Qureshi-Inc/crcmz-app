@@ -2,6 +2,7 @@
 
     route() ──> inbox            always; the bell and /app/notifications
             └─> Web Push         webpush.py, per-category switches
+            └─> Android ring     fcm.py, Huddle / Watch Party starts only
             └─> WhatsApp DM      personal alerts only, per-person switch
             └─> Mattermost DM    personal alerts only, per-person switch
 
@@ -32,6 +33,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+import fcm
 import webpush
 
 logger = logging.getLogger(__name__)
@@ -133,18 +135,28 @@ def record(category: str, title: str, body: str = "", url: str = "/app", *,
 
 def route(category: str, title: str, body: str = "", url: str = "/app", *,
           exclude: str = "", only: list[str] | None = None, tag: str = "",
-          ttl: int = 3600, urgency: str = "normal", dm_text: str = "", dms: bool = True) -> dict:
+          ttl: int = 3600, urgency: str = "normal", dm_text: str = "", dms: bool = True,
+          caller: str = "") -> dict:
     """Send one alert everywhere it should go. Same arguments as webpush.notify.
 
     ``dm_text`` is the WhatsApp/Mattermost wording for a personal alert; the
     title and body are used when it is empty. ``dms=False`` keeps a personal
     category's alert to the inbox and push (squad news, not a message to you).
+    ``caller`` names who rings, for the categories that ring the Android app.
     """
     url = _clean_url(url)
     out: dict = {"category": category, "inbox": len(record(category, title, body, url, only=only, exclude=exclude))}
+    rang: set[str] = set()
+    if category in fcm.RING:
+        try:
+            r = fcm.ring(category, title, body, url, exclude=exclude, only=only, tag=tag, caller=caller)
+            rang = r.pop("endpoints")
+            out["ring"] = r
+        except Exception:  # noqa: BLE001 - a failed ring falls back to plain push
+            logger.exception("notifications: ring failed")
     try:
         out["push"] = webpush.notify(category, title, body, url, exclude=exclude, only=only,
-                                     tag=tag, ttl=ttl, urgency=urgency)
+                                     tag=tag, ttl=ttl, urgency=urgency, skip=rang)
     except Exception:  # noqa: BLE001 - push failing must not lose the DMs
         logger.exception("notifications: push failed")
         out["push"] = None
