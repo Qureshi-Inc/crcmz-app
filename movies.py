@@ -82,9 +82,16 @@ TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "https://torrentio.strem.fun").r
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 ADDS_PER_DAY = 5        # per person; admins aren't capped
-TRY_4K = 5              # cached-copy attempts before settling
-TRY_1080 = 3
-BLOCKED_TRIES = 8        # copies tried after the cached ones, skipping any Real-Debrid has blocked
+# Every try is an add (and usually a delete) on Real-Debrid; a burst of them looks like
+# abuse and can get our IP refused, so a movie gets at most MAX_ADDS.
+MAX_ADDS = 3
+TRY_4K = 2              # cached-copy attempts in 4K, then one in 1080p, then one to download
+BLOCK_PAUSE_S = 6 * 3600
+# Big Buck Bunny (public domain): if Real-Debrid refuses even this, it's refusing us, not the film.
+PROBE_HASH = "dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c"
+SERVER_BLOCKED = ("Real-Debrid is refusing new movies from our server right now (every torrent, even free "
+                  "ones). It's usually temporary; try again later.")
+_rd_blocked_until = 0.0
 ADDING_GIVE_UP_S = 30 * 60
 RESCAN_AFTER_S = 20      # Zurg notices a deleted torrent within seconds
 POLL_S = 1.5            # between Real-Debrid checks while a copy is being tried
@@ -573,6 +580,8 @@ async def _rd(method: str, path: str, **kw) -> Any:
         if r.status_code == 451:
             # "infringing_file": Real-Debrid has this one torrent blocked (a takedown). Others may be fine.
             raise HTTPException(451, "Real-Debrid has that copy blocked")
+        if r.status_code == 429:
+            raise HTTPException(429, "Real-Debrid says we're asking too often. Try again in a few minutes.")
         raise HTTPException(502, "Real-Debrid refused the request")
     return r.json() if r.content else None
 
@@ -811,6 +820,8 @@ async def add(sub: str, name: str, imdb: str, *, admin: bool = False) -> dict:
         raise HTTPException(400, "which movie?")
     if not RD_TOKEN:
         raise HTTPException(503, "adding movies isn't set up yet")
+    if time.time() < _rd_blocked_until:
+        raise HTTPException(503, SERVER_BLOCKED)
     have = (await library_index()).get(imdb)
     if have:
         return {"imdb": imdb, "title": have["title"], "year": have["year"], "poster": have["poster"],
@@ -878,37 +889,61 @@ async def _fetch(imdb: str) -> None:
                     logger.info("movies: %s: %d copies too big for the disk (%s usable)", imdb,
                                 len(ranked) - len(fits), _gb(room))
                 ranked = fits
-            fours = [c for c in ranked if c["tier"] == 2160][:TRY_4K]
-            tens = [c for c in ranked if c["tier"] == 1080][:TRY_1080]
-            for c in fours + tens:
-                got = await _try_copy(c, keep=False)
-                if got:
+            fours = [c for c in ranked if c["tier"] == 2160]
+            tens = [c for c in ranked if c["tier"] == 1080]
+            # Up to MAX_ADDS copies: the best 4K ones, then the best 1080p. The first one Real-Debrid
+            # takes is held (downloading) while the others are checked for a copy it already has;
+            # a cached one wins and the held one is deleted. Never add, delete and re-add.
+            plan = (fours[:TRY_4K] + tens[:1])[:MAX_ADDS]
+            held = None
+            for n, c in enumerate(plan):
+                got = await _try_copy(c, keep=held is None)
+                if got and got[1] == "downloaded":
+                    if held:
+                        try:
+                            await _rd("DELETE", f"/torrents/delete/{held[1]}")
+                        except HTTPException:
+                            logger.info("movies: couldn't remove the copy we held")
                     _chosen(imdb, c, got[0], _after_rd())
                     return
-            # Nothing cached: download the best copy with people seeding it. Copies Real-Debrid
-            # has blocked are skipped, and the rest of the list gets a turn.
-            tried = {id(c) for c in fours + tens}
-            rest = [c for c in fours if not c.get("blocked")] + [c for c in ranked if id(c) not in tried]
-            rest = sorted(rest, key=lambda c: (c["seeders"] < 5, -c["tier"], -c["score"])) + \
-                [c for c in tens if not c.get("blocked")]
-            got = c = None
-            for c in rest[:BLOCKED_TRIES]:
-                got = await _try_copy(c, keep=True, wait_s=20)
-                if got:
-                    break
-            if not got:
-                blocked = sum(1 for x in ranked if x.get("blocked"))
-                _set(imdb, status="failed", error=(
-                    "Real-Debrid has every copy of this one blocked (a takedown claim). New releases often are; "
-                    "try again in a few days." if blocked and blocked >= min(len(ranked), BLOCKED_TRIES)
-                    else "Real-Debrid couldn't get a copy"))
+                if got and held is None:
+                    held = (c, got[0])
+                if n == 0 and c.get("blocked") and await _we_are_blocked():
+                    _set(imdb, status="failed", error=SERVER_BLOCKED)
+                    return
+            if held:
+                _chosen(imdb, held[0], held[1], "downloading")
                 return
-            _chosen(imdb, c, got[0], _after_rd() if got[1] == "downloaded" else "downloading")
+            blocked = sum(1 for x in plan if x.get("blocked"))
+            _set(imdb, status="failed", error=(
+                "Real-Debrid has the copies of this one blocked (a takedown claim). New releases often are; "
+                "try again in a few days." if blocked else "Real-Debrid couldn't get a copy"))
         except HTTPException as e:
             _set(imdb, status="failed", error=str(e.detail))
         except Exception:  # noqa: BLE001
             logger.exception("movies: fetching %s failed", imdb)
             _set(imdb, status="failed", error="Something went wrong finding a copy")
+
+
+async def _we_are_blocked() -> bool:
+    """The first copy was refused: is Real-Debrid refusing this film, or us? Adds a public
+    domain film once to find out (deleted straight away). If us, adds pause for a while."""
+    global _rd_blocked_until
+    try:
+        added = await _rd("POST", "/torrents/addMagnet", data={"magnet": f"magnet:?xt=urn:btih:{PROBE_HASH}"})
+    except HTTPException as e:
+        if e.status_code == 451:
+            _rd_blocked_until = time.time() + BLOCK_PAUSE_S
+            logger.warning("movies: Real-Debrid refuses every add from this server; pausing adds for %d h",
+                           BLOCK_PAUSE_S // 3600)
+            return True
+        return False
+    try:
+        if (added or {}).get("id"):
+            await _rd("DELETE", f"/torrents/delete/{added['id']}")
+    except HTTPException:
+        pass
+    return False
 
 
 def _chosen(imdb: str, c: dict, tid: str, status: str) -> None:

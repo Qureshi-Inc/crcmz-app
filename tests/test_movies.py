@@ -419,7 +419,32 @@ def add_tests():
         assert "Couldn't add Dune" in NOTES[0][0][1] and NOTES[0][1]["url"] == "/app/watch?m=tt15239678"
         assert CHANNEL == [], "a failed add isn't posted to the channel"
 
-    for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_copy_real_debrid_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
+    def a_server_wide_block_stops_at_once_and_pauses_adds():
+        reset()
+        RD.blocked = {c["hash"] for c in mv.rank(DUNE)} | {mv.PROBE_HASH}
+        try:
+            run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        finally:
+            RD.blocked = set()
+        adds = [p for m, p in RD.calls if p == "/torrents/addMagnet"]
+        assert len(adds) == 2, f"one copy, then the free-film check: {len(adds)}"
+        assert mv._row("tt15239678")["error"] == mv.SERVER_BLOCKED
+        try:
+            run(mv.add("u-noor", "Noor", "tt0000001"))
+        except HTTPException as e:
+            assert e.status_code == 503 and e.detail == mv.SERVER_BLOCKED
+        else:
+            raise AssertionError("adds weren't paused")
+        finally:
+            mv._rd_blocked_until = 0.0
+
+    def a_movie_never_costs_more_than_three_adds():
+        reset()   # nothing cached: two 4K and one 1080p, the first held to download
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        adds = [p for m, p in RD.calls if p == "/torrents/addMagnet"]
+        assert len(adds) <= mv.MAX_ADDS and mv._row("tt15239678")["status"] == "downloading", (len(adds), mv._row("tt15239678"))
+
+    for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_server_wide_block_stops_at_once_and_pauses_adds, a_movie_never_costs_more_than_three_adds, a_copy_real_debrid_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
                a_cached_1080p_beats_an_uncached_4k, no_copy_says_so, already_in_the_library_is_not_added_again,
                a_second_press_joins_the_first_and_bad_ids_are_refused, five_a_day_unless_admin,
                a_failed_add_can_be_tried_again):
