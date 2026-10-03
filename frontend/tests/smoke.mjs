@@ -1880,6 +1880,7 @@ try {
       'POST /api/watch/join': json(200, { ticket: 'tkt', expiresIn: 60, room: 'crcmz', viewer: { name: 'Goopy', mod: true } }),
       'GET /npm/livekit-client@2/dist/livekit-client.umd.min.js': (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: FAKE_LK }),
       'POST /api/watch/call/token': (r) => { posts.callToken = [...(posts.callToken || []), r.request().postDataJSON()]; return json(200, { token: 'lk-watch', url: 'wss://lk.example', room: 'watch-crcmz' })(r) },
+      'GET /api/ring/people': json(200, [{ id: 'u2', name: 'Noor', reachable: true }, { id: 'u3', name: 'Zubair', reachable: false }]),
       'POST /api/ring': (r) => { posts.ring = [...(posts.ring || []), r.request().postDataJSON()]; return json(200, { phones_rang: 1, pushed: 2 })(r) },
       'POST /api/watch/rally': (r) => { posts.rally.push(r.request().postDataJSON()); return json(200, { status: 'sent' })(r) },
       'POST /api/watch/nickname': (r) => { posts.nick.push(r.request().postDataJSON()); return json(200, { nickname: 'G', name: 'G' })(r) },
@@ -1992,6 +1993,18 @@ try {
       await page.touchscreen.tap(st.x + 12, st.y + st.height / 2)
       await page.waitForFunction(() => document.querySelector('.wp-stage')?.getAttribute('data-chrome') === 'true', null, { timeout: 3000 }).catch(() => {})
       check('watch: a touch brings the fullscreen controls back', (await page.getAttribute('.wp-stage', 'data-chrome')) === 'true')
+      // The fullscreen chat field: send, and on a phone the field and its keyboard go away.
+      const chatBtn = await page.locator('.wp-ov-row button[aria-label="Chat"]').boundingBox()
+      await page.touchscreen.tap(chatBtn.x + chatBtn.width / 2, chatBtn.y + chatBtn.height / 2)
+      await page.waitForSelector('#wp-fs-in')
+      await page.fill('#wp-fs-in', 'from fullscreen')
+      await page.press('#wp-fs-in', 'Enter')
+      await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:chatV2' && e[1]?.msg === 'from fullscreen'), null, { timeout: 3000 }).catch(() => {})
+      const phone = await page.evaluate(() => matchMedia('(hover: none) and (pointer: coarse)').matches)
+      await page.waitForTimeout(200)
+      check('watch: fullscreen chat sends, and on a phone the field closes after Send',
+        (await page.evaluate(() => window.__wpEmits.some((e) => e[0] === 'CMD:chatV2' && e[1]?.msg === 'from fullscreen'))) && (await page.locator('#wp-fs-in').count()) === (phone ? 0 : 1), `phone=${phone}`)
+      if (await page.locator('.wp-stage[data-chrome="false"]').count()) { const st3 = await page.locator('.wp-stage').boundingBox(); await page.touchscreen.tap(st3.x + 12, st3.y + st3.height / 2) }
       const ex = await page.locator('.wp-ov-row button[aria-label="Exit fullscreen"]').boundingBox()
       await page.touchscreen.tap(ex.x + ex.width / 2, ex.y + ex.height / 2)
       await page.waitForSelector('.wp-ov-row button[aria-label="Fullscreen"]', { timeout: 3000 }).catch(() => {})
@@ -2019,7 +2032,8 @@ try {
     check('watch: incoming chat shows with the sender name', (await page.textContent('.wp-chat-list')).includes('Bizzle'))
     await page.fill('#wp-chat-in', 'hi all')
     await page.press('#wp-chat-in', 'Enter')
-    check('watch: sending chat emits CMD:chatV2', (await page.evaluate(() => window.__wpEmits.find((e) => e[0] === 'CMD:chatV2')?.[1]?.msg)) === 'hi all')
+    await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:chatV2' && e[1]?.msg === 'hi all'), null, { timeout: 3000 }).catch(() => {})
+    check('watch: sending chat emits CMD:chatV2', await page.evaluate(() => window.__wpEmits.some((e) => e[0] === 'CMD:chatV2' && e[1]?.msg === 'hi all')))
     const box = await page.locator('.wp-stage').boundingBox()
     await page.touchscreen.tap(box.x + 12, box.y + box.height / 2)
     await page.waitForTimeout(300)
@@ -2046,6 +2060,20 @@ try {
     await page.waitForFunction(() => document.querySelector('.wp-set')?.textContent.includes('Rally sent'))
     check('watch: Rally posts once after confirming, and rings everyone', posts.rally.length === 1 && (posts.ring || []).length === 1 && posts.ring[0].kind === 'watch')
     await page.click('.wp-set button[aria-label="Close settings"]')
+    // The ring list: ring one person, or everyone.
+    {
+      const before = (posts.ring || []).length
+      await page.click('.wp-actions button:has-text("Ring")')
+      await page.waitForSelector('.ring-sheet .ring-row')
+      check("ring list: the squad with a Ring each, and who a ring can't reach", (await page.locator('.ring-row').count()) === 2
+        && (await page.isDisabled('.ring-row button[aria-label="Ring Zubair"]')) && (await page.textContent('.ring-sheet')).includes('No phone or notifications'))
+      await page.click('.ring-row button[aria-label="Ring Noor"]')
+      await page.waitForTimeout(300)
+      check('ring list: Ring on one person rings just them', posts.ring.length === before + 1 && JSON.stringify(posts.ring.at(-1).to) === '["u2"]' && posts.ring.at(-1).kind === 'watch')
+      await page.click('.ring-sheet button:has-text("Ring everyone")')
+      await page.waitForSelector('.ring-sheet', { state: 'detached' })
+      check('ring list: Ring everyone rings the whole squad', posts.ring.length === before + 2 && posts.ring.at(-1).to === undefined)
+    }
     // Movies home: Watch opens on movies; a poster opens its sheet; Add; Watch together.
     await page.click('.wp-head a:has-text("Movies")')
     await page.waitForSelector('.mv-hero-h')

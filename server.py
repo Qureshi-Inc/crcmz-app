@@ -6403,14 +6403,25 @@ async def watch_call_token(request: Request):
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/ring/people")
+async def ring_people(request: Request):
+    """The ring list: the squad by name, and whether a ring reaches them."""
+    sub = _push_sub(request)
+    return JSONResponse(await asyncio.to_thread(_notify.ring_people, sub), headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/ring")
 async def ring_squad(request: Request):
-    """The Ring button: call everyone's phone. Body: {kind: "huddle" | "watch", room?}."""
+    """The Ring button: call everyone's phone, or just `to` (Zitadel ids from /api/ring/people).
+    Body: {kind: "huddle" | "watch", room?, to?}."""
     sub = _push_sub(request)
     body = await _push_body(request)
     session = _get_session(request) or {}
     name = session.get("name") or session.get("preferred_username") or "Someone"
-    r = await asyncio.to_thread(_notify.ring_squad, str(body.get("kind") or ""), sub, name, str(body.get("room") or ""))
+    to = body.get("to")
+    only = [str(x) for x in to][:20] if isinstance(to, list) else None
+    r = await asyncio.to_thread(_notify.ring_squad, str(body.get("kind") or ""), sub, name, str(body.get("room") or ""),
+                                only)
     if r.get("error") == "cooldown":
         raise HTTPException(status_code=429, detail=f"You just rang. Try again in {r['retry_in']}s.",
                             headers={"Retry-After": str(r["retry_in"])})

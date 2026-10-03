@@ -224,6 +224,35 @@ def route_tests():
         assert notifications.ring_squad("squad", "u1", "Moiz") == {"error": "kind must be huddle or watch"}
         assert notifications.ring_squad("huddle", "", "Moiz") == {"error": "no caller"}
 
+    def the_ring_list_rings_one_person_or_everyone():
+        reset()
+        notifications._rang_by.clear()
+        fcm.register("u2", "2" * 40)
+        fcm.register("u3", "3" * 40)
+        out = notifications.ring_squad("watch", "u1", "Moiz", only=["u3"])
+        assert out["ok"] and out["only"] == ["u3"] and [t for t, _ in SENT] == ["3" * 40], SENT
+        assert notifications.ring_squad("watch", "u1", "Moiz", only=["u3"])["error"] == "cooldown", "30 s per person"
+        assert notifications.ring_squad("watch", "u1", "Moiz", only=["u2"])["ok"], "someone else isn't held back"
+        assert notifications.ring_squad("watch", "u1", "Moiz")["ok"], "nor is ringing everyone"
+        assert notifications.ring_squad("watch", "u1", "Moiz", only=["u1"]) == {"error": "nobody to ring"}
+
+    def the_ring_list_shows_who_a_ring_reaches():
+        reset()
+        import crcmz_identity
+        old = crcmz_identity.people
+        crcmz_identity.people = lambda refresh=False: [
+            {"zitadel_id": "u1", "display_name": "Moiz", "tags": {}},
+            {"zitadel_id": "u2", "display_name": "Noor", "tags": {}},
+            {"zitadel_id": "u3", "display_name": "zub@example.com", "mm_username": "zubair", "tags": {}},
+            {"zitadel_id": "u9", "display_name": "App Review", "tags": {"review": "true"}}]
+        try:
+            fcm.register("u2", "2" * 40)
+            people = notifications.ring_people("u1")
+            assert people == [{"id": "u2", "name": "Noor", "reachable": True},
+                              {"id": "u3", "name": "zubair", "reachable": False}], people
+        finally:
+            crcmz_identity.people = old
+
     def the_ring_tool_is_write_only_and_audited():
         import assistant
         assert "ring_squad" in assistant.write_tool_names() and "ring_squad" not in assistant.tool_names()
@@ -261,6 +290,7 @@ def route_tests():
         assert SENT[-1][1]["url"] == "/app"
 
     for fn in (a_phone_that_rang_is_not_also_pushed, a_failed_ring_still_pushes, other_categories_never_ring,
+               the_ring_list_rings_one_person_or_everyone, the_ring_list_shows_who_a_ring_reaches,
                the_native_app_gets_every_alert_and_a_ring_only_once, outside_links_never_reach_the_native_app,
                upgrading_to_the_native_app_drops_chromes_web_push,
                ring_button_rings_everyone_but_the_caller_once_a_minute, the_ring_tool_is_write_only_and_audited):

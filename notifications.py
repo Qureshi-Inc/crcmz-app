@@ -202,12 +202,22 @@ RING_COOLDOWN_S = 60
 _rang_by: dict[str, float] = {}
 
 
-def ring_squad(kind: str, caller_sub: str, caller_name: str, room: str = "") -> dict:
-    """Someone pressed Ring: call everyone else's phone into a Huddle or the Watch Party.
+RING_ONE_COOLDOWN_S = 30
 
-    One ring a minute per person per kind, whoever asks (the app's button or a tool).
-    People who switched that category off aren't rung (same switches as push).
+
+def ring_squad(kind: str, caller_sub: str, caller_name: str, room: str = "",
+               only: list[str] | None = None) -> dict:
+    """Someone pressed Ring: call everyone else's phone into a Huddle or the Watch Party,
+    or just the people in `only` (Zitadel ids: the ring list's per-person buttons).
+
+    Everyone: one ring a minute per person per kind, whoever asks (the app's button or a
+    tool). One person: once every 30 s each. People who switched that category off
+    aren't rung (same switches as push).
     """
+    if only is not None:
+        only = sorted({str(x) for x in only if str(x) and str(x) != caller_sub})[:20]
+        if not only:
+            return {"error": "nobody to ring"}
     if kind not in fcm.RING:
         return {"error": "kind must be huddle or watch"}
     if not caller_sub:
@@ -215,22 +225,48 @@ def ring_squad(kind: str, caller_sub: str, caller_name: str, room: str = "") -> 
     room = re.sub(r"[^a-z0-9\-]", "", (room or "crcmz").lower())[:64] or "crcmz"
     who = (caller_name or "Someone").strip()[:60] or "Someone"
     now = time.time()
+    key = f"{caller_sub}:{kind}" + (f":{','.join(only)}" if only else "")
+    wait = RING_ONE_COOLDOWN_S if only else RING_COOLDOWN_S
     with _lock:
-        last = _rang_by.get(f"{caller_sub}:{kind}")
-        if last is not None and now - last < RING_COOLDOWN_S:
-            return {"error": "cooldown", "retry_in": int(RING_COOLDOWN_S - (now - last)) + 1}
-        _rang_by[f"{caller_sub}:{kind}"] = now
+        last = _rang_by.get(key)
+        if last is not None and now - last < wait:
+            return {"error": "cooldown", "retry_in": int(wait - (now - last)) + 1}
+        _rang_by[key] = now
     if kind == "huddle":
         out = route("huddle", f"📞 {who} is calling you to a Huddle", f"Room {room}. Tap to jump in.",
-                    f"/app/huddle?room={room}", exclude=caller_sub, tag=f"huddle-{room}",
+                    f"/app/huddle?room={room}", exclude=caller_sub, only=only, tag=f"huddle-{room}",
                     urgency="high", ttl=600, caller=who)
     else:
         out = route("watch", f"📞 {who} is calling you to the Watch Party", "Tap to join.",
-                    "/app/watch/party", exclude=caller_sub, tag="watch-ring", urgency="high", ttl=600, caller=who)
+                    "/app/watch/party", exclude=caller_sub, only=only, tag="watch-ring", urgency="high", ttl=600, caller=who)
     ring = out.get("ring") or {}
     push = out.get("push") or {}
+    ios = out.get("ring_ios") or {}
     return {"ok": True, "kind": kind, "room": room if kind == "huddle" else "",
-            "phones_rang": ring.get("delivered", 0), "pushed": push.get("delivered", 0)}
+            "phones_rang": ring.get("delivered", 0) + ios.get("delivered", 0), "pushed": push.get("delivered", 0),
+            **({"only": only} if only else {})}
+
+
+def ring_people(caller_sub: str) -> list[dict]:
+    """The ring list: everyone in the squad but the caller (and the App Store reviewer),
+    by name, and whether a ring can reach them (a phone app or push set up). No ids of
+    devices, no contact details."""
+    import crcmz_identity
+    import movies
+    out = []
+    for p in crcmz_identity.people():
+        sub = p.get("zitadel_id") or ""
+        if not sub or sub == caller_sub or movies.is_review(p):
+            continue
+        name = (p.get("display_name") or "").strip()
+        if not name or "@" in name:
+            name = (p.get("mm_username") or p.get("username") or "").split("@")[0]
+        if not name:
+            continue
+        reach = fcm.device_count(sub) + webpush.device_count(sub)
+        out.append({"id": sub, "name": name[:40], "reachable": reach > 0})
+    out.sort(key=lambda x: (not x["reachable"], x["name"].lower()))
+    return out
 
 
 def wa_jid_for(person: dict) -> str:

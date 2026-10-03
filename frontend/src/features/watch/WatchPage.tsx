@@ -9,7 +9,7 @@ import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
 import { ErrorStrip } from '../../components/states'
 import { useDesktop } from '../../lib/media'
-import { ringSquad } from '../../lib/ring'
+import { RingSheet } from '../../components/RingSheet'
 import { loginUrl } from '../../lib/session'
 import { Library, useMoviesOff } from './Library'
 import { Orbs } from './Orbs'
@@ -196,11 +196,12 @@ function CallRow({ s }: { s: WatchState }) {
           </button>
         )}
         <button
-          type="button" className="btn btn-secondary" disabled={!live || ringing} title="Ring everyone's phone into the Watch Party"
-          onClick={() => { setRinging(true); void ringSquad('watch').finally(() => setRinging(false)) }}
+          type="button" className="btn btn-secondary" disabled={!live} aria-haspopup="dialog" title="Ring everyone, or one person, into the Watch Party"
+          onClick={() => setRinging(true)}
         >
-          <Icon name="phone" />{ringing ? 'Ringing…' : 'Ring everyone'}
+          <Icon name="phone" />Ring
         </button>
+        <RingSheet kind="watch" open={ringing} onOpenChange={setRinging} />
         {canPopOut(s) && (
           <button type="button" className="btn btn-secondary" title="Keep the movie or the call in a floating window"
             onClick={() => { void popOut().then((ok) => { if (!ok) toast("This phone won't pop it out right now", 'warning') }) }}>

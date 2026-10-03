@@ -378,21 +378,54 @@ function FsChat() {
 }
 
 /** The chat box in fullscreen, where the chat panel is out of view. */
+/** The fullscreen chat field. With an on-screen keyboard it floats just above the keyboard
+ *  so you can see what you type, and Send closes the keyboard and the field. With a
+ *  real keyboard (a computer, a keyboard on a tablet) it stays put and stays open. */
 function FsChatForm({ online, onDone }: { online: boolean; onDone: () => void }) {
   const [msg, setMsg] = useState('')
   const ref = useRef<HTMLInputElement>(null)
+  const kb = useOnScreenKeyboard()
+  // A touch-only device types on the screen even when the page can't measure the keyboard
+  // (Android's web view resizes the page around it instead).
+  const onScreen = kb > 0 || touchOnly()
   useEffect(() => { ref.current?.focus({ preventScroll: true }) }, [])
   function submit(e: FormEvent) {
     e.preventDefault()
-    if (sendChat(msg)) setMsg('')
+    if (!sendChat(msg)) return
+    setMsg('')
+    if (onScreen) { ref.current?.blur(); onDone() }
   }
   return (
-    <form className="wp-fs-form" onSubmit={submit} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDone() } }}>
+    <form className="wp-fs-form" data-float={kb > 0} style={kb > 0 ? { bottom: kb + 8 } : undefined} onSubmit={submit}
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDone() } }}>
       <label className="sr-only" htmlFor="wp-fs-in">Message</label>
-      <input id="wp-fs-in" ref={ref} className="input" value={msg} maxLength={500} placeholder={online ? 'Message the room' : 'Connecting…'} disabled={!online} onChange={(e) => setMsg(e.target.value)} enterKeyHint="send" autoComplete="off" />
+      <input id="wp-fs-in" ref={ref} className="input" value={msg} maxLength={500} placeholder={online ? 'Message the room' : 'Connecting…'} disabled={!online}
+        onChange={(e) => setMsg(e.target.value)} enterKeyHint="send" autoComplete="off"
+        // Keyboard dismissed without sending: the field goes too (on a phone).
+        onBlur={() => { if (onScreen && !msg.trim()) onDone() }} />
       <button type="submit" className="wp-ctl" aria-label="Send" disabled={!online || !msg.trim()}><Icon name="send" /></button>
     </form>
   )
+}
+
+const touchOnly = () => typeof matchMedia === 'function' && matchMedia('(hover: none) and (pointer: coarse)').matches
+
+/** How much of the page an on-screen keyboard covers, in px (0 when there's none). */
+function useOnScreenKeyboard(): number {
+  const [h, setH] = useState(0)
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const measure = () => {
+      const covered = Math.round(window.innerHeight - vv.height - vv.offsetTop)
+      setH(covered > 80 ? covered : 0)   // under 80px is a toolbar, not a keyboard
+    }
+    measure()
+    vv.addEventListener('resize', measure)
+    vv.addEventListener('scroll', measure)
+    return () => { vv.removeEventListener('resize', measure); vv.removeEventListener('scroll', measure) }
+  }, [])
+  return h
 }
 
 /** Page-scoped keys (JOURNEY PS-6): never while typing or while a dialog is open. */

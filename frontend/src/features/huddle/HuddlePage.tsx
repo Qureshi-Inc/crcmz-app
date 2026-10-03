@@ -8,7 +8,7 @@ import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
 import { useDesktop } from '../../lib/media'
-import { ringSquad } from '../../lib/ring'
+import { RingSheet } from '../../components/RingSheet'
 import { loginUrl } from '../../lib/session'
 import { useSwipeDown } from '../../lib/gestures'
 import { initials, tint } from '../../lib/watch'
@@ -254,12 +254,13 @@ function CallView({ s }: { s: HuddleState }) {
             <Icon name={s.layout === 'grid' ? 'spotlight' : 'grid'} />
           </button>
           <button
-            type="button" className="btn btn-secondary hu-ai-btn" disabled={ringing}
-            title="Ring everyone's phone into this call"
-            onClick={() => { setRinging(true); void ringSquad('huddle', s.room).finally(() => setRinging(false)) }}
+            type="button" className="btn btn-secondary hu-ai-btn" aria-haspopup="dialog"
+            title="Ring everyone, or one person, into this call"
+            onClick={() => setRinging(true)}
           >
-            <Icon name="phone" />{ringing ? 'Ringing…' : 'Ring'}
+            <Icon name="phone" />Ring
           </button>
+          <RingSheet kind="huddle" room={s.room} open={ringing} onOpenChange={setRinging} />
           <button type="button" className="btn btn-secondary hu-ai-btn" aria-pressed={s.aiOpen} aria-expanded={s.aiOpen} onClick={() => setAiOpen(!s.aiOpen)}>
             <Icon name="ask" />AI
           </button>
