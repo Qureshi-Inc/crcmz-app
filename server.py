@@ -61,6 +61,7 @@ import webpush as _push  # init() runs with the other stores, below
 import fcm as _fcm  # Android app rings (Huddle / Watch Party); init() below too
 import crcmz_identity
 import notifications as _notify  # the inbox + routing over push, WhatsApp and Mattermost
+import discord_bridge as _discord_bridge
 
 _rl_lock = _threading.Lock()
 _rl_hits: dict[str, list[float]] = {}
@@ -6953,8 +6954,9 @@ WA_GOOPERS_JID = os.environ.get("WA_GOOPERS_JID", "")  # stats only (founders gr
 # typing, announcements) lives in CRCMZ BOYZ. Falls back to the old group so
 # an unset WA_MAIN_JID keeps the bot where it was rather than going silent.
 WA_MAIN_JID = os.environ.get("WA_MAIN_JID", "").strip() or WA_GOOPERS_JID
-DISCORD_BOT_TOKEN       = os.environ.get("DISCORD_BOT_TOKEN", "")
+DISCORD_BOT_TOKEN        = os.environ.get("DISCORD_BOT_TOKEN", "")
 DISCORD_CLIPS_CHANNEL_ID = os.environ.get("DISCORD_CLIPS_CHANNEL_ID", "")
+DISCORD_SQUAD_CHANNEL_ID = os.environ.get("DISCORD_SQUAD_CHANNEL_ID", "")
 
 # ── Huddle (LiveKit video chat) ────────────────────────────────────────────────
 LIVEKIT_URL        = os.environ.get("LIVEKIT_URL", "wss://huddle.crcmz.me")
@@ -7513,6 +7515,16 @@ async def _start_squad_poller():
         _watched_messengers = [m for m in [psn_messenger, _squad_messenger] if m is not None]
         _video_queue = asyncio.Queue()
 
+        # Wire up the Discord ↔ PSN bridge.  The send callback uses _squad_messenger
+        # (CRCMZ BOYZ group) — the same group the poller watches.
+        if DISCORD_SQUAD_CHANNEL_ID and psn_messenger:
+            _discord_bridge.configure(
+                send_psn=psn_messenger.send_message,
+                bot_psn_id=(client.online_id if client else ""),
+            )
+            asyncio.create_task(_discord_bridge.run_discord_listener())
+            logger.info("discord_bridge: started (squad_channel=%s)", DISCORD_SQUAD_CHANNEL_ID)
+
         async def _video_detect_loop():
             def _adjacent_caption(msgs: list[dict], idx: int, sender: str,
                                    window_ms: int = 5000) -> str:
@@ -7692,6 +7704,10 @@ async def _start_squad_poller():
                                         "expires_at=%.0f",
                                         sender, text,
                                         text_ts + TRIGGER_FORWARD_WINDOW)
+                                elif text:
+                                    # Plain text message (not a clip trigger) —
+                                    # forward to #the-squad on Discord.
+                                    _discord_bridge.forward_psn_to_discord(sender, text)
                                 continue
 
                             # Video clip messages

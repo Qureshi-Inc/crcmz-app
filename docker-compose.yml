@@ -26,6 +26,7 @@ services:
       - WA_NAME_ALIASES=${WA_NAME_ALIASES:-}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
       - DISCORD_CLIPS_CHANNEL_ID=${DISCORD_CLIPS_CHANNEL_ID:-}
+      - DISCORD_SQUAD_CHANNEL_ID=${DISCORD_SQUAD_CHANNEL_ID:-}
       # Watch Party — this app brokers identity for the self-hosted WatchParty
       # fork. The PRIVATE key stays here; WatchParty only ever gets the public
       # half. Leave the key unset to auto-generate one into /data/watch.
