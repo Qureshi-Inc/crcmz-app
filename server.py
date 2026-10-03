@@ -6513,7 +6513,7 @@ async def huddle_notes_get(request: Request, mid: str):
     return JSONResponse(m, headers={"Cache-Control": "no-store"})
 
 
-@app.patch("/api/huddle/notes/{mid}")
+@app.post("/api/huddle/notes/{mid}")
 async def huddle_notes_rename(request: Request, mid: str):
     """Rename a meeting (anyone who was in it)."""
     session = _get_session(request)

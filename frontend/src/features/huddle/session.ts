@@ -123,13 +123,20 @@ export type HuddleState = {
   /** Everyone else with a hand up, by name (oldest first). */
   hands: string[]
   reactions: Reaction[]
+  /** Start the transcript (for everyone) as soon as you join; saved notes come of it. */
+  autoTranscribe: boolean
 }
 
 let state: HuddleState = {
   phase: 'pre', room: 'crcmz', error: '', errorText: '', preview: 'off', mics: [], cams: [], micId: '', camId: '',
   mic: false, cam: false, share: false, blur: false, note: '', tiles: [], tracks: 0, layout: 'spotlight', pinned: '', speaker: '',
   audioBlocked: false, aiOpen: false, aiBusy: false, aiLog: [], aiSignedOut: false, transcribing: false, recorders: [], lines: [], nativeRoom: '',
-  hand: false, hands: [], reactions: [],
+  hand: false, hands: [], reactions: [], autoTranscribe: readAuto(),
+}
+function readAuto(): boolean { try { return localStorage.getItem('crcmz.huddle.transcribe') === '1' } catch { return false } }
+export function setAutoTranscribe(on: boolean) {
+  try { localStorage.setItem('crcmz.huddle.transcribe', on ? '1' : '0') } catch { /* */ }
+  set({ autoTranscribe: on })
 }
 const listeners = new Set<() => void>()
 function set(patch: Partial<HuddleState>) {
@@ -245,6 +252,7 @@ export async function join({ camera = true }: { camera?: boolean } = {}) {
     const others = muteOtherCalls('huddle')
     if (others.length && state.mic) toast(`Muted your ${others.join(' and ')} mic while you're in Huddle`, 'info')
     sync()
+    if (state.autoTranscribe && !state.transcribing) toggleTranscript({ open: false })
   } catch (e) {
     if (r) { try { await r.disconnect() } catch { /* */ } }
     room = null
@@ -262,6 +270,7 @@ async function joinNative(wanted: string, camera: boolean) {
     muteOtherCalls('huddle')
     toNative({ type: 'start', kind: 'huddle', url: t.url, token: t.token, room: t.room, title: `Huddle · ${t.room}`, publish: true, camera, mic: true })
     set({ phase: 'pre', nativeRoom: t.room })
+    if (state.autoTranscribe) nativeTranscriptOn()
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) { markSignedOut(); set({ phase: 'pre', error: 'signin' }) }
     else if (e instanceof ApiError && e.status === 503) set({ phase: 'pre', error: 'config' })
@@ -603,6 +612,14 @@ function onData(m: Record<string, unknown>, name: string, id: string) {
     else remoteRecorders.delete(id)
     if (state.nativeRoom) set({ recorders: [...remoteRecorders.values(), ...(state.transcribing ? ['You'] : [])] })
     else sync()
+    // The transcript is for the whole call: someone turning it on (or off) does it for
+    // everyone, so the notes have what everybody said, not just them.
+    if (m.all && !!m.on !== state.transcribing) {
+      set({ aiLog: [...state.aiLog, { role: 'note', text: `${name} turned the transcript ${m.on ? 'on' : 'off'} for everyone.` }] })
+      if (m.on) toggleTranscript({ open: false, quiet: true, echo: false })
+      else if (state.nativeRoom) toNative({ type: 'transcript', kind: 'huddle', on: false })
+      else stopTranscript(false, false)
+    }
   } else if (m.t === 'line' && typeof m.text === 'string' && m.text) {
     addLine(name, m.text.slice(0, 2000))
   } else if (m.t === 'hand') {
@@ -643,8 +660,17 @@ export function react(e: string) {
 onNativeData((kind, m, from, fromId) => {
   if (kind !== 'huddle' || !state.nativeRoom) return
   if (m.t === 'transcribing') {
+    // Asked for right after joining, the app's mic may not be up yet: try again shortly.
+    if (!m.on && nativeTries > 0 && /unmute/i.test(String(m.note || ''))) {
+      nativeTries--
+      window.setTimeout(() => toNative({ type: 'transcript', kind: 'huddle', on: true }), 1500)
+      return
+    }
+    if (m.on) nativeTries = 0
     set({ transcribing: !!m.on, recorders: [...remoteRecorders.values(), ...(m.on ? ['You'] : [])] })
-    if (typeof m.note === 'string' && m.note) set({ aiLog: [...state.aiLog, { role: 'note', text: m.note }] })
+    if (typeof m.note === 'string' && m.note) set({ aiLog: [...state.aiLog, { role: 'note', text: m.on ? NOTE_ON : m.note }] })
+    // The app tells the call it's recording; this makes it everyone's transcript.
+    if (nativeAnnounce) { void sendData({ t: 'rec', on: !!m.on, all: true }); nativeAnnounce = false }
     return
   }
   if (m.t === 'line' && fromId === 'me') { addLine(from || 'You', String(m.text || '').slice(0, 2000)); return }
@@ -652,17 +678,30 @@ onNativeData((kind, m, from, fromId) => {
   onData(m, from, fromId)
 })
 
-export function toggleTranscript() {
+const NOTE_ON = "Transcript on for everyone in the call. The meeting notes are saved when the call ends."
+let nativeTries = 0
+let nativeAnnounce = false
+function nativeTranscriptOn() {
+  nativeTries = 6
+  nativeAnnounce = true
+  toNative({ type: 'transcript', kind: 'huddle', on: true })
+}
+
+/** Transcript on or off for the whole call. `open`: show the AI helper; `echo`: tell the room. */
+export function toggleTranscript({ open = true, quiet = false, echo = true }: { open?: boolean; quiet?: boolean; echo?: boolean } = {}) {
   if (state.nativeRoom) {
     // The app records its own mic (the page has none in a native call).
-    set({ aiOpen: true })
-    toNative({ type: 'transcript', kind: 'huddle', on: !state.transcribing })
+    if (open) set({ aiOpen: true })
+    if (state.transcribing) { nativeAnnounce = echo; toNative({ type: 'transcript', kind: 'huddle', on: false }); return }
+    nativeTries = 6
+    nativeAnnounce = echo
+    toNative({ type: 'transcript', kind: 'huddle', on: true })
     return
   }
-  if (state.transcribing) { stopTranscript(true); return }
+  if (state.transcribing) { stopTranscript(true, echo); return }
   const lp = room?.localParticipant
   const mst = lp?.getTrackPublication(SRC.mic)?.track?.mediaStreamTrack
-  set({ aiOpen: true })
+  if (open) set({ aiOpen: true })
   if (!lp || !mst || !lp.isMicrophoneEnabled) {
     set({ aiLog: [...state.aiLog, { role: 'note', text: 'Unmute your mic to start the transcript.' }] })
     return
@@ -690,10 +729,10 @@ export function toggleTranscript() {
     if (blob.size > 2000) void transcribe(blob, me)
   }
   recorder = rec
-  set({ transcribing: true, aiLog: [...state.aiLog, { role: 'note', text: 'Transcript on. Everyone in the call can see it is on.' }] })
+  set({ transcribing: true, ...(quiet ? {} : { aiLog: [...state.aiLog, { role: 'note' as const, text: NOTE_ON }] }) })
   try { rec.start() } catch { stopTranscript(false); return }
   chunkTimer = window.setTimeout(() => { if (rec.state === 'recording') rec.stop() }, CHUNK_MS)
-  void sendData({ t: 'rec', on: true })
+  void sendData({ t: 'rec', on: true, ...(echo ? { all: true } : {}) })
   sync()
 }
 
@@ -703,12 +742,12 @@ function stopRecorder() {
   recorder = null
   if (rec && rec.state !== 'inactive') { try { rec.stop() } catch { /* */ } }
 }
-function stopTranscript(say: boolean) {
+function stopTranscript(say: boolean, echo = false) {
   if (!state.transcribing) return
   stopRecorder()
   set({ transcribing: false })
   if (say) set({ aiLog: [...state.aiLog, { role: 'note', text: 'Transcript off.' }] })
-  void sendData({ t: 'rec', on: false })
+  void sendData({ t: 'rec', on: false, ...(echo ? { all: true } : {}) })
   sync()
 }
 
@@ -716,6 +755,7 @@ async function transcribe(blob: Blob, me: string) {
   const fd = new FormData()
   const ext = blob.type.includes('ogg') ? 'ogg' : blob.type.includes('mp4') ? 'm4a' : 'webm'
   fd.append('file', blob, `audio.${ext}`)
+  fd.append('room', state.room)   // the meeting the notes come from
   try {
     const r = await fetch('/api/huddle/transcribe', { method: 'POST', body: fd, credentials: 'same-origin' })
     if (r.status === 401) { set({ aiSignedOut: true }); stopTranscript(false); return }

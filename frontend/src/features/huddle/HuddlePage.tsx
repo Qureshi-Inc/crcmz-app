@@ -3,7 +3,7 @@
 // and the room keeps going; the call bar brings you back.
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
@@ -15,7 +15,7 @@ import { initials, tint } from '../../lib/watch'
 import {
   askAi, canPopOut, canShare, join, leave, popOut, showNativeCall, meetingNotes, pin, previewMedia, retryAi, setAiOpen, setCamId, setLayout, setMicId, setRoomName,
   spotlightTile, startAudio, startPreview, stopPreview, tileTrack, toggleBlur, toggleCam, toggleMic, toggleShare, toggleTranscript,
-  react, toggleHand, REACTIONS, useHuddle, type HuddleState, type Tile,
+  react, setAutoTranscribe, toggleHand, REACTIONS, useHuddle, type HuddleState, type Tile,
 } from './session'
 import { HelpLink } from '../../components/HelpLink'
 
@@ -40,6 +40,7 @@ export function HuddlePage() {
     <div className="page hu-page" data-call={call}>
       <div className="hu-head">
         <h1 className="page-h1" tabIndex={-1}>Huddle<HelpLink id="huddle" /></h1>
+        <Link className="btn btn-ghost hu-notes-link" to="/huddle/notes"><Icon name="notes" />Meeting notes</Link>
       </div>
       {call ? <CallView s={s} /> : s.nativeRoom ? <NativeLive s={s} /> : <PreJoin s={s} />}
     </div>
@@ -61,6 +62,7 @@ function NativeLive({ s }: { s: HuddleState }) {
           <button type="button" className="btn btn-secondary" aria-haspopup="dialog" onClick={() => setRinging(true)}>
             <Icon name="phone" />Ring
           </button>
+          <TranscriptButton s={s} />
           <HandButton s={s} />
           <ReactButton />
         </div>
@@ -78,6 +80,21 @@ function NativeLive({ s }: { s: HuddleState }) {
         <AiPanel s={s} titleId="hu-native-ai-h" inline />
       </section>
     </div>
+  )
+}
+
+/** Transcript on or off for everyone in the call; the meeting notes come from it. */
+function TranscriptButton({ s, ctrl = false }: { s: HuddleState; ctrl?: boolean }) {
+  const label = s.transcribing ? 'Stop the transcript' : 'Transcribe this call (meeting notes when it ends)'
+  return ctrl ? (
+    <button type="button" className="hu-ctrl" data-active={s.transcribing} aria-pressed={s.transcribing} aria-label={label} title={label}
+      onClick={() => toggleTranscript({ open: false })}>
+      <Icon name="notes" /><span className="hu-ctrl-label" aria-hidden="true">{s.transcribing ? 'Stop notes' : 'Notes'}</span>
+    </button>
+  ) : (
+    <button type="button" className="btn btn-secondary" aria-pressed={s.transcribing} title={label} onClick={() => toggleTranscript({ open: false })}>
+      <Icon name="notes" />{s.transcribing ? 'Stop transcript' : 'Transcribe'}
+    </button>
   )
 }
 
@@ -189,6 +206,13 @@ function PreJoin({ s }: { s: HuddleState }) {
             )}
           </div>
         )}
+        <label className="hu-auto-tx">
+          <input type="checkbox" checked={s.autoTranscribe} disabled={joining} onChange={(e) => setAutoTranscribe(e.target.checked)} />
+          <span>
+            <b>Transcribe and save meeting notes</b>
+            <span className="field-hint">The transcript starts for everyone when you join; the AI writes the notes when the call ends.</span>
+          </span>
+        </label>
         <div className="hu-join-row">
           <button type="submit" className="btn btn-primary hu-join" disabled={joining}>
             <Icon name={noCam ? 'mic' : 'cam'} />
@@ -380,6 +404,7 @@ function Controls({ s, disabled }: { s: HuddleState; disabled: boolean }) {
       <button type="button" className="hu-ctrl" data-active={s.blur} aria-pressed={s.blur} aria-label="Blur background" disabled={disabled || !s.cam} onClick={() => void toggleBlur()}>
         <Icon name="blur" /><span className="hu-ctrl-label" aria-hidden="true">Blur</span>
       </button>
+      <TranscriptButton s={s} ctrl />
       <HandButton s={s} ctrl />
       <ReactButton ctrl />
       <button type="button" className="hu-ctrl hu-ctrl-leave" aria-label="Leave the call" onClick={() => void leave()}>
@@ -431,7 +456,7 @@ function AiPanel({ s, titleId, sheet = false, inline = false }: { s: HuddleState
         </div>
       )}
       <div className="hu-ai-tools">
-        <button type="button" className="btn btn-secondary" aria-pressed={s.transcribing} onClick={toggleTranscript}>
+        <button type="button" className="btn btn-secondary" aria-pressed={s.transcribing} onClick={() => toggleTranscript()}>
           <Icon name={s.transcribing ? 'micOff' : 'mic'} />{s.transcribing ? 'Stop transcript' : 'Transcript'}
         </button>
         <button type="button" className="btn btn-secondary" disabled={s.aiBusy} onClick={meetingNotes}><Icon name="notes" />Notes</button>

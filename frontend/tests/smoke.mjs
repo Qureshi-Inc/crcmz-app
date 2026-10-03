@@ -2324,6 +2324,37 @@ try {
     check('no unmocked writes and no page errors (Watch 1440)', d.page.violations.length === 0, d.page.violations.join(', '))
     await d.ctx.close()
 
+    // ── Meeting notes: the list, one meeting rendered from Markdown, full screen, rename. ──
+    {
+      const renames = []
+      const NOTE = { id: 'mt1', room: 'crcmz', started: 1759500000, ended: 1759503600, status: 'ready', title: 'Ranked night plan', people: ['Moiz', 'Zubi'] }
+      const n = await newPage({ width: 375, height: 800, mocks: {
+        ...WATCH,
+        'GET /api/huddle/notes': json(200, { meetings: [NOTE, { ...NOTE, id: 'mt2', status: 'writing', title: 'Huddle · crcmz' }] }),
+        'GET /api/huddle/notes/mt1': json(200, { ...NOTE, mine: true, notes: '# Ranked night plan\n\n## Follow-ups\n- **Zubi** books the lobby\n- Moiz brings snacks', transcript: [{ ts: 1759500100, name: 'Zubi', text: 'I can book it' }] }),
+        'POST /api/huddle/notes/mt1': (r) => { renames.push(r.request().postDataJSON()); return json(200, { ok: true, title: 'Ranked' })(r) },
+      } })
+      await ready(n.page, '/app/huddle/notes')
+      await n.page.waitForSelector('.notes-row')
+      check('notes: the list shows your meetings, and which are still being written', (await n.page.locator('.notes-row').count()) === 2 && (await n.page.textContent('.notes-list')).includes('Writing the notes'))
+      await n.page.click('.notes-row:has-text("Ranked night plan")')
+      await n.page.waitForSelector('.notes-md h2')
+      check('notes: Markdown renders (headings, bold, lists)', (await n.page.textContent('.notes-md h2')) === 'Follow-ups' && (await n.page.locator('.notes-md li strong').count()) === 1)
+      await n.page.click('button:has-text("Full screen")')
+      await n.page.waitForSelector('.notes-reader .notes-md')
+      const box = await n.page.locator('.notes-reader').boundingBox()
+      check('notes: Full screen fills the screen', box.width === 375 && box.height === 800, JSON.stringify(box))
+      await n.page.keyboard.press('Escape')
+      await n.page.click('button:has-text("Rename")')
+      await n.page.fill('#notes-title', 'Ranked')
+      await n.page.click('.notes-rename button[type=submit]')
+      await n.page.waitForFunction(() => !document.querySelector('.notes-rename'))
+      check('notes: Rename posts the new name', renames.at(-1)?.title === 'Ranked', JSON.stringify(renames))
+      await axe(n.page, 'Meeting notes 375', '.app-main')
+      check('no unmocked writes and no page errors (meeting notes)', n.page.violations.length === 0, n.page.violations.join(', '))
+      await n.ctx.close()
+    }
+
     // ── 14. Huddle (PS-7). LiveKit is a fake client served at the CDN URL: the room,
     // the participants and their tracks are scripted from the test. Token, AI and
     // transcribe are fixtures. Nothing reaches a real LiveKit server. ──
@@ -2375,7 +2406,7 @@ try {
       check("huddle: alone says you're the only one here", await h.page.isVisible('.hu-alone'))
       check('huddle: the preview camera is released once in the call', await h.page.evaluate(() => !document.querySelector('.hu-preview')))
       const ctrls = await h.page.locator('.hu-controls button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')))
-      check('huddle: controls are mic, camera, share, blur, hand, reactions, leave', ctrls.join('|') === 'Mute|Turn camera off|Share your screen|Blur background|Raise your hand|Reactions|Leave the call', ctrls.join('|'))
+      check('huddle: controls are mic, camera, share, blur, transcribe, hand, reactions, leave', ctrls.join('|') === 'Mute|Turn camera off|Share your screen|Blur background|Transcribe this call (meeting notes when it ends)|Raise your hand|Reactions|Leave the call', ctrls.join('|'))
       await h.page.evaluate(() => { window.__lkAdd('p2', 'Bizzle'); window.__lkAdd('p3', 'Noor') })
       await h.page.waitForFunction(() => document.querySelector('.hu-count')?.textContent === '3 in call')
       check('huddle: people joining fill the filmstrip', (await h.page.locator('.hu-strip li').count()) === 3)
@@ -2465,7 +2496,7 @@ try {
       await h.page.waitForSelector('.hu-ai-sheet', { state: 'detached' })
 
       // Leave the page: the call keeps going in the call bar.
-      await h.page.click('.tabbar a[href="/app/clips"]')
+      await h.page.click('.tabbar a[href="/app"]')
       await h.page.waitForSelector('.watchbar-bar')
       check('huddle: leaving /huddle keeps the call in the call bar', (await h.page.textContent('.watchbar-bar')).includes('squadnight · 3 in call') && (await hs(h.page)).audio === 2)
       check('huddle: the call bar shows the transcript chip while someone records', (await h.page.textContent('.watchbar-bar')).includes('Transcript on'))

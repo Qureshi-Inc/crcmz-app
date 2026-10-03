@@ -2235,7 +2235,7 @@ html[data-watchbar][data-player]:has(.app-main[data-chat="mobile"]) .toasts { bo
    Huddle (PS-7)
    ════════════════════════════════════════════════════════════════════════════ */
 .hu-page { display: flex; flex-direction: column; gap: var(--space-4); }
-.hu-head { display: flex; align-items: center; gap: var(--space-3); }
+.hu-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
 
 /* Pre-join: preview beside the form on wide screens, above it on phones. */
 .hu-pre { display: grid; gap: var(--space-4); grid-template-columns: minmax(0, 1fr); padding: var(--space-4); }
@@ -2830,3 +2830,40 @@ html[data-native-shell] .tabbar { display: none; }
 .wp-cc-item[aria-checked="true"] { color: var(--interactive-text); font-weight: 700; }
 .wp-cc-item:hover, .wp-cc-item:focus-visible { background: rgba(255, 255, 255, .08); }
 .wp-video::cue { background: rgba(0, 0, 0, .65); color: #fff; font-size: 1.05em; }
+
+/* Huddle: "Transcribe and save meeting notes" before joining. */
+.hu-auto-tx { display: flex; gap: var(--space-3); align-items: flex-start; min-height: var(--tap-min); cursor: pointer; }
+.hu-auto-tx input { width: 22px; height: 22px; margin-top: 2px; flex: none; accent-color: var(--accent-solid); }
+.hu-auto-tx > span { display: flex; flex-direction: column; gap: 2px; }
+.hu-auto-tx .field-hint { margin: 0; }
+
+/* Meeting notes (features/huddle/NotesPage). */
+.notes-page { display: flex; flex-direction: column; gap: var(--space-4); }
+.notes-page > .meta { margin: 0; }
+.notes-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.notes-row { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-4); border-radius: var(--radius-lg); color: var(--text); text-decoration: none; min-height: var(--tap-min); }
+.notes-row-title { font-weight: 800; font-size: var(--text-lg); }
+.notes-row-status { color: var(--interactive-text); }
+.notes-empty { padding: var(--space-5); border-radius: var(--radius-lg); display: grid; gap: var(--space-2); justify-items: start; }
+.notes-back { align-self: flex-start; }
+.notes-title { margin: 0; overflow-wrap: anywhere; }
+.notes-rename { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.notes-rename .input { flex: 1 1 220px; min-width: 0; }
+.notes-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.notes-card { padding: var(--space-5); border-radius: var(--radius-lg); }
+.notes-md h1 { font-size: var(--text-xl); margin: 0 0 var(--space-3); }
+.notes-md h2 { font-size: var(--text-lg); margin: var(--space-5) 0 var(--space-2); }
+.notes-md ul, .notes-md ol { padding-left: 1.3em; }
+.notes-md li + li { margin-top: var(--space-1); }
+.notes-transcript { padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); }
+.notes-transcript summary { cursor: pointer; font-weight: 700; min-height: var(--tap-min); display: flex; align-items: center; }
+.notes-transcript ol { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); max-height: 60vh; overflow-y: auto; }
+.notes-reader {
+  position: fixed; inset: 0; z-index: calc(var(--z-sheet) + 20); background: var(--c-sheet-bg, #0b0720); color: var(--text);
+  display: flex; flex-direction: column; outline: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.notes-reader-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-decorative); }
+.notes-reader-title { flex: 1; min-width: 0; margin: 0; font-size: var(--text-base); font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes-reader-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: var(--space-5) var(--gutter) var(--space-8); }
+.notes-reader-body .notes-md { max-width: 720px; margin: 0 auto; font-size: 1.05rem; }

@@ -173,8 +173,8 @@ def server_tests():
         r = client.get(f"/api/huddle/notes/{other}", cookies=cookie)
         assert r.status_code == 200 and r.json()["mine"] is False and r.json()["notes"] == "# Theirs", "a shared link opens"
         assert "sub" not in str(r.json()["people"])
-        assert client.patch(f"/api/huddle/notes/{other}", json={"title": "x"}, cookies=cookie, headers=origin).status_code == 403
-        r = client.patch(f"/api/huddle/notes/{mid}", json={"title": "Ranked"}, cookies=cookie, headers=origin)
+        assert client.post(f"/api/huddle/notes/{other}", json={"title": "x"}, cookies=cookie, headers=origin).status_code == 403
+        r = client.post(f"/api/huddle/notes/{mid}", json={"title": "Ranked"}, cookies=cookie, headers=origin)
         assert r.status_code == 200 and r.json()["title"] == "Ranked", r.text
         assert client.get("/api/huddle/notes/nope", cookies=cookie).status_code == 404
 
