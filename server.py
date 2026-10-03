@@ -61,6 +61,7 @@ import webpush as _push  # init() runs with the other stores, below
 import fcm as _fcm  # Android app rings (Huddle / Watch Party); init() below too
 import crcmz_identity
 import notifications as _notify  # the inbox + routing over push, WhatsApp and Mattermost
+import health_deps as _health_deps  # /health/<dependency>, for the status page
 import discord_bridge as _discord_bridge
 
 _rl_lock = _threading.Lock()
@@ -169,6 +170,21 @@ def webauthn_related_origins():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/health/{dep}")
+async def health_dep(dep: str):
+    """One dependency's health for the status page (health_deps.py): 200 fine, 503 not.
+    /health/all checks them all."""
+    if dep == "all":
+        results = await asyncio.gather(*(_health_deps.run(n) for n in _health_deps.CHECKS))
+        bad = [r["dep"] for r in results if not r["ok"]]
+        return JSONResponse({"ok": not bad, "down": bad, "checks": results}, status_code=503 if bad else 200,
+                            headers={"Cache-Control": "no-store"})
+    r = await _health_deps.run(dep)
+    if r is None:
+        return JSONResponse({"error": "no such check", "checks": sorted(_health_deps.CHECKS)}, status_code=404)
+    return JSONResponse(r, status_code=200 if r["ok"] else 503, headers={"Cache-Control": "no-store"})
 
 
 # The React interface, built by `npm run build` in frontend/ and copied into the image
@@ -761,6 +777,9 @@ _PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 MACHINE_TOKEN = os.environ.get("CRCMZ_MACHINE_TOKEN", "")
 # Paths that must be reachable before authentication.
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
+               # The status page's per-dependency checks (health_deps.py): ok / not ok
+               # and a plain reason, nothing secret.
+               "/health/all", *(f"/health/{n}" for n in _health_deps.CHECKS),
                "/auth/logout", "/auth/passkey/begin", "/auth/passkey/complete",
                "/.well-known/webauthn", "/.well-known/assetlinks.json",
                "/.well-known/apple-app-site-association",
