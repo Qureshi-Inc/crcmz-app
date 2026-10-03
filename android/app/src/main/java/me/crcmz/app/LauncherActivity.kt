@@ -129,7 +129,10 @@ class LauncherActivity : AppCompatActivity() {
         web = WebView(this)
         web.setBackgroundColor(getColor(R.color.bg))
         refresh = SwipeRefreshLayout(this).apply {
-            addView(web)
+            // MATCH_PARENT, never the default wrap_content: a wrap_content web view reports a
+            // viewport height of 0, so every vh / dvh on the page collapses (the chat board
+            // opened 0px tall).
+            addView(web, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
             setOnRefreshListener { web.reload(); postDelayed({ isRefreshing = false }, 800) }
             setProgressBackgroundColorSchemeColor(getColor(R.color.bg))
             setColorSchemeColors(getColor(R.color.accent))
@@ -194,6 +197,8 @@ class LauncherActivity : AppCompatActivity() {
             userAgentString = "$userAgentString CRCMZ-Android/${BuildConfig.VERSION_NAME}"
         }
         CookieManager.getInstance().setAcceptCookie(true)
+        // Debug builds only: inspect the page from a computer (chrome://inspect).
+        if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
         // Passkeys in the page (sign-in and Settings → Passkeys), through the phone's
         // credential manager. crcmz.me vouches for this app (/.well-known/assetlinks.json).
         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
