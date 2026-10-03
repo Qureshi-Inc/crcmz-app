@@ -58,13 +58,19 @@ def is_configured() -> bool:
 # PSN → Discord
 # ---------------------------------------------------------------------------
 
+import re as _re
+_DISCORD_ECHO_RE = _re.compile(r'^\[.+?\] ')
+
+
 def forward_psn_to_discord(sender: str, text: str) -> None:
     """Non-blocking: post a PSN text message to #the-squad on Discord."""
     if not is_configured():
         return
-    if _bot_psn_id and sender == _bot_psn_id:
-        return  # don't echo our own Discord-originated messages back
     if not text:
+        return
+    # Drop messages that originated from Discord (format: "[username] text")
+    # so they don't echo back. Bot chatboard/soundboard messages are allowed through.
+    if _DISCORD_ECHO_RE.match(text):
         return
     content = f"**[{sender}]** {text}"
     threading.Thread(
