@@ -2719,3 +2719,8 @@ textarea.ask-input { flex: 1; min-width: 0; resize: none; min-height: var(--tap-
 .track-focus-head .section-h2 { margin: 0; }
 .track-focus-acts { display: flex; gap: var(--space-2); }
 .track-focus .comment-list { max-height: none; }
+
+/* The iOS app draws its own tab bar under the page (lib/nativeShell.ts): nothing here needs
+   to clear one. */
+html[data-native-shell] { --tabbar-h: 0px; --tabbar-rise: 0px; }
+html[data-native-shell] .tabbar { display: none; }

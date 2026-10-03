@@ -23,6 +23,7 @@ import { CallBar, useHuddleBar, useWatchBar } from '../features/watch/WatchBar'
 import { useWatchSelect } from '../features/watch/session'
 import { DESTS, MORE_ACCOUNT, SIDEBAR_FOOT, SIDEBAR_MAIN, destForPath, moreSquad, type DestId } from './nav'
 import { useTabs } from './tabs'
+import { nativeShell, onShellGo, toShell } from '../lib/nativeShell'
 import { DrawerGrip, useDrawerNav } from './drawer'
 
 const MASCOT = '/footer-avatar.png'
@@ -108,7 +109,7 @@ export function Shell() {
       </main>
       {!desktop && callRows > 0 && <CallBar variant="bar" watch={watchBar} huddle={huddleBar} />}
       {!desktop && <MiniPlayer variant="bar" />}
-      {!desktop && <TabBar current={current} isAdmin={isAdmin} />}
+      {!desktop && (nativeShell() ? <NativeTabs current={current} isAdmin={isAdmin} /> : <TabBar current={current} isAdmin={isAdmin} />)}
       <PlayerSheet />
       <Toaster />
     </>
@@ -277,6 +278,25 @@ function TabBar({ current, isAdmin }: { current: DestId | null; isAdmin: boolean
       </ul>
     </nav>
   )
+}
+
+/** The iOS app's own tab bar: the same slots and More list, drawn natively. */
+function NativeTabs({ current, isAdmin }: { current: DestId | null; isAdmin: boolean }) {
+  const badge = useLiveBadge()
+  const tabs = useTabs()
+  const navigate = useNavigate()
+  const fs = useWatchSelect((s) => s.fs)
+  useEffect(() => onShellGo((path) => navigate(path)), [navigate])
+  useEffect(() => {
+    const item = (id: DestId, group?: 'squad' | 'account') => ({ id, label: DESTS[id].label, path: DESTS[id].path, ...(group ? { group } : {}) })
+    const allowed = (id: DestId) => !DESTS[id].adminOnly || isAdmin
+    toShell({
+      tabs: [item(tabs[0]!), item(tabs[1]!), item('ask'), item(tabs[2]!)],
+      more: [...moreSquad(tabs).filter(allowed).map((id) => item(id, 'squad')), ...MORE_ACCOUNT.filter(allowed).map((id) => item(id, 'account'))],
+      active: current, badge, hidden: fs,
+    })
+  }, [tabs, current, badge, fs, isAdmin])
+  return null
 }
 
 /**

@@ -15,6 +15,7 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
     private var pending: [String: String] = [:]   // push token -> platform, until the server has it
     private var registering = false
     private var calls: CallHost?
+    private let shell = Shell()
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -26,6 +27,8 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
         config.websiteDataStore = .default()
         // Huddle and Watch Party calls are handed to the app (NativeCall).
         config.userContentController.add(self, name: "crcmzCall")
+        // The tab bar is the app's own (Shell).
+        config.userContentController.add(self, name: "crcmzShell")
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -41,14 +44,21 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
         webView.scrollView.refreshControl = refresh
         let root = UIView()
         root.backgroundColor = webView.backgroundColor
-        webView.frame = root.bounds
-        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         root.addSubview(webView)
+        root.addSubview(shell.bar)
         view = root
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        shell.presenter = self
+        shell.go = { [weak self] path in
+            self?.webView.callAsyncJavaScript("window.__crcmzGo ? window.__crcmzGo(path) : location.assign('/app' + path)",
+                                              arguments: ["path": path], in: nil, in: .page)
+        }
+        shell.onVisible = { [weak self] _ in
+            UIView.animate(withDuration: 0.2) { self?.view.setNeedsLayout(); self?.view.layoutIfNeeded() }
+        }
         let host = CallHost(in: self)
         calls = host
         NativeCall.shared.onTiles = { [weak host] in host?.tilesChanged() }
@@ -60,6 +70,14 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        let b = view.bounds
+        if shell.isVisible {
+            let h = 49 + view.safeAreaInsets.bottom
+            shell.bar.frame = CGRect(x: 0, y: b.height - h, width: b.width, height: h)
+            webView.frame = CGRect(x: 0, y: 0, width: b.width, height: b.height - h)
+        } else {
+            webView.frame = b
+        }
         calls?.layout()
     }
 
@@ -67,7 +85,7 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.host == "app.crcmz.me",
               let body = message.body as? [String: Any] else { return }
-        NativeCall.shared.handle(body)
+        if message.name == "crcmzShell" { shell.update(body) } else { NativeCall.shared.handle(body) }
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
@@ -115,7 +133,12 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
         }
     }
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        shell.pageChanged(webView.url)
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        shell.pageChanged(webView.url)
         flushTokens()
     }
 

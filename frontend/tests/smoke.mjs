@@ -2967,6 +2967,29 @@ try {
     check('no unmocked writes and no page errors (Slap thumbs)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
+
+  // ── iOS app: the tab bar is native (lib/nativeShell.ts) ─────────────────────
+  {
+    const { ctx, page } = await newPage({ width: 390, height: 844 })
+    await ctx.addInitScript(() => {
+      window.__shell = []
+      window.webkit = { messageHandlers: { crcmzShell: { postMessage: (m) => window.__shell.push(m) } } }
+    })
+    await ready(page)
+    await page.waitForFunction(() => window.__shell.length > 0)
+    check('ios shell: the page hides its own tab bar', !(await page.isVisible('.tabbar')))
+    const m = await page.evaluate(() => window.__shell.at(-1))
+    check('ios shell: the app gets your three tabs with Ask AI in the middle', m.tabs.map((t) => t.id).join() === 'squad,slap,ask,watch', JSON.stringify(m.tabs))
+    check('ios shell: More lists the rest, without Admin for a non-admin', m.more.some((t) => t.id === 'clips') && !m.more.some((t) => t.id === 'admin') && m.active === 'squad')
+    const pad = await page.$eval('.app-main', (e) => parseFloat(getComputedStyle(e).paddingBottom))
+    check('ios shell: no room left for a bar that is not there', pad < 100, String(pad))
+    await page.evaluate(() => window.__crcmzGo('/slap'))
+    await page.waitForFunction(() => location.pathname === '/app/slap')
+    await page.waitForFunction(() => window.__shell.at(-1).active === 'slap')
+    check('ios shell: a native tap routes in place and the app hears the new tab', true)
+    check('no page errors (ios shell)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
 } finally {
   await browser.close()
 }

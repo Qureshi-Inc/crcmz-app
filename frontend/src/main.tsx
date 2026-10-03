@@ -5,6 +5,7 @@ import { App } from './app/App'
 import { applyLegacyDeepLink } from './app/nav'
 import { startPwa } from './lib/pwa'
 import { takeNativeLaunch } from './lib/native'
+import './lib/nativeShell'
 
 // /app?p=<legacy key> → the mapped route, before the router reads the URL (G-03).
 applyLegacyDeepLink()
