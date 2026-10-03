@@ -367,9 +367,10 @@ def mattermost_join_url() -> str:
 
 
 def link_mattermost(user_id: str, email: str) -> str:
-    """If `email` already has a Mattermost account, put it on the crcmz team and
-    write the person's `mm_username` tag. Returns the username, or '' if there is
-    no account yet.
+    """If `email` already has a Mattermost account, put it on the crcmz team,
+    rename the MM account to the user's chosen_username if they picked one, and
+    write the confirmed @name to the mm_username tag.  Returns the username, or
+    '' if no Mattermost account exists yet (user hasn't signed in to MM).
 
     Accounts are never created here. Mattermost signs people in through Authentik
     → Zitadel (OpenID, auth data = email), and the bot token can only make
@@ -385,6 +386,23 @@ def link_mattermost(user_id: str, email: str) -> str:
         if r.status_code != 200:
             raise InviteError(f"Mattermost user lookup failed ({r.status_code})")
         mm = r.json()
+
+        # If the user chose a specific @name during signup, rename their MM
+        # account to match so the username is never auto-generated garbage.
+        if user_id:
+            chosen = _get_tag(client, user_id, "chosen_username")
+            if chosen and chosen != mm["username"]:
+                if not username_taken(client, chosen, user_id, email):
+                    patch = client.put(f"{MATTERMOST_URL}/api/v4/users/{mm['id']}/patch",
+                                       headers=bot, json={"username": chosen})
+                    if patch.status_code == 200:
+                        mm = patch.json()
+                        logger.info("vip: renamed MM @%s → @%s for zitadel %s",
+                                    mm.get("old_username", "?"), mm["username"], user_id)
+                    else:
+                        logger.warning("vip: could not rename MM username for zitadel %s: %s %s",
+                                       user_id, patch.status_code, patch.text[:120])
+
         team_id, _ = _mm_team(client)
         tm = client.get(f"{MATTERMOST_URL}/api/v4/teams/{team_id}/members/{mm['id']}", headers=bot)
         if tm.status_code != 200:
@@ -396,7 +414,8 @@ def link_mattermost(user_id: str, email: str) -> str:
             _set_tag(client, user_id, "mm_username", mm["username"])
     if user_id:
         with _lock, _conn() as c:
-            c.execute("UPDATE vip_invites SET mm_username = ? WHERE zitadel_id = ? AND mm_username = ''",
+            # Always write the final MM username so the DB stays in sync.
+            c.execute("UPDATE vip_invites SET mm_username = ? WHERE zitadel_id = ?",
                       (mm["username"], user_id))
     logger.info("vip: mattermost @%s linked to zitadel %s", mm["username"], user_id)
     return mm["username"]
