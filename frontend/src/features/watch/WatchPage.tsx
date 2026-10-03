@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
+import { toast } from '../../components/toast'
 import { ErrorStrip } from '../../components/states'
 import { useDesktop } from '../../lib/media'
 import { ringSquad } from '../../lib/ring'
@@ -16,7 +17,7 @@ import { Chat, PresencePill, ReactionsTray, Roster } from './Social'
 import { Stage, usePlayerKeys } from './Stage'
 export { OrbPosControl } from './Settings'
 import {
-  attachLayout, canCall, clearVideo, exitFs, joinCall, leave, rejoin, setTitle, setVideo, start, useWatch, videoLabel, type WatchState,
+  attachLayout, canCall, canPopOut, clearVideo, popOut, exitFs, joinCall, leave, rejoin, setTitle, setVideo, start, useWatch, videoLabel, type WatchState,
 } from './session'
 import { HelpLink } from '../../components/HelpLink'
 
@@ -200,6 +201,12 @@ function CallRow({ s }: { s: WatchState }) {
         >
           <Icon name="phone" />{ringing ? 'Ringing…' : 'Ring everyone'}
         </button>
+        {canPopOut(s) && (
+          <button type="button" className="btn btn-secondary" title="Keep the movie or the call in a floating window"
+            onClick={() => { void popOut().then((ok) => { if (!ok) toast("This phone won't pop it out right now", 'warning') }) }}>
+            <Icon name="expand" />Pop out
+          </button>
+        )}
       </div>
       {c.note && <p className="meta wp-call-note" role="status">{c.note}</p>}
       {!c.on && live && !canCall() && <p className="meta">This browser can't share a camera.</p>}

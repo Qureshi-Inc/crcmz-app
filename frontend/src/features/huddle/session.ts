@@ -14,6 +14,7 @@ import { useSyncExternalStore } from 'react'
 import { toast } from '../../components/toast'
 import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError, request } from '../../lib/http'
+import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
 import { markSignedOut } from '../../lib/session'
 import { loadScript } from '../../lib/watch'
@@ -622,14 +623,28 @@ async function transcribe(blob: Blob, me: string) {
 // Joining takes the lock screen; Slap or a Watch Party started during the call
 // takes it over, and hanging up hands it back. Chrome adds mic, camera and
 // hang-up buttons for a call; elsewhere it is just the card.
+// ── Picture in picture ──────────────────────────────────────────────────────
+/** What floats: a shared screen, else whoever's talking, else anyone with a camera on. */
+function pipStream(): MediaStream | null {
+  const theirs = state.tiles.filter((t) => !t.local && t.video)
+  const pick = theirs.find((t) => t.screen) ?? theirs.find((t) => t.pid === state.speaker) ?? theirs[0]
+  return pick ? streamOf(tileTrack(pick)?.mediaStreamTrack) : null
+}
+/** Pop out: the call in a floating window you can keep while using other apps. */
+export const popOut = () => openPip(pipStream(), 'huddle')
+export const canPopOut = (s: HuddleState) => pipSupported() && s.tiles.some((t) => !t.local && t.video)
+
 const lockHandlers: lockScreen.Handlers = {
   togglemicrophone: () => { void toggleMic() },
   togglecamera: () => { void toggleCam() },
   hangup: () => { void leave() },
+  // Chrome's "the page went to the background": float the call by itself.
+  enterpictureinpicture: () => { void popOut() },
 }
 
 function syncLockScreen() {
-  if (!inCall()) { lockScreen.release('huddle'); return }
+  if (!inCall()) { lockScreen.release('huddle'); stopPip('huddle'); return }
+  setPipStream(pipStream(), 'huddle')
   const others = state.tiles.filter((t) => !t.local && !t.screen).length
   const spec: lockScreen.Spec = {
     title: `Huddle · ${state.room}`,

@@ -12,6 +12,7 @@ import { toast } from '../../components/toast'
 import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
+import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
 import {
   beacon, extract, fmtTime, getConfig, isDirect, isProxy, joinRoom, loadScript, REACTIONS, setNickname,
@@ -143,6 +144,7 @@ const listeners = new Set<() => void>()
 const clockListeners = new Set<() => void>()
 function set(patch: Partial<WatchState>) {
   state = { ...state, ...patch }
+  if (patch.loud || patch.rtc) setPipStream(callPipStream(), 'watch')
   listeners.forEach((l) => l())
 }
 const setCall = (patch: Partial<Call>) => set({ call: { ...state.call, ...patch } })
@@ -1016,7 +1018,8 @@ export async function joinCall() {
     }
     void enumerate()
     localStream = stream
-    setCall({ on: true, muted: true, camOff: false, micOnly, facing: 'user', note: micOnly ? 'No camera found — joined with your mic.' : '' })
+    // You join muted, with no mic open at all; Unmute is one tap away.
+    setCall({ on: true, muted: true, camOff: false, micOnly, facing: 'user', note: micOnly ? 'No camera found — tap Unmute to talk.' : '' })
     log('cam.on', { micOnly, tracks: stream.getTracks().map((t) => `${t.kind}:${t.readyState}`) })
     // A camera can be revoked mid-call: video ending hangs up.
     stream.getVideoTracks().forEach((t) => t.addEventListener('ended', () => { if (state.call.on) camStop() }))
@@ -1024,16 +1027,13 @@ export async function joinCall() {
     live().forEach((id) => peer(id, true))
     Object.values(peers).forEach(syncTracks)
     bumpRtc()
-    // You join talking: the mic opens straight away (the same path as Unmute, so a live
-    // Huddle mic is muted). A live mic puts the phone in voice-call audio, so the movie
-    // can sound a little thinner on Bluetooth while it's open; Mute gives it back.
-    void toggleMute()
   } finally {
     setCall({ busy: false })
   }
 }
 function camStop() {
   log('cam.off')
+  stopPip('watch')
   micGen++
   setCall({ on: false, muted: true, camOff: false, micOnly: false })
   announce(false)
@@ -1424,13 +1424,33 @@ const lockHandlers: lockScreen.Handlers = {
   seekto: (d) => { if (d.seekTime != null) userSeek(d.seekTime) },
   seekbackward: (d) => skip(-(d.seekOffset || SKIP_S)),
   seekforward: (d) => skip(d.seekOffset || SKIP_S),
-  // Chrome offers this when you switch away from a playing video.
-  enterpictureinpicture: () => {
-    if (state.kind === 'file' && video && document.pictureInPictureEnabled && !document.pictureInPictureElement) {
-      video.requestPictureInPicture().catch(() => { /* not allowed right now */ })
-    }
-  },
+  // Chrome offers this when you switch away from a playing video (or a live call).
+  enterpictureinpicture: () => { void popOut() },
 }
+
+// ── Picture in picture ──────────────────────────────────────────────────────
+// The movie floats when there's a video file playing; otherwise the call does, showing
+// whoever's talking (the last one who did, so it doesn't flicker between people).
+let lastTalker = ''
+function callPipStream(): MediaStream | null {
+  const withVideo = Object.keys(peers).filter((id) => peerView(id).video)
+  const talking = withVideo.find((id) => state.loud[id])
+  if (talking) lastTalker = talking
+  const pick = withVideo.includes(lastTalker) ? lastTalker : withVideo[0]
+  return pick ? streamOf(peers[pick]?.stream?.getVideoTracks().find((t) => t.readyState === 'live')) : null
+}
+const movieFloats = () => state.kind === 'file' && !!video && state.playing && !!document.pictureInPictureEnabled
+/** Pop out: the movie, or the call, in a floating window. */
+export async function popOut(): Promise<boolean> {
+  if (movieFloats() && video) {
+    try {
+      if (document.pictureInPictureElement !== video) await video.requestPictureInPicture()
+      return true
+    } catch { return false }
+  }
+  return openPip(callPipStream(), 'watch')
+}
+export const canPopOut = (s: WatchState) => pipSupported() && ((s.kind === 'file' && s.playing) || (s.call.on && Object.keys(peers).some((id) => peerView(id).video)))
 
 function lockSpec(): lockScreen.Spec {
   const id = state.kind === 'yt' ? ytId(state.video) : null

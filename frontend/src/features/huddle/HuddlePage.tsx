@@ -6,13 +6,14 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useSearchParams } from 'react-router-dom'
 import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
+import { toast } from '../../components/toast'
 import { useDesktop } from '../../lib/media'
 import { ringSquad } from '../../lib/ring'
 import { loginUrl } from '../../lib/session'
 import { useSwipeDown } from '../../lib/gestures'
 import { initials, tint } from '../../lib/watch'
 import {
-  askAi, canShare, join, leave, meetingNotes, pin, previewMedia, retryAi, setAiOpen, setCamId, setLayout, setMicId, setRoomName,
+  askAi, canPopOut, canShare, join, leave, popOut, meetingNotes, pin, previewMedia, retryAi, setAiOpen, setCamId, setLayout, setMicId, setRoomName,
   spotlightTile, startAudio, startPreview, stopPreview, tileTrack, toggleBlur, toggleCam, toggleMic, toggleShare, toggleTranscript,
   useHuddle, type HuddleState, type Tile,
 } from './session'
@@ -161,6 +162,12 @@ function CallView({ s }: { s: HuddleState }) {
             </span>
           )}
           <span className="hu-topbar-spacer" />
+          {canPopOut(s) && (
+            <button type="button" className="icon-btn" disabled={stale} aria-label="Pop out: keep the call in a floating window"
+              title="Pop out" onClick={() => { void popOut().then((ok) => { if (!ok) toast("This phone won't pop the call out right now", 'warning') }) }}>
+              <Icon name="expand" />
+            </button>
+          )}
           <button
             type="button" className="icon-btn" disabled={stale}
             aria-label={s.layout === 'grid' ? 'Spotlight layout' : 'Grid layout'}
