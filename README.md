@@ -27,7 +27,7 @@
 3. Tap **View in TestFlight** in the email, or open TestFlight → **Redeem** and type the code from the email.
 4. Install CRCMZ, allow notifications, sign in.
 
-No email? Ask Moiz to add you to the **CRCMZ Squad** group. In the app, **More → Get the app** has the same links.
+No email? Reach out to **InterestingSoup** to get added to the **CRCMZ Squad** group. In the app, **More → Get the app** has the same links.
 
 ---
 
