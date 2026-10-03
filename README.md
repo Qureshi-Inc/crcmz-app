@@ -1,8 +1,45 @@
-# CRCMZ App
+<p align="center"><img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" alt="CRCMZ"></p>
 
-Squad platform for Professional Goopers. One FastAPI service that does everything:
-PSN messaging, WhatsApp analytics, clip pipeline, soundboard, giveaway, watch party,
-AI assistant, MCP server, and the portal at **app.crcmz.me**.
+<h1 align="center">CRCMZ App</h1>
+
+<p align="center"><b>The squad platform for Professional Goopers</b> — one place for who's on, clips, music, movie nights and calls.</p>
+
+<p align="center">
+  <a href="https://app.crcmz.me/app"><img alt="app.crcmz.me" src="https://img.shields.io/website?url=https%3A%2F%2Fapp.crcmz.me%2Fhealth&label=app.crcmz.me&up_message=live&down_message=down&style=for-the-badge"></a>
+  <a href="https://github.com/Qureshi-Inc/crcmz-app/releases/latest"><img alt="Android" src="https://img.shields.io/github/v/release/Qureshi-Inc/crcmz-app?filter=android-*&label=Android&logo=android&style=for-the-badge&color=3ddc84"></a>
+  <a href="#iphone-testflight"><img alt="iPhone" src="https://img.shields.io/badge/iPhone-TestFlight-0d96f6?logo=apple&style=for-the-badge"></a>
+</p>
+
+---
+
+## Get it
+
+| | Where | How |
+|---|---|---|
+| 🌐 **Web** | **[app.crcmz.me/app](https://app.crcmz.me/app)** | Sign in with your CRCMZ account. On a phone, *Add to Home Screen* works too. |
+| 🤖 **Android** | **[Latest release](https://github.com/Qureshi-Inc/crcmz-app/releases/latest)** | Download the `.apk`, open it, allow "install unknown apps", sign in. |
+| 🍎 **iPhone** | **TestFlight** (invite only) | See below. |
+
+### iPhone (TestFlight)
+
+1. Look for the email from Apple: *"… has invited you to test CRCMZ"*.
+2. Install **[TestFlight](https://apps.apple.com/app/testflight/id899247664)** from the App Store.
+3. Tap **View in TestFlight** in the email, or open TestFlight → **Redeem** and type the code from the email.
+4. Install CRCMZ, allow notifications, sign in.
+
+No email? Ask Moiz to add you to the **CRCMZ Squad** group. In the app, **More → Get the app** has the same links.
+
+---
+
+## Status
+
+| Surface | Where it runs | State |
+|---|---|---|
+| Web app + API | `app.crcmz.me` · Coolify app 24, `main` branch | 🟢 Live (deploys are triggered in Coolify; a push alone doesn't deploy) |
+| Android app | `android/` · TWA + Firebase rings · [GitHub Releases](https://github.com/Qureshi-Inc/crcmz-app/releases) | 🟢 Released |
+| iPhone app | `ios/` · native shell, calls and Slap player · TestFlight | 🟡 Beta (CRCMZ Squad group) |
+| MCP server | `app.crcmz.me/mcp` | 🟢 Live |
+| Huddle + Watch Party calls | LiveKit at `huddle.crcmz.me` | 🟢 Live |
 
 ---
 
@@ -10,16 +47,39 @@ AI assistant, MCP server, and the portal at **app.crcmz.me**.
 
 | Area | What it is |
 |---|---|
-| Portal | Squad dashboard — online now, ranks, WhatsApp stats, clips, soundboard |
-| PSN | Sends messages to PSN group threads; monitors for AI triggers (`ai <question>`) |
-| WhatsApp | Receives messages from Baileys bridge, stores analytics, AI bot (`ai <question>`) |
-| Clips | Receives PSN clip webhooks, stores them, auto-forwards video to WhatsApp/Discord |
-| Soundboard | Personal + shared button boards; Stream Deck plugin talks to this |
-| Giveaway | Entry tracking and draw logic |
-| Watch Party | Room management + JWT tickets; routed at `/wp`, backed by WatchParty fork |
-| AI assistant | Tool-calling loop over the squad data; answers questions from WA/PSN/portal |
-| MCP server | `POST /mcp` — exposes all assistant tools; per-user OAuth with write access |
-| Identity graph | Zitadel metadata tags tie PSN/WA/Mattermost identities together |
+| Squad | Who's online and in what game, ranks, hype meter, the Chat Board (posts to the PSN group) |
+| Clips | PSN clip webhooks → WhatsApp / Discord, reels, the Studio editor, the monthly montage |
+| Slap | The squad's music on Jellyfin: Discover, charts, thumbs, @mentions, Listen Together |
+| Watch | Movies home (Real-Debrid → Jellyfin library) and the Watch Party: synced video plus a LiveKit camera call |
+| Huddle | Drop-in voice and video calls (LiveKit), with picture in picture |
+| Ask AI | Tool-calling assistant over all the squad's data, in the app, WhatsApp and PSN (`ai <question>`) |
+| Notifications | Web Push, Android (FCM) and iPhone (APNs) alerts; Huddle / Watch Party rings like a call |
+| WhatsApp | Baileys bridge: group analytics, awards, the AI bot |
+| Giveaway | Entries, countdown and the draw |
+| Soundboard | Personal + shared button boards for the Stream Deck plugin |
+| MCP server | `POST /mcp` — every assistant tool; per-user OAuth for write access |
+| Identity graph | Zitadel metadata tags tie PSN / WhatsApp / Mattermost / Slap identities together |
+
+---
+
+## Phone apps
+
+**Android** (`android/`, see `android/README.md`): a Trusted Web Activity around the site,
+with Firebase rings for Huddle and Watch Party (full screen, even locked), share target and
+icon shortcuts. Releases are tagged `android-v*` with the `.apk` attached.
+
+**iPhone** (`ios/`, see `ios/README.md`): a WKWebView around the site, with native parts
+where the web can't keep up:
+
+| Native part | Swift | Page side |
+|---|---|---|
+| Tab bar + More sheet | `Shell.swift` | `frontend/src/lib/nativeShell.ts` |
+| Huddle / Watch Party calls, picture in picture | `NativeCall.swift`, `CallOverlay.swift` | `frontend/src/lib/nativeCall.ts` |
+| Slap player (keeps going locked, lock screen, CarPlay Now Playing) | `NativeAudio.swift` | `frontend/src/lib/nativeAudio.ts` |
+| Notifications (APNs) and call rings (PushKit + CallKit) | `Push.swift`, `Calls.swift` | `frontend/src/lib/native.ts`, `apns.py` |
+
+Builds run on the MacBook with `ios/build.sh` (archive + upload to TestFlight). Bump
+`CURRENT_PROJECT_VERSION` in `ios/project.yml` first.
 
 ---
 
