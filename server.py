@@ -6321,7 +6321,7 @@ async def notifications_channels_save(request: Request):
 
 # ── Huddle API (LiveKit token + Ollama proxy) ──────────────────────────────────
 
-def _mk_livekit_token(identity: str, name: str, room: str) -> str:
+def _mk_livekit_token(identity: str, name: str, room: str, attributes: dict | None = None) -> str:
     import jwt as _pyjwt, uuid as _uuid
     now = int(_time.time())
     payload = {
@@ -6339,6 +6339,8 @@ def _mk_livekit_token(identity: str, name: str, room: str) -> str:
         },
         "jti": str(_uuid.uuid4()),
     }
+    if attributes:
+        payload["attributes"] = {str(k): str(v) for k, v in attributes.items()}
     token = _pyjwt.encode(payload, LIVEKIT_API_SECRET, algorithm="HS256")
     return token if isinstance(token, str) else token.decode()
 
@@ -6364,6 +6366,36 @@ async def huddle_token(request: Request):
     ws_url = LIVEKIT_URL
     # Joining never rings anyone: a call is the Ring button (POST /api/ring).
     return JSONResponse({"token": token, "url": ws_url, "room": room})
+
+
+@app.post("/api/watch/call/token")
+async def watch_call_token(request: Request):
+    """The Watch Party's camera call: a LiveKit room per party room (watch-<room>).
+
+    Body: {room, client}. ``client`` is this tab's Watch Party socket id; it rides along
+    as a participant attribute so the page can put each camera on the right viewer.
+    Identity is the person plus that id, so one person on two devices is two cameras.
+    """
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        return JSONResponse({"detail": "calls aren't set up on this server"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    room = watch_mod.canonical_room((body or {}).get("room") or "crcmz")
+    if not room or not watch_mod.is_allowed_room(room):
+        return JSONResponse({"detail": "unknown room"}, status_code=400)
+    import re as _re
+    client = _re.sub(r"[^A-Za-z0-9_-]", "", str((body or {}).get("client") or ""))[:40]
+    if not client:
+        return JSONResponse({"detail": "client required"}, status_code=400)
+    sub = viewer["zitadelSubject"]
+    token = _mk_livekit_token(f"{sub}#{client}", viewer["displayName"], f"watch-{room}", {"client": client})
+    return JSONResponse({"token": token, "url": LIVEKIT_URL, "room": f"watch-{room}"},
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/ring")

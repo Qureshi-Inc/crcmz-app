@@ -261,6 +261,26 @@ def http_tests():
         assert r.status_code == 200, r.status_code
         assert "d" not in r.json()["keys"][0]
 
+    def t_call_token_is_a_livekit_room_per_party():
+        import jwt as pyjwt
+        assert client.post("/api/watch/call/token", json={"room": "crcmz", "client": "abc"}, headers=HDR).status_code == 401
+        key, secret = server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET
+        server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET = "lk-key", "s" * 32
+        client.cookies.set(COOKIE, session_cookie(name="Zed Name"))
+        try:
+            r = client.post("/api/watch/call/token", json={"room": "crcmz", "client": "Sock_Id-1/../x"}, headers=HDR)
+            assert r.status_code == 200, (r.status_code, r.text)
+            body = r.json()
+            assert body["room"] == "watch-crcmz" and body["url"].startswith("wss://")
+            claims = pyjwt.decode(body["token"], "s" * 32, algorithms=["HS256"])
+            assert claims["sub"] == "zit-user-1#Sock_Id-1x" and claims["video"]["room"] == "watch-crcmz"
+            assert claims["attributes"] == {"client": "Sock_Id-1x"} and claims["video"]["canPublish"]
+            assert client.post("/api/watch/call/token", json={"room": "crcmz"}, headers=HDR).status_code == 400
+            assert client.post("/api/watch/call/token", json={"room": "not-a-room", "client": "a"}, headers=HDR).status_code == 400
+        finally:
+            client.cookies.clear()
+            server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET = key, secret
+
     def t_join_issues_ticket():
         import jwt as pyjwt
         client.cookies.set(COOKIE, session_cookie(name="Zed Name"))
