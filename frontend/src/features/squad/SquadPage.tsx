@@ -2,7 +2,7 @@
 // ranks, and the Chat Board (sheet on mobile, panel on desktop).
 import { useMemo } from 'react'
 import type { UseQueryResult } from '@tanstack/react-query'
-import { displayName, useHype, useSquad, HYPE_MS, SQUAD_MS, type Hype, type HypeLevel, type Member, type SquadResponse } from '../../lib/api'
+import { displayName, useHype, useSquad, HYPE_MS, SQUAD_MS, type Hype, type HypeLevel, type Member, type SquadResponse, type Platform } from '../../lib/api'
 import { ErrorStrip, SkeletonRows, SlowLoad, StaleMarker, useStale } from '../../components/states'
 import { SEND_LABEL, slowLabel } from '../../lib/send'
 import { usePsnControl } from '../chat/usePsnControl'
@@ -224,6 +224,35 @@ function TogetherCard({ game, icon, who }: Together) {
   )
 }
 
+// ── Platform badge (top-left of the avatar; the presence dot keeps bottom-right) ─
+const PLATFORM_LABEL: Record<Platform, string> = { psn: 'PlayStation', steam: 'Steam' }
+
+function PlatformBadge({ p }: { p: Platform }) {
+  return (
+    <span className="platform-badge" data-platform={p} title={PLATFORM_LABEL[p]}>
+      {p === 'steam' ? (
+        // Tabler "brand-steam" (MIT), 24 grid.
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M16.5 5a4.5 4.5 0 1 1 -.653 8.953l-4.347 3.009l0 .038a3 3 0 0 1 -2.824 3l-.176 0a3 3 0 0 1 -2.94 -2.402l-2.56 -1.098v-3.5l3.51 1.755a2.989 2.989 0 0 1 2.834 -.635l2.727 -3.818a4.5 4.5 0 0 1 4.429 -5.302z" />
+          <circle cx="16.5" cy="9.5" r="1" fill="currentColor" />
+        </svg>
+      ) : <span aria-hidden="true">PS</span>}
+      <span className="sr-only">{PLATFORM_LABEL[p]}</span>
+    </span>
+  )
+}
+
+function steamLine(m: Member): string | null {
+  const st = m.steam
+  if (!st) return null
+  const bits: string[] = []
+  if (st.hours_2weeks) bits.push(`${st.hours_2weeks} h last 2 wks`)
+  if (st.hours_total != null) bits.push(`${st.hours_total.toLocaleString()} h on Steam`)
+  if (st.game_count) bits.push(`${st.game_count} games`)
+  if (st.top_game?.name) bits.push(`most: ${st.top_game.name}`)
+  return bits.length ? bits.join(' · ') : st.private ? 'Steam profile is private' : null
+}
+
 // ── SQ-04 Who's on ───────────────────────────────────────────────────────────
 function statusOf(m: Member): { state: 'playing' | 'online' | 'offline'; text: string } {
   if (m.playing && m.game) return { state: 'playing', text: `On ${m.game}` }
@@ -263,11 +292,13 @@ function PresenceCard({ q, stale }: { q: UseQueryResult<SquadResponse>; stale: {
             const s = statusOf(m)
             const icon = m.game_icon || m.recent_game_icon
             const mm = m.mm_username
+            const line = steamLine(m)
             return (
-              <li key={`${m.online_id ?? ''}-${i}`} className="presence-row" data-offline={s.state === 'offline' || undefined}>
+              <li key={`${m.online_id ?? m.name ?? ''}-${i}`} className="presence-row" data-offline={s.state === 'offline' || undefined}>
                 <span className="av-wrap">
                   {m.avatar ? <img className="av" src={m.avatar} alt="" referrerPolicy="no-referrer" loading="lazy" /> : <span className="av" />}
                   <span className="presence-dot" data-offline={s.state === 'offline' || undefined} aria-hidden="true" />
+                  <PlatformBadge p={m.platform_source ?? 'psn'} />
                 </span>
                 <div className="who">
                   <div className="who-name">
@@ -275,12 +306,15 @@ function PresenceCard({ q, stale }: { q: UseQueryResult<SquadResponse>; stale: {
                     {mm && <span className="who-mm">@{mm}</span>}
                   </div>
                   <div className="who-status" data-state={s.state}>{s.text}</div>
+                  {line && <div className="meta steam-line">{line}</div>}
                 </div>
                 {icon && <img className="game-icon" src={icon} alt="" referrerPolicy="no-referrer" loading="lazy" />}
-                {m.trophy_level != null && (
+                {m.trophy_level != null ? (
                   <span className="row-side">
                     <span className="row-platform">{m.platform ? `${m.platform} · ` : ''}</span>Lv <b>{m.trophy_level}</b>
                   </span>
+                ) : m.steam?.level != null && (
+                  <span className="row-side"><span className="row-platform">Steam · </span>Lv <b>{m.steam.level}</b></span>
                 )}
               </li>
             )
@@ -326,3 +360,4 @@ function RanksCard({ q }: { q: UseQueryResult<SquadResponse> }) {
     </section>
   )
 }
+

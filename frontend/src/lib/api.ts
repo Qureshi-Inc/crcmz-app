@@ -22,8 +22,23 @@ export type Member = {
   bronze?: number | null
   has_stats?: boolean
   linked?: boolean
+  /** Steam-only rows have no online_id; this is their name. */
+  name?: string | null
+  /** Where the shown presence comes from: the avatar's platform badge. */
+  platform_source?: Platform
+  platforms?: Platform[]
+  steam?: SteamPart | null
 }
 export type SquadResponse = { squad: Member[]; error?: string }
+
+export type SteamGame = { name: string | null; hours?: number; icon: string | null }
+/** Present when the person signed in with Steam (Settings → Steam). null = private/unknown. */
+export type SteamPart = {
+  persona_name: string | null; profile_url: string | null; state: string; online: boolean; playing: boolean
+  game: string | null; private: boolean; level: number | null; game_count: number | null
+  hours_total: number | null; hours_2weeks: number | null; top_game: SteamGame | null
+}
+export type Platform = 'psn' | 'steam'
 
 export type HypeLevel = 'dead' | 'cold' | 'warm' | 'hot' | 'fire' | 'overload'
 export type Hype = { count: number; pct: number; label: string; level: HypeLevel }
@@ -93,4 +108,4 @@ export function useAccount() {
   })
 }
 
-export const displayName = (m: Member) => m.online_id || m.mm_username || 'Unknown'
+export const displayName = (m: Member) => m.online_id || m.name || m.mm_username || 'Unknown'
