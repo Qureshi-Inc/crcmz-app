@@ -16,6 +16,7 @@ import { WhatsAppPage } from '../features/whatsapp/WhatsAppPage'
 import { CoachPage } from '../features/coach/CoachPage'
 import { GiveawayPage } from '../features/giveaway/GiveawayPage'
 import { HelpPage } from '../features/help/HelpPage'
+import { GetAppPage } from '../features/getapp/GetAppPage'
 import { MoviesHome } from '../features/watch/MoviesHome'
 import { NotificationsPage } from '../features/notifications/NotificationsPage'
 
@@ -59,6 +60,7 @@ export function App() {
               <Route path="settings" element={<SettingsPage />} />
               <Route path="settings/:tab" element={<SettingsPage />} />
               <Route path="help" element={<HelpPage />} />
+              <Route path="get-app" element={<GetAppPage />} />
               <Route path="notifications" element={<NotificationsPage />} />
               <Route path="admin" element={<AdminPage />} />
               <Route path="portal" element={<PortalPage />} />

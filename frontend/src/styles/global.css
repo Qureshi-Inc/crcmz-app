@@ -2724,3 +2724,10 @@ textarea.ask-input { flex: 1; min-width: 0; resize: none; min-height: var(--tap-
    to clear one. */
 html[data-native-shell] { --tabbar-h: 0px; --tabbar-rise: 0px; }
 html[data-native-shell] .tabbar { display: none; }
+
+/* Get the app: the card for the phone you're on is lit. */
+.getapp-card { display: grid; gap: var(--space-3); justify-items: start; padding: var(--space-5); margin-bottom: var(--space-5); }
+.getapp-card h2 { margin: 0; }
+.getapp-card ol { margin: 0; padding-left: var(--space-5); list-style: decimal; display: grid; gap: var(--space-2); }
+.getapp-card .meta { margin: 0; }
+.getapp-card[data-mine="true"] { border-color: var(--interactive); }

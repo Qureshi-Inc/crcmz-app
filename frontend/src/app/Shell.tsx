@@ -289,7 +289,7 @@ function NativeTabs({ current, isAdmin }: { current: DestId | null; isAdmin: boo
   useEffect(() => onShellGo((path) => navigate(path)), [navigate])
   useEffect(() => {
     const item = (id: DestId, group?: 'squad' | 'account') => ({ id, label: DESTS[id].label, path: DESTS[id].path, ...(group ? { group } : {}) })
-    const allowed = (id: DestId) => !DESTS[id].adminOnly || isAdmin
+    const allowed = (id: DestId) => (!DESTS[id].adminOnly || isAdmin) && id !== 'getapp'   // already in the app
     toShell({
       tabs: [item(tabs[0]!), item(tabs[1]!), item('ask'), item(tabs[2]!)],
       more: [...moreSquad(tabs).filter(allowed).map((id) => item(id, 'squad')), ...MORE_ACCOUNT.filter(allowed).map((id) => item(id, 'account'))],

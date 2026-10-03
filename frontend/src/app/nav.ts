@@ -4,7 +4,7 @@ import type { IconName } from '../components/Icon'
 
 export type DestId =
   | 'squad' | 'clips' | 'slap' | 'whatsapp' | 'giveaway' | 'watch' | 'huddle'
-  | 'coach' | 'ask' | 'notifications' | 'portal' | 'settings' | 'help' | 'admin'
+  | 'coach' | 'ask' | 'notifications' | 'portal' | 'settings' | 'help' | 'getapp' | 'admin'
 
 export type Dest = {
   id: DestId
@@ -42,6 +42,7 @@ export const DESTS: Record<DestId, Dest> = {
     blurb: 'Passkeys, password, PSN, Mattermost, MCP and Watch.',
   },
   help: { id: 'help', label: 'Help', path: '/help', icon: 'info', classicHref: '/', blurb: 'How to use each part of the app.' },
+  getapp: { id: 'getapp', label: 'Get the app', path: '/get-app', icon: 'download', classicHref: '/', blurb: 'CRCMZ for Android and iPhone.' },
   admin: {
     id: 'admin', label: 'Admin', path: '/admin', icon: 'admin', classicHref: '/', adminOnly: true,
     classicHint: 'Open the account menu, then Settings, then Users.',
@@ -57,14 +58,14 @@ export const TAB_CHOICES: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giv
 export const DEFAULT_TABS: DestId[] = ['squad', 'slap', 'watch']
 /** More sheet, Squad group: every slot choice that isn't in the bar right now. */
 export const moreSquad = (tabs: DestId[]): DestId[] => TAB_CHOICES.filter((id) => !tabs.includes(id))
-export const MORE_ACCOUNT: DestId[] = ['notifications', 'portal', 'settings', 'help', 'admin']
+export const MORE_ACCOUNT: DestId[] = ['notifications', 'portal', 'settings', 'help', 'getapp', 'admin']
 /** Desktop sidebar (≥ 1024 px). */
 export const SIDEBAR_MAIN: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'ask']
-export const SIDEBAR_FOOT: DestId[] = ['notifications', 'portal', 'settings', 'help', 'admin']
+export const SIDEBAR_FOOT: DestId[] = ['notifications', 'portal', 'settings', 'help', 'getapp', 'admin']
 
 /** The ⓘ beside a page title: that page's section on the Help page. */
 export function helpHref(id: DestId): string | null {
-  return id === 'help' ? null : `/help#${id}`
+  return id === 'help' || id === 'getapp' ? null : `/help#${id}`
 }
 
 /** Which destination owns an in-app pathname (relative to /app). */
