@@ -9,7 +9,7 @@ import { Icon, type IconName } from '../../components/Icon'
 import { useReducedMotion } from '../../lib/media'
 import { CAN_VOL, fmtTime, REACTIONS } from '../../lib/watch'
 import {
-  attachVideo, attachYt, clearVideo, forceSync, getWatch, joinCall, leaveCall, nameOf as nameMap, onChat, onReaction, react, sendChat, setCamVol, setPlayerVol,
+  attachVideo, attachYt, clearVideo, forceSync, setSubtitle, getWatch, joinCall, leaveCall, nameOf as nameMap, onChat, onReaction, react, sendChat, setCamVol, setPlayerVol,
   skip, toggleCamsMute, toggleFs, toggleMute, togglePlay, togglePlayerMute, toggleVideo, unblock, userSeek, useWatch, useWatchClock,
   videoLabel, type ChatMsg, type RxEvent, type WatchState,
 } from './session'
@@ -158,7 +158,10 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggle
   const [chatOpen, setChatOpen] = useState(false)
   const rxRef = useRef<HTMLDivElement>(null)
   useDismiss(rxOpen, rxRef, () => setRxOpen(false))
-  useEffect(() => { if (!s.fs) setChatOpen(false) }, [s.fs])
+  const [ccOpen, setCcOpen] = useState(false)
+  const ccRef = useRef<HTMLDivElement>(null)
+  useDismiss(ccOpen, ccRef, () => setCcOpen(false))
+  const hasCc = s.kind === 'yt' || s.subs.length > 0
   const idle = !s.kind
   const online = s.status === 'live'
   const live = c.live || !Number.isFinite(c.dur)
@@ -169,7 +172,33 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggle
       {idle ? <span /> : (
         <div className="wp-ov-top">
           <span className="wp-ov-title">{label || 'Watch Party'}</span>
-          <Ctl icon="sync" label="Sync to the room" onClick={forceSync} />
+          {/* The call, subtitles and chat live up here; the bottom row is for the video. */}
+          <span className="wp-ov-topbar" role="group" aria-label="Call, subtitles and chat">
+            {s.call.on && <Ctl icon={s.call.muted ? 'micOff' : 'mic'} label={s.call.muted ? 'Unmute mic' : 'Mute mic'} onClick={toggleMute} pressed={!s.call.muted} />}
+            <Ctl
+              icon={s.call.on && (s.call.camOff || s.call.micOnly) ? 'camOff' : 'cam'} label={camLabel}
+              onClick={() => (s.call.on ? toggleVideo() : void joinCall())} pressed={s.call.on && !s.call.camOff && !s.call.micOnly}
+              disabled={s.call.busy || (s.call.on && s.call.micOnly)}
+            />
+            {s.call.on && <Ctl icon="leave" label="Leave call" onClick={leaveCall} className="wp-ctl-leave" />}
+            {hasCc && (
+              <span className="wp-cc" ref={ccRef}>
+                <Ctl icon="cc" label={s.sub !== null || s.ytCc ? 'Subtitles (on)' : 'Subtitles'} pressed={s.sub !== null || s.ytCc} expanded={s.kind === 'yt' ? undefined : ccOpen}
+                  onClick={() => (s.kind === 'yt' ? setSubtitle(s.ytCc ? null : 0) : setCcOpen(!ccOpen))} />
+                {ccOpen && s.kind !== 'yt' && (
+                  <span className="glass wp-cc-menu" role="menu" aria-label="Subtitles">
+                    <button type="button" role="menuitemradio" aria-checked={s.sub === null} className="wp-cc-item" onClick={() => { setSubtitle(null); setCcOpen(false) }}>Off</button>
+                    {s.subs.map((t) => (
+                      <button key={t.index} type="button" role="menuitemradio" aria-checked={s.sub === t.index} className="wp-cc-item"
+                        onClick={() => { setSubtitle(t.index); setCcOpen(false) }}>{t.label}{t.forced ? ' (forced)' : ''}</button>
+                    ))}
+                  </span>
+                )}
+              </span>
+            )}
+            <Ctl icon="chat" label={chatOpen ? 'Hide chat box' : 'Chat'} onClick={() => setChatOpen(!chatOpen)} pressed={chatOpen} />
+            <Ctl icon="sync" label="Sync to the room" onClick={forceSync} />
+          </span>
         </div>
       )}
       {!idle && (
@@ -198,15 +227,7 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggle
             </>
           )}
           <span className="wp-ov-spacer" />
-          {s.call.on && <Ctl icon={s.call.muted ? 'micOff' : 'mic'} label={s.call.muted ? 'Unmute mic' : 'Mute mic'} onClick={toggleMute} pressed={!s.call.muted} />}
-          <Ctl
-            icon={s.call.on && (s.call.camOff || s.call.micOnly) ? 'camOff' : 'cam'} label={camLabel}
-            onClick={() => (s.call.on ? toggleVideo() : void joinCall())} pressed={s.call.on && !s.call.camOff && !s.call.micOnly}
-            disabled={s.call.busy || (s.call.on && s.call.micOnly)}
-          />
-          {s.call.on && <Ctl icon="leave" label="Leave call" onClick={leaveCall} className="wp-ctl-leave" />}
           <Ctl icon="smile" label={rxOpen ? 'Hide reactions' : 'Reactions'} onClick={() => setRxOpen(!rxOpen)} pressed={rxOpen} />
-          {s.fs && <Ctl icon="chat" label={chatOpen ? 'Hide chat box' : 'Chat'} onClick={() => setChatOpen(!chatOpen)} pressed={chatOpen} />}
           <Ctl id="wp-set-btn" icon="settings" label="Settings" onClick={toggleSettings} expanded={setOpen} />
           <Ctl icon={s.fs ? 'fsExit' : 'fs'} label={s.fs ? 'Exit fullscreen' : 'Fullscreen'} onClick={toggleFs} />
         </div>

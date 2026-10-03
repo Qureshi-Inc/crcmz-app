@@ -1967,6 +1967,19 @@ try {
       await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
     }
     await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
+    const top = await page.locator('.wp-ov-topbar button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')))
+    check('watch: camera, chat and sync sit at the top; the bottom row keeps the video controls', top.includes('Join with camera') && top.includes('Chat') && top.includes('Sync to the room')
+      && !(await page.locator('.wp-ov-row button[aria-label="Join with camera"]').count()), top.join(', '))
+    // Someone joining at 0:00 never pulls the room back: they catch up instead.
+    {
+      const seeks0 = await page.evaluate(() => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').length)
+      const t0 = await page.evaluate(() => document.querySelector('.wp-video').currentTime)
+      await page.evaluate(() => window.__wpFire('REC:tsMap', { p9: 0 }))
+      await page.waitForTimeout(200)
+      const t1 = await page.evaluate(() => document.querySelector('.wp-video').currentTime)
+      check('watch sync: a newcomer at 0:00 doesn\'t send the room back to the start', t1 >= t0 - 0.5 && (await page.evaluate(() => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').length)) === seeks0
+        && (await page.evaluate(() => document.querySelector('.wp-video').playbackRate)) === 1, `${t0} -> ${t1}`)
+    }
     // Sync: a small lag is caught up by playing a little faster (no seek); a big one seeks.
     {
       const seeks = await page.evaluate(() => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').length)
@@ -1994,7 +2007,7 @@ try {
       await page.waitForFunction(() => document.querySelector('.wp-stage')?.getAttribute('data-chrome') === 'true', null, { timeout: 3000 }).catch(() => {})
       check('watch: a touch brings the fullscreen controls back', (await page.getAttribute('.wp-stage', 'data-chrome')) === 'true')
       // The fullscreen chat field: send, and on a phone the field and its keyboard go away.
-      const chatBtn = await page.locator('.wp-ov-row button[aria-label="Chat"]').boundingBox()
+      const chatBtn = await page.locator('.wp-ov-topbar button[aria-label="Chat"]').boundingBox()
       await page.touchscreen.tap(chatBtn.x + chatBtn.width / 2, chatBtn.y + chatBtn.height / 2)
       await page.waitForSelector('#wp-fs-in')
       await page.fill('#wp-fs-in', 'from fullscreen')
@@ -2187,11 +2200,11 @@ try {
     check('watch 1440: joining the call shows your camera orb, muted', (await d.page.getAttribute('.wp-orb', 'aria-label')).startsWith('You, mic muted'))
     check('watch 1440: joining captures video only — no mic is opened', (await d.page.evaluate(() => window.__gum.map((t) => t.kind).join())) === 'video' && (await liveMics()) === 0)
     await d.page.hover('.wp-stage')
-    await d.page.click('.wp-ov-row button[aria-label="Unmute mic"]')
-    await d.page.waitForSelector('.wp-ov-row button[aria-label="Mute mic"]')
+    await d.page.click('.wp-ov-topbar button[aria-label="Unmute mic"]')
+    await d.page.waitForSelector('.wp-ov-topbar button[aria-label="Mute mic"]')
     await d.page.waitForFunction(() => window.__gum.some((t) => t.kind === 'audio' && t.readyState === 'live'))
     check('watch 1440: Unmute opens exactly one live mic', (await liveMics()) === 1)
-    await d.page.click('.wp-ov-row button[aria-label="Mute mic"]')
+    await d.page.click('.wp-ov-topbar button[aria-label="Mute mic"]')
     await d.page.waitForFunction(() => window.__gum.filter((t) => t.kind === 'audio').every((t) => t.readyState === 'ended'))
     check('watch 1440: Mute stops the mic track, not just disables it', (await liveMics()) === 0)
     await d.page.waitForFunction(() => document.querySelector('.wp-face-video')?.readyState >= 2)
@@ -2273,7 +2286,7 @@ try {
     }
     await pickPos(d.page, 'over')
     await d.page.hover('.wp-stage')
-    check('watch 1440: in the call the overlay gets a mic button', (await d.page.locator('.wp-ov-row button[aria-label="Unmute mic"], .wp-ov-row button[aria-label="Mute mic"]').count()) > 0)
+    check('watch 1440: in the call the overlay gets a mic button', (await d.page.locator('.wp-ov-topbar button[aria-label="Unmute mic"], .wp-ov-topbar button[aria-label="Mute mic"]').count()) > 0)
     await shot(d.page, 'watch-1440-over')
     await pickPos(d.page, 'top')
     check('watch 1440: Above puts the orbs over the top of the video', await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().bottom <= document.querySelector('.wp-stage').getBoundingClientRect().top + 1))

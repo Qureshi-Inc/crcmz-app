@@ -2818,3 +2818,14 @@ html[data-native-shell] .tabbar { display: none; }
 .ring-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ring-note { font-size: var(--text-xs); }
 .ring-row[data-reachable="false"] .ring-face { opacity: .5; }
+
+/* Watch Party player: the call, subtitles and chat at the top (Stage Overlay). */
+.wp-ov-top:has(.wp-ov-topbar) { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; }
+.wp-ov-top:has(.wp-ov-topbar) .wp-ov-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wp-ov-topbar { grid-column: 2; display: flex; align-items: center; gap: var(--space-1); justify-content: center; }
+.wp-cc { position: relative; display: inline-flex; }
+.wp-cc-menu { position: absolute; top: calc(100% + var(--space-1)); right: 0; z-index: 30; display: grid; min-width: 180px; max-height: 240px; overflow-y: auto; padding: var(--space-1); border-radius: var(--radius-md); }
+.wp-cc-item { min-height: 44px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.wp-cc-item[aria-checked="true"] { color: var(--interactive-text); font-weight: 700; }
+.wp-cc-item:hover, .wp-cc-item:focus-visible { background: rgba(255, 255, 255, .08); }
+.wp-video::cue { background: rgba(0, 0, 0, .65); color: #fff; font-size: 1.05em; }

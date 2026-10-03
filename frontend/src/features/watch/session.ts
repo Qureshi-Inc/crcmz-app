@@ -32,6 +32,8 @@ type YtPlayer = {
   playVideo(): void; pauseVideo(): void; seekTo(t: number, ahead: boolean): void; getCurrentTime(): number; getDuration(): number
   getVideoLoadedFraction(): number; setVolume(v: number): void; mute(): void; unMute(): void; destroy(): void
   getVideoData?: () => { title?: string }
+  // Captions (the player's own module).
+  loadModule?: (m: string) => void; unloadModule?: (m: string) => void; setOption?: (m: string, k: string, v: unknown) => void
 }
 type YtNs = { Player: new (el: HTMLElement, o: Record<string, unknown>) => YtPlayer; PlayerState: { PLAYING: number; PAUSED: number } }
 type HlsInst = { loadSource(u: string): void; attachMedia(v: HTMLVideoElement): void; destroy(): void; on(e: string, f: (ev: unknown, d: { fatal?: boolean; type?: string; details?: string }) => void): void; once(e: string, f: () => void): void }
@@ -80,6 +82,11 @@ export type WatchState = {
   camMuted: boolean
   prefs: Record<string, { v: number; m: boolean }>
   fs: boolean
+  /** The library film's subtitles (none for other videos), and which one is on (index, or null). */
+  subs: SubTrack[]
+  sub: number | null
+  /** YouTube's own captions are on. */
+  ytCc: boolean
   extracting: boolean
   /** Extract 429: Play counts down to this (ms). */
   extractUntil: number
@@ -92,6 +99,7 @@ export type WatchState = {
   speakerId: string
   orbPos: OrbPos
 }
+export type SubTrack = { index: number; label: string; lang: string; text: boolean; forced: boolean }
 export type Clock = { t: number; dur: number; buf: number; live: boolean }
 
 const MAX_TRIES = 6
@@ -127,7 +135,7 @@ let state: WatchState = {
   chat: [], call: { on: false, muted: true, micOnly: false, camOff: false, facing: 'user', busy: false, note: '' },
   rtc: 0, loud: {}, playerVol: 1, playerMuted: false, camVol: 1, camMuted: false,
   prefs: readLocal<Record<string, { v: number; m: boolean }>>(PREFS_KEY, {}),
-  fs: false, extracting: false, extractUntil: 0, title: '', needGesture: false, histTick: 0,
+  fs: false, subs: [], sub: null, ytCc: false, extracting: false, extractUntil: 0, title: '', needGesture: false, histTick: 0,
   mics: [], speakers: [], micId: '', speakerId: '', orbPos: readOrbPos(),
 }
 let clock: Clock = { t: 0, dur: NaN, buf: 0, live: false }
@@ -381,7 +389,9 @@ function mount(url: string) {
   if (ytBox) ytBox.replaceChildren()
   ytState = -1
   nudging = 1
-  set({ video: url, kind: '', ytFresh: false, playing: false, unblock: '', mediaError: '' })
+  burned = null
+  set({ video: url, kind: '', ytFresh: false, playing: false, unblock: '', mediaError: '', subs: [], sub: null, ytCc: false })
+  void loadSubs(url)
   titleVideoChanged()
   void movieTitle(url)
   if (!url) { lockScreen.release('watch'); return }
@@ -680,15 +690,18 @@ function bind(s: Sock) {
     if (!others.length) { nudge(1); return }
     const med = others[Math.floor(others.length / 2)]!
     const mine = Number(map[state.clientId])
-    const ahead = (Number.isFinite(mine) && mine >= 0 ? mine : cur) - med
+    const behind = med - (Number.isFinite(mine) && mine >= 0 ? mine : cur)
+    // Only whoever is behind moves: someone joining (at 0:00) or coming back never pulls
+    // the room back to them; they catch up to it.
     const bigJump = state.kind === 'file' ? 8 : 3   // YouTube can't be nudged smoothly
-    if (Math.abs(ahead) > bigJump) {
+    if (behind > bigJump) {
       nudge(1)
-      log('sync.drift', { t: Math.round(cur * 10) / 10, median: Math.round(med * 10) / 10, ahead: Math.round(ahead * 10) / 10, n: others.length })
-      remote(() => seek(cur - ahead))
-    } else if (state.kind === 'file' && isPlaying()) {
-      if (Math.abs(ahead) > 1) nudge(ahead > 0 ? 0.96 : 1.04, ahead)
-      else if (Math.abs(ahead) < 0.4) nudge(1)
+      log('sync.drift', { t: Math.round(cur * 10) / 10, median: Math.round(med * 10) / 10, behind: Math.round(behind * 10) / 10, n: others.length })
+      remote(() => seek(cur + behind))
+    } else if (state.kind === 'file' && isPlaying() && behind > 1) {
+      nudge(1.04, -behind)
+    } else if (behind < 0.4) {
+      nudge(1)
     }
   })
   s.on('chatinit', (arr: ChatMsg[]) => set({ chat: Array.isArray(arr) ? arr.slice(-60) : [] }))
@@ -801,6 +814,69 @@ export async function changeName(nickname: string) {
   tries = 0
   void connect()
   return d.name
+}
+
+// ── Subtitles (each viewer's own choice) ────────────────────────────────────
+// A library film's text subtitles play as a WebVTT <track> (instant). Image ones (Blu-ray
+// PGS) are drawn into this viewer's own transcode: the stream reloads at the same time,
+// for them only. YouTube has its own captions.
+let burned: number | null = null
+async function loadSubs(url: string) {
+  const id = MOVIE_STREAM.exec(url)?.[1]
+  if (!id) return
+  try {
+    const subs = await request<SubTrack[]>(`/api/watch/movies/subs/${id}`, { quiet401: true })
+    if (state.video === url) set({ subs })
+  } catch { /* none, or not allowed: no CC menu */ }
+}
+
+export function setSubtitle(index: number | null) {
+  if (state.kind === 'yt') {
+    try {
+      if (index === null) { yt?.unloadModule?.('captions'); set({ ytCc: false }) }
+      else { yt?.loadModule?.('captions'); yt?.setOption?.('captions', 'track', { languageCode: 'en' }); set({ ytCc: true }) }
+    } catch { /* captions aren't available for this video */ }
+    return
+  }
+  const v = video
+  const id = MOVIE_STREAM.exec(state.video)?.[1]
+  if (!v || !id) return
+  const pick = index === null ? null : state.subs.find((x) => x.index === index) ?? null
+  v.querySelectorAll('track').forEach((t) => t.remove())
+  const wantBurn = pick && !pick.text ? pick.index : null
+  if (wantBurn !== burned) reloadStream(wantBurn)
+  if (pick?.text) {
+    const t = document.createElement('track')
+    t.kind = 'subtitles'
+    t.label = pick.label
+    t.srclang = pick.lang.slice(0, 2) || 'en'
+    t.src = `/api/watch/movies/subs/${id}/${pick.index}.vtt`
+    t.default = true
+    v.appendChild(t)
+    const show = () => { for (const tt of Array.from(v.textTracks)) tt.mode = tt.label === pick.label ? 'showing' : 'disabled' }
+    t.addEventListener('load', show)
+    show()
+  }
+  log('sub.pick', { index, text: pick?.text ?? null })
+  set({ sub: pick ? pick.index : null })
+}
+
+/** Load this viewer's stream again (with burned-in subtitles, or without), at the same time. */
+function reloadStream(burn: number | null) {
+  const v = video
+  if (!v) return
+  burned = burn
+  const at = v.currentTime
+  const wasPlaying = !v.paused
+  const src = burn === null ? state.video : `${state.video}?burn=${burn}`
+  const resume = () => { v.currentTime = at; if (wasPlaying) void v.play().catch(() => {}) }
+  if (hls) {
+    hls.once(window.Hls!.Events.MANIFEST_PARSED, resume)
+    hls.loadSource(src)
+  } else {
+    v.addEventListener('loadedmetadata', resume, { once: true })
+    v.src = src
+  }
 }
 
 /** A film from the library plays as /api/watch/movies/stream/<id>/master.m3u8: only whoever

@@ -768,6 +768,40 @@ def local_tests():
 
 
 # ── Removing ─────────────────────────────────────────────────────────────────
+def subtitle_tests():
+    print("subtitles")
+
+    def image_subtitles_burn_into_your_own_stream_only():
+        path, params = mv.hls_request("u-zub", "c" * 32, "master.m3u8", "burn=3")
+        assert params["SubtitleStreamIndex"] == "3" and params["SubtitleMethod"] == "Encode", params
+        _, plain = mv.hls_request("u-zub", "c" * 32, "master.m3u8", "")
+        assert "SubtitleStreamIndex" not in plain
+        _, bad = mv.hls_request("u-zub", "c" * 32, "master.m3u8", "burn=3;rm")
+        assert "SubtitleStreamIndex" not in bad, "only a number"
+
+    def the_list_puts_english_first_and_names_tracks_plainly():
+        old = mv.slap._jf
+        async def fake(method, path, **kw):
+            import httpx
+            return httpx.Response(200, json={"Items": [{"Id": "c" * 32, "MediaStreams": [
+                {"Type": "Video", "Index": 0},
+                {"Type": "Subtitle", "Index": 4, "Language": "zho", "DisplayTitle": "Chinese - PGSSUB", "IsTextSubtitleStream": False},
+                {"Type": "Subtitle", "Index": 2, "Language": "eng", "DisplayTitle": "English - Default - SUBRIP", "IsTextSubtitleStream": True},
+                {"Type": "Subtitle", "Index": 5, "Language": "eng", "DisplayTitle": "English - Forced - PGSSUB", "IsForced": True}]}]})
+        mv.slap._jf = fake
+        mv._cache.pop("subs:" + "c" * 32, None)
+        try:
+            subs = run(mv.subtitles("c" * 32))
+        finally:
+            mv.slap._jf = old
+        assert [x["index"] for x in subs] == [2, 4, 5], subs
+        assert subs[0] == {"index": 2, "label": "English - Default", "lang": "eng", "text": True, "forced": False}, subs[0]
+        assert subs[1]["text"] is False and subs[1]["label"] == "Chinese"
+
+    for fn in (image_subtitles_burn_into_your_own_stream_only, the_list_puts_english_first_and_names_tracks_plainly):
+        check(fn.__name__, fn)
+
+
 def remove_tests():
     print("removing")
 
@@ -1052,6 +1086,7 @@ if __name__ == "__main__":
     follow_tests()
     local_tests()
     remove_tests()
+    subtitle_tests()
     browse_tests()
     stream_tests()
     http_tests()

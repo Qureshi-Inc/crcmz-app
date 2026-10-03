@@ -1585,6 +1585,30 @@ _TRANSCODE = {"VideoCodec": "h264", "AudioCodec": "aac", "VideoBitrate": "100000
 _DROP = {"api_key", "apikey", "deviceid", "playsessionid"}
 
 
+async def subtitles(jf_id: str) -> list[dict]:
+    """A film's subtitles: [{index, label, lang, text}]. Text ones play as a WebVTT track
+    (subtitle_vtt); image ones (PGS, VobSub) are burned into the viewer's own stream."""
+    if not _JF_ID.match(jf_id or ""):
+        raise HTTPException(404, "not found")
+    if (hit := _cached(f"subs:{jf_id}", 3600)) is not None:
+        return hit
+    res = slap._ok(await slap._jf("GET", "/Items", params={"Ids": jf_id, "Fields": "MediaStreams"})) or {}
+    it = (res.get("Items") or [{}])[0]
+    out = []
+    for st in it.get("MediaStreams") or []:
+        if st.get("Type") != "Subtitle" or st.get("Index") is None:
+            continue
+        lang = str(st.get("Language") or "")
+        label = str(st.get("DisplayTitle") or st.get("Title") or lang or "Subtitles")
+        label = re.sub(r"\s*-\s*(PGSSUB|SUBRIP|ASS|SSA|DVDSUB|VOBSUB|MOV_TEXT|WEBVTT)\b", "", label, flags=re.I).strip(" -")
+        out.append({"index": int(st["Index"]), "label": label[:60] or "Subtitles", "lang": lang,
+                    "text": bool(st.get("IsTextSubtitleStream")), "forced": bool(st.get("IsForced"))})
+    # English first, then the rest; forced-only tracks last.
+    out.sort(key=lambda x: (x["forced"], x["lang"] not in ("eng", "en"), x["index"]))
+    _cache[f"subs:{jf_id}"] = (time.time(), out)
+    return out
+
+
 def hls_request(sub: str, jf_id: str, path: str, query: str) -> tuple[str, dict]:
     """The Jellyfin path and params for one HLS request from a viewer. Raises 404 on anything else."""
     if not _JF_ID.match(jf_id or "") or not _HLS_PATH.match(path or ""):
@@ -1592,6 +1616,11 @@ def hls_request(sub: str, jf_id: str, path: str, query: str) -> tuple[str, dict]
     device, play = _session_ids(sub, jf_id)
     if path == "master.m3u8":
         params = {"MediaSourceId": jf_id, **_TRANSCODE}
+        # A viewer who picked image subtitles (Blu-ray PGS) gets them drawn into their own
+        # transcode: ?burn=<subtitle stream index>. Text subtitles are a separate track.
+        burn = dict(parse_qsl(query or "")).get("burn", "")
+        if burn.isdigit() and int(burn) < 100:
+            params.update({"SubtitleStreamIndex": burn, "SubtitleMethod": "Encode"})
     else:
         params = {k: v for k, v in parse_qsl(query or "", keep_blank_values=True) if k.lower() not in _DROP}
     params.update({"DeviceId": device, "PlaySessionId": play})
@@ -1721,6 +1750,23 @@ def build_router(get_session, is_admin) -> APIRouter:
             raise HTTPException(404, "no poster")
         return Response(r.content, media_type=r.headers.get("content-type", "image/jpeg"),
                         headers={"Cache-Control": "private, max-age=86400"})
+
+    @router.get("/subs/{jf_id}")
+    async def subs_get(jf_id: str, request: Request):
+        caller_sub(request)
+        return await subtitles(jf_id)
+
+    @router.get("/subs/{jf_id}/{index}.vtt")
+    async def subs_vtt(jf_id: str, index: int, request: Request):
+        caller_sub(request)
+        if not _JF_ID.match(jf_id) or not 0 <= index < 100:
+            raise HTTPException(404, "not found")
+        if not any(x["index"] == index and x["text"] for x in await subtitles(jf_id)):
+            raise HTTPException(404, "no text subtitles there")
+        r = await slap._jf("GET", f"/Videos/{jf_id}/{jf_id}/Subtitles/{index}/0/Stream.vtt")
+        if r.status_code != 200:
+            raise HTTPException(502, "those subtitles won't load right now")
+        return Response(r.content, media_type="text/vtt", headers={"Cache-Control": "private, max-age=86400"})
 
     @router.get("/stream/{jf_id}/{path:path}")
     async def stream(jf_id: str, path: str, request: Request):
