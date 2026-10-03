@@ -32,6 +32,7 @@ nothing; the query is shell-quoted.
 from __future__ import annotations
 
 import contextlib
+import asyncio
 import contextvars
 import json
 import logging
@@ -1967,6 +1968,12 @@ def call_tool(name: str, args: dict) -> tuple[str, bool]:
 
 _WRITE_TOOLS: dict[str, dict[str, Any]] = {}
 
+# The app's private Ask AI chat (signed in, one person's own thread) may use these write
+# tools as that person. Group chats (WhatsApp, PSN, Discord) never get any: anyone there
+# could type anything.
+CHAT_WRITE_TOOLS = ("slap_add_song",)
+_CHAT_WRITER: contextvars.ContextVar[dict | None] = contextvars.ContextVar("crcmz_chat_writer", default=None)
+
 
 def write_tool(name: str, description: str, parameters: dict) -> Callable:
     def register(fn: Callable) -> Callable:
@@ -2126,6 +2133,58 @@ def _ring_squad(kind: str, room: str = "", caller: dict | None = None) -> dict:
     result = notifications.ring_squad(str(kind or ""), zid, f"{_caller_name(caller)} (via AI)", str(room or ""))
     mcp_oauth.audit_write(zid, "ring_squad", args,
                           f"rang:{result.get('phones_rang', 0)}" if result.get("ok") else f"error:{result.get('error', '')}")
+    return result
+
+
+@write_tool(
+    "slap_add_song",
+    "Download a song into the squad's Slap music library (Jellyfin) and file it in a "
+    "person's picks playlist, credited to them on the Slap leaderboard: the same flow as "
+    "New finds' Download and as posting a link in the Slap share channel. Use it when "
+    "someone asks to add / download / get a song (e.g. after you've told them about a new "
+    "song). Give `url` (an Apple Music, Spotify, YouTube, SoundCloud, Deezer or Tidal link) "
+    "or `title` + `artist` (looked up in Apple's catalogue). `for_person` is who it's for "
+    "and credited to (a name, @username or PSN id); leave it out to credit the person "
+    "asking. If you don't know who's asking and they didn't say, ASK who to credit it to "
+    "before calling. Returns status downloading or already_in_library. Limit: 15 a day "
+    "per person.",
+    {"type": "object",
+     "properties": {
+         "url":        {"type": "string", "description": "A music link to download."},
+         "title":      {"type": "string", "description": "Song title, when there's no link."},
+         "artist":     {"type": "string", "description": "Song artist, with title."},
+         "for_person": {"type": "string", "description": "Who it's for / credited to. Default: the asker."},
+     }})
+def _slap_add_song(url: str = "", title: str = "", artist: str = "", for_person: str = "",
+                   caller: dict | None = None) -> dict:
+    import concurrent.futures
+    import json as _json
+    import mcp_oauth
+    import slap_discover
+    caller = caller or {}
+    zid = caller.get("zitadel_id", "")
+    args = _json.dumps({"url": url, "title": title, "artist": artist, "for_person": for_person})
+    ident = _ident()
+    person = None
+    if (for_person or "").strip():
+        person = ident.resolve(for_person.strip())
+        if not person:
+            return {"error": f"I don't know who '{for_person}' is in the squad",
+                    "ask": "Ask who the song is for (their name, @username or PSN id)."}
+    elif zid:
+        person = ident.by_zitadel_id().get(zid)
+    if not person:
+        return {"error": "who is this song for?",
+                "ask": "Ask the user who to credit the song to before adding it."}
+    if not mcp_oauth.within_rate_limit(zid or person.get("zitadel_id", ""), "slap_add_song", 30, 86400):
+        mcp_oauth.audit_write(zid, "slap_add_song", args, "rate_limited")
+        return {"error": "rate limit exceeded", "limit": "30 a day"}
+    # The tool loop is synchronous; the importer call isn't. Run it on its own loop.
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        result = pool.submit(asyncio.run, slap_discover.add_song(
+            person, url=url, title=title, artist=artist)).result(timeout=90)
+    mcp_oauth.audit_write(zid, "slap_add_song", args,
+                          result.get("status", "") if result.get("ok") else f"error:{result.get('error', '')}")
     return result
 
 
@@ -3899,6 +3958,13 @@ def signal_tool_specs() -> list[dict]:
                           "parameters": spec["parameters"]}}]
 
 
+def _chat_write_specs() -> list[dict]:
+    """The write tools this chat may use: only the app's private chat, as its owner."""
+    if _CHAT_WRITER.get() is None:
+        return []
+    return [t for t in write_tool_specs() if t["function"]["name"] in CHAT_WRITE_TOOLS]
+
+
 class Stopped(Exception):
     """Raised from an on_event callback to abandon an answer mid-stream."""
 
@@ -3915,7 +3981,7 @@ def _chat(messages: list[dict], model: str, base: str, key: str,
     payload = {
         "model": model,
         "messages": messages,
-        "tools": tool_specs() + signal_tool_specs(),
+        "tools": tool_specs() + signal_tool_specs() + _chat_write_specs(),
         # "required" only ever on the first turn: leaving it on would make the
         # model call tools forever instead of writing the answer.
         "tool_choice": tc,
@@ -4094,9 +4160,16 @@ def ask(question: str, history: list[dict] | None = None,
     there may read Professional Goopers; every other call -- group chats above
     all -- runs in the public view and can only see CRCMZ BOYZ.
     """
-    with wa_viewer(wa_viewer_sub):
-        return _ask(question, history, image_b64=image_b64, image_type=image_type,
-                    on_tool=on_tool, on_event=on_event, asker=asker)
+    # The private app chat may also do a few things as its owner (CHAT_WRITE_TOOLS).
+    writer = ({"zitadel_id": wa_viewer_sub, "name": (asker or {}).get("display_name") or ""}
+              if wa_viewer_sub else None)
+    tok = _CHAT_WRITER.set(writer)
+    try:
+        with wa_viewer(wa_viewer_sub):
+            return _ask(question, history, image_b64=image_b64, image_type=image_type,
+                        on_tool=on_tool, on_event=on_event, asker=asker)
+    finally:
+        _CHAT_WRITER.reset(tok)
 
 
 def _ask(question: str, history: list[dict] | None = None,
@@ -4271,7 +4344,11 @@ def _ask(question: str, history: list[dict] | None = None,
                     pass
             if on_event:
                 on_event({"type": "tool", "name": name})
-            result, ok = call_tool(name, args)
+            writer = _CHAT_WRITER.get()
+            if name in CHAT_WRITE_TOOLS and writer is not None:
+                result, ok = call_write_tool(name, args, writer)
+            else:
+                result, ok = call_tool(name, args)
             trail.append({"tool": name, "args": args, "ok": ok,
                           "chars": len(result)})
             if on_event:

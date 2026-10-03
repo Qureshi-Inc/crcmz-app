@@ -396,6 +396,62 @@ async def download(sub: str, name: str, apple_id: str, week: str | None = None,
     return public(_find(week, apple_id) or f)
 
 
+_MUSIC_HOSTS = re.compile(
+    r"^https://(music\.apple\.com|open\.spotify\.com|(www\.|m\.|music\.)?youtube\.com|youtu\.be|"
+    r"soundcloud\.com|(www\.)?deezer\.com|tidal\.com|listen\.tidal\.com)/", re.I)
+
+
+async def add_song(person: dict, *, url: str = "", title: str = "", artist: str = "") -> dict:
+    """Bring one song into the library for ``person``, the same way New finds' Download
+    does: an importer job credited to them (their Mattermost id), filed in their picks.
+
+    Either a link (Apple Music, Spotify, YouTube, SoundCloud, Deezer, Tidal) or a title
+    and artist, which is looked up in Apple's catalogue. Returns what happened."""
+    sub = person.get("zitadel_id") or ""
+    url = (url or "").strip()
+    title, artist = (title or "").strip()[:160], (artist or "").strip()[:120]
+    if url and not _MUSIC_HOSTS.match(url):
+        return {"error": "that isn't a music link I can download (Apple Music, Spotify, YouTube, SoundCloud, Deezer or Tidal)"}
+    if not url and not title:
+        return {"error": "give me a link, or the song's title (and artist)"}
+    if _downloads_today(sub) >= DOWNLOADS_PER_DAY:
+        return {"error": f"that's {DOWNLOADS_PER_DAY} downloads today for them; try again tomorrow"}
+    index = await library_index(refresh=True)
+    if not url and (have := index.find(title, artist)):
+        return {"ok": True, "status": "already_in_library", "title": have.get("title", title),
+                "artist": have.get("artist", artist), "track_id": have["id"]}
+    if not url:
+        async with httpx.AsyncClient(timeout=15) as client:
+            hit = await itunes_find(client, artist, title) if artist else None
+            if not hit:
+                r = await client.get(ITUNES_URL, params={"term": f"{artist} {title}".strip(), "entity": "song",
+                                                         "limit": 1, "media": "music"})
+                x = ((r.json().get("results") or [None])[0] if r.status_code == 200 else None) or {}
+                if x.get("trackViewUrl") and _APPLE_HOSTS.match(x["trackViewUrl"]):
+                    hit = {"title": x.get("trackName") or title, "artist": x.get("artistName") or artist,
+                           "url": x["trackViewUrl"].split("&uo=")[0]}
+        if not hit:
+            return {"error": f"I couldn't find \"{artist + ' - ' if artist else ''}{title}\" in Apple's catalogue; send a link instead"}
+        title, artist, url = hit["title"], hit["artist"], hit["url"]
+    if title and (have := index.find(title, artist)):
+        return {"ok": True, "status": "already_in_library", "title": have.get("title", title),
+                "artist": have.get("artist", artist), "track_id": have["id"]}
+    requester = mm_id(person)
+    job = await slap._importer("/jobs", {"url": url, **({"requester_user_id": requester} if requester else {})},
+                               timeout=30)
+    jid = str(job.get("id") or "")
+    if not jid:
+        return {"error": "the music importer didn't take that"}
+    who = picks_name(person)
+    with _lock, _conn() as db:
+        db.execute("INSERT OR REPLACE INTO credits(job_id, sub, name, title, artist, ts) VALUES (?,?,?,?,?,?)",
+                   (jid, sub, who, title or url, artist, time.time()))
+    logger.info("discover: added for %s: %s (job %s)", who, title or url, jid)
+    return {"ok": True, "status": "downloading", "title": title or None, "artist": artist or None,
+            "for": person.get("display_name") or who, "picks": who,
+            "note": "It lands in the Slap library in a minute or two, in their picks."}
+
+
 def _update(week: str, apple_id: str, **cols: Any) -> None:
     sets = ", ".join(f"{k}=?" for k in cols)
     with _lock, _conn() as db:

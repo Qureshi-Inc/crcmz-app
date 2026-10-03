@@ -468,11 +468,71 @@ def http_tests():
         check(fn.__name__, fn)
 
 
+def add_song_tests():
+    print("add a song (AI / MCP)")
+    import assistant
+    import crcmz_identity
+    import mcp_oauth
+    moiz = {"zitadel_id": "u-moiz", "display_name": "Moiz", "mm_username": "moiz", "email": "m@x.co"}
+    noor = {"zitadel_id": "u-noor", "display_name": "kaptaan noor", "mm_username": "nooramin40", "email": "n@x.co"}
+    crcmz_identity.by_zitadel_id = lambda refresh=False: {"u-moiz": moiz, "u-noor": noor}
+    crcmz_identity.resolve = lambda q: {"noor": noor, "nooramin40": noor, "moiz": moiz}.get(q.lower())
+    old_mm = d.mm_id
+    d.mm_id = lambda p: {"u-moiz": "mm-moiz", "u-noor": "mm-noor"}.get(p["zitadel_id"], "")
+    mcp_oauth.within_rate_limit = lambda *a, **k: True
+    mcp_oauth.audit_write = lambda *a, **k: None
+
+    def a_title_downloads_for_the_asker_credited_to_them():
+        reset()
+        out = assistant._slap_add_song(title="Saturn", artist="SZA", caller={"zitadel_id": "u-moiz"})
+        assert out["ok"] and out["status"] == "downloading" and out["picks"] == "moiz", out
+        path, body = IMPORTER[-1]
+        assert path == "/jobs" and body["url"].startswith("https://music.apple.com/") and body["requester_user_id"] == "mm-moiz", IMPORTER
+
+    def it_can_be_for_someone_else():
+        reset()
+        out = assistant._slap_add_song(url="https://open.spotify.com/track/abc", for_person="noor",
+                                       caller={"zitadel_id": "u-moiz"})
+        assert out["ok"] and out["picks"] == "nooramin40" and IMPORTER[-1][1]["requester_user_id"] == "mm-noor", out
+
+    def unknown_asker_means_ask_who_its_for():
+        reset()
+        out = assistant._slap_add_song(title="Saturn", artist="SZA", caller={})
+        assert "ask" in out and not IMPORTER, out
+        out = assistant._slap_add_song(title="Saturn", artist="SZA", for_person="Stranger", caller={"zitadel_id": "u-moiz"})
+        assert "ask" in out and not IMPORTER, out
+
+    def only_music_links_and_not_twice():
+        reset()
+        assert "error" in assistant._slap_add_song(url="https://evil.example/x.mp3", caller={"zitadel_id": "u-moiz"})
+        have = JF.tracks[0]
+        out = assistant._slap_add_song(title=have["Name"], artist=(have.get("Artists") or [""])[0], caller={"zitadel_id": "u-moiz"})
+        assert out.get("status") == "already_in_library" and not IMPORTER, out
+
+    def only_the_private_app_chat_gets_it():
+        assert "slap_add_song" in assistant.write_tool_names() and "slap_add_song" not in assistant.tool_names()
+        assert assistant._chat_write_specs() == [], "no writer: no write tools (group chats)"
+        tok = assistant._CHAT_WRITER.set({"zitadel_id": "u-moiz"})
+        try:
+            assert [t["function"]["name"] for t in assistant._chat_write_specs()] == ["slap_add_song"]
+        finally:
+            assistant._CHAT_WRITER.reset(tok)
+
+    try:
+        for fn in (a_title_downloads_for_the_asker_credited_to_them, it_can_be_for_someone_else,
+                   unknown_asker_means_ask_who_its_for, only_music_links_and_not_twice,
+                   only_the_private_app_chat_gets_it):
+            check(fn.__name__, fn)
+    finally:
+        d.mm_id = old_mm
+
+
 if __name__ == "__main__":
     matching_tests()
     finds_tests()
     download_tests()
     picks_tests()
+    add_song_tests()
     http_tests()
     print(f"\n{PASSED} passed, {len(FAILED)} failed")
     sys.exit(1 if FAILED else 0)
