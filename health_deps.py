@@ -113,7 +113,7 @@ async def check_whatsapp() -> tuple[bool, str]:
 
 
 async def check_tts() -> tuple[bool, str]:
-    base = _env("WA_TTS_URL", "http://100.76.195.46:8880").rstrip("/")
+    base = _env("WA_TTS_URL", "http://100.65.68.108:8880").rstrip("/")
     r = await _get(f"{base}/health")
     return r.status_code < 500, f"answered {r.status_code}"
 

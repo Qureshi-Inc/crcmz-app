@@ -7221,7 +7221,7 @@ def _check_arc_alert(squad: list[dict]) -> None:
 
 # === PSN → WhatsApp / Discord video forwarder ================================
 WA_BRIDGE_URL  = os.environ.get("WA_BRIDGE_URL", "")
-WA_TTS_URL     = os.environ.get("WA_TTS_URL", "http://100.76.195.46:8880")
+WA_TTS_URL     = os.environ.get("WA_TTS_URL", "http://100.65.68.108:8880")
 WA_GOOPERS_JID = os.environ.get("WA_GOOPERS_JID", "")  # stats only (founders group)
 # Every bot interaction (clips, forwards, coaching, reactions, the AI bot,
 # typing, announcements) lives in CRCMZ BOYZ. Falls back to the old group so
