@@ -1208,10 +1208,11 @@ try {
     const g = await page.$eval('.find-grid', (el) => {
       const box = el.getBoundingClientRect()
       const tiles = [...el.querySelectorAll('.find-tile')].map((t) => t.getBoundingClientRect())
-      const inView = tiles.filter((t) => t.top >= box.top - 1 && t.bottom <= box.bottom + 1).length
-      return { n: tiles.length, cols: new Set(tiles.map((t) => Math.round(t.left))).size, inView, scrolls: el.scrollHeight > el.clientHeight + 10 }
+      const inView = tiles.filter((t) => t.left >= box.left - 1 && t.right <= box.right + 1).length
+      return { n: tiles.length, rows: new Set(tiles.map((t) => Math.round(t.top))).size, inView,
+        sideways: el.scrollWidth > el.clientWidth + 10, notDown: el.scrollHeight <= el.clientHeight + 1 }
     })
-    check('discover: 20 finds, 2 across, 6 in view, the rest scroll', g.n === 20 && g.cols === 2 && g.inView === 6 && g.scrolls, JSON.stringify(g))
+    check('discover: 20 finds in 3 rows, 6 in view, swiping sideways (never up and down)', g.n === 20 && g.rows === 3 && g.inView === 6 && g.sideways && g.notDown, JSON.stringify(g))
     await shot(page, 'slap-discover-grid-375', true)
     await ctx.close()
     const off = await newPage({ width: 375, height: 800, mocks: { ...SLAP_BASE, 'GET /api/slap/discover': json(200, { ...disc, finds: [], off: true }) }, match: slapMatch({}) })
@@ -2261,7 +2262,7 @@ try {
       check("huddle: alone says you're the only one here", await h.page.isVisible('.hu-alone'))
       check('huddle: the preview camera is released once in the call', await h.page.evaluate(() => !document.querySelector('.hu-preview')))
       const ctrls = await h.page.locator('.hu-controls button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')))
-      check('huddle: controls are mic, camera, share, blur, leave', ctrls.join('|') === 'Mute|Turn camera off|Share your screen|Blur background|Leave the call', ctrls.join('|'))
+      check('huddle: controls are mic, camera, share, blur, hand, reactions, leave', ctrls.join('|') === 'Mute|Turn camera off|Share your screen|Blur background|Raise your hand|Reactions|Leave the call', ctrls.join('|'))
       await h.page.evaluate(() => { window.__lkAdd('p2', 'Bizzle'); window.__lkAdd('p3', 'Noor') })
       await h.page.waitForFunction(() => document.querySelector('.hu-count')?.textContent === '3 in call')
       check('huddle: people joining fill the filmstrip', (await h.page.locator('.hu-strip li').count()) === 3)
@@ -2295,6 +2296,23 @@ try {
       await h.page.evaluate(() => window.__lkFire('reconnected'))
       await h.page.waitForSelector('.hu-stale', { state: 'detached' })
       check('huddle: reconnected clears the overlay', true)
+
+      // Hands and reactions over the data channel.
+      await h.page.click('.hu-controls button[aria-label="Raise your hand"]')
+      check('huddle: raising your hand tells the room', await h.page.evaluate(() => window.__lkData.some((d) => d.t === 'hand' && d.up === true && d.topic === 'crcmz-huddle')))
+      await h.page.evaluate(() => window.__lkSay('p2', { t: 'hand', up: true }))
+      await h.page.waitForSelector('.hu-hand-chip')
+      check("huddle: someone else's hand shows (chip and tile badge)", (await h.page.textContent('.hu-hand-chip')).includes('1') && (await h.page.locator('.hu-tile-hand').count()) >= 1)
+      await h.page.click('.hu-controls button[aria-label="Lower your hand"]')
+      await h.page.click('.hu-controls button[aria-label="Reactions"]')
+      await h.page.click('.hu-react-row button[aria-label="Send 🔥"]')
+      check('huddle: a reaction floats up and goes to the room', (await h.page.locator('.hu-reaction').count()) >= 1 && await h.page.evaluate(() => window.__lkData.some((d) => d.t === 'rx' && d.e === '🔥')))
+      await h.page.evaluate(() => window.__lkSay('p3', { t: 'rx', e: '😂' }))
+      await h.page.waitForFunction(() => [...document.querySelectorAll('.hu-reaction')].some((r) => r.textContent.includes('Noor')))
+      check("huddle: someone else's reaction shows with their name", true)
+      await h.page.evaluate(() => window.__lkSay('p3', { t: 'rx', e: '<script>' }))
+      check('huddle: a reaction outside the set is ignored', !(await h.page.evaluate(() => document.body.innerHTML.includes('&lt;script&gt;'))))
+      await h.page.keyboard.press('Escape')
 
       // AI helper: the bottom sheet, ask, transcript, notes, a failure.
       await h.page.click('button.hu-ai-btn[aria-expanded]')

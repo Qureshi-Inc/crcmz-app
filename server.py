@@ -6482,11 +6482,16 @@ async def huddle_transcribe(request: Request):
             return JSONResponse({"error": "No audio file"}, status_code=400)
         audio_data = await audio_file.read()
         content_type = getattr(audio_file, "content_type", None) or "audio/webm"
+        # Keep the real type: the website sends webm/ogg/m4a, the phone apps send wav.
+        fname = getattr(audio_file, "filename", "") or ""
+        ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+        if ext not in ("webm", "ogg", "m4a", "mp4", "wav", "mp3"):
+            ext = "webm"
         async with _hx.AsyncClient(timeout=30.0) as c:
             r = await c.post(
                 endpoint,
                 headers=headers,
-                files={"file": ("audio.webm", audio_data, content_type)},
+                files={"file": (f"audio.{ext}", audio_data, content_type)},
                 data={"model": WHISPER_MODEL, "response_format": "json"},
             )
         if not r.is_success:

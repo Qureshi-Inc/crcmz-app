@@ -1139,21 +1139,25 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 .disc-chart .card-head { align-items: flex-start; gap: var(--space-3); }
 .disc-chart .card-head .meta { margin: var(--space-1) 0 0; }
 .disc-count { flex: none; white-space: nowrap; }
-/* New finds: a compact list, 2 across and 3 rows in view (6 songs), scrolling down to 20.
-   A tiny cover (tap: preview) with the song to its right and a download icon at the end. */
+/* New finds: a compact list in 3 rows that you swipe sideways, a column at a time:
+   2 columns in view (6 songs) and the next peeking in, through all 20. Sideways so it
+   never fights the page's own scrolling (a box scrolling up and down inside a page that
+   does too is what made the phone apps jumpy). */
 .find-grid {
-  --find-row: 60px; --find-gap: var(--space-2);
-  list-style: none; margin: var(--space-3) 0 0; padding: 2px var(--space-1) 2px 2px;
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: var(--find-row);
-  gap: var(--find-gap) var(--space-3);
-  max-height: calc(var(--find-row) * 3 + var(--find-gap) * 2 + 4px); overflow-y: auto; overscroll-behavior: contain;
-  scroll-snap-type: y proximity; scrollbar-width: thin;
+  --find-row: 56px; --find-gap: var(--space-2); --find-col-gap: var(--space-2);
+  list-style: none; margin: var(--space-3) calc(-1 * var(--gutter)) 0; padding: 2px var(--gutter);
+  display: grid; grid-auto-flow: column; grid-template-rows: repeat(3, var(--find-row));
+  grid-auto-columns: calc((100% - var(--find-col-gap)) / 2 - 10px);
+  gap: var(--find-gap) var(--find-col-gap);
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory; scroll-padding-inline: var(--gutter); scrollbar-width: none; touch-action: pan-x pan-y;
 }
-@media (min-width: 900px) { .find-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.find-grid::-webkit-scrollbar { display: none; }
+@media (min-width: 900px) { .find-grid { grid-auto-columns: calc((100% - 2 * var(--find-col-gap)) / 3 - 10px); } }
 .find-grid:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-md); }
-.find-tile { scroll-snap-align: start; display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.find-tile { scroll-snap-align: start; display: flex; align-items: center; gap: 6px; min-width: 0; }
 .find-art {
-  position: relative; flex: none; display: grid; place-items: center; width: 48px; height: 48px; padding: 0;
+  position: relative; flex: none; display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
   border: 1px solid var(--border-control); border-radius: var(--radius-sm, 8px); overflow: hidden;
   background: rgba(255, 255, 255, .06); color: var(--text-dim); cursor: pointer;
 }
@@ -1170,7 +1174,7 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 .find-tile .find-title { font-weight: 700; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .find-tile .find-sub { font-size: var(--text-xs); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .find-for { font-size: var(--text-xs); font-weight: 600; color: var(--accent-text, var(--text-dim)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.find-mark { flex: none; width: 30px; height: 30px; margin: 0 1px 0 7px; display: grid; place-items: center; border-radius: 50%; border: 1.5px solid currentColor; }
+.find-mark { flex: none; width: 28px; height: 28px; margin: 0 0 0 2px; display: grid; place-items: center; border-radius: 50%; border: 1.5px solid currentColor; }
 .find-mark .nav-icon, .find-mark svg { width: 15px; height: 15px; }
 .find-mark[data-tone="live"] { color: var(--interactive-text); }
 .find-mark[data-tone="live"] svg { animation: find-spin 1.2s linear infinite; }
@@ -1180,10 +1184,10 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 @media (prefers-reduced-motion: reduce) { .find-mark[data-tone="live"] svg { animation: none; } }
 /* A 44px tap target, drawn as a small round icon. */
 .find-get {
-  flex: none; width: 44px; height: 44px; margin-right: -6px; display: grid; place-items: center;
+  flex: none; width: 44px; height: 44px; margin: 0 -8px 0 -6px; display: grid; place-items: center;
   border: 0; padding: 0; background: transparent; cursor: pointer; color: var(--c-btn-primary-text);
 }
-.find-get .nav-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--c-btn-primary-bg); }
+.find-get .nav-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--c-btn-primary-bg); }
 .find-get .nav-icon svg { width: 15px; height: 15px; }
 .find-get:disabled { opacity: .6; }
 .find-get:focus-visible { outline: none; }
@@ -2770,3 +2774,25 @@ html[data-native-shell] .tabbar { display: none; }
 .getapp-card ol { margin: 0; padding-left: var(--space-5); list-style: decimal; display: grid; gap: var(--space-2); }
 .getapp-card .meta { margin: 0; }
 .getapp-card[data-mine="true"] { border-color: var(--interactive); }
+
+/* Huddle: hands, reactions, and the native call's page (phone apps). */
+.hu-tile-hand { position: absolute; top: 6px; left: 6px; z-index: 2; font-size: 20px; line-height: 1; padding: 4px 6px; border-radius: var(--radius-pill); background: rgba(5, 3, 15, .7); }
+.hu-tile[data-hand="true"] { box-shadow: 0 0 0 2px var(--gold-text); }
+.hu-hand-chip { padding: 2px var(--space-2); border-radius: var(--radius-pill); border: 1px solid var(--gold-text); color: var(--gold-text); font-size: var(--text-xs); font-weight: 700; }
+.hu-ctrl-emoji { font-size: 20px; line-height: 22px; }
+.hu-react { position: relative; display: inline-flex; }
+.hu-react-row { position: absolute; bottom: calc(100% + var(--space-2)); left: 50%; transform: translateX(-50%); z-index: 20; display: flex; gap: 2px; padding: var(--space-1); border-radius: var(--radius-pill); }
+.hu-react-btn { width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; font-size: 24px; cursor: pointer; }
+.hu-react-btn:hover, .hu-react-btn:focus-visible { background: rgba(255, 255, 255, .1); }
+.hu-reactions { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 5; }
+.hu-reaction { position: absolute; bottom: 8%; left: var(--hu-rx-x); display: grid; justify-items: center; animation: hu-rx-up 3.2s ease-out forwards; }
+.hu-reaction-e { font-size: 34px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.5)); }
+.hu-reaction-name { font-size: var(--text-xs); font-weight: 700; padding: 0 6px; border-radius: var(--radius-pill); background: rgba(5, 3, 15, .7); }
+@keyframes hu-rx-up { 0% { transform: translateY(0) scale(.6); opacity: 0; } 12% { transform: translateY(-10px) scale(1); opacity: 1; } 80% { opacity: 1; } 100% { transform: translateY(-180px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .hu-reaction { animation: none; } }
+.hu-native-wrap { display: grid; gap: var(--space-4); }
+.hu-native { position: relative; overflow: visible; }
+.hu-native-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.hu-native-status { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.hu-native .hu-reactions { overflow: visible; }
+.hu-native-ai { min-height: 320px; }

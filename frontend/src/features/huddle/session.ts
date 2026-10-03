@@ -14,7 +14,7 @@ import { useSyncExternalStore } from 'react'
 import { toast } from '../../components/toast'
 import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError, request } from '../../lib/http'
-import { nativeCalls, onNativeEnded, toNative } from '../../lib/nativeCall'
+import { nativeCalls, onNativeData, onNativeEnded, toNative } from '../../lib/nativeCall'
 import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
 import { markSignedOut } from '../../lib/session'
@@ -72,7 +72,12 @@ export type Device = { id: string; label: string }
 export type Tile = {
   key: string; pid: string; name: string; local: boolean; screen: boolean
   speaking: boolean; micOn: boolean; video: boolean
+  /** Their hand is up. */
+  hand: boolean
 }
+/** An emoji someone just sent; it floats up for a few seconds. */
+export type Reaction = { id: number; name: string; e: string }
+export const REACTIONS = ['👍', '😂', '🔥', '👏', '❤️', '😮'] as const
 export type AiMsg = { role: 'user' | 'assistant' | 'note' | 'error'; text: string; retry?: AiRequest }
 type AiRequest = { kind: 'ask'; text: string } | { kind: 'notes' }
 export type Line = { name: string; text: string; ts: number }
@@ -113,12 +118,18 @@ export type HuddleState = {
   lines: Line[]
   /** In the iOS app the call runs natively: the room it's in, '' when none. */
   nativeRoom: string
+  /** Your hand is up. */
+  hand: boolean
+  /** Everyone else with a hand up, by name (oldest first). */
+  hands: string[]
+  reactions: Reaction[]
 }
 
 let state: HuddleState = {
   phase: 'pre', room: 'crcmz', error: '', errorText: '', preview: 'off', mics: [], cams: [], micId: '', camId: '',
   mic: false, cam: false, share: false, blur: false, note: '', tiles: [], tracks: 0, layout: 'spotlight', pinned: '', speaker: '',
   audioBlocked: false, aiOpen: false, aiBusy: false, aiLog: [], aiSignedOut: false, transcribing: false, recorders: [], lines: [], nativeRoom: '',
+  hand: false, hands: [], reactions: [],
 }
 const listeners = new Set<() => void>()
 function set(patch: Partial<HuddleState>) {
@@ -254,7 +265,13 @@ async function joinNative(wanted: string, camera: boolean) {
   }
 }
 export const showNativeCall = () => toNative({ type: 'show', kind: 'huddle' })
-onNativeEnded((kind) => { if (kind === 'huddle') { set({ nativeRoom: '' }); if (previewWanted) void startPreview() } })
+onNativeEnded((kind) => {
+  if (kind !== 'huddle') return
+  remoteRecorders.clear()
+  remoteHands.clear()
+  set({ nativeRoom: '', transcribing: false, recorders: [], hand: false, hands: [], reactions: [] })
+  if (previewWanted) void startPreview()
+})
 
 export async function leave() {
   const r = room
@@ -277,7 +294,9 @@ function teardown() {
   set({
     tiles: [], mic: false, cam: false, share: false, blur: false, note: '', pinned: '', speaker: '', audioBlocked: false,
     aiOpen: false, aiBusy: false, aiLog: [], aiSignedOut: false, transcribing: false, recorders: [], lines: [],
+    hand: false, hands: [], reactions: [],
   })
+  remoteHands.clear()
 }
 
 function wire(r: LkRoom, ns: LkNs) {
@@ -294,9 +313,13 @@ function wire(r: LkRoom, ns: LkNs) {
     sync()
   }) as never)
   for (const ev of [E.ParticipantConnected, E.LocalTrackPublished, E.LocalTrackUnpublished, E.TrackMuted, E.TrackUnmuted, E.TrackPublished, E.TrackUnpublished]) on(ev, () => sync())
-  on(E.ParticipantConnected, () => { if (state.transcribing) void sendData({ t: 'rec', on: true }) })
+  on(E.ParticipantConnected, () => {
+    if (state.transcribing) void sendData({ t: 'rec', on: true })
+    if (state.hand) void sendData({ t: 'hand', up: true })
+  })
   on(E.ParticipantDisconnected, ((p: LkParticipant) => {
     remoteRecorders.delete(p.identity)
+    remoteHands.delete(p.identity)
     if (state.pinned === p.identity) set({ pinned: '' })
     sync()
   }) as never)
@@ -307,16 +330,10 @@ function wire(r: LkRoom, ns: LkNs) {
   }) as never)
   on(E.DataReceived, ((payload: Uint8Array, p?: LkParticipant, _kind?: unknown, topic?: string) => {
     if (topic && topic !== TOPIC) return
-    let m: { t?: string; on?: boolean; text?: string }
+    let m: Record<string, unknown>
     try { m = JSON.parse(new TextDecoder().decode(payload)) } catch { return }
     if (!p) return
-    if (m.t === 'rec') {
-      if (m.on) remoteRecorders.set(p.identity, nameOf(p))
-      else remoteRecorders.delete(p.identity)
-      sync()
-    } else if (m.t === 'line' && m.text) {
-      addLine(nameOf(p), m.text.slice(0, 2000))
-    }
+    onData(m, nameOf(p), p.identity)
   }) as never)
   on(E.AudioPlaybackStatusChanged, () => set({ audioBlocked: r.canPlaybackAudio === false }))
   on(E.Reconnecting, () => { if (room === r) set({ phase: 'reconnecting' }) })
@@ -363,7 +380,8 @@ function sync() {
   for (const [p, local] of people) {
     const mic = p.getTrackPublication(SRC.mic)
     const cam = p.getTrackPublication(SRC.cam)
-    const base = { pid: p.identity, name: nameOf(p), local, speaking: p.isSpeaking, micOn: !!mic && !mic.isMuted }
+    const base = { pid: p.identity, name: nameOf(p), local, speaking: p.isSpeaking, micOn: !!mic && !mic.isMuted,
+      hand: local ? state.hand : remoteHands.has(p.identity) }
     tiles.push({ ...base, key: p.identity, screen: false, video: !!cam?.track && !cam.isMuted })
     const scr = p.getTrackPublication(SRC.screen)
     if (scr?.track) tiles.push({ ...base, key: p.identity + ':screen', screen: true, video: true, speaking: false })
@@ -371,7 +389,7 @@ function sync() {
   const recorders = [...remoteRecorders.values()]
   if (state.transcribing) recorders.unshift(nameOf(lp))
   set({
-    tiles, tracks: state.tracks + 1, recorders,
+    tiles, tracks: state.tracks + 1, recorders, hands: [...remoteHands.values()],
     mic: lp.isMicrophoneEnabled, cam: lp.isCameraEnabled, share: lp.isScreenShareEnabled,
   })
 }
@@ -559,10 +577,79 @@ function addLine(name: string, text: string) {
 }
 
 async function sendData(m: Record<string, unknown>) {
+  // In the app the call is native: it publishes for us.
+  if (state.nativeRoom) { toNative({ type: 'data', kind: 'huddle', payload: m }); return }
   try { await room?.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(m)), { reliable: true, topic: TOPIC }) } catch { /* */ }
 }
 
+// ── Hands and reactions (and everything else on the data channel) ───────────
+const remoteHands = new Map<string, string>()   // identity -> name
+let rxSeq = 0
+let rxSent: number[] = []
+
+/** One message from the room's data channel (or relayed by the app). */
+function onData(m: Record<string, unknown>, name: string, id: string) {
+  if (m.t === 'rec') {
+    if (m.on) remoteRecorders.set(id, name)
+    else remoteRecorders.delete(id)
+    if (state.nativeRoom) set({ recorders: [...remoteRecorders.values(), ...(state.transcribing ? ['You'] : [])] })
+    else sync()
+  } else if (m.t === 'line' && typeof m.text === 'string' && m.text) {
+    addLine(name, m.text.slice(0, 2000))
+  } else if (m.t === 'hand') {
+    if (m.up) remoteHands.set(id, name)
+    else remoteHands.delete(id)
+    if (state.nativeRoom) set({ hands: [...remoteHands.values()] })
+    else sync()
+    if (m.up) toast(`✋ ${name} raised a hand`, 'info')
+  } else if (m.t === 'rx' && typeof m.e === 'string' && (REACTIONS as readonly string[]).includes(m.e)) {
+    showReaction(name, m.e)
+  }
+}
+
+function showReaction(name: string, e: string) {
+  const id = ++rxSeq
+  set({ reactions: [...state.reactions.slice(-11), { id, name, e }] })
+  window.setTimeout(() => set({ reactions: state.reactions.filter((r) => r.id !== id) }), 3200)
+}
+
+export function toggleHand() {
+  const up = !state.hand
+  set({ hand: up })
+  void sendData({ t: 'hand', up })
+  if (!state.nativeRoom) sync()
+}
+
+export function react(e: string) {
+  if (!(REACTIONS as readonly string[]).includes(e)) return
+  const now = Date.now()
+  rxSent = rxSent.filter((t) => now - t < 3000)
+  if (rxSent.length >= 6) return   // a burst guard: 6 every 3 seconds
+  rxSent.push(now)
+  showReaction('You', e)
+  void sendData({ t: 'rx', e })
+}
+
+// The app relays the native call's data channel, and its own transcript.
+onNativeData((kind, m, from, fromId) => {
+  if (kind !== 'huddle' || !state.nativeRoom) return
+  if (m.t === 'transcribing') {
+    set({ transcribing: !!m.on, recorders: [...remoteRecorders.values(), ...(m.on ? ['You'] : [])] })
+    if (typeof m.note === 'string' && m.note) set({ aiLog: [...state.aiLog, { role: 'note', text: m.note }] })
+    return
+  }
+  if (m.t === 'line' && fromId === 'me') { addLine(from || 'You', String(m.text || '').slice(0, 2000)); return }
+  if (m.t === 'hand_self') { set({ hand: !!m.up }); return }   // the call screen's own hand button
+  onData(m, from, fromId)
+})
+
 export function toggleTranscript() {
+  if (state.nativeRoom) {
+    // The app records its own mic (the page has none in a native call).
+    set({ aiOpen: true })
+    toNative({ type: 'transcript', kind: 'huddle', on: !state.transcribing })
+    return
+  }
   if (state.transcribing) { stopTranscript(true); return }
   const lp = room?.localParticipant
   const mst = lp?.getTrackPublication(SRC.mic)?.track?.mediaStreamTrack

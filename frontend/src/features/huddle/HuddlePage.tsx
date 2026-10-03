@@ -15,7 +15,7 @@ import { initials, tint } from '../../lib/watch'
 import {
   askAi, canPopOut, canShare, join, leave, popOut, showNativeCall, meetingNotes, pin, previewMedia, retryAi, setAiOpen, setCamId, setLayout, setMicId, setRoomName,
   spotlightTile, startAudio, startPreview, stopPreview, tileTrack, toggleBlur, toggleCam, toggleMic, toggleShare, toggleTranscript,
-  useHuddle, type HuddleState, type Tile,
+  react, toggleHand, REACTIONS, useHuddle, type HuddleState, type Tile,
 } from './session'
 import { HelpLink } from '../../components/HelpLink'
 
@@ -46,14 +46,78 @@ export function HuddlePage() {
   )
 }
 
-/** In the iOS app the call is native and full screen; this is what's behind it. */
+/** In the phone apps the call is native (full screen, picture in picture); this is what's
+ *  behind it: back to the call, the AI helper (it reads the transcript the app records),
+ *  your hand and reactions. */
 function NativeLive({ s }: { s: HuddleState }) {
   return (
-    <section className="glass hu-native" aria-live="polite">
-      <p className="empty-title">You're in the Huddle · {s.nativeRoom}</p>
-      <p className="meta">The call is open full screen. It keeps going if you leave the app, in a floating window.</p>
-      <button type="button" className="btn btn-primary" onClick={showNativeCall}><Icon name="huddle" />Return to the call</button>
-    </section>
+    <div className="hu-native-wrap">
+      <section className="glass hu-native" aria-live="polite">
+        <p className="empty-title">You're in the Huddle · {s.nativeRoom}</p>
+        <p className="meta">The call is open full screen. It keeps going if you leave the app, in a floating window.</p>
+        <div className="hu-native-acts">
+          <button type="button" className="btn btn-primary" onClick={showNativeCall}><Icon name="huddle" />Return to the call</button>
+          <HandButton s={s} />
+          <ReactButton />
+        </div>
+        {(s.hands.length > 0 || s.recorders.length > 0) && (
+          <p className="meta hu-native-status" role="status">
+            {s.hands.length > 0 && <span>✋ {s.hands.join(', ')}</span>}
+            {s.recorders.length > 0 && <span className="hu-rec-chip"><span className="hu-rec-dot" aria-hidden="true" />Transcript on</span>}
+          </p>
+        )}
+        <Reactions s={s} />
+      </section>
+      <section className="glass hu-ai-side hu-native-ai" aria-labelledby="hu-native-ai-h">
+        <AiPanel s={s} titleId="hu-native-ai-h" inline />
+      </section>
+    </div>
+  )
+}
+
+function HandButton({ s, ctrl = false }: { s: HuddleState; ctrl?: boolean }) {
+  return ctrl ? (
+    <button type="button" className="hu-ctrl" data-active={s.hand} aria-pressed={s.hand} aria-label={s.hand ? 'Lower your hand' : 'Raise your hand'} onClick={toggleHand}>
+      <span className="hu-ctrl-emoji" aria-hidden="true">✋</span><span className="hu-ctrl-label" aria-hidden="true">{s.hand ? 'Lower' : 'Hand'}</span>
+    </button>
+  ) : (
+    <button type="button" className="btn btn-secondary" aria-pressed={s.hand} onClick={toggleHand}>
+      <span aria-hidden="true">✋</span>{s.hand ? 'Lower hand' : 'Raise hand'}
+    </button>
+  )
+}
+
+/** A row of quick reactions everyone in the call sees float up. */
+function ReactButton({ ctrl = false }: { ctrl?: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span className="hu-react">
+      <button type="button" className={ctrl ? 'hu-ctrl' : 'btn btn-secondary'} aria-expanded={open} aria-label="Reactions" onClick={() => setOpen(!open)}>
+        <Icon name="smile" />{ctrl ? <span className="hu-ctrl-label" aria-hidden="true">React</span> : 'React'}
+      </button>
+      {open && (
+        <span className="glass hu-react-row" role="group" aria-label="Send a reaction">
+          {REACTIONS.map((e) => (
+            <button key={e} type="button" className="hu-react-btn" aria-label={`Send ${e}`} onClick={() => react(e)}>{e}</button>
+          ))}
+        </span>
+      )}
+    </span>
+  )
+}
+
+function Reactions({ s }: { s: HuddleState }) {
+  if (!s.reactions.length) return null
+  return (
+    <div className="hu-reactions" aria-live="polite">
+      {s.reactions.map((r, i) => (
+        <span key={r.id} className="hu-reaction" style={{ ['--hu-rx-x' as string]: `${12 + ((r.id * 37) % 70)}%`, ['--hu-rx-i' as string]: i }}>
+          <span className="hu-reaction-e" aria-hidden="true">{r.e}</span>
+          <span className="hu-reaction-name">{r.name}</span>
+          <span className="sr-only">{r.name} reacted {r.e}</span>
+        </span>
+      ))}
+    </div>
   )
 }
 
@@ -167,6 +231,9 @@ function CallView({ s }: { s: HuddleState }) {
         <div className="hu-topbar">
           <span className="hu-room"><Icon name="huddle" />{s.room}</span>
           <span className="hu-count" role="status">{people === 1 ? 'Just you' : `${people} in call`}</span>
+          {s.hands.length > 0 && (
+            <span className="hu-hand-chip" role="status" title={`Hands up: ${s.hands.join(', ')}`}>✋ {s.hands.length}</span>
+          )}
           {s.recorders.length > 0 && (
             <span className="hu-rec-chip" role="status" title={`Recording a transcript: ${s.recorders.join(', ')}`}>
               <span className="hu-rec-dot" aria-hidden="true" />Transcript on
@@ -205,6 +272,7 @@ function CallView({ s }: { s: HuddleState }) {
         )}
         <div className="hu-stage-wrap" data-stale={stale}>
           {s.layout === 'grid' ? <Grid s={s} /> : <Spotlight s={s} />}
+          <Reactions s={s} />
           {stale && (
             <div className="hu-stale" role="status">
               <span className="spinner" aria-hidden="true" />Reconnecting…
@@ -274,7 +342,8 @@ function TileView({ t, big = false }: { t: Tile; big?: boolean }) {
     return () => { track.detach(el) }
   }, [track])
   return (
-    <span className="hu-tile" data-speaking={t.speaking} data-screen={t.screen} data-big={big}>
+    <span className="hu-tile" data-speaking={t.speaking} data-screen={t.screen} data-big={big} data-hand={t.hand}>
+      {t.hand && <span className="hu-tile-hand" aria-label={`${t.name} has a hand up`}>✋</span>}
       {track
         ? <video ref={ref} className="hu-tile-video" autoPlay muted playsInline data-mirror={t.local && !t.screen} aria-hidden="true" />
         : <span className="hu-tile-face" style={{ background: tint(t.name) }} aria-hidden="true">{initials(t.name)}</span>}
@@ -304,6 +373,8 @@ function Controls({ s, disabled }: { s: HuddleState; disabled: boolean }) {
       <button type="button" className="hu-ctrl" data-active={s.blur} aria-pressed={s.blur} aria-label="Blur background" disabled={disabled || !s.cam} onClick={() => void toggleBlur()}>
         <Icon name="blur" /><span className="hu-ctrl-label" aria-hidden="true">Blur</span>
       </button>
+      <HandButton s={s} ctrl />
+      <ReactButton ctrl />
       <button type="button" className="hu-ctrl hu-ctrl-leave" aria-label="Leave the call" onClick={() => void leave()}>
         <Icon name="leave" /><span className="hu-ctrl-label" aria-hidden="true">Leave</span>
       </button>
@@ -327,7 +398,7 @@ function AiSheet({ s }: { s: HuddleState }) {
   )
 }
 
-function AiPanel({ s, titleId, sheet = false }: { s: HuddleState; titleId: string; sheet?: boolean }) {
+function AiPanel({ s, titleId, sheet = false, inline = false }: { s: HuddleState; titleId: string; sheet?: boolean; inline?: boolean }) {
   const [q, setQ] = useState('')
   const log = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -344,7 +415,7 @@ function AiPanel({ s, titleId, sheet = false }: { s: HuddleState; titleId: strin
       <div className="sheet-title-row">
         {/* Radix names the sheet from its own Title id, so only the desktop h2 takes ours. */}
         <Title className={sheet ? 'sheet-title' : 'section-h2'} {...(sheet ? {} : { id: titleId })}>AI helper</Title>
-        <button type="button" className="icon-btn" aria-label="Close the AI helper" onClick={() => setAiOpen(false)}><Icon name="close" /></button>
+        {!inline && <button type="button" className="icon-btn" aria-label="Close the AI helper" onClick={() => setAiOpen(false)}><Icon name="close" /></button>}
       </div>
       {s.aiSignedOut && (
         <div className="banner" role="alert">
