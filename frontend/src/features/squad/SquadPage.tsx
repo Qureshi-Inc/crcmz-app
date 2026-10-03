@@ -1,8 +1,9 @@
 // PS-1 · Squad: who's on, the hype meter and trophy highlights, the together card,
 // ranks, and the Chat Board (sheet on mobile, panel on desktop).
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import * as Tabs from '@radix-ui/react-tabs'
 import type { UseQueryResult } from '@tanstack/react-query'
-import { displayName, useHype, useSquad, HYPE_MS, SQUAD_MS, type Hype, type HypeLevel, type Member, type SquadResponse, type Platform } from '../../lib/api'
+import { displayName, useHype, useSquad, HYPE_MS, SQUAD_MS, type Hype, type HypeLevel, type Member, type SquadResponse, type Platform, type RankMode } from '../../lib/api'
 import { ErrorStrip, SkeletonRows, SlowLoad, StaleMarker, useStale } from '../../components/states'
 import { SEND_LABEL, slowLabel } from '../../lib/send'
 import { usePsnControl } from '../chat/usePsnControl'
@@ -31,6 +32,7 @@ export function SquadPage() {
           <div className="lists-inner">
             <PresenceCard q={squad} stale={squadStale} />
             <RanksCard q={squad} />
+            <SquadNumbersCard q={squad} />
           </div>
         </div>
       </div>
@@ -242,15 +244,17 @@ function PlatformBadge({ p }: { p: Platform }) {
   )
 }
 
-function steamLine(m: Member): string | null {
-  const st = m.steam
+/** One line of cross-platform numbers under the status. */
+function statsLine(m: Member): string | null {
+  const st = m.stats
   if (!st) return null
   const bits: string[] = []
   if (st.hours_2weeks) bits.push(`${st.hours_2weeks} h last 2 wks`)
-  if (st.hours_total != null) bits.push(`${st.hours_total.toLocaleString()} h on Steam`)
-  if (st.game_count) bits.push(`${st.game_count} games`)
-  if (st.top_game?.name) bits.push(`most: ${st.top_game.name}`)
-  return bits.length ? bits.join(' · ') : st.private ? 'Steam profile is private' : null
+  if (st.hours_total) bits.push(`${st.hours_total.toLocaleString()} h played`)
+  if (st.games) bits.push(`${st.games} games`)
+  if (st.steam_top_pct) bits.push(`top ${st.steam_top_pct}% on Steam`)
+  if (st.steam_games_private) bits.push('Steam games private')
+  return bits.length ? bits.join(' · ') : null
 }
 
 // ── SQ-04 Who's on ───────────────────────────────────────────────────────────
@@ -292,7 +296,7 @@ function PresenceCard({ q, stale }: { q: UseQueryResult<SquadResponse>; stale: {
             const s = statusOf(m)
             const icon = m.game_icon || m.recent_game_icon
             const mm = m.mm_username
-            const line = steamLine(m)
+            const line = statsLine(m)
             return (
               <li key={`${m.online_id ?? m.name ?? ''}-${i}`} className="presence-row" data-offline={s.state === 'offline' || undefined}>
                 <span className="av-wrap">
@@ -309,7 +313,9 @@ function PresenceCard({ q, stale }: { q: UseQueryResult<SquadResponse>; stale: {
                   {line && <div className="meta steam-line">{line}</div>}
                 </div>
                 {icon && <img className="game-icon" src={icon} alt="" referrerPolicy="no-referrer" loading="lazy" />}
-                {m.trophy_level != null ? (
+                {m.primary === 'steam' && m.steam?.level != null ? (
+                  <span className="row-side"><span className="row-platform">Steam · </span>Lv <b>{m.steam.level}</b></span>
+                ) : m.trophy_level != null ? (
                   <span className="row-side">
                     <span className="row-platform">{m.platform ? `${m.platform} · ` : ''}</span>Lv <b>{m.trophy_level}</b>
                   </span>
@@ -325,39 +331,107 @@ function PresenceCard({ q, stale }: { q: UseQueryResult<SquadResponse>; stale: {
   )
 }
 
-// ── SQ-05 Ranks ──────────────────────────────────────────────────────────────
+// ── SQ-05 Ranks: one board per mode, computed server-side (squad_view.ranks) ─
+const RANK_TABS: { id: RankMode; label: string }[] = [
+  { id: 'overall', label: 'Overall' }, { id: 'hours', label: 'Hours' }, { id: 'recent', label: '2 weeks' },
+  { id: 'games', label: 'Games' }, { id: 'trophies', label: 'Trophies' }, { id: 'steam', label: 'Steam' },
+]
+const RANK_HELP: Record<RankMode, string> = {
+  overall: "Hours, last 2 weeks and games, each scaled to the squad's best, averaged. PSN and Steam count the same.",
+  hours: 'Lifetime hours: PSN playtime plus Steam playtime.',
+  recent: "Hours in the last 2 weeks: Steam's count plus the PSN sessions we saw.",
+  games: 'PSN games played plus Steam games owned.',
+  trophies: 'PSN trophy level.',
+  steam: 'Steam level, and where that puts you among every Steam account.',
+}
+const RANK_KEY = 'crcmz_app_rank_mode'
+
+function fmtRank(v: number, unit: string): string {
+  if (unit === 'h') return `${v.toLocaleString()} h`
+  if (unit === 'level') return `Lv ${v}`
+  if (unit === 'games') return `${v}`
+  return `${v}`
+}
+
 function RanksCard({ q }: { q: UseQueryResult<SquadResponse> }) {
-  const ranked = useMemo(
-    () => (q.data?.squad ?? [])
-      .filter((m) => typeof m.trophy_level === 'number')
-      .sort((a, b) => (b.trophy_level! - a.trophy_level!) || ((b.platinum || 0) - (a.platinum || 0))),
-    [q.data],
-  )
+  const [mode, setMode] = useState<RankMode>(() => {
+    try { const v = localStorage.getItem(RANK_KEY); if (RANK_TABS.some((t) => t.id === v)) return v as RankMode } catch { /* private mode */ }
+    return 'overall'
+  })
+  const ranks = q.data?.ranks
   if (!q.data) return null // loading and error are carried by Who's on
-  const max = ranked[0]?.trophy_level || 1
+  const board = ranks?.[mode]
+  const entries = board?.entries ?? []
+  const max = entries[0]?.value || 1
+  function pick(m: string) {
+    setMode(m as RankMode)
+    try { localStorage.setItem(RANK_KEY, m) } catch { /* private mode */ }
+  }
   return (
     <section className="glass" aria-labelledby="ranks-h">
       <div className="card-head"><h2 id="ranks-h" className="section-h2">Ranks</h2></div>
-      {ranked.length === 0 ? (
-        <div className="empty"><p className="dim" style={{ margin: 0 }}>No trophy data yet.</p></div>
-      ) : (
-        <ol className="rows">
-          {ranked.map((m, i) => (
-            <li key={`${m.online_id ?? ''}-${i}`} className="rank-row">
-              <span className="rank-pos" data-top={i < 3 || undefined}>#{i + 1}</span>
-              {m.avatar ? <img className="av" src={m.avatar} alt="" referrerPolicy="no-referrer" loading="lazy" style={{ width: 36, height: 36 }} /> : <span className="av" style={{ width: 36, height: 36 }} />}
-              <div style={{ minWidth: 0 }}>
-                <div className="who-name"><span className="n">{displayName(m)}</span></div>
-                <div className="rank-line">
-                  Lv {m.trophy_level} · {m.platinum || 0} plat · {m.gold || 0} gold · {m.silver || 0} silver · {m.bronze || 0} bronze
-                </div>
-                <div className="rank-bar" aria-hidden="true"><i style={{ width: `${Math.round(((m.trophy_level || 0) / max) * 100)}%` }} /></div>
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
+      <Tabs.Root value={mode} onValueChange={pick}>
+        <Tabs.List className="tabstrip rank-tabs" aria-label="Rank by">
+          {RANK_TABS.map((t) => <Tabs.Trigger key={t.id} value={t.id} className="tabstrip-tab">{t.label}</Tabs.Trigger>)}
+        </Tabs.List>
+        <p className="meta rank-help">{RANK_HELP[mode]}</p>
+        {RANK_TABS.map((t) => (
+          <Tabs.Content key={t.id} value={t.id}>
+            {t.id !== mode ? null : entries.length === 0 ? (
+              <div className="empty"><p className="dim" style={{ margin: 0 }}>Nobody has numbers for this yet.</p></div>
+            ) : (
+              <ol className="rows">
+                {entries.map((e, i) => (
+                  <li key={`${e.name}-${i}`} className="rank-row">
+                    <span className="rank-pos" data-top={i < 3 || undefined}>#{i + 1}</span>
+                    <span className="av-wrap" style={{ width: 36, height: 36 }}>
+                      {e.avatar ? <img className="av" src={e.avatar} alt="" referrerPolicy="no-referrer" loading="lazy" /> : <span className="av" />}
+                    </span>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="who-name">
+                        <span className="n">{e.name}</span>
+                        <span className="rank-value">{fmtRank(e.value, board!.unit)}</span>
+                      </div>
+                      {e.detail && <div className="rank-line">{e.detail}</div>}
+                      <div className="rank-bar" aria-hidden="true"><i style={{ width: `${Math.round((e.value / max) * 100)}%` }} /></div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </Tabs.Content>
+        ))}
+      </Tabs.Root>
     </section>
   )
 }
 
+// ── Squad numbers: squad-wide facts across both platforms ────────────────────
+function SquadNumbersCard({ q }: { q: UseQueryResult<SquadResponse> }) {
+  const s = q.data?.summary
+  if (!s) return null
+  const tiles: { label: string; value: string; sub?: string; icon?: string | null }[] = []
+  if (s.hours_total) tiles.push({ label: 'Squad hours, all time', value: s.hours_total.toLocaleString() })
+  if (s.hours_2weeks) tiles.push({ label: 'Squad hours, last 2 weeks', value: s.hours_2weeks.toLocaleString() })
+  if (s.most_played) tiles.push({ label: 'Most played', value: s.most_played.name, sub: `${(s.most_played.hours ?? 0).toLocaleString()} h across ${s.most_played.players} ${s.most_played.players === 1 ? 'player' : 'players'}`, icon: s.most_played.icon })
+  if (s.most_shared) tiles.push({ label: 'Most of you play', value: s.most_shared.name, sub: `${s.most_shared.players} of ${s.members} have played it`, icon: s.most_shared.icon })
+  if (s.grinder) tiles.push({ label: 'Grinder of the fortnight', value: s.grinder.name, sub: `${s.grinder.hours} h in 2 weeks` })
+  if (tiles.length === 0) return null
+  return (
+    <section className="glass" aria-labelledby="numbers-h">
+      <div className="card-head"><h2 id="numbers-h" className="section-h2">Squad numbers</h2></div>
+      <ul className="numbers">
+        {tiles.map((t) => (
+          <li key={t.label} className="number-tile">
+            {t.icon && <img className="game-icon" src={t.icon} alt="" referrerPolicy="no-referrer" loading="lazy" />}
+            <div style={{ minWidth: 0 }}>
+              <div className="number-value">{t.value}</div>
+              <div className="stat-label">{t.label}</div>
+              {t.sub && <div className="meta">{t.sub}</div>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}

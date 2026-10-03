@@ -272,8 +272,10 @@ def steam_only_people_get_their_own_rows():
 
 
 def merged_rows_carry_no_ids_or_key():
+    # `_sub` is squad_view's internal join key; squad_view strips it (test_squad_view.py).
     blob = json.dumps(MERGED)
-    assert "SECRET-STEAM-KEY" not in blob and "zitadel_id" not in blob and MAZINO not in blob, blob
+    assert "SECRET-STEAM-KEY" not in blob and MAZINO not in blob, blob
+    assert all("zitadel_id" not in m for m in MERGED) and all("_sub" in m for m in MERGED)
 
 
 def psn_input_not_mutated():
@@ -283,8 +285,49 @@ def psn_input_not_mutated():
 check("Steam presence fills an offline PSN row and badges it Steam", steam_playing_wins_over_psn_offline)
 check("a PSN-only row only gains its platform", psn_rows_untouched_otherwise)
 check("Steam-only people are appended as their own rows", steam_only_people_get_their_own_rows)
-check("merged rows carry no Zitadel id, SteamID or key", merged_rows_carry_no_ids_or_key)
+check("merged rows carry no SteamID or key, only the internal _sub", merged_rows_carry_no_ids_or_key)
 check("the PSN list passed in is not mutated", psn_input_not_mutated)
+
+print("primary platform")
+
+
+def primary_steam_leads_an_idle_row():
+    PEOPLE[0]["primary_platform"] = "steam"
+    SUMMARIES[0].pop("gameextrainfo"); SUMMARIES[0].pop("gameid")
+    steam._cache.clear()
+    try:
+        m = steam.merge_into_squad([{"online_id": "mazino_psn", "online": False, "playing": False,
+                                     "recent_game": "Arc Raiders", "trophy_level": 300}])[0]
+        assert m["primary"] == "steam" and m["platform_source"] == "steam", m
+        assert m["online"] and m["recent_game"] == "Counter-Strike 2", m
+    finally:
+        SUMMARIES[0].update(gameextrainfo="Counter-Strike 2", gameid="730")
+        steam._cache.clear()
+
+
+def a_live_psn_game_beats_primary_steam():
+    PEOPLE[0]["primary_platform"] = "steam"
+    steam._cache.clear()
+    SUMMARIES[0].pop("gameextrainfo"); SUMMARIES[0].pop("gameid")
+    try:
+        m = steam.merge_into_squad([{"online_id": "mazino_psn", "online": True, "playing": True,
+                                     "game": "Arc Raiders"}])[0]
+        assert m["primary"] == "steam" and m["platform_source"] == "psn" and m["game"] == "Arc Raiders", m
+    finally:
+        SUMMARIES[0].update(gameextrainfo="Counter-Strike 2", gameid="730")
+        PEOPLE[0].pop("primary_platform")
+        steam._cache.clear()
+
+
+def set_primary_writes_only_known_platforms():
+    TAG_WRITES.clear()
+    assert steam.set_primary("100", "steam") and TAG_WRITES == [("100", "primary_platform", "steam")]
+    assert not steam.set_primary("100", "xbox") and len(TAG_WRITES) == 1
+
+
+check("primary=steam leads an idle row (badge, last game)", primary_steam_leads_an_idle_row)
+check("a live PSN game still beats primary=steam", a_live_psn_game_beats_primary_steam)
+check("set_primary only writes psn or steam", set_primary_writes_only_known_platforms)
 
 print("identity + tool")
 

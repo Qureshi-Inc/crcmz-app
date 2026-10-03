@@ -126,6 +126,23 @@ def link(sub: str, steam_id: str) -> str:
     return "ok"
 
 
+PRIMARY_TAG = "primary_platform"
+PLATFORMS = ("psn", "steam")
+
+
+def set_primary(sub: str, platform: str) -> bool:
+    """Which platform's stats lead this person's Squad row (the primary_platform tag)."""
+    if platform not in PLATFORMS:
+        return False
+    ok = crcmz_identity.set_tag(sub, PRIMARY_TAG, platform)
+    crcmz_identity.people(refresh=True)
+    return ok
+
+
+def primary_of(person: dict | None) -> str:
+    return "steam" if (person or {}).get("primary_platform") == "steam" else "psn"
+
+
 def unlink(sub: str) -> bool:
     ok = crcmz_identity.clear_tag(sub, TAG)
     crcmz_identity.people(refresh=True)
@@ -178,11 +195,19 @@ def _capsule(appid: Any) -> str | None:
 def stats(steam_id: str) -> dict:
     """Level, library size, total hours and the last two weeks of play."""
     def fetch() -> dict:
-        out: dict[str, Any] = {"level": None, "game_count": None, "hours_total": None,
-                               "top_game": None, "recent": [], "hours_2weeks": None}
+        out: dict[str, Any] = {"level": None, "level_top_pct": None, "game_count": None,
+                               "hours_total": None, "top_game": None, "recent": [], "hours_2weeks": None,
+                               # Internal (squad_view's shared-games count); never copied into a row.
+                               "owned": []}
         try:
             out["level"] = (_get("IPlayerService/GetSteamLevel/v1/", steamid=steam_id)
                             .get("response") or {}).get("player_level")
+            if out["level"] is not None:
+                # Global standing: the share of all Steam accounts at or below this level.
+                pct = (_get("IPlayerService/GetSteamLevelDistribution/v1/", player_level=out["level"])
+                       .get("response") or {}).get("player_level_percentile")
+                if pct is not None:
+                    out["level_top_pct"] = max(0.1, round(100 - float(pct), 1))
         except Exception as e:  # noqa: BLE001
             logger.debug("steam: level for %s: %s", steam_id, e)
         owned = (_get("IPlayerService/GetOwnedGames/v1/", steamid=steam_id, include_appinfo=1,
@@ -192,6 +217,9 @@ def stats(steam_id: str) -> dict:
         if "game_count" in owned:
             out["game_count"] = owned.get("game_count") or 0
             out["hours_total"] = round(sum(g.get("playtime_forever") or 0 for g in games) / 60)
+            out["owned"] = [{"name": g.get("name"), "hours": round((g.get("playtime_forever") or 0) / 60, 1),
+                             "icon": _icon(g.get("appid"), g.get("img_icon_url") or "")}
+                            for g in games if g.get("name")]
             top = max(games, key=lambda g: g.get("playtime_forever") or 0, default=None)
             if top and top.get("playtime_forever"):
                 out["top_game"] = {"name": top.get("name"), "hours": round(top["playtime_forever"] / 60),
@@ -230,6 +258,7 @@ def _member(person: dict, summary: dict | None, st: dict) -> dict:
         "last_online": s.get("lastlogoff"),
         "private": s.get("communityvisibilitystate") not in (None, 3),
         "level": st.get("level"),
+        "level_top_pct": st.get("level_top_pct"),
         "game_count": st.get("game_count"),
         "hours_total": st.get("hours_total"),
         "hours_2weeks": st.get("hours_2weeks"),
@@ -265,7 +294,7 @@ def _game_icon(row: dict) -> str | None:
 
 def _steam_part(row: dict) -> dict:
     keep = ("persona_name", "profile_url", "state", "online", "playing", "game", "private", "level",
-            "game_count", "hours_total", "hours_2weeks", "top_game")
+            "level_top_pct", "game_count", "hours_total", "hours_2weeks", "top_game")
     return {k: row.get(k) for k in keep}
 
 
@@ -277,23 +306,37 @@ def merge_into_squad(psn_members: list[dict]) -> list[dict]:
     playing (or online) the row's presence comes from Steam and the badge says
     Steam. People on Steam only are appended as their own rows. The join is the
     identity graph -- PSN online id -> Zitadel person -> steam_id -- never names.
+
+    ``primary`` is the person's choice in Settings (primary_platform tag): which
+    stats lead the row. A live game always wins the badge -- someone whose
+    primary is Steam but who is in a PS5 game right now shows PSN -- and the
+    choice decides the badge, last game and level whenever nobody's playing.
     """
     rows = squad_status() if configured() else []
     by_sub = {r["zitadel_id"]: r for r in rows}
-    by_psn = crcmz_identity.by_psn_id() if rows else {}
+    by_psn = crcmz_identity.by_psn_id()
     used: set[str] = set()
     out: list[dict] = []
     for m in psn_members:
-        m = {**m, "platform_source": "psn", "platforms": ["psn"]}
+        m = {**m, "platform_source": "psn", "platforms": ["psn"], "primary": "psn"}
         person = by_psn.get((m.get("online_id") or "").casefold())
+        # Internal join key for squad_view; it strips this before anything is served.
+        m["_sub"] = person["zitadel_id"] if person else None
         s = by_sub.get(person["zitadel_id"]) if person else None
         if s:
             used.add(s["zitadel_id"])
-            m["platforms"] = ["psn", "steam"]
-            m["steam"] = _steam_part(s)
+            primary = primary_of(person)
+            m.update(platforms=["psn", "steam"], steam=_steam_part(s), primary=primary)
             if s["playing"] and not m.get("playing"):
                 m.update(online=True, playing=True, game=s["game"], game_icon=_game_icon(s),
                          platform_source="steam")
+            elif m.get("playing"):
+                pass  # in a PSN game right now: PSN leads regardless
+            elif primary == "steam":
+                recent = (s.get("recent") or [None])[0] or s.get("top_game") or {}
+                m.update(online=bool(m.get("online") or s["online"]), platform_source="steam",
+                         recent_game=recent.get("name") or m.get("recent_game"),
+                         recent_game_icon=recent.get("icon") or m.get("recent_game_icon"))
             elif s["online"] and not m.get("online"):
                 m.update(online=True, platform_source="steam")
         out.append(m)
@@ -312,8 +355,10 @@ def merge_into_squad(psn_members: list[dict]) -> list[dict]:
             "recent_game": recent.get("name"),
             "recent_game_icon": recent.get("icon"),
             "linked": True,
+            "_sub": s["zitadel_id"],
             "platform_source": "steam",
             "platforms": ["steam"],
+            "primary": "steam",
             "steam": _steam_part(s),
         })
     return out
