@@ -1784,6 +1784,7 @@ try {
       'GET /api/watch/config': json(200, { authMode: 'zitadel', origin: '', socketPath: '/wp/socket.io', rooms: ['crcmz'], defaultRoom: 'crcmz', ticketTtl: 60, viewer: { id: 'u1', name: 'Goopy', nickname: '', psnOnlineId: 'Goopy', mod: true } }),
       'GET /wp/socket.io/socket.io.js': (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: FAKE_IO }),
       'POST /api/watch/join': json(200, { ticket: 'tkt', expiresIn: 60, room: 'crcmz', viewer: { name: 'Goopy', mod: true } }),
+      'POST /api/ring': (r) => { posts.ring = [...(posts.ring || []), r.request().postDataJSON()]; return json(200, { phones_rang: 1, pushed: 2 })(r) },
       'POST /api/watch/rally': (r) => { posts.rally.push(r.request().postDataJSON()); return json(200, { status: 'sent' })(r) },
       'POST /api/watch/nickname': (r) => { posts.nick.push(r.request().postDataJSON()); return json(200, { nickname: 'G', name: 'G' })(r) },
       'POST /api/watch/history': (r) => { posts.hist.push(1); return json(200, { ok: true })(r) },
@@ -1900,9 +1901,9 @@ try {
     await page.click('.wp-stage button[aria-label="Settings"]')
     await page.click('.wp-set button:has-text("Rally the squad")')
     check('watch: Rally asks before posting', posts.rally.length === 0 && (await page.textContent('.wp-set')).includes('WhatsApp'))
-    await page.click('.wp-set button:has-text("Send rally")')
+    await page.click('.wp-set button:has-text("Rally now")')
     await page.waitForFunction(() => document.querySelector('.wp-set')?.textContent.includes('Rally sent'))
-    check('watch: Rally posts once after confirming', posts.rally.length === 1)
+    check('watch: Rally posts once after confirming, and rings everyone', posts.rally.length === 1 && (posts.ring || []).length === 1 && posts.ring[0].kind === 'watch')
     await page.click('.wp-set button[aria-label="Close settings"]')
     // Movies home: Watch opens on movies; a poster opens its sheet; Add; Watch together.
     await page.click('.wp-head a:has-text("Movies")')
@@ -2003,16 +2004,19 @@ try {
     const liveMics = () => d.page.evaluate(() => window.__gum.filter((t) => t.kind === 'audio' && t.readyState === 'live').length)
     await d.page.click('button:has-text("Join with camera")')
     await d.page.waitForSelector('.wp-orb')
-    check('watch 1440: joining the call shows your camera orb, muted', (await d.page.getAttribute('.wp-orb', 'aria-label')).startsWith('You, mic muted'))
-    check('watch 1440: joining captures video only — no mic is opened', (await d.page.evaluate(() => window.__gum.map((t) => t.kind).join())) === 'video' && (await liveMics()) === 0)
+    // You join talking: camera and one live mic. Mute stops the mic track (so the phone
+    // leaves voice-call audio); Unmute opens it again.
+    await d.page.waitForFunction(() => window.__gum.some((t) => t.kind === 'audio' && t.readyState === 'live'), null, { timeout: 5000 }).catch(() => {})
+    check('watch 1440: joining the call shows your camera orb with the mic on', (await d.page.getAttribute('.wp-orb', 'aria-label')).startsWith('You, mic on'), await d.page.getAttribute('.wp-orb', 'aria-label'))
+    check('watch 1440: joining opens camera and exactly one live mic', (await liveMics()) === 1 && (await d.page.evaluate(() => window.__gum.some((t) => t.kind === 'video'))))
     await d.page.hover('.wp-stage')
-    await d.page.click('.wp-ov-row button[aria-label="Unmute mic"]')
-    await d.page.waitForSelector('.wp-ov-row button[aria-label="Mute mic"]')
-    await d.page.waitForFunction(() => window.__gum.some((t) => t.kind === 'audio' && t.readyState === 'live'))
-    check('watch 1440: Unmute opens exactly one live mic', (await liveMics()) === 1)
     await d.page.click('.wp-ov-row button[aria-label="Mute mic"]')
     await d.page.waitForFunction(() => window.__gum.filter((t) => t.kind === 'audio').every((t) => t.readyState === 'ended'))
     check('watch 1440: Mute stops the mic track, not just disables it', (await liveMics()) === 0)
+    await d.page.hover('.wp-stage')
+    await d.page.click('.wp-ov-row button[aria-label="Unmute mic"]')
+    await d.page.waitForFunction(() => window.__gum.some((t) => t.kind === 'audio' && t.readyState === 'live'))
+    check('watch 1440: Unmute opens exactly one live mic again', (await liveMics()) === 1)
     await d.page.waitForFunction(() => document.querySelector('.wp-face-video')?.readyState >= 2)
     const below = await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().top >= document.querySelector('.wp-stage').getBoundingClientRect().bottom - 1)
     check('watch 1440: orbs sit below the video by default', below)
@@ -2059,11 +2063,26 @@ try {
           g.chrome === 'true' && g.opacity === '1' && clear && g.oTop >= g.stTop && g.oBottom <= g.stBottom && !g.midShown && g.rowPlay, JSON.stringify(g))
         await shot(d.page, `watch-375-${pos}`)
       }
+      // Enlarged on the video: a step up, not a takeover, and still inside the video.
+      await d.page.click('.wp-orbs-over .wp-orb')
+      await d.page.click('[role=menuitem]:has-text("Enlarge tile")')
+      await d.page.waitForTimeout(300)
+      const big = await d.page.evaluate(() => {
+        const f = document.querySelector('.wp-orbs-over .wp-orb[data-big="true"] .wp-face')?.getBoundingClientRect()
+        const st = document.querySelector('.wp-stage').getBoundingClientRect()
+        const list = document.querySelector('.wp-orbs-over .wp-orb-list')
+        return f && { w: f.width, h: f.height, stW: st.width, stH: st.height, inside: f.left >= st.left && f.right <= st.right && f.top >= st.top && f.bottom <= st.bottom,
+          scrolls: list.scrollWidth > list.clientWidth + 1 }
+      })
+      check('watch 375: an enlarged camera on the video is a bit bigger, not huge, and fits', !!big && big.h > 48 && big.h <= 80 && big.w <= big.stW * 0.4 && big.inside && !big.scrolls, JSON.stringify(big))
+      await shot(d.page, 'watch-375-overBottom-big')
+      await d.page.click('.wp-orbs-over .wp-orb')
+      await d.page.click('[role=menuitem]:has-text("Shrink tile")')
       await d.page.setViewportSize(vp)
     }
     await pickPos(d.page, 'over')
     await d.page.hover('.wp-stage')
-    check('watch 1440: in the call the overlay gets a mic button', await d.page.isVisible('.wp-ov-row button[aria-label="Unmute mic"]'))
+    check('watch 1440: in the call the overlay gets a mic button', (await d.page.locator('.wp-ov-row button[aria-label="Unmute mic"], .wp-ov-row button[aria-label="Mute mic"]').count()) > 0)
     await shot(d.page, 'watch-1440-over')
     await pickPos(d.page, 'top')
     check('watch 1440: Above puts the orbs over the top of the video', await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().bottom <= document.querySelector('.wp-stage').getBoundingClientRect().top + 1))
@@ -2233,7 +2252,7 @@ try {
       check('huddle: reconnected clears the overlay', true)
 
       // AI helper: the bottom sheet, ask, transcript, notes, a failure.
-      await h.page.click('.hu-ai-btn')
+      await h.page.click('button.hu-ai-btn[aria-expanded]')
       await h.page.waitForSelector('.hu-ai-sheet')
       check('huddle: the AI opens as a bottom sheet on a phone', await h.page.isVisible('.hu-ai-sheet .hu-ai-log'))
       await h.page.fill('.hu-ai-sheet input', "who's winning")
@@ -2287,12 +2306,12 @@ try {
       await h.page.waitForSelector('.wp-pill[data-tone="live"]')
       await h.page.click('.wp-actions button:has-text("Join with camera")')
       await h.page.waitForSelector('.wp-orb')
-      check('huddle: joining the Watch call (muted) leaves your Huddle mic alone', await h.page.evaluate(() => window.__lkRoom.localParticipant.isMicrophoneEnabled))
+      // Joining Watch opens your mic, so the Huddle mic is muted (one live mic at a time).
+      await h.page.waitForSelector('.toast:has-text("Muted your Huddle mic")')
+      check('huddle: joining the Watch call (mic on) mutes your Huddle mic, and says so', await h.page.evaluate(() => !window.__lkRoom.localParticipant.isMicrophoneEnabled))
       await h.page.click('.tabbar a[href="/app"]')
       await h.page.waitForFunction(() => document.querySelectorAll('.watchbar-bar .miniplayer-row').length === 2)
-      await h.page.click('.watchbar-bar button[aria-label="Watch mic muted. Unmute"]')
-      await h.page.waitForSelector('.toast:has-text("Muted your Huddle mic")')
-      check('huddle: unmuting the Watch mic mutes your Huddle mic, and says so', await h.page.evaluate(() => !window.__lkRoom.localParticipant.isMicrophoneEnabled))
+      check('huddle: the Watch mic shows live in the call bar', await h.page.isVisible('.watchbar-bar button[aria-label="Watch mic live. Mute"]'))
       check('huddle: two calls, two rows in the call bar', (await h.page.getAttribute('.watchbar-bar', 'aria-label')) === 'Calls' && (await h.page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--callbar-rows').trim())) === '2')
       await shot(h.page, 'huddle-375-two-calls')
       await h.page.click('.watchbar-bar button[aria-label="Leave the watch party"]')
@@ -2326,7 +2345,7 @@ try {
       const strip = await hd.page.evaluate(() => { const s = document.querySelector('.hu-strip').getBoundingClientRect(), p = document.querySelector('.hu-spot').getBoundingClientRect(); return { stripLeft: s.left, spotRight: p.right, spotW: p.width } })
       check('huddle 1440: the filmstrip runs down beside the spotlight', strip.stripLeft >= strip.spotRight, JSON.stringify(strip))
       await shot(hd.page, 'huddle-1440')
-      await hd.page.click('.hu-ai-btn')
+      await hd.page.click('button.hu-ai-btn[aria-expanded]')
       await hd.page.waitForSelector('.hu-ai-side')
       const spotW2 = await hd.page.evaluate(() => document.querySelector('.hu-spot').getBoundingClientRect().width)
       check('huddle 1440: the AI side sheet pushes the stage instead of covering it', spotW2 < strip.spotW - 200 && !(await hd.page.isVisible('.scrim')), `${strip.spotW} → ${spotW2}`)

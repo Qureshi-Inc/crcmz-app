@@ -1016,8 +1016,7 @@ export async function joinCall() {
     }
     void enumerate()
     localStream = stream
-    // You join muted, with no mic open at all; Unmute is one tap away.
-    setCall({ on: true, muted: true, camOff: false, micOnly, facing: 'user', note: micOnly ? 'No camera found — tap Unmute to talk.' : '' })
+    setCall({ on: true, muted: true, camOff: false, micOnly, facing: 'user', note: micOnly ? 'No camera found — joined with your mic.' : '' })
     log('cam.on', { micOnly, tracks: stream.getTracks().map((t) => `${t.kind}:${t.readyState}`) })
     // A camera can be revoked mid-call: video ending hangs up.
     stream.getVideoTracks().forEach((t) => t.addEventListener('ended', () => { if (state.call.on) camStop() }))
@@ -1025,6 +1024,10 @@ export async function joinCall() {
     live().forEach((id) => peer(id, true))
     Object.values(peers).forEach(syncTracks)
     bumpRtc()
+    // You join talking: the mic opens straight away (the same path as Unmute, so a live
+    // Huddle mic is muted). A live mic puts the phone in voice-call audio, so the movie
+    // can sound a little thinner on Bluetooth while it's open; Mute gives it back.
+    void toggleMute()
   } finally {
     setCall({ busy: false })
   }

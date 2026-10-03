@@ -1881,7 +1881,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
    a box (--big-w x --big-h), so a landscape camera is wide and a portrait one tall,
    never cropped. The selectors out-rank the small on-video / phone sizes below. */
 .wp-orbs { --big-w: min(320px, 80vw); --big-h: 200px; }
-.wp-orbs-over { --big-w: min(360px, 60cqw); --big-h: min(240px, 30cqw, 45dvh); }
+/* On the video an enlarged tile is only a step up (about twice the small one), so the
+   movie stays the main thing; a full-size view of everyone is the strip's grid. */
+.wp-orbs-over { --big-w: min(200px, 34cqw); --big-h: clamp(72px, 14cqw, 112px); }
 .wp-orbs .wp-orb[data-big="true"] { width: auto; max-width: none; }
 .wp-orbs .wp-orb[data-big="true"] .wp-face {
   width: min(var(--big-w), calc(var(--big-h) * var(--ar, 1))); height: auto; aspect-ratio: var(--ar, 1);
@@ -1907,7 +1909,12 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .wp-orbs-over-side .wp-orb-list { flex-direction: column; align-items: flex-end; overflow-x: hidden; overflow-y: auto; }
 /* Top / bottom: a row along the edge; it steps past the control bars while they show. */
 .wp-orbs-over-top, .wp-orbs-over-bottom { left: var(--space-2); right: var(--space-2); justify-content: center; }
-.wp-orbs-over-top .wp-orb-list, .wp-orbs-over-bottom .wp-orb-list { flex: 0 1 auto; }
+/* Everyone fits without scrolling: past the edge of the video the row wraps, and the
+   next row is centred under (or, along the bottom, over) the first. */
+.wp-orbs-over-top .wp-orb-list, .wp-orbs-over-bottom .wp-orb-list {
+  flex: 0 1 auto; flex-wrap: wrap; justify-content: center; align-items: flex-end; overflow: visible; max-width: 100%;
+}
+.wp-orbs-over-top .wp-orb-list { align-items: flex-start; }
 .wp-orbs-over-top { top: var(--space-1); }
 .wp-orbs-over-bottom { bottom: var(--space-1); }
 .wp-stage[data-chrome="true"] .wp-orbs-over-top { transform: translateY(44px); }
@@ -1919,6 +1926,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 @container wpstage (max-width: 560px) {
   .wp-orbs-over-top .wp-face, .wp-orbs-over-bottom .wp-face { width: 40px; height: 40px; }
   .wp-orbs-over-top .wp-orb, .wp-orbs-over-bottom .wp-orb { width: 42px; }
+  .wp-orbs-over { --big-w: min(140px, 36cqw); --big-h: 72px; }
   .wp-stage[data-chrome="true"] .wp-orbs-over-top { transform: translateY(54px); }
   .wp-stage[data-chrome="true"] .wp-orbs-over-bottom { transform: translateY(-62px); }
   .wp-stage[data-chrome="true"][data-rx="true"] .wp-orbs-over-bottom { transform: translateY(-114px); }
