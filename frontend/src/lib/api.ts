@@ -81,7 +81,7 @@ export const HYPE_MS = 60_000
 async function fetchSquad(signal?: AbortSignal): Promise<SquadResponse> {
   const d = await getJSON<SquadResponse>('/api/squad', signal)
   if (d.error) throw new ApiError(500, d.error, null)
-  return { squad: Array.isArray(d.squad) ? d.squad : [] }
+  return { squad: Array.isArray(d.squad) ? d.squad : [], summary: d.summary, ranks: d.ranks, psn_error: d.psn_error }
 }
 
 /** One shared store (PS-0): the shell badge and the Squad page read the same query. */

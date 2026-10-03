@@ -131,7 +131,9 @@ def _summary(rows: list[dict], libraries: list[tuple[str, list[dict]]]) -> dict:
         return e and {"name": e["name"], "hours": round(e["hours"]), "players": len(e["players"]), "icon": e["icon"]}
 
     most_played = max(games, key=lambda e: e["hours"], default=None)
-    most_shared = max(games, key=lambda e: (len(e["players"]), e["hours"]), default=None)
+    # The most-shared game other than the most-played one, so the two tiles differ.
+    most_shared = max((e for e in games if e is not most_played),
+                      key=lambda e: (len(e["players"]), e["hours"]), default=None)
     if most_shared and len(most_shared["players"]) < 2:
         most_shared = None
     recent = [(r["stats"]["hours_2weeks"] or 0, r) for r in rows]

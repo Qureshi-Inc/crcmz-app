@@ -158,6 +158,7 @@ def numbers():
     assert S["hours_total"] == 1000 + 1163 + 40, S
     assert S["most_played"]["name"].startswith("Call of Duty") and S["most_played"]["hours"] == 1880, S
     # Arc Raiders: Mazino + Soup on PSN (named differently) + Nooni on Steam.
+    # (Never the most-played game, so the two tiles always differ.)
     assert S["most_shared"]["players"] == 3 and S["most_shared"]["name"].lower() == "arc raiders", S
     assert S["grinder"] == {"name": "Nooni", "hours": 4.2} and S["playing_now"] == 1, S
 
