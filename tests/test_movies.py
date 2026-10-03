@@ -786,6 +786,20 @@ def remove_tests():
         assert "Dune: Part Two" not in [m["title"] for m in run(mv.library("u-zub"))["movies"]]
         assert mv._row("tt15239678") is None, "it can be added again"
 
+    def added_again_it_shows_up_even_with_the_same_jellyfin_id():
+        setup()
+        run(mv.remove("u-zub", "c" * 32))
+        run(asyncio.gather(*list(mv._tasks)) if mv._tasks else asyncio.sleep(0))
+        lib = lambda: [m["title"] for m in run(mv.library("u-zub", True))["movies"]]  # noqa: E731
+        assert "Dune: Part Two" not in lib(), "the old copies stay hidden until Jellyfin's rescan"
+        # Downloaded again: Jellyfin's id comes from the folder, so the new copy has the same
+        # id, but it was added after the removal.
+        for it in JF.items:
+            if it["Id"] == "c" * 32:
+                it["DateCreated"] = time.strftime("%Y-%m-%dT%H:%M:%S.1234567Z", time.gmtime(time.time() + 60))
+        mv._cache.clear() if hasattr(mv, "_cache") else None
+        assert "Dune: Part Two" in lib(), "the re-added film shows up"
+
     def nobody_else_and_never_a_film_on_the_servers_disk():
         setup()
         for who, jf, admin, code in (("u-noor", "c" * 32, False, 403), ("u-zub", "e" * 32, False, 403),
@@ -800,7 +814,7 @@ def remove_tests():
         assert run(mv.remove("u-admin", "e" * 32, admin=True))["removed"] == 1 and "KEEP" not in RD.torrents
 
     for fn in (the_adder_or_an_admin_can_remove_and_it_says_so, removing_deletes_every_real_debrid_copy_and_hides_it_at_once,
-               nobody_else_and_never_a_film_on_the_servers_disk):
+               nobody_else_and_never_a_film_on_the_servers_disk, added_again_it_shows_up_even_with_the_same_jellyfin_id):
         check(fn.__name__, fn)
 
 

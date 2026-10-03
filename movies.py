@@ -47,6 +47,7 @@ DB: /data/movies.db
 
 from __future__ import annotations
 
+import datetime as dt
 import asyncio
 import hashlib
 import logging
@@ -562,6 +563,15 @@ def _version(item: dict) -> tuple[int, bool]:
     return tier, (v.get("VideoRangeType") or v.get("VideoRange") or "SDR") not in ("SDR", "Unknown", "")
 
 
+def _created_ts(it: dict) -> float:
+    """Jellyfin's DateCreated as a unix time (0 when missing or unreadable)."""
+    raw = str(it.get("DateCreated") or "")
+    try:
+        return dt.datetime.fromisoformat(raw[:26].rstrip("Z").split(".")[0]).replace(tzinfo=dt.timezone.utc).timestamp()
+    except ValueError:
+        return 0.0
+
+
 async def jellyfin_movies(refresh: bool = False) -> list[dict]:
     """The Movies library, one card per film (the best version of each), newest first.
     Each card keeps every version's id and path, which removing needs."""
@@ -575,10 +585,15 @@ async def jellyfin_movies(refresh: bool = False) -> list[dict]:
     items = (slap._ok(await slap._jf("GET", "/Items", params=params)) or {}).get("Items") or []
     with _lock, _conn() as db:
         db.execute("DELETE FROM removed WHERE ts < ?", (time.time() - 6 * 3600,))
-        gone = {r[0] for r in db.execute("SELECT jf_id FROM removed")}
+        gone = {r[0]: r[1] for r in db.execute("SELECT jf_id, ts FROM removed")}
     films: dict[str, list[tuple[tuple, dict]]] = {}
     for it in items:
-        if not _JF_ID.match(str(it.get("Id") or "")) or it["Id"] in gone:
+        if not _JF_ID.match(str(it.get("Id") or "")):
+            continue
+        # A removed film stays hidden until Jellyfin's rescan drops it. But Jellyfin's ids
+        # come from the folder: download the same film again and the new copy gets the
+        # same id. Anything Jellyfin added after the removal is that new copy, not the old.
+        if it["Id"] in gone and _created_ts(it) <= gone[it["Id"]]:
             continue
         tier, hdr = _version(it)
         path = str(it.get("Path") or "")
