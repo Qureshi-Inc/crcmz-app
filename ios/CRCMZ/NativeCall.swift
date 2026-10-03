@@ -52,6 +52,11 @@ final class NativeCall: ObservableObject {
     @Published private(set) var myHand = false
     @Published private(set) var reactions: [Reaction] = []
     @Published private(set) var transcribing = false
+    /// The AI chat (the page keeps it and asks the AI; this shows it on the call screen).
+    struct AiMsg: Identifiable { let id: Int; let role: String; let text: String }
+    @Published private(set) var aiLog: [AiMsg] = []
+    @Published private(set) var aiBusy = false
+    @Published var showingAI = false
 
     var onMode: ((Mode) -> Void)?
     var onTiles: (() -> Void)?
@@ -98,6 +103,11 @@ final class NativeCall: ObservableObject {
         case "transcript":
             guard self.kind == kind else { return }
             setTranscript(m["on"] as? Bool ?? false)
+        case "ai":
+            let log = m["log"] as? [[String: Any]] ?? []
+            aiLog = log.enumerated().map { AiMsg(id: $0.offset, role: $0.element["role"] as? String ?? "note",
+                                                 text: $0.element["text"] as? String ?? "") }
+            aiBusy = m["busy"] as? Bool ?? false
         default: break
         }
     }
@@ -168,11 +178,20 @@ final class NativeCall: ObservableObject {
         showReaction("You", e)
     }
 
-    /// The AI helper is on the Huddle page: shrink the call to its panel and open it.
+    /// The AI chat, over the call. The page has the chat history; ask it to send it.
     func openAI() {
-        mode = .panel
-        onOpenPage?("/huddle")
+        showingAI = true
+        onData?(.huddle, ["t": "ai_open"], "You", "me")
     }
+
+    /// Ask the AI. `transcribe`: start the transcript first (so it can follow the call).
+    func askAI(_ text: String, transcribe: Bool) {
+        let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, !aiBusy else { return }
+        onData?(.huddle, ["t": "ai_ask", "text": String(q.prefix(1000)), "transcribe": transcribe], "You", "me")
+    }
+
+    func retryAI() { onData?(.huddle, ["t": "ai_retry"], "You", "me") }
 
     private func showReaction(_ name: String, _ e: String) {
         reactionSeq += 1
@@ -249,6 +268,7 @@ final class NativeCall: ObservableObject {
         tiles = []
         hands = [:]
         myHand = false
+        showingAI = false
         reactions = []
         if transcribing { transcriber.stop(); transcribing = false }
         micOn = false

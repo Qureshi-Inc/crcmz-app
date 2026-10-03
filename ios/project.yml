@@ -20,7 +20,7 @@ settings:
     CODE_SIGN_IDENTITY: Apple Distribution
     PROVISIONING_PROFILE_SPECIFIER: CRCMZ App Store
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "6"
+    CURRENT_PROJECT_VERSION: "7"
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
@@ -30,6 +30,7 @@ targets:
     sources: [CRCMZ]
     dependencies:
       - package: LiveKit
+      - target: CRCMZShare
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.crcmz.app
@@ -42,3 +43,20 @@ targets:
         CODE_SIGN_ENTITLEMENTS: CRCMZ/CRCMZ.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
+  # Share → CRCMZ: a song from Spotify / Apple Music into the Slap library.
+  CRCMZShare:
+    type: app-extension
+    platform: iOS
+    sources: [CRCMZShare]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.crcmz.app.share
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: Apple Distribution
+        "CODE_SIGN_IDENTITY[sdk=iphoneos*]": Apple Distribution
+        PROVISIONING_PROFILE_SPECIFIER: CRCMZ Share App Store
+        PRODUCT_NAME: CRCMZShare
+        INFOPLIST_FILE: CRCMZShare/Info.plist
+        CODE_SIGN_ENTITLEMENTS: CRCMZShare/CRCMZShare.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES

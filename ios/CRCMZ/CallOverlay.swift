@@ -49,6 +49,13 @@ private struct FullCall: View {
         .padding(.vertical, 8)
         .foregroundStyle(.white)
         .background(ink.ignoresSafeArea())
+        // The AI chat slides up over the call; the call keeps going above it.
+        .sheet(isPresented: $call.showingAI) {
+            AiChat(call: call)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        }
     }
 
     private var people: String {
@@ -186,7 +193,114 @@ private struct Controls: View {
     }
 }
 
-/// Huddle extras: your hand, a reaction, the AI helper (on the Huddle page).
+/// The AI chat over the call. The page keeps the conversation (so it's all still there
+/// when you close this and come back, and the same on the Huddle page) and asks the AI;
+/// this shows it and sends your questions. Asking with the transcript off offers to
+/// start it first, since that's how the AI follows the call.
+private struct AiChat: View {
+    @ObservedObject var call: NativeCall
+    @State private var text = ""
+    @State private var pending: String?
+    @FocusState private var typing: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("AI helper", systemImage: "sparkles").font(.headline)
+                Spacer()
+                if call.transcribing {
+                    Label("Transcribing", systemImage: "waveform").font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 5).background(Capsule().fill(Color.red.opacity(0.25)))
+                }
+                Button { call.showingAI = false } label: { Image(systemName: "xmark") }
+                    .buttonStyle(Round(size: 34)).accessibilityLabel("Close the AI chat")
+            }
+            .padding(.horizontal).padding(.top, 14).padding(.bottom, 8)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        if call.aiLog.isEmpty {
+                            Text(call.transcribing ? "Ask about the call: what was decided, who's doing what, or anything else."
+                                 : "Ask the AI anything. With the transcript on, it follows the call too.")
+                                .font(.subheadline).foregroundStyle(.secondary).padding(.top, 8)
+                        }
+                        ForEach(call.aiLog) { m in Bubble(msg: m, retry: { call.retryAI() }).id(m.id) }
+                        if call.aiBusy {
+                            HStack(spacing: 8) { ProgressView().tint(.white); Text("Thinking…").foregroundStyle(.secondary) }
+                                .font(.subheadline).id(-1)
+                        }
+                    }
+                    .padding(.horizontal).padding(.bottom, 8)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onAppear { proxy.scrollTo(call.aiLog.last?.id, anchor: .bottom) }
+                .onChange(of: call.aiLog.count) { _ in withAnimation { proxy.scrollTo(call.aiBusy ? -1 : call.aiLog.last?.id, anchor: .bottom) } }
+                .onChange(of: call.aiBusy) { busy in withAnimation { proxy.scrollTo(busy ? -1 : call.aiLog.last?.id, anchor: .bottom) } }
+            }
+            HStack(spacing: 8) {
+                TextField("Ask the AI", text: $text, axis: .vertical)
+                    .lineLimit(1...4).focused($typing).submitLabel(.send)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.1)))
+                    .onSubmit(send)
+                Button(action: send) { Image(systemName: "arrow.up") }
+                    .buttonStyle(Round(size: 40, on: !text.isEmpty))
+                    .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty || call.aiBusy)
+                    .accessibilityLabel("Ask")
+            }
+            .padding(.horizontal).padding(.vertical, 10)
+        }
+        .foregroundStyle(.white)
+        .background(ink.ignoresSafeArea())
+        .confirmationDialog("Start the transcript?", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+                            titleVisibility: .visible) {
+            Button("Start and ask") { ask(transcribe: true) }
+            Button("Just ask") { ask(transcribe: false) }
+            Button("Cancel", role: .cancel) { pending = nil }
+        } message: {
+            Text("The AI follows the call through the transcript. It starts for everyone in the call, and the meeting notes are saved when the call ends.")
+        }
+    }
+
+    private func send() {
+        let q = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, !call.aiBusy else { return }
+        if call.transcribing { call.askAI(q, transcribe: false); text = "" } else { pending = q }
+    }
+
+    private func ask(transcribe: Bool) {
+        guard let q = pending else { return }
+        call.askAI(q, transcribe: transcribe)
+        pending = nil
+        text = ""
+    }
+}
+
+private struct Bubble: View {
+    let msg: NativeCall.AiMsg
+    let retry: () -> Void
+
+    var body: some View {
+        switch msg.role {
+        case "user":
+            HStack { Spacer(minLength: 40); Text(msg.text).padding(10).background(RoundedRectangle(cornerRadius: 16).fill(accent.opacity(0.45))) }
+        case "assistant":
+            Text((try? AttributedString(markdown: msg.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(msg.text))
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.08)))
+                .textSelection(.enabled)
+        case "error":
+            HStack {
+                Text(msg.text).foregroundStyle(Color(red: 1, green: 0.55, blue: 0.55))
+                Button("Try again", action: retry).font(.subheadline.weight(.semibold))
+            }
+        default:
+            Text(msg.text).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .center)
+        }
+    }
+}
+
+/// Huddle extras: your hand, a reaction, the transcript, the AI chat.
 private struct Extras: View {
     @ObservedObject var call: NativeCall
     @State private var picking = false
@@ -207,7 +321,7 @@ private struct Extras: View {
                     .buttonStyle(Pill(on: call.myHand)).accessibilityLabel(call.myHand ? "Lower your hand" : "Raise your hand")
                 Button { picking.toggle() } label: { Label("React", systemImage: "face.smiling") }
                     .buttonStyle(Pill(on: picking))
-                Button { call.toggleTranscript() } label: { Label(call.transcribing ? "Stop" : "Notes", systemImage: call.transcribing ? "stop.circle" : "waveform") }
+                Button { call.toggleTranscript() } label: { Label(call.transcribing ? "Stop" : "Transcribe", systemImage: call.transcribing ? "stop.circle" : "waveform") }
                     .buttonStyle(Pill(on: call.transcribing))
                     .accessibilityLabel(call.transcribing ? "Stop the transcript" : "Transcribe this call, for meeting notes when it ends")
                 Button { call.openAI() } label: { Label("AI", systemImage: "sparkles") }

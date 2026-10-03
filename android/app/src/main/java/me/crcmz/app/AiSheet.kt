@@ -89,7 +89,10 @@ object AiSheet {
             addView(bar)
         }
         val d = BottomSheetDialog(app)
-        d.setContentView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (app.resources.displayMetrics.heightPixels * 0.62).toInt()))
+        // Fills the window up to 62% of the screen: with the keyboard up it gets shorter
+        // instead of running off the top.
+        d.setContentView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        d.behavior.maxHeight = (app.resources.displayMetrics.heightPixels * 0.62).toInt()
         d.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         d.window?.navigationBarColor = sheetColor
         d.behavior.state = BottomSheetBehavior.STATE_EXPANDED

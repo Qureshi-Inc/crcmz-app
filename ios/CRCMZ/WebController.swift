@@ -164,6 +164,7 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         shell.pageChanged(webView.url)
         flushTokens()
+        SharedSession.save(from: webView.configuration.websiteDataStore.httpCookieStore)
         #if DEBUG
         // Simulator check of the native bar without signing in: -crcmzShellDemo YES.
         if UserDefaults.standard.bool(forKey: "crcmzShellDemo") {
