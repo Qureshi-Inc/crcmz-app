@@ -67,11 +67,13 @@ ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
 # the tag is a list.
 # jellyfin_user is the person's account on the music server (see slap.py); it is
 # written by the app itself the first time someone opens Slap without one.
+# steam_id is the person's 64-bit SteamID, written by the app after Steam's
+# OpenID sign-in confirms it (see steam.py) and deleted again on unlink.
 # founder ("true") marks the six people who see founder-only features, e.g. the
 # Professional Goopers WhatsApp stats. Console-only: set_tag() refuses it, so
 # nobody can grant it to themselves through the app. Read it via is_founder().
 TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone", "wa_names", "jellyfin_user",
-            "founder")
+            "steam_id", "founder")
 
 # Separators accepted inside a multi-value tag.
 _TAG_SPLIT = ",;|"
@@ -107,6 +109,7 @@ def bot_person() -> dict:
         "wa_phone": "",
         "wa_names": [],
         "jellyfin_user": "",
+        "steam_id": "",
         "founder": False,
         "tags": {},
         "is_bot": True,
@@ -267,6 +270,7 @@ def _fetch_people() -> list[dict]:
                 "wa_phone": tags.get("wa_phone", ""),
                 "wa_names": _split_tag(tags.get("wa_names", "")),
                 "jellyfin_user": tags.get("jellyfin_user", ""),
+                "steam_id": tags.get("steam_id", "").strip(),
                 "founder": _truthy(tags.get("founder", "")),
                 "tags": tags,
             })
@@ -276,9 +280,13 @@ def _fetch_people() -> list[dict]:
     return people
 
 
+# Tags the app itself may write. Everything else is console-only.
+_APP_TAGS = ("jellyfin_user", "steam_id")
+
+
 def set_tag(zitadel_id: str, key: str, value: str) -> bool:
     """Write one metadata tag on a person. Only app-owned keys may be written."""
-    if key != "jellyfin_user" or not configured() or not zitadel_id.isdigit():
+    if key not in _APP_TAGS or not configured() or not zitadel_id.isdigit():
         return False
     try:
         r = httpx.post(
@@ -292,6 +300,21 @@ def set_tag(zitadel_id: str, key: str, value: str) -> bool:
     if r.status_code != 200:
         logger.warning("identity: tag write for %s answered %s", zitadel_id, r.status_code)
     return r.status_code == 200
+
+
+def clear_tag(zitadel_id: str, key: str) -> bool:
+    """Delete one app-owned metadata tag. A tag that was never set counts as cleared."""
+    if key not in _APP_TAGS or not configured() or not zitadel_id.isdigit():
+        return False
+    try:
+        r = httpx.delete(f"{ZITADEL_ISSUER}/management/v1/users/{zitadel_id}/metadata/{key}",
+                         headers=_headers(), timeout=_HTTP_TIMEOUT)
+    except httpx.HTTPError as e:
+        logger.warning("identity: tag delete failed for %s: %s", zitadel_id, e)
+        return False
+    if r.status_code not in (200, 404):
+        logger.warning("identity: tag delete for %s answered %s", zitadel_id, r.status_code)
+    return r.status_code in (200, 404)
 
 
 def people(*, refresh: bool = False) -> list[dict]:

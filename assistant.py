@@ -522,6 +522,32 @@ def _members() -> Any:
             "members": [m.get("display") for m in members if m.get("display")]}
 
 
+@tool("steam_squad_status",
+      "Steam presence and stats for squad members who linked Steam in the app "
+      "(Settings -> Steam). Per person: Steam name, state (online/away/offline...), "
+      "the game they are in right now, Steam level, library size, total hours, most "
+      "played game and the last two weeks of play. null means a private profile "
+      "or unknown, not zero. People who only play on PSN are not here; use "
+      "squad_members for them.",
+      {"type": "object",
+       "properties": {"person": {"type": "string",
+                                 "description": "Optional name to narrow to one person."}},
+       "required": []})
+def _steam_squad(person: str = "") -> Any:
+    import crcmz_identity
+    import steam
+    if not steam.configured():
+        return {"configured": False, "members": []}
+    rows = steam.squad_status()
+    if person:
+        who = crcmz_identity.resolve(person)
+        rows = [r for r in rows if who and r["zitadel_id"] == who["zitadel_id"]]
+    keep = ("display_name", "persona_name", "state", "playing", "game", "level", "game_count",
+            "hours_total", "hours_2weeks", "top_game", "recent")
+    return {"configured": True, "count": len(rows),
+            "members": [{k: r.get(k) for k in keep} for r in rows]}
+
+
 @tool("squad_facts",
       "Facts the squad has written about each other. The recent ones are "
       "already in your context; use this to look up everything about one person "

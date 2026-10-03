@@ -6654,6 +6654,95 @@ async def settings_mattermost_unlink(request: Request):
     return JSONResponse({"ok": True})
 
 
+# ── Steam (steam.py) ─────────────────────────────────────────────────────────
+# Sign in with Steam proves a SteamID, which becomes the person's steam_id tag.
+# The callback is NOT an open path: the session cookie is SameSite=Lax, so it
+# rides the redirect back from Steam, and the signed state must name the same
+# person -- otherwise a crafted link could attach one person's Steam to another.
+_STEAM_CALLBACK = "/settings/steam/callback"
+
+
+def _steam_state_signer() -> _USTS:
+    return _USTS(_EFFECTIVE_SESSION_SECRET, salt="steam-openid-state")
+
+
+def _steam_done_page(ok: bool, text: str) -> HTMLResponse:
+    msg = "steam_linked" if ok else "steam_failed"
+    return HTMLResponse(f"""
+<html><head><title>Steam</title>
+<script>if (window.opener) {{ window.opener.postMessage('{msg}', location.origin); window.close(); }}
+else {{ location.replace('/app/settings/steam'); }}</script>
+</head><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0d0a1f;color:#fff">
+<h2>{_html.escape(text)}</h2><p><a style="color:#fff" href="/app/settings/steam">Back to Settings</a></p>
+</body></html>""", status_code=200 if ok else 400)
+
+
+@app.get("/auth/settings/steam")
+async def settings_steam_status(request: Request):
+    """Steam link status for the logged-in user."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    sid = await asyncio.to_thread(_steam.steam_id_of, session.get("sub", ""))
+    out = {"linked": bool(sid), "steam_id": sid or None, "persona_name": None, "avatar": None,
+           "profile_url": None, "connect_available": _steam.configured()}
+    if sid and _steam.configured():
+        s = (await asyncio.to_thread(_steam.summaries, [sid])).get(sid) or {}
+        out.update(persona_name=s.get("personaname"), avatar=s.get("avatarmedium"),
+                   profile_url=s.get("profileurl"))
+    return JSONResponse(out)
+
+
+@app.get("/auth/settings/steam/connect")
+async def settings_steam_connect(request: Request):
+    """Send the logged-in user to Steam's sign-in page."""
+    session = _get_session(request)
+    if not session:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    if not _steam.configured():
+        return JSONResponse({"error": "Steam is not configured"}, status_code=503)
+    state = _steam_state_signer().dumps(session.get("sub", ""))
+    return_to = f"https://{_PUBLIC_HOST}{_STEAM_CALLBACK}?{_urlencode({'state': state})}"
+    return RedirectResponse(url=_steam.login_url(return_to, f"https://{_PUBLIC_HOST}/"), status_code=302)
+
+
+@app.get(_STEAM_CALLBACK)
+async def settings_steam_callback(request: Request, state: str = ""):
+    """Steam's redirect back: verify the assertion, then tag the person."""
+    session = _get_session(request)
+    if not session:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    try:
+        zid = _steam_state_signer().loads(state, max_age=600)
+    except (BadSignature, SignatureExpired):
+        return _steam_done_page(False, "That Steam sign-in expired. Try again from Settings.")
+    if zid != session.get("sub"):
+        return _steam_done_page(False, "That Steam sign-in was started by a different account.")
+    params = dict(request.query_params)
+    steam_id = await asyncio.to_thread(_steam.verify_assertion, params,
+                                       f"https://{_PUBLIC_HOST}{_STEAM_CALLBACK}")
+    if not steam_id:
+        return _steam_done_page(False, "Steam didn't confirm the sign-in. Try again.")
+    result = await asyncio.to_thread(_steam.link, zid, steam_id)
+    if result == "taken":
+        return _steam_done_page(False, "That Steam account is already linked to someone else.")
+    if result != "ok":
+        return _steam_done_page(False, "Couldn't save your Steam link. Try again.")
+    logger.info("steam: %s linked %s", zid, steam_id)
+    return _steam_done_page(True, "✅ Steam connected! You can close this window.")
+
+
+@app.post("/auth/settings/steam/unlink")
+async def settings_steam_unlink(request: Request):
+    """Remove the logged-in user's steam_id tag."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not await asyncio.to_thread(_steam.unlink, session.get("sub", "")):
+        return JSONResponse({"error": "unlink failed"}, status_code=502)
+    return JSONResponse({"ok": True})
+
+
 @app.get("/auth/logout")
 async def auth_logout():
     resp = RedirectResponse(url="/auth/login", status_code=302)
@@ -6926,6 +7015,7 @@ PSN_AI_POLL_SECONDS = max(10, int(os.environ.get("PSN_AI_POLL_SECONDS", "20")))
 PSN_AI_GROUPS = os.environ.get("PSN_AI_GROUPS", "squad").lower()
 import game_history as _games
 import mm_tokens as _mm_tokens
+import steam as _steam
 import memory_store as _mem
 import coach as _coach
 import ig_posts as _ig
@@ -8150,10 +8240,16 @@ def api_squad():
     if not _v2_available:
         return JSONResponse({"squad": [], "error": "auth unavailable"})
     try:
-        return {"squad": psn_data.squad_status(psn_auth)}
+        members = psn_data.squad_status(psn_auth)
     except Exception as e:  # noqa: BLE001
         logger.error("dashboard: squad status failed: %s", e)
         return JSONResponse({"squad": [], "error": str(e)}, status_code=500)
+    # Steam joins the same list (steam.py); a Steam failure must not cost PSN.
+    try:
+        return {"squad": _steam.merge_into_squad(members)}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("dashboard: steam merge failed: %s", e)
+        return {"squad": members}
 
 
 

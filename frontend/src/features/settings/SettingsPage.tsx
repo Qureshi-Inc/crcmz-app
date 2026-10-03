@@ -14,7 +14,7 @@ import { OrbPosControl } from '../watch/WatchPage'
 import { ApiError, getJSON } from '../../lib/http'
 import {
   addPasskey, changePassword, fmtDate, fmtDateTime, MCP_CONFIG, passkeysSupported, removePasskey, revokeMcp, tokenState,
-  unlinkMattermost, type McpStatus, type MmStatus, type Passkey, type PsnStatus,
+  unlinkMattermost, unlinkSteam, type McpStatus, type MmStatus, type Passkey, type PsnStatus, type SteamStatus,
 } from '../../lib/account'
 import {
   currentSubscription, disablePush, enablePush, fetchPushConfig, isIOS, isStandalone, promptInstall, pushSupported,
@@ -28,6 +28,7 @@ const TABS = [
   { id: 'passkeys', label: 'Passkeys' },
   { id: 'security', label: 'Password' },
   { id: 'psn', label: 'PSN' },
+  { id: 'steam', label: 'Steam' },
   { id: 'mattermost', label: 'Mattermost' },
   { id: 'mcp', label: 'MCP' },
   { id: 'watch', label: 'Watch' },
@@ -63,6 +64,7 @@ export function SettingsPage() {
         <Tabs.Content value="passkeys" className="settings-panel"><PasskeysTab /></Tabs.Content>
         <Tabs.Content value="security" className="settings-panel"><SecurityTab /></Tabs.Content>
         <Tabs.Content value="psn" className="settings-panel"><PsnTab /></Tabs.Content>
+        <Tabs.Content value="steam" className="settings-panel"><SteamTab /></Tabs.Content>
         <Tabs.Content value="mattermost" className="settings-panel"><MattermostTab /></Tabs.Content>
         <Tabs.Content value="mcp" className="settings-panel"><McpTab /></Tabs.Content>
         <Tabs.Content value="watch" className="settings-panel"><WatchTab /></Tabs.Content>
@@ -247,6 +249,87 @@ function PsnTab() {
         </>
       )}
       <div><Link className="btn btn-primary" to="/portal"><Icon name="link" />Link your PSN account</Link></div>
+    </section>
+  )
+}
+
+// ── Steam ────────────────────────────────────────────────────────────────────
+const STEAM_CONNECT = '/auth/settings/steam/connect'
+
+function SteamTab() {
+  const qc = useQueryClient()
+  const q = useQuery({ queryKey: ['account', 'steam'], queryFn: ({ signal }) => getJSON<SteamStatus>('/auth/settings/steam', signal) })
+  const [blocked, setBlocked] = useState(false)
+  const [confirm, setConfirm] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return
+      if (e.data === 'steam_linked') toast('Steam connected', 'success')
+      else if (e.data === 'steam_failed') toast("Steam didn't connect. Try again.", 'error')
+      else return
+      void qc.invalidateQueries({ queryKey: ['account', 'steam'] })
+      void qc.invalidateQueries({ queryKey: ['steam-squad'] })
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [qc])
+
+  function connect() {
+    const w = window.open(STEAM_CONNECT, 'steam_openid', 'width=800,height=760,menubar=no,toolbar=no')
+    setBlocked(!w)
+  }
+  async function unlink() {
+    setBusy(true)
+    try { await unlinkSteam(); toast('Steam disconnected', 'success') }
+    catch { toast("Couldn't disconnect. Try again.", 'error') }
+    finally {
+      setBusy(false)
+      void qc.invalidateQueries({ queryKey: ['account', 'steam'] })
+      void qc.invalidateQueries({ queryKey: ['steam-squad'] })
+    }
+  }
+
+  return (
+    <section className="glass settings-card" aria-labelledby="steam-h">
+      <h2 className="section-h2" id="steam-h">Steam</h2>
+      {q.isPending ? <SkeletonRows n={1} />
+        : q.isError ? <ErrorStrip text="Couldn't load your Steam status" onRetry={() => q.refetch()} />
+        : q.data.linked ? (
+          <>
+            <div className="acct-status">
+              {q.data.avatar
+                ? <img className="av" src={q.data.avatar} alt="" referrerPolicy="no-referrer" style={{ width: 40, height: 40 }} />
+                : <span className="acct-status-emoji" aria-hidden="true">🕹️</span>}
+              <span className="acct-row-text">
+                <span className="acct-row-title">{q.data.persona_name ?? 'Steam account'}</span>
+                <span className="meta">
+                  {q.data.profile_url ? <a href={q.data.profile_url} target="_blank" rel="noopener noreferrer">View Steam profile</a> : `SteamID ${q.data.steam_id}`}
+                </span>
+              </span>
+              <span className="badge" data-tone="live">Linked</span>
+            </div>
+            <p className="settings-note" role="note">Your games and hours only show on Squad if your Steam profile's game details are public.</p>
+            <div><button type="button" className="btn btn-secondary" onClick={() => setConfirm(true)} disabled={busy}>{busy ? 'Disconnecting…' : 'Disconnect'}</button></div>
+          </>
+        ) : (
+          <>
+            <p className="dim">Not linked. Sign in with Steam so the squad can see when you're on and what you're playing.</p>
+            {q.data.connect_available
+              ? <div><button type="button" className="btn btn-primary" onClick={connect}><Icon name="link" />Sign in with Steam</button></div>
+              : <p className="settings-note" role="note">Steam isn't switched on for this server yet.</p>}
+            {blocked && <p className="field-err" role="alert">The pop-up was blocked. Allow pop-ups, or <a href={STEAM_CONNECT} target="_blank" rel="noopener">open the Steam sign-in</a>.</p>}
+            <p className="meta">Steam only tells us your SteamID. We never see your password.</p>
+          </>
+        )}
+      <ConfirmDialog
+        open={confirm} onOpenChange={setConfirm}
+        title="Disconnect Steam?"
+        body={<p>You'll drop off the Steam card on Squad until you sign in again.</p>}
+        action="Disconnect"
+        onConfirm={() => void unlink()}
+      />
     </section>
   )
 }
