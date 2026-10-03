@@ -34,6 +34,11 @@ def check(name, fn):
 def _local_store(tmpdir, files):
     os.environ["CLIP_LOCAL_DIR"] = tmpdir
     os.environ.pop("CLIP_BUCKET", None)
+    # The tool also reads the archived count from clips.db: give it an empty one in
+    # the temp dir (run-all.sh's /data starts empty, so there is no table otherwise).
+    import clips
+    clips._DB_PATH = Path(tmpdir).parent / "clips-test.db"
+    clips.init()
     import clip_store
     importlib.reload(clip_store)
     for rel, size in files:

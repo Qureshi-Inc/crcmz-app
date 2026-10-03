@@ -448,7 +448,12 @@ def test_squad_scope_is_aggregate_only():
         assert set(r.keys()) <= {"grade", "game", "created_at"}, r.keys()
     blob = json.dumps(squad)
     assert "alice" not in blob and "bob" not in blob
-    assert "Pushed alone" not in blob and "B — solid" not in blob
+    assert "B — solid" not in blob and "C — ok" not in blob, "no one's report text"
+    # A shared pattern ("Pushed alone", count 2) is what squad scope is for; it may
+    # appear only as a chart label, never in a review row.
+    rest = json.dumps({k: v for k, v in squad.items() if k != "charts"})
+    assert "Pushed alone" not in rest
+    assert {m["label"] for m in squad["charts"]["mistakes"]} == {"Pushed alone"}
     # mistake patterns lose their evidence links in squad scope
     for m in squad["charts"]["mistakes"]:
         assert "reviews" not in m, "a pattern must not link back to a report"

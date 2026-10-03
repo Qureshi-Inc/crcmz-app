@@ -2981,6 +2981,10 @@ def _task_claim(caller: dict, task_id: str = "", agent_name: str = "") -> dict:
         return {"ok": False, "error": "agent_name is required"}
 
     zid = caller.get("zitadel_id", "")
+    # An agent works a handful of tasks an hour; anything near this is a loop.
+    if not mcp_oauth.within_rate_limit(zid, "task_claim", 120, 3600):
+        mcp_oauth.audit_write(zid, "task_claim", f'{{"task_id": "{task_id}"}}', "rate_limited")
+        return {"ok": False, "error": "rate limit exceeded", "limit": "120 an hour"}
     at_mod.init()
     ok = at_mod.claim(task_id, agent_name)
     if ok:
@@ -3013,6 +3017,10 @@ def _task_complete(caller: dict, task_id: str = "",
         return {"ok": False, "error": "task_id is required"}
 
     zid = caller.get("zitadel_id", "")
+    # An agent works a handful of tasks an hour; anything near this is a loop.
+    if not mcp_oauth.within_rate_limit(zid, "task_complete", 120, 3600):
+        mcp_oauth.audit_write(zid, "task_complete", f'{{"task_id": "{task_id}"}}', "rate_limited")
+        return {"ok": False, "error": "rate limit exceeded", "limit": "120 an hour"}
     at_mod.init()
     ok = at_mod.complete(task_id, result_notes=result_notes or "")
     if ok:
@@ -3044,6 +3052,10 @@ def _task_release(caller: dict, task_id: str = "", note: str = "") -> dict:
         return {"ok": False, "error": "task_id is required"}
 
     zid = caller.get("zitadel_id", "")
+    # An agent works a handful of tasks an hour; anything near this is a loop.
+    if not mcp_oauth.within_rate_limit(zid, "task_release", 120, 3600):
+        mcp_oauth.audit_write(zid, "task_release", f'{{"task_id": "{task_id}"}}', "rate_limited")
+        return {"ok": False, "error": "rate limit exceeded", "limit": "120 an hour"}
     at_mod.init()
     ok = at_mod.release(task_id, note=note or "")
     if ok:
@@ -4345,10 +4357,12 @@ def _ask(question: str, history: list[dict] | None = None,
                     messages.append({"role": "user", "content": question})
                     continue
                 # Model twice declined to call a tool even when told to — it
-                # judged the question doesn't need data. If it wrote an answer
-                # use it; only return the error when there's nothing to say.
+                # judged the question doesn't need data (the data-question regex
+                # also catches "who are you"). A conversational answer is used; one
+                # with a number in it is a stat with no source ("themoosecompany,
+                # 215"), so nobody gets that.
                 bare_answer = _strip_thinking(message.get("content") or "").strip()
-                if bare_answer:
+                if bare_answer and not re.search(r"\d", bare_answer):
                     logger.info("assistant: no tool but model gave answer, using it")
                     return {
                         "answer": bare_answer,

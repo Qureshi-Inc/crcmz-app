@@ -65,8 +65,13 @@ def _call(tool, args, token):
     import json
     r = _rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
               "params": {"name": tool, "arguments": args}}, token)
-    content = r.get("result", {}).get("content", [{}])
-    return json.loads(content[0].get("text", "{}"))
+    res = r.get("result", {})
+    content = res.get("content", [{}])
+    text = content[0].get("text", "{}")
+    # A refused call (out of scope, bad arguments) is isError with a plain sentence.
+    if res.get("isError"):
+        return {"isError": True, "text": text}
+    return json.loads(text)
 
 
 # ── basic lifecycle ──────────────────────────────────────────────────────────

@@ -57,7 +57,8 @@ SIDE_EFFECTS = [
     (r"\.post\(|\.put\(|\.patch\(|\.delete\(", "issues a mutating HTTP request"),
     (r"\bINSERT\b|\bUPDATE\s|\bDELETE\s+FROM\b|\bDROP\s+TABLE\b", "writes to a database"),
     (r"open\([^)]*[\"'][wa]", "opens a file for writing"),
-    (r"shutil\.|os\.remove|os\.unlink|os\.rmdir", "deletes from the filesystem"),
+    # shutil.disk_usage only reads; everything else in shutil copies, moves or deletes.
+    (r"shutil\.(?!disk_usage\b)|os\.remove|os\.unlink|os\.rmdir|\.unlink\(|\.rmdir\(", "changes the filesystem"),
 ]
 
 # Names that describe a side effect. A tool called any of these belongs in the write

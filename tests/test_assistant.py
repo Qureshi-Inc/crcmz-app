@@ -325,12 +325,16 @@ def t_data_questions_are_classified():
 def t_a_data_question_without_a_tool_is_refused_not_guessed():
     # The model will happily invent "Coco_WasTaken, 198" for a ranking question.
     # Two refusals to call a tool must produce no answer rather than a lie.
-    reset(final("themoosecompany, 215"), final("still not calling a tool"))
+    reset(final("themoosecompany, 215"), final("still themoosecompany, 215"))
     r = assistant.ask("who added the most songs?")
     assert r.get("no_tool") is True, r
     assert "couldn't look that one up" in r["answer"], r
     assert r["tools_used"] == [], r
     assert "215" not in r["answer"], "a guessed number reached the user"
+    # A question the regex mistook for data ("who are you") gets its words-only answer.
+    reset(final("lol"), final("just one of the boys, innit"))
+    r = assistant.ask("who are you?")
+    assert r["answer"] == "just one of the boys, innit" and r.get("no_tool") is not True, r
 
 
 def t_the_retry_drops_previous_answers_but_keeps_the_question():
@@ -383,13 +387,14 @@ def t_persona_is_vulgar_by_default():
     reset(final("aight"))
     assistant.ask("who yaps most")
     p = SEEN[0]["messages"][0]["content"]
-    assert "VOICE" in p, p[:300]
-    assert "Dave Chappelle" in p, "the persona brief should be in the prompt"
-    for word in ("bhenchod", "chutiya", "oye khotay"):
-        assert word in p, f"{word} missing from the persona"
+    # The Hasaan persona (dddb09d): the group chat's voice, slang and swearing included.
+    assert "HOW YOU TALK" in p and "Hasaan" in p, p[:300]
+    assert "Swear freely" in p and "Punjabi slang" in p, "the persona brief should be in the prompt"
+    for word in ("bhai", "harami", "fucking"):
+        assert word in p, f"{word} missing from the persona's examples"
     assert "never add disclaimers" in p, p[-600:]
     # Vulgar or not, the accuracy rule has to survive.
-    assert "the FACTS stay real" in p, p[-600:]
+    assert "FACTS stay real" in p and "Every number" in p, p[-600:]
     assert "never invent one" in p, "the accuracy rule must survive the persona"
     assert SEEN[0]["temperature"] > 0.5, SEEN[0]["temperature"]
 

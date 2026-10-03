@@ -13,6 +13,7 @@ stdlib only).  The write-tool tests need the app image:
 import base64
 import hashlib
 import os
+import re
 import secrets
 import sys
 import tempfile
@@ -287,12 +288,18 @@ def tool_tests():
             assert wt not in read_mcp, f"{wt} leaked into MCP read tools"
 
     def t_write_tools_have_required_params():
+        # Write tools were all messages once; now they also claim tasks, record montages,
+        # reindex memory, add songs. Each needs a well-formed schema; the ones that send
+        # something need the message to send.
         for spec in assistant.write_tool_specs():
             fn = spec.get("function", {})
             params = fn.get("parameters", {})
-            assert params.get("type") == "object", fn["name"]
-            assert "message" in params.get("properties", {}), \
-                f"{fn['name']} has no 'message' param"
+            props = params.get("properties", {})
+            assert params.get("type") == "object" and isinstance(props, dict), fn["name"]
+            missing = [r for r in params.get("required", []) if r not in props]
+            assert not missing, f"{fn['name']} requires {missing} but doesn't describe them"
+            if re.search(r"send|dm|post_message|reply", fn["name"]):
+                assert "message" in props, f"{fn['name']} has no 'message' param"
 
     def t_no_credentials_in_write_tool_specs():
         import json

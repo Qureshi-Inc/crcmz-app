@@ -152,7 +152,18 @@ def the_bot_is_not_filtered_out_of_the_query():
                else len(_SRC)]
     window = _SRC[_SRC.index("SELECT sender_name, timestamp, text"):]
     window = window[:window.index("ORDER BY timestamp ASC")]
-    assert "from_me = 0" not in window, (
+    # `from_me = 0` may appear inside the NOT (...) that drops the asker's own "catch me
+    # up" line; what must not come back is a filter on the bot's rows themselves.
+    outer = window
+    if "AND NOT (" in outer:
+        start = outer.index("AND NOT (") + len("AND NOT ")
+        depth, end = 0, start
+        for end, ch in enumerate(outer[start:], start):
+            depth += {"(": 1, ")": -1}.get(ch, 0)
+            if depth == 0:
+                break
+        outer = outer[:start] + outer[end + 1:]
+    assert "AND NOT" in window and "from_me = 0" not in outer, (
         "the summary window excludes the bot's own messages again — that is exactly "
         "what made it attribute a request to the bot to another member")
 

@@ -201,7 +201,7 @@ def trigger_from(msg: dict, group_jid: str = "") -> str | None:
         # with following text as a trigger so the bot responds from day one.
         # Once WA_BOT_IDS is set, only actual @mentions of us fire.
         if not _self_ids and rest:
-            return rest[:TRIGGER_MAX]
+            return parse_trigger(rest, TRIGGER_MAX) or rest[:TRIGGER_MAX]
         # We know our IDs but this mention isn't us — still catch "ai ..." in rest.
         return parse_trigger(rest, TRIGGER_MAX)
 

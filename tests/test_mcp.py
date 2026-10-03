@@ -57,10 +57,10 @@ def protocol_tests():
 
     def fails_closed_without_token():
         mcp.MCP_TOKEN = ""
-        # An unset token must not mean "open": the default has to be refuse-all.
-        assert mcp.configured() is False
-        assert mcp.authorised("Bearer anything") is False
-        assert mcp.authorised("") is False
+        # An unset token must not mean "open": the shared-token path refuses everything.
+        # (The endpoint itself stays on for per-user OAuth tokens, 10b0096.)
+        for header in ("Bearer anything", "Bearer ", "", "Bearer  ", "anything"):
+            assert mcp.authorised(header) is False, header
     check("no MCP_TOKEN means nothing is authorised", fails_closed_without_token)
 
     def bearer_checked():
@@ -187,11 +187,14 @@ def http_tests():
     client = TestClient(server.app, headers={"host": "app.crcmz.me"})
     ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
 
-    def disabled_returns_503():
+    def no_shared_token_still_serves_no_data():
+        # With no MCP_TOKEN the endpoint is still on for OAuth users (10b0096), so a
+        # caller without a valid token gets 401 and never a result.
         mcp_server.MCP_TOKEN = ""
-        r = client.post("/mcp", json=ping)
-        assert r.status_code == 503, (r.status_code, r.text)
-    check("disabled MCP answers 503, never data", disabled_returns_503)
+        for headers in ({}, {"Authorization": "Bearer "}, {"Authorization": "Bearer anything"}):
+            r = client.post("/mcp", json=ping, headers=headers)
+            assert r.status_code == 401 and "result" not in r.text, (headers, r.status_code, r.text)
+    check("with no shared token, nobody without a token gets data", no_shared_token_still_serves_no_data)
 
     def unauthenticated_is_401():
         mcp_server.MCP_TOKEN = TOKEN

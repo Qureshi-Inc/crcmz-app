@@ -50,13 +50,16 @@ def check(name, fn):
 
 
 class _Stub(BaseHTTPRequestHandler):
-    """Plays both the Baileys bridge (/send) and the model (/v1/...)."""
+    """Plays both the Baileys bridge (/send, /typing) and the model (/v1/...)."""
 
     def do_POST(self):  # noqa: N802
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])) or b"{}")
         if self.path.endswith("/send"):
             BRIDGE_SENT.append(body)
             out = {"status": "sent"}
+        elif self.path.endswith("/typing"):
+            # The bridge's "typing…" indicator while the model thinks.
+            out = {"status": "ok"}
         else:
             MODEL_SEEN.append(body)
             msg = SCRIPT.pop(0) if SCRIPT else {"role": "assistant",
@@ -207,12 +210,13 @@ def t_sender_name_falls_back_to_the_number():
 def t_reply_goes_to_the_bridge():
     BRIDGE_SENT.clear()
     assert wa_ai.send_reply(BASE, GROUP, "here you go") is True
-    assert BRIDGE_SENT[-1] == {"message": "here you go", "groupJid": GROUP}, BRIDGE_SENT
+    # mentions: the @Name tags the bridge turns into real WhatsApp mentions (none here).
+    assert BRIDGE_SENT[-1] == {"message": "here you go", "groupJid": GROUP, "mentions": []}, BRIDGE_SENT
 
 
 def t_long_replies_are_trimmed():
     BRIDGE_SENT.clear()
-    wa_ai.send_reply(BASE, GROUP, "z" * 3000)
+    wa_ai.send_reply(BASE, GROUP, "z" * (wa_ai.MAX_REPLY_CHARS + 1000))
     sent = BRIDGE_SENT[-1]["message"]
     assert len(sent) == wa_ai.MAX_REPLY_CHARS and sent.endswith("…"), len(sent)
 
