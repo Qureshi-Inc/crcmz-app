@@ -9,6 +9,7 @@ import { toast } from '../../components/toast'
 import { ApiError } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
 import * as lockScreen from '../../lib/mediaSession'
+import { nativeAudio, nativeAudioElement, nativeNowPlaying, type Remote } from '../../lib/nativeAudio'
 import { artUrl, bumpStream, reportListen, streamUrl, together, type QueueItem, type Room, type TogetherOp, type Track } from '../../lib/slap'
 
 export type Repeat = 'off' | 'all' | 'one'
@@ -91,7 +92,8 @@ let pendingSeek: number | null = null
 
 function el(): HTMLAudioElement {
   if (audio) return audio
-  const a = new Audio()
+  // In the iOS app the app's own player plays it, so it keeps going with the phone locked.
+  const a = nativeAudio() ? nativeAudioElement(onRemote) : new Audio()
   a.preload = 'auto'
   a.addEventListener('timeupdate', () => { tickListen(); setClock(a.currentTime, a.duration) })
   a.addEventListener('durationchange', () => setClock(a.currentTime, a.duration))
@@ -523,4 +525,35 @@ function lockSpec(): lockScreen.Spec {
 
 function syncLockScreen() {
   if (lockScreen.holds('slap')) lockScreen.update('slap', lockSpec())
+  if (audio && nativeAudio()) syncNative()
+}
+
+// ── The iOS app's player (lib/nativeAudio.ts) ───────────────────────────────
+/** The track after this one, as the queue would pick it when this one ends. */
+function upNext(): QueueItem | null {
+  if (state.mode === 'together') {
+    const r = state.room
+    return r && r.index >= 0 ? r.queue[r.index + 1] ?? null : null
+  }
+  if (state.repeat === 'one') return current()
+  return state.queue[state.index + 1] ?? (state.repeat === 'all' ? state.queue[0] ?? null : null)
+}
+
+function syncNative() {
+  const item = current()
+  const n = upNext()
+  nativeNowPlaying(item && { title: item.title, artist: item.artist ?? '', album: state.mode === 'together' ? 'Listen Together' : item.album ?? '', art: artUrl(item.art, 600) },
+    n ? { url: streamUrl(n.id) } : null, state.mode === 'together')
+}
+
+/** Lock screen, Control Center, CarPlay or headphones. The app already did play, pause and
+ *  seek itself (it works with the page asleep); the room hears about them here. */
+function onRemote(a: Remote, time?: number) {
+  const together = state.mode === 'together'
+  if (a === 'nexttrack') return next()
+  if (a === 'previoustrack') return prev()
+  if (!together) return
+  if (a === 'play' && !state.room?.playing) cmd('play')
+  else if (a === 'pause' && state.room?.playing) cmd('pause')
+  else if (a === 'seekto' && time != null) cmd('seek', { position: time })
 }

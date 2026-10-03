@@ -29,6 +29,8 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
         config.userContentController.add(self, name: "crcmzCall")
         // The tab bar is the app's own (Shell).
         config.userContentController.add(self, name: "crcmzShell")
+        // Slap's music plays through the app (NativeAudio).
+        config.userContentController.add(self, name: "crcmzAudio")
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -52,6 +54,10 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
     override func viewDidLoad() {
         super.viewDidLoad()
         shell.presenter = self
+        NativeAudio.shared.start(web: webView)
+        #if DEBUG
+        if let files = UserDefaults.standard.string(forKey: "crcmzAudioDemo") { NativeAudio.shared.demo(files.components(separatedBy: ",")) }
+        #endif
         shell.go = { [weak self] path in
             self?.webView.callAsyncJavaScript("window.__crcmzGo ? window.__crcmzGo(path) : location.assign('/app' + path)",
                                               arguments: ["path": path], in: nil, in: .page)
@@ -85,7 +91,11 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.host == "app.crcmz.me",
               let body = message.body as? [String: Any] else { return }
-        if message.name == "crcmzShell" { shell.update(body) } else { NativeCall.shared.handle(body) }
+        switch message.name {
+        case "crcmzShell": shell.update(body)
+        case "crcmzAudio": NativeAudio.shared.handle(body)
+        default: NativeCall.shared.handle(body)
+        }
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
