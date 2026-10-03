@@ -2875,3 +2875,7 @@ html[data-native-shell] .tabbar { display: none; }
 .hu-ai-tx { margin: 0; display: flex; align-items: center; gap: var(--space-2); }
 .hu-ai-confirm { flex-direction: column; align-items: stretch; gap: var(--space-2); }
 .hu-ai-confirm-acts { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.share-movie { display: flex; gap: var(--space-3); align-items: center; text-align: left; width: 100%; }
+.share-poster { width: 72px; height: 108px; object-fit: cover; border-radius: var(--radius-sm); flex: none; }
+.share-what { overflow-wrap: anywhere; }
+.share-choices { display: grid; gap: var(--space-2); width: 100%; }

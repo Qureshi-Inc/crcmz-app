@@ -1233,6 +1233,21 @@ def build_router(get_session, is_admin) -> APIRouter:
             raise HTTPException(400, r["error"])
         return r
 
+    @router.post("/share/undo")
+    async def share_undo(request: Request):
+        """Undo a shared song: cancelled if it hasn't started, taken back out if it's in."""
+        me = await caller(request)
+        b = await body_of(request)
+        return await discover.undo_share(me["sub"], _s(b.get("job"), 64))
+
+    @router.get("/share/{job}")
+    async def share_get(request: Request, job: str):
+        me = await caller(request)
+        sh = await asyncio.to_thread(discover.share_status, me["sub"], job)
+        if not sh:
+            raise HTTPException(404, "no such song")
+        return sh
+
     @router.post("/discover/download")
     async def discover_download(request: Request):
         me = await caller(request)

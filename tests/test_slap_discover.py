@@ -87,7 +87,11 @@ class FakeJF:
             self.playlists[path.split("/")[2]]["items"] += params["ids"].split(",")
             return self.r(None, 204)
         if method == "DELETE" and path.startswith("/Items/"):
-            del self.playlists[path.split("/")[2]]
+            iid = path.split("/")[2]
+            if iid in self.playlists:
+                del self.playlists[iid]
+            else:
+                self.tracks = [t for t in self.tracks if t["Id"] != iid]
             return self.r(None, 204)
         raise AssertionError(f"unexpected jellyfin call {method} {path}")
 
@@ -114,6 +118,12 @@ async def fake_importer(path, body, timeout):
     if path.endswith("/approve"):
         JOBS[path.split("/")[2]]["status"] = "approved"
         return {"ok": True}
+    if path.endswith("/cancel"):
+        j = JOBS[path.split("/")[2]]
+        if j["status"] != "pending":
+            raise HTTPException(409, "can't cancel a job that's downloading")
+        j["status"] = "cancelled"
+        return {"id": j["id"], "status": "cancelled"}
     raise AssertionError(path)
 
 
@@ -471,7 +481,7 @@ def http_tests():
             assert client.post("/api/slap/share", json={"text": "look https://example.com/x"}, cookies=cookie, headers=origin).status_code == 400
             r = client.post("/api/slap/share", cookies=cookie, headers=origin,
                             json={"text": "Saturn by SZA https://open.spotify.com/track/abc?si=1)", "url": ""})
-            assert r.status_code == 200 and r.json()["status"] == "downloading" and "job_id" not in r.json(), r.text
+            assert r.status_code == 200 and r.json()["status"] == "downloading" and r.json()["job"] == list(JOBS)[-1], r.text
             assert IMPORTER[-1][1]["url"] == "https://open.spotify.com/track/abc?si=1", IMPORTER[-1]
             assert d.shares_pending()
             run(d.follow_shares())
@@ -483,6 +493,31 @@ def http_tests():
             (cat, title, *_), kw = told[-1]
             assert cat == "music" and have["Name"] in title and kw["only"] == ["u-zub"] and kw["dms"] is False, told
             assert not d.shares_pending()
+            # Undo once it's in: the importer's file and the library's item come out.
+            deleted: list[str] = []
+
+            async def fake_delete(path):
+                deleted.append(path)
+            d._importer_delete = fake_delete
+            JOBS[jid]["track_id"] = "imp-7"
+            r = client.post("/api/slap/share/undo", json={"job": jid}, cookies=cookie, headers=origin)
+            assert r.status_code == 200 and deleted == ["/tracks/imp-7"] and have["Id"] not in [t["Id"] for t in JF.tracks], (r.text, deleted)
+            assert client.get(f"/api/slap/share/{jid}", cookies=cookie).json()["status"] == "undone"
+            # Undo before it starts: cancelled. Undo mid-download: taken out when it lands, silently.
+            r = client.post("/api/slap/share", json={"url": "https://music.apple.com/us/album/x?i=9"}, cookies=cookie, headers=origin)
+            j2 = r.json()["job"]
+            client.post("/api/slap/share/undo", json={"job": j2}, cookies=cookie, headers=origin)
+            assert JOBS[j2]["status"] == "cancelled" and client.get(f"/api/slap/share/{j2}", cookies=cookie).json()["status"] == "undone"
+            j3 = client.post("/api/slap/share", json={"url": "https://music.apple.com/us/album/y?i=8"}, cookies=cookie, headers=origin).json()["job"]
+            JOBS[j3]["status"] = "downloading"
+            client.post("/api/slap/share/undo", json={"job": j3}, cookies=cookie, headers=origin)
+            assert client.get(f"/api/slap/share/{j3}", cookies=cookie).json()["status"] == "undo"
+            JOBS[j3].update(status="complete", title="Nothing", artist="Nobody", track_id="imp-9")
+            n = len(told)
+            run(d.follow_shares())
+            assert deleted[-1] == "/tracks/imp-9" and len(told) == n, "undone: removed, and no 'it's in' message"
+            assert client.get(f"/api/slap/share/{j3}", cookies=cookie).json()["status"] == "undone"
+            assert client.post("/api/slap/share/undo", json={"job": "nope"}, cookies=cookie, headers=origin).status_code == 404
             person["tags"] = {"review": "true"}
             try:
                 assert client.post("/api/slap/share", json={"url": "https://open.spotify.com/track/abc"}, cookies=cookie, headers=origin).status_code == 403

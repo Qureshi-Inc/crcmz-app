@@ -114,7 +114,7 @@ def _conn() -> sqlite3.Connection:
                 url      TEXT NOT NULL,
                 title    TEXT NOT NULL DEFAULT '',
                 artist   TEXT NOT NULL DEFAULT '',
-                status   TEXT NOT NULL DEFAULT 'downloading',   -- downloading | done | failed
+                status   TEXT NOT NULL DEFAULT 'downloading',   -- downloading | done | failed | undo | undone
                 track_id TEXT NOT NULL DEFAULT '',
                 error    TEXT NOT NULL DEFAULT '',
                 ts       REAL NOT NULL
@@ -489,6 +489,8 @@ async def share_song(person: dict, text: str) -> dict:
         return {"error": "that isn't a music link I can download (Apple Music, Spotify, YouTube, SoundCloud, Deezer or Tidal)"}
     r = await add_song(person, url=url)
     jid = r.pop("job_id", "")
+    if jid:
+        r["job"] = jid   # for Undo (POST /api/slap/share/undo)
     if r.get("ok") and r.get("status") == "downloading" and jid:
         with _lock, _conn() as db:
             db.execute("INSERT OR REPLACE INTO shares(job_id, sub, url, title, artist, ts) VALUES (?,?,?,?,?,?)",
@@ -498,15 +500,86 @@ async def share_song(person: dict, text: str) -> dict:
 
 def shares_pending() -> bool:
     with _conn() as db:
-        return db.execute("SELECT 1 FROM shares WHERE status = 'downloading' LIMIT 1").fetchone() is not None
+        return db.execute("SELECT 1 FROM shares WHERE status IN ('downloading', 'undo') LIMIT 1").fetchone() is not None
+
+
+def share_status(sub: str, job_id: str) -> dict | None:
+    """One of your shared songs: where it's at (the share page's Undo reads this)."""
+    with _conn() as db:
+        r = db.execute("SELECT job_id, url, title, artist, status, error, ts FROM shares WHERE job_id = ? AND sub = ?",
+                       (str(job_id)[:64], sub)).fetchone()
+    return dict(r) if r else None
+
+
+async def _importer_delete(path: str) -> None:
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.delete(f"{slap.SLAP_INTERNAL_URL}{path}", headers={"Authorization": f"Bearer {slap.SLAP_ADMIN_TOKEN}"})
+    if r.status_code >= 400 and r.status_code != 404:
+        raise HTTPException(502, "the music importer didn't remove it")
+
+
+async def _remove_track(job: dict, jf_id: str) -> None:
+    """Take a downloaded song back out: the importer's file and the library's item (and so its picks entry)."""
+    if job.get("track_id"):
+        await _importer_delete(f"/tracks/{job['track_id']}")
+    if jf_id:
+        await slap._jf("DELETE", f"/Items/{jf_id}")
+
+
+async def undo_share(sub: str, job_id: str) -> dict:
+    """Undo a shared song: cancel it if it hasn't started, or remove it once it's in."""
+    sh = share_status(sub, job_id)
+    if not sh:
+        raise HTTPException(404, "no such song")
+    if sh["status"] in ("undo", "undone"):
+        return {"ok": True, "status": "undone"}
+    if sh["status"] == "failed":
+        return {"ok": True, "status": "undone"}
+    if sh["status"] == "downloading":
+        try:
+            await slap._importer(f"/jobs/{job_id}/cancel", {}, timeout=20)
+            status = "undone"
+        except HTTPException:
+            status = "undo"   # already downloading: it comes out as soon as it lands (follow_shares)
+    else:
+        with _conn() as db:
+            jf = (db.execute("SELECT track_id FROM shares WHERE job_id = ?", (job_id,)).fetchone() or {"track_id": ""})["track_id"]
+        try:
+            job = await _importer_get(f"/jobs/{job_id}")
+        except HTTPException:
+            job = {}
+        await _remove_track(job, jf)
+        status = "undone"
+    with _lock, _conn() as db:
+        db.execute("UPDATE shares SET status = ? WHERE job_id = ?", (status, job_id))
+    logger.info("discover: share %s undone (%s)", job_id, status)
+    return {"ok": True, "status": "undone"}
 
 
 async def follow_shares() -> int:
     """Check shared songs' importer jobs; tell the sharer when one lands (or fails)."""
     with _conn() as db:
-        rows = [dict(r) for r in db.execute("SELECT * FROM shares WHERE status = 'downloading'")]
+        rows = [dict(r) for r in db.execute("SELECT * FROM shares WHERE status IN ('downloading', 'undo')")]
     changed = 0
     for sh in rows:
+        if sh["status"] == "undo":
+            # Undone while it downloaded: take it out once it lands, and say nothing.
+            try:
+                job = await _importer_get(f"/jobs/{sh['job_id']}")
+            except HTTPException:
+                continue
+            st = str(job.get("status") or "").lower()
+            if st == "complete":
+                hit = (await library_index(refresh=True)).find(str(job.get("title") or sh["title"]), str(job.get("artist") or sh["artist"]))
+                try:
+                    await _remove_track(job, hit["id"] if hit else "")
+                except HTTPException:
+                    continue
+            if st in ("complete", "failed", "cancelled"):
+                with _lock, _conn() as db:
+                    db.execute("UPDATE shares SET status = 'undone' WHERE job_id = ?", (sh["job_id"],))
+                changed += 1
+            continue
         try:
             job = await _importer_get(f"/jobs/{sh['job_id']}")
         except HTTPException as e:
@@ -523,8 +596,8 @@ async def follow_shares() -> int:
                 db.execute("UPDATE shares SET status='done', title=?, artist=?, track_id=? WHERE job_id=?",
                            (title, artist, hit["id"] if hit else "", sh["job_id"]))
             if notify:
-                notify("music", f"🎵 {title} is in Slap", f"{title}{' · ' + artist if artist else ''}: added to your picks.",
-                       "/app/slap", only=[sh["sub"]], tag=f"share-{sh['job_id']}", dms=False)
+                notify("music", f"🎵 {title} is in Slap", f"{title}{' · ' + artist if artist else ''}: added to your picks. Tap to play it, or undo.",
+                       f"/app/share?done={sh['job_id']}", only=[sh["sub"]], tag=f"share-{sh['job_id']}", dms=False)
             changed += 1
         elif st in ("failed", "cancelled") or time.time() - sh["ts"] > 6 * 3600:
             err = str(job.get("error_message") or "the download didn't work")[:200]

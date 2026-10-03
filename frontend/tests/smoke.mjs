@@ -2355,19 +2355,42 @@ try {
       await n.ctx.close()
     }
 
-    // ── Share → CRCMZ: a music link goes to Slap; anything else to the Watch Party. ──
+    // ── Share → CRCMZ: a song goes straight to Slap (with Undo); a trailer offers its film; a video the Watch Party. ──
     {
-      const shares = []
+      const shares = [], undos = []
+      const INSPECT = {
+        song: { link: 'https://open.spotify.com/track/abc?si=1', kind: 'song', auto: 'slap', movie: null, video_title: '', choices: ['slap', 'watch'] },
+        trailer: { link: 'https://youtu.be/heat', kind: 'trailer', auto: null, video_title: 'Heat (1995) Official Trailer',
+          movie: { imdb: 'tt0113277', title: 'Heat', year: '1995', poster: '', in_library: false }, choices: ['movie', 'watch'] },
+        video: { link: 'https://youtu.be/dQw4w9WgXcQ', kind: 'video', auto: null, movie: null, video_title: 'Never Gonna Give You Up', choices: ['watch', 'slap'] },
+      }
       const sh = await newPage({ width: 375, height: 800, mocks: {
         ...WATCH,
-        'POST /api/slap/share': (r) => { shares.push(r.request().postDataJSON()); return json(200, { ok: true, status: 'downloading', title: 'Saturn', artist: 'SZA' })(r) },
+        'POST /api/share/inspect': (r) => { const b = r.request().postDataJSON(); const k = /spotify/.test(b.text || b.url) ? 'song' : /heat/.test(b.url) ? 'trailer' : 'video'; return json(200, INSPECT[k])(r) },
+        'POST /api/slap/share': (r) => { shares.push(r.request().postDataJSON()); return json(200, { ok: true, status: 'downloading', title: 'Saturn', artist: 'SZA', job: 'job-1' })(r) },
+        'POST /api/slap/share/undo': (r) => { undos.push(r.request().postDataJSON()); return json(200, { ok: true, status: 'undone' })(r) },
+        'GET /api/slap/share/job-1': json(200, { job_id: 'job-1', title: 'Saturn', artist: 'SZA', status: 'done', error: '' }),
       } })
       await ready(sh.page, `/app/share?text=${encodeURIComponent('Saturn by SZA https://open.spotify.com/track/abc?si=1')}`)
-      await sh.page.waitForSelector('.share-card .empty-title:has-text("Downloading Saturn")')
-      check('share: a Spotify link goes into Slap, once', shares.length === 1 && shares[0].url === 'https://open.spotify.com/track/abc?si=1', JSON.stringify(shares))
+      await sh.page.waitForSelector('.share-card .empty-title:has-text("Adding Saturn")')
+      check('share: a song is added to Slap straight away, once', shares.length === 1 && shares[0].url === 'https://open.spotify.com/track/abc?si=1', JSON.stringify(shares))
+      await sh.page.click('.share-card button:has-text("Undo")')
+      await sh.page.waitForSelector('.share-card .empty-title:has-text("Undone")')
+      check('share: Undo takes it back out', undos.length === 1 && undos[0].job === 'job-1')
+      await ready(sh.page, '/app/share?done=job-1')
+      await sh.page.waitForSelector('.share-card .empty-title:has-text("is in Slap")')
+      check("share: the notification's page says it's in, with Undo", await sh.page.isVisible('.share-card button:has-text("Undo")'))
+      await ready(sh.page, `/app/share?url=${encodeURIComponent('https://youtu.be/heat')}`)
+      await sh.page.waitForSelector('.share-movie')
+      const btns = await sh.page.locator('.share-choices button').allTextContents()
+      check('share: a trailer offers its film first, then the trailer in the Watch Party', btns[0].includes('Add to Movies') && btns[1].includes('trailer') && shares.length === 1, btns.join(' | '))
+      await sh.page.click('.share-choices button:has-text("Add to Movies")')
+      await sh.page.waitForURL(/\/app\/watch\?m=tt0113277/)
+      check('share: Add to Movies opens the film (4K / 1080p are picked there)', true)
       await ready(sh.page, `/app/share?url=${encodeURIComponent('https://youtu.be/dQw4w9WgXcQ')}`)
+      await sh.page.click('.share-choices button:has-text("Play in the Watch Party")')
       await sh.page.waitForURL(/\/app\/watch\/party/)
-      check('share: a video link opens the Watch Party instead', shares.length === 1)
+      check('share: a video plays in the Watch Party', shares.length === 1)
       check('no unmocked writes and no page errors (share)', sh.page.violations.length === 0, sh.page.violations.join(', '))
       await sh.ctx.close()
     }

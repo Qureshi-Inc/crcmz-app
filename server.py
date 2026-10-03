@@ -6528,6 +6528,20 @@ async def huddle_notes_rename(request: Request, mid: str):
     return JSONResponse({"ok": True, "title": _meet.get(mid, with_transcript=False)["title"]})
 
 
+@app.post("/api/share/inspect")
+async def share_inspect(request: Request):
+    """Share → CRCMZ: what a shared link is and what to offer (share.py). Body: {url, text, title}."""
+    if not _get_session(request):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    try:
+        b = await request.json()
+    except Exception:  # noqa: BLE001
+        b = {}
+    b = b if isinstance(b, dict) else {}
+    out = await _share.inspect(str(b.get("url") or "")[:2000], str(b.get("text") or "")[:2000], str(b.get("title") or "")[:300])
+    return JSONResponse(out, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/watch/call/token")
 async def watch_call_token(request: Request):
     """The Watch Party's camera call: a LiveKit room per party room (watch-<room>).
@@ -7260,6 +7274,7 @@ import mcp_server as _mcp
 import mcp_audit as _mcp_audit
 import facts as _facts
 import meeting_notes as _meet
+import share as _share
 import chat_history as _chat
 import psn_ai
 import wa_ai
