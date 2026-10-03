@@ -354,6 +354,9 @@ def v2_squad(request: Request, req: SquadRequest | None = None):
     try:
         if _squad_messenger.send_message(text):
             logger.info(f"squad: sent -> {text[:60]}")
+            _discord_bridge.forward_psn_to_discord(
+                client.online_id if client else "CRCMZ-BOT", text, skip_bot_filter=True
+            )
             s = _get_session(request) or {}
             who = s.get("name") or s.get("preferred_username") or "The squad"
             if req and req.notify and _push_squad_once.first(s.get("sub") or "machine"):
@@ -7801,7 +7804,7 @@ async def _start_squad_poller():
                             "video-watch: seeded %d UIDs, recovered %d unfinished jobs",
                             len(_video_seen), len(recovered),
                         )
-                await asyncio.sleep(30)
+                await asyncio.sleep(5)
 
         async def _video_forward_worker():
             while True:

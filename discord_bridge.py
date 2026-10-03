@@ -62,15 +62,22 @@ import re as _re
 _DISCORD_ECHO_RE = _re.compile(r'^\[.+?\] ')
 
 
-def forward_psn_to_discord(sender: str, text: str) -> None:
-    """Non-blocking: post a PSN text message to #the-squad on Discord."""
+def forward_psn_to_discord(sender: str, text: str, skip_bot_filter: bool = False) -> None:
+    """Non-blocking: post a PSN text message to #the-squad on Discord.
+
+    skip_bot_filter=True is used when forwarding directly from a send endpoint
+    (the caller already knows it's a bot message worth bridging).
+    """
     if not is_configured():
         return
     if not text:
         return
     # Drop messages that originated from Discord (format: "[username] text")
-    # so they don't echo back. Bot chatboard/soundboard messages are allowed through.
     if _DISCORD_ECHO_RE.match(text):
+        return
+    # In poller mode, drop the bot's own echoed messages — those are forwarded
+    # directly from the send endpoints to avoid double-posting.
+    if not skip_bot_filter and _bot_psn_id and sender == _bot_psn_id:
         return
     content = f"**[{sender}]** {text}"
     threading.Thread(
