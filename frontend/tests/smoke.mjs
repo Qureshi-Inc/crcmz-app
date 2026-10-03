@@ -1900,7 +1900,7 @@ try {
       ] }),
       'GET /api/watch/movies/home': json(200, MOVIES_HOME),
       'GET /api/watch/movies/now': json(200, { room: 'crcmz', watching: 0, video: '', title: '', poster: '', id: null, paused: true }),
-      'GET /api/watch/movies/meta/tt0110912': (r) => json(200, { ...MOVIES_HOME.rows[0].items[1], state: (posts.movies || []).some((m) => m.imdb === 'tt0110912') ? 'finding' : 'new', logo: '', runtime: 154, director: ['Quentin Tarantino'], cast: ['John Travolta', 'Uma Thurman'], writer: [], awards: 'Won 1 Oscar', country: 'United States', trailers: [], can_add: true, by: '', can_remove: false, library_quality: '', adding: null })(r),
+      'GET /api/watch/movies/meta/tt0110912': (r) => json(200, { ...MOVIES_HOME.rows[0].items[1], state: (posts.movies || []).some((m) => m.imdb === 'tt0110912') ? 'finding' : 'new', logo: '', runtime: 154, director: ['Quentin Tarantino'], cast: ['John Travolta', 'Uma Thurman'], writer: [], awards: 'Won 1 Oscar', country: 'United States', trailers: ['s7EdQ4FqbhY'], can_add: true, by: '', can_remove: false, library_quality: '', adding: null })(r),
       'GET /api/watch/movies/meta/tt1375666': json(200, { ...MOVIES_HOME.featured, logo: '', runtime: 148, director: ['Christopher Nolan'], cast: ['Leonardo DiCaprio'], writer: [], awards: '', country: '', trailers: [], can_add: true, by: 'Goopy', can_remove: false, library_quality: '4K HDR', adding: null }),
       'POST /api/watch/movies/remove': (r) => { posts.removed = [...(posts.removed || []), r.request().postDataJSON()]; return json(200, { title: 'Heat', removed: 1 })(r) },
       'POST /api/watch/movies/add': (r) => { posts.movies = [...(posts.movies || []), r.request().postDataJSON()]; return json(200, { imdb: 'tt15239678', title: 'Dune: Part Two', year: '2024', poster: '', status: 'finding', progress: 0, quality: '', size_gb: 0, by: 'Goopy', error: '', id: null, at: NOW * 1000 })(r) },
@@ -2031,6 +2031,15 @@ try {
     await page.waitForFunction(() => location.pathname === '/app/watch/party')
     await page.waitForFunction((u) => window.__wpEmits.some((e) => e[0] === 'CMD:host' && e[1] === u), `/api/watch/movies/stream/${'d'.repeat(32)}/master.m3u8`, { timeout: 5000 }).catch(() => {})
     check('movies: Watch together opens the party and plays it for everyone', await page.evaluate((u) => window.__wpEmits.some((e) => e[0] === 'CMD:host' && e[1] === u), `/api/watch/movies/stream/${'d'.repeat(32)}/master.m3u8`))
+    // A trailer plays on the party's shared screen, for everyone (not privately in the sheet).
+    await page.click('.tabbar a[href="/app/watch"]')
+    await page.click('#mv-row-popular .mv-tile:has-text("Pulp Fiction")')
+    await page.waitForSelector('.mv-sheet button:has-text("Trailer")')
+    await page.click('.mv-sheet button:has-text("Trailer")')
+    await page.waitForFunction(() => location.pathname === '/app/watch/party')
+    if (await page.locator('.dialog-confirm button:has-text("Switch")').count()) await page.click('.dialog-confirm button:has-text("Switch")')
+    await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:host' && String(e[1]).includes('youtube.com/watch?v=s7EdQ4FqbhY')), null, { timeout: 5000 }).catch(() => {})
+    check('movies: Trailer plays on the party screen for everyone', await page.evaluate(() => window.__wpEmits.some((e) => e[0] === 'CMD:host' && String(e[1]).includes('youtube.com/watch?v=s7EdQ4FqbhY'))) && (await page.locator('.mv-trailer').count()) === 0)
     // Leave /watch: the party keeps going in the Watch bar.
     await page.click('.tabbar a[href="/app"]')
     await page.waitForSelector('.watchbar-bar')

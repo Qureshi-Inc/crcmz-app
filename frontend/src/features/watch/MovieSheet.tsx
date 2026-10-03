@@ -1,4 +1,5 @@
-// Watch · a movie's sheet: backdrop, the facts, the trailer, and the one thing to do
+// Watch · a movie's sheet: backdrop, the facts, the trailer (played on the party's shared
+// screen, for everyone), and the one thing to do
 // next. In the library: Watch together (the party switches to it, after asking if it's
 // on something else). Not yet: Add to library, then the sheet follows it in. Whoever
 // added it, or an admin, can remove it again.
@@ -91,7 +92,6 @@ const hm = (min: number) => (min >= 60 ? `${Math.floor(min / 60)}h ${String(min 
 
 function Body({ d, onGenre, party, onGone }: { d: Details; onGenre: (g: string) => void; party: PartyPlay; onGone: () => void }) {
   const qc = useQueryClient()
-  const [trailer, setTrailer] = useState(false)
   const [busy, setBusy] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
   const refresh = () => {
@@ -132,12 +132,7 @@ function Body({ d, onGenre, party, onGone }: { d: Details; onGenre: (g: string) 
   return (
     <div className="mv-sheet-scroll">
       <div className="mv-sheet-hero">
-        {trailer && d.trailers[0] ? (
-          <iframe
-            className="mv-trailer" src={`https://www.youtube-nocookie.com/embed/${d.trailers[0]}?autoplay=1&playsinline=1&rel=0`}
-            title={`${d.title} trailer`} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen
-          />
-        ) : <Backdrop src={d.background || d.poster} className="mv-sheet-bg" />}
+        <Backdrop src={d.background || d.poster} className="mv-sheet-bg" />
       </div>
       <div className="mv-sheet-pad">
         <div className="mv-sheet-top">
@@ -177,8 +172,10 @@ function Body({ d, onGenre, party, onGone }: { d: Details; onGenre: (g: string) 
             <p className="meta">Adding movies isn't switched on yet.</p>
           )}
           {d.trailers[0] && (
-            <button type="button" className="btn btn-secondary" onClick={() => setTrailer((t) => !t)} aria-pressed={trailer}>
-              <Icon name={trailer ? 'close' : 'play'} />{trailer ? 'Close trailer' : 'Trailer'}
+            // On the party's shared screen, so everyone in the party watches it together.
+            <button type="button" className="btn btn-secondary" title="Play the trailer for everyone in the Watch Party"
+              onClick={() => party.play(`https://www.youtube.com/watch?v=${d.trailers[0]}`, `${d.title} · trailer`)}>
+              <Icon name="play" />Trailer
             </button>
           )}
           {d.can_remove && (
