@@ -1771,6 +1771,70 @@ try {
         return s
       }
     })()`
+    const FAKE_LK = `(() => {
+      const Source = { Camera: 'camera', Microphone: 'microphone', ScreenShare: 'screen_share', ScreenShareAudio: 'screen_share_audio' }
+      const E = { TrackSubscribed: 'trackSubscribed', TrackUnsubscribed: 'trackUnsubscribed', ParticipantConnected: 'participantConnected', ParticipantDisconnected: 'participantDisconnected',
+        ActiveSpeakersChanged: 'activeSpeakersChanged', LocalTrackPublished: 'localTrackPublished', LocalTrackUnpublished: 'localTrackUnpublished', TrackMuted: 'trackMuted', TrackUnmuted: 'trackUnmuted',
+        TrackPublished: 'trackPublished', TrackUnpublished: 'trackUnpublished', DataReceived: 'dataReceived', AudioPlaybackStatusChanged: 'audioPlaybackChanged', Reconnecting: 'reconnecting',
+        SignalReconnecting: 'signalReconnecting', Reconnected: 'reconnected', Disconnected: 'disconnected' }
+      const track = (kind, source, mst) => ({ kind, source, isMuted: false, mediaStreamTrack: mst,
+        attach(el) { el = el || document.createElement(kind); el.srcObject = new MediaStream([this.mediaStreamTrack]); return el },
+        detach(el) { if (el) el.srcObject = null; return el },
+        async replaceTrack(t) { this.mediaStreamTrack = t } })
+      const canvasTrack = (color) => { const c = document.createElement('canvas'); c.width = 320; c.height = 240; const g = c.getContext('2d'); g.fillStyle = color; g.fillRect(0, 0, 320, 240); setInterval(() => { g.fillStyle = color; g.fillRect(0, 0, 320, 240) }, 200); return c.captureStream(5).getVideoTracks()[0] }
+      const toneTrack = () => { const ac = new AudioContext(); const o = ac.createOscillator(); const d = ac.createMediaStreamDestination(); o.connect(d); o.start(); return d.stream.getAudioTracks()[0] }
+      const participant = (identity, name) => ({ identity, name, isSpeaking: false, trackPublications: new Map(),
+        getTrackPublication(src) { return [...this.trackPublications.values()].find((p) => p.source === src) } })
+      window.__lkData = []
+      window.__lkConnects = []
+      class Room {
+        constructor(opts) {
+          const room = this
+          this.opts = opts; this.h = {}; this.canPlaybackAudio = true; this.remoteParticipants = new Map()
+          const lp = participant('u1', 'Goopy')
+          const pub = (src, t) => { const p = { kind: t.kind, source: src, trackSid: src, isMuted: false, track: t }; lp.trackPublications.set(src, p); room.fire(E.LocalTrackPublished, p, lp) }
+          const enabled = (src) => { const p = lp.getTrackPublication(src); return !!p && !p.isMuted }
+          Object.defineProperties(lp, {
+            isMicrophoneEnabled: { get: () => enabled(Source.Microphone) },
+            isCameraEnabled: { get: () => enabled(Source.Camera) },
+            isScreenShareEnabled: { get: () => enabled(Source.ScreenShare) },
+          })
+          const toggle = async (src, on, get) => {
+            const p = lp.getTrackPublication(src)
+            if (p && src !== Source.ScreenShare) { p.isMuted = !on; p.track.isMuted = !on; room.fire(on ? E.TrackUnmuted : E.TrackMuted, p, lp); return }
+            if (p && !on) { p.track.mediaStreamTrack.stop(); lp.trackPublications.delete(src); room.fire(E.LocalTrackUnpublished, p, lp); return }
+            if (on) pub(src, track(src === Source.Microphone ? 'audio' : 'video', src, await get()))
+          }
+          lp.setMicrophoneEnabled = (on) => toggle(Source.Microphone, on, async () => (await navigator.mediaDevices.getUserMedia({ audio: true })).getAudioTracks()[0])
+          lp.setCameraEnabled = (on) => toggle(Source.Camera, on, async () => (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0])
+          lp.setScreenShareEnabled = (on) => toggle(Source.ScreenShare, on, async () => canvasTrack('#2244aa'))
+          lp.publishData = async (data, o) => { window.__lkData.push({ ...JSON.parse(new TextDecoder().decode(data)), topic: o.topic, reliable: o.reliable }) }
+          lp.unpublishTrack = async (t, stop) => { for (const [k, p] of lp.trackPublications) if (p.track === t) { lp.trackPublications.delete(k); if (stop) t.mediaStreamTrack.stop(); room.fire(E.LocalTrackUnpublished, p, lp) } }
+          this.localParticipant = lp
+          window.__lkRoom = this
+          window.__lkFire = (ev, ...a) => room.fire(ev, ...a)
+          window.__lkAdd = (id, name) => {
+            const p = participant(id, name)
+            room.remoteParticipants.set(id, p)
+            room.fire(E.ParticipantConnected, p)
+            for (const [src, t] of [[Source.Camera, track('video', Source.Camera, canvasTrack(id === 'p2' ? '#aa2266' : '#22aa66'))], [Source.Microphone, track('audio', Source.Microphone, toneTrack())]]) {
+              const pb = { kind: t.kind, source: src, trackSid: id + src, isMuted: false, isSubscribed: true, track: t }
+              p.trackPublications.set(src, pb)
+              room.fire(E.TrackSubscribed, t, pb, p)
+            }
+          }
+          window.__lkRemove = (id) => { const p = room.remoteParticipants.get(id); if (!p) return; room.remoteParticipants.delete(id); for (const pb of p.trackPublications.values()) room.fire(E.TrackUnsubscribed, pb.track, pb, p); room.fire(E.ParticipantDisconnected, p) }
+          window.__lkSpeak = (ids) => { const all = [lp, ...room.remoteParticipants.values()]; all.forEach((p) => { p.isSpeaking = ids.includes(p.identity) }); room.fire(E.ActiveSpeakersChanged, all.filter((p) => p.isSpeaking)) }
+          window.__lkSay = (id, obj) => room.fire(E.DataReceived, new TextEncoder().encode(JSON.stringify(obj)), room.remoteParticipants.get(id), 0, 'crcmz-huddle')
+        }
+        on(ev, fn) { (this.h[ev] ||= []).push(fn); return this }
+        fire(ev, ...a) { (this.h[ev] || []).forEach((f) => f(...a)) }
+        async connect(url, token) { window.__lkConnects.push([url, token]); this.state = 'connected' }
+        async disconnect() { this.state = 'disconnected'; this.fire(E.Disconnected, 1) }
+        async startAudio() { this.canPlaybackAudio = true }
+      }
+      window.LivekitClient = { Room, RoomEvent: E, Track: { Source }, DisconnectReason: { CLIENT_INITIATED: 1, SERVER_SHUTDOWN: 2 } }
+    })()`
     const film = (imdb, title, year, extra = {}) => ({ imdb, title, year, poster: '', background: '', rating: '8.0', genres: ['Drama'], overview: `${title}, the film.`, state: 'new', id: null, quality: '', progress: 0, error: '', ...extra })
     const INCEPTION = film('tt1375666', 'Inception', '2010', { state: 'ready', id: 'd'.repeat(32), quality: '4K HDR', rating: '8.8' })
     const MOVIES_HOME = {
@@ -1784,6 +1848,8 @@ try {
       'GET /api/watch/config': json(200, { authMode: 'zitadel', origin: '', socketPath: '/wp/socket.io', rooms: ['crcmz'], defaultRoom: 'crcmz', ticketTtl: 60, viewer: { id: 'u1', name: 'Goopy', nickname: '', psnOnlineId: 'Goopy', mod: true } }),
       'GET /wp/socket.io/socket.io.js': (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: FAKE_IO }),
       'POST /api/watch/join': json(200, { ticket: 'tkt', expiresIn: 60, room: 'crcmz', viewer: { name: 'Goopy', mod: true } }),
+      'GET /npm/livekit-client@2/dist/livekit-client.umd.min.js': (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: FAKE_LK }),
+      'POST /api/watch/call/token': (r) => { posts.callToken = [...(posts.callToken || []), r.request().postDataJSON()]; return json(200, { token: 'lk-watch', url: 'wss://lk.example', room: 'watch-crcmz' })(r) },
       'POST /api/ring': (r) => { posts.ring = [...(posts.ring || []), r.request().postDataJSON()]; return json(200, { phones_rang: 1, pushed: 2 })(r) },
       'POST /api/watch/rally': (r) => { posts.rally.push(r.request().postDataJSON()); return json(200, { status: 'sent' })(r) },
       'POST /api/watch/nickname': (r) => { posts.nick.push(r.request().postDataJSON()); return json(200, { nickname: 'G', name: 'G' })(r) },
@@ -2019,6 +2085,20 @@ try {
     await d.page.waitForFunction(() => document.querySelector('.wp-face-video')?.readyState >= 2)
     const below = await d.page.evaluate(() => document.querySelector('.wp-orbs').getBoundingClientRect().top >= document.querySelector('.wp-stage').getBoundingClientRect().bottom - 1)
     check('watch 1440: orbs sit below the video by default', below)
+    // Someone else in the call (LiveKit): their camera lands on their party viewer, glows when they talk, goes when they leave.
+    check('watch 1440: the call is a LiveKit room joined with this party connection', (posts.callToken || []).length >= 1 && posts.callToken[0].room === 'crcmz' && !!posts.callToken[0].client)
+    await d.page.evaluate(() => { window.__wpFire('roster', [{ id: 'p2', isMod: false }]); window.__lkAdd('p2', 'Bizzle') })
+    await d.page.waitForSelector('.wp-orb[aria-label^="Bizzle"]', { timeout: 5000 }).catch(() => {})
+    check('watch 1440: another camera in the call shows on their orb', await d.page.evaluate(() => {
+      const o = [...document.querySelectorAll('.wp-orb')].find((b) => b.getAttribute('aria-label')?.startsWith('Bizzle'))
+      const v = o?.querySelector('video'); return !!v && !v.hidden && !!v.srcObject
+    }))
+    await d.page.evaluate(() => window.__lkSpeak(['p2']))
+    await d.page.waitForSelector('.wp-orb[aria-label^="Bizzle"][data-loud="true"]', { timeout: 3000 }).catch(() => {})
+    check('watch 1440: they glow while they talk', await d.page.isVisible('.wp-orb[aria-label^="Bizzle"][data-loud="true"]'))
+    await d.page.evaluate(() => { window.__lkSpeak([]); window.__lkRemove('p2') })
+    await d.page.waitForSelector('.wp-orb[aria-label^="Bizzle"]', { state: 'detached', timeout: 3000 }).catch(() => {})
+    check('watch 1440: and their camera goes when they leave the call', !(await d.page.isVisible('.wp-orb[aria-label^="Bizzle"]')))
     check('watch 1440: camera tiles are rounded squares, not circles', await d.page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.wp-face')).borderTopLeftRadius) < 20))
     await pickPos(d.page, 'over')
     await d.page.waitForSelector('.wp-stage .wp-orbs-over-side')
@@ -2108,70 +2188,7 @@ try {
       const hposts = { token: [], ai: [], tr: 0 }
       let tokenMode = 'ok'
       let aiMode = 'ok'
-      const FAKE_LK = `(() => {
-        const Source = { Camera: 'camera', Microphone: 'microphone', ScreenShare: 'screen_share', ScreenShareAudio: 'screen_share_audio' }
-        const E = { TrackSubscribed: 'trackSubscribed', TrackUnsubscribed: 'trackUnsubscribed', ParticipantConnected: 'participantConnected', ParticipantDisconnected: 'participantDisconnected',
-          ActiveSpeakersChanged: 'activeSpeakersChanged', LocalTrackPublished: 'localTrackPublished', LocalTrackUnpublished: 'localTrackUnpublished', TrackMuted: 'trackMuted', TrackUnmuted: 'trackUnmuted',
-          TrackPublished: 'trackPublished', TrackUnpublished: 'trackUnpublished', DataReceived: 'dataReceived', AudioPlaybackStatusChanged: 'audioPlaybackChanged', Reconnecting: 'reconnecting',
-          SignalReconnecting: 'signalReconnecting', Reconnected: 'reconnected', Disconnected: 'disconnected' }
-        const track = (kind, source, mst) => ({ kind, source, isMuted: false, mediaStreamTrack: mst,
-          attach(el) { el = el || document.createElement(kind); el.srcObject = new MediaStream([this.mediaStreamTrack]); return el },
-          detach(el) { if (el) el.srcObject = null; return el },
-          async replaceTrack(t) { this.mediaStreamTrack = t } })
-        const canvasTrack = (color) => { const c = document.createElement('canvas'); c.width = 320; c.height = 240; const g = c.getContext('2d'); g.fillStyle = color; g.fillRect(0, 0, 320, 240); setInterval(() => { g.fillStyle = color; g.fillRect(0, 0, 320, 240) }, 200); return c.captureStream(5).getVideoTracks()[0] }
-        const toneTrack = () => { const ac = new AudioContext(); const o = ac.createOscillator(); const d = ac.createMediaStreamDestination(); o.connect(d); o.start(); return d.stream.getAudioTracks()[0] }
-        const participant = (identity, name) => ({ identity, name, isSpeaking: false, trackPublications: new Map(),
-          getTrackPublication(src) { return [...this.trackPublications.values()].find((p) => p.source === src) } })
-        window.__lkData = []
-        window.__lkConnects = []
-        class Room {
-          constructor(opts) {
-            const room = this
-            this.opts = opts; this.h = {}; this.canPlaybackAudio = true; this.remoteParticipants = new Map()
-            const lp = participant('u1', 'Goopy')
-            const pub = (src, t) => { const p = { kind: t.kind, source: src, trackSid: src, isMuted: false, track: t }; lp.trackPublications.set(src, p); room.fire(E.LocalTrackPublished, p, lp) }
-            const enabled = (src) => { const p = lp.getTrackPublication(src); return !!p && !p.isMuted }
-            Object.defineProperties(lp, {
-              isMicrophoneEnabled: { get: () => enabled(Source.Microphone) },
-              isCameraEnabled: { get: () => enabled(Source.Camera) },
-              isScreenShareEnabled: { get: () => enabled(Source.ScreenShare) },
-            })
-            const toggle = async (src, on, get) => {
-              const p = lp.getTrackPublication(src)
-              if (p && src !== Source.ScreenShare) { p.isMuted = !on; p.track.isMuted = !on; room.fire(on ? E.TrackUnmuted : E.TrackMuted, p, lp); return }
-              if (p && !on) { p.track.mediaStreamTrack.stop(); lp.trackPublications.delete(src); room.fire(E.LocalTrackUnpublished, p, lp); return }
-              if (on) pub(src, track(src === Source.Microphone ? 'audio' : 'video', src, await get()))
-            }
-            lp.setMicrophoneEnabled = (on) => toggle(Source.Microphone, on, async () => (await navigator.mediaDevices.getUserMedia({ audio: true })).getAudioTracks()[0])
-            lp.setCameraEnabled = (on) => toggle(Source.Camera, on, async () => (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0])
-            lp.setScreenShareEnabled = (on) => toggle(Source.ScreenShare, on, async () => canvasTrack('#2244aa'))
-            lp.publishData = async (data, o) => { window.__lkData.push({ ...JSON.parse(new TextDecoder().decode(data)), topic: o.topic, reliable: o.reliable }) }
-            lp.unpublishTrack = async (t, stop) => { for (const [k, p] of lp.trackPublications) if (p.track === t) { lp.trackPublications.delete(k); if (stop) t.mediaStreamTrack.stop(); room.fire(E.LocalTrackUnpublished, p, lp) } }
-            this.localParticipant = lp
-            window.__lkRoom = this
-            window.__lkFire = (ev, ...a) => room.fire(ev, ...a)
-            window.__lkAdd = (id, name) => {
-              const p = participant(id, name)
-              room.remoteParticipants.set(id, p)
-              room.fire(E.ParticipantConnected, p)
-              for (const [src, t] of [[Source.Camera, track('video', Source.Camera, canvasTrack(id === 'p2' ? '#aa2266' : '#22aa66'))], [Source.Microphone, track('audio', Source.Microphone, toneTrack())]]) {
-                const pb = { kind: t.kind, source: src, trackSid: id + src, isMuted: false, isSubscribed: true, track: t }
-                p.trackPublications.set(src, pb)
-                room.fire(E.TrackSubscribed, t, pb, p)
-              }
-            }
-            window.__lkRemove = (id) => { const p = room.remoteParticipants.get(id); if (!p) return; room.remoteParticipants.delete(id); for (const pb of p.trackPublications.values()) room.fire(E.TrackUnsubscribed, pb.track, pb, p); room.fire(E.ParticipantDisconnected, p) }
-            window.__lkSpeak = (ids) => { const all = [lp, ...room.remoteParticipants.values()]; all.forEach((p) => { p.isSpeaking = ids.includes(p.identity) }); room.fire(E.ActiveSpeakersChanged, all.filter((p) => p.isSpeaking)) }
-            window.__lkSay = (id, obj) => room.fire(E.DataReceived, new TextEncoder().encode(JSON.stringify(obj)), room.remoteParticipants.get(id), 0, 'crcmz-huddle')
-          }
-          on(ev, fn) { (this.h[ev] ||= []).push(fn); return this }
-          fire(ev, ...a) { (this.h[ev] || []).forEach((f) => f(...a)) }
-          async connect(url, token) { window.__lkConnects.push([url, token]); this.state = 'connected' }
-          async disconnect() { this.state = 'disconnected'; this.fire(E.Disconnected, 1) }
-          async startAudio() { this.canPlaybackAudio = true }
-        }
-        window.LivekitClient = { Room, RoomEvent: E, Track: { Source }, DisconnectReason: { CLIENT_INITIATED: 1, SERVER_SHUTDOWN: 2 } }
-      })()`
+
       const HUDDLE = {
         ...WATCH,
         'GET /npm/livekit-client@2/dist/livekit-client.umd.min.js': (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: FAKE_LK }),

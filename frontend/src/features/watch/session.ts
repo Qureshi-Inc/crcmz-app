@@ -10,7 +10,7 @@
 import { useSyncExternalStore } from 'react'
 import { toast } from '../../components/toast'
 import { muteOtherCalls, registerCall } from '../../lib/calls'
-import { ApiError } from '../../lib/http'
+import { ApiError, request } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
 import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
@@ -95,17 +95,8 @@ export type WatchState = {
 export type Clock = { t: number; dur: number; buf: number; live: boolean }
 
 const MAX_TRIES = 6
-// STUN finds a direct path; the server's config adds the TURN relay for people who
-// can't be reached directly (strict NAT, mobile carriers, VPNs).
-let ICE: RTCIceServer[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
-let iceAt = 0
-/** The relay password lasts 12 hours; a page left open longer fetches a fresh one. */
-async function freshIce() {
-  if (!iceAt || Date.now() - iceAt < 6 * 3600_000) return
-  try { const c = await getConfig(); if (c.iceServers?.length) { ICE = c.iceServers; iceAt = Date.now() } } catch { /* keep the old one */ }
-}
 // The orbs are small, so a tiny stream looks identical to a big one and keeps the
-// mesh affordable on phone uplinks.
+// call affordable on phone uplinks.
 const CAM_BITRATE = 260_000
 const VIDEO_C = { width: { ideal: 320 }, height: { ideal: 320 }, frameRate: { ideal: 15, max: 20 } }
 const RX_WINDOW = 5000
@@ -530,7 +521,6 @@ export async function boot() {
     return
   }
   if (!state.active) return
-  if (cfg.iceServers?.length) { ICE = cfg.iceServers; iceAt = Date.now() }
   set({ cfg, room: cfg.defaultRoom || 'crcmz', myName: cfg.viewer?.name || '', isMod: !!cfg.viewer?.mod })
   try {
     await loadScript(`${cfg.origin || ''}${cfg.socketPath || '/socket.io'}/socket.io.js`)
@@ -617,6 +607,7 @@ function bind(s: Sock) {
     tries = 0
     awaitHost = true
     set({ status: 'live', error: '' })
+    void connectRoom()   // listen to the party's call (cameras of whoever's in it)
     s.emit('watch:presence:get')
     s.emit('CMD:askHost')
     // After askHost, so the room's current video can't arrive after the one picked.
@@ -637,10 +628,8 @@ function bind(s: Sock) {
     // Remember what was on, in case the server restarted and forgot the room.
     lastHost = state.video ? { url: state.video, t: time(), paused: !isPlaying(), at: Date.now() } : null
     log('sock.disconnect', { reason: String(reason || ''), ...snap() }, 'warn')
-    // Peer connections are addressed by socket id server-side, so they're all dead.
-    // Our own camera stays on and re-announces once we're back.
+    // The call is its own LiveKit room, so it carries on; the roster comes back on reconnect.
     set({ roster: [] })
-    dropAllPeers()
     if (kicked) { dropSock(); return }
     retry('')
   })
@@ -655,7 +644,7 @@ function bind(s: Sock) {
   // nameMap only supplies names; it is never pruned. `roster` is the live list.
   s.on('REC:nameMap', (m: Record<string, string>) => set({ names: m || {} }))
   s.on('roster', (arr: RosterEntry[]) => { set({ roster: Array.isArray(arr) ? arr : [] }); reconcilePeers() })
-  s.on('signal', (d: { from?: string; msg?: Signal }) => void onSignal(d?.from, d?.msg))
+  s.on('signal', (d: { from?: string; msg?: { t?: string; e?: string } }) => onSignal(d?.from, d?.msg))
   s.on('REC:host', (h: { video?: string; videoTS?: number; paused?: boolean }) => {
     h = h || {}
     log('rec.host', { video: short(h.video || ''), prev: short(state.video), ts: Number(h.videoTS) || 0, paused: !!h.paused, first: awaitHost }, !h.video && state.video ? 'warn' : 'info')
@@ -689,6 +678,7 @@ export function leave() {
   postHistory()
   endCall()
   set({ active: false })
+  disconnectRoom()
   window.clearTimeout(retryT)
   window.clearTimeout(recoverT)
   dropSock()
@@ -948,33 +938,53 @@ function showRx(e: string, name: string) {
   rxListeners.forEach((l) => l({ e, name, burst }))
 }
 
-// ── The call: local media ───────────────────────────────────────────────────
-type Signal = { t: 'cam'; on: boolean; vid?: boolean } | { t: 'sdp'; sdp: RTCSessionDescriptionInit } | { t: 'ice'; ice: RTCIceCandidateInit } | { t: 'rx'; e: string }
-type Peer = { pc: RTCPeerConnection; polite: boolean; makingOffer: boolean; ignoreOffer: boolean; stream: MediaStream | null; discT: number }
+// ── The call: a LiveKit room per party room (watch-<room>) ──────────────────
+// The party itself (the video, chat, reactions) stays on the Watch Party socket. The
+// cameras and mics are a LiveKit room, like Huddle: everyone in the party is connected
+// to it listening, so you see and hear whoever's in the call without joining; joining
+// publishes your camera. Each participant carries its party socket id as the "client"
+// attribute, which is how a camera lands on the right viewer (and kick still works).
+// The iOS app runs this same room natively (ios/), with picture in picture.
+type Signal = { t: 'rx'; e: string }
+type LkTrack = {
+  kind: 'audio' | 'video'; source: string; isMuted: boolean; mediaStreamTrack: MediaStreamTrack
+  restartTrack?(o?: MediaTrackConstraints): Promise<unknown>
+  replaceTrack?(t: MediaStreamTrack, userProvided?: boolean): Promise<unknown>
+}
+type LkPub = { kind: 'audio' | 'video'; source: string; trackSid: string; isMuted: boolean; track?: LkTrack }
+type LkParticipant = {
+  identity: string; name?: string; isSpeaking: boolean; attributes?: Record<string, string>
+  trackPublications: Map<string, LkPub>
+  getTrackPublication(source: string): LkPub | undefined
+}
+type LkLocal = LkParticipant & {
+  setMicrophoneEnabled(on: boolean, opts?: MediaTrackConstraints): Promise<unknown>
+  setCameraEnabled(on: boolean, opts?: MediaTrackConstraints): Promise<unknown>
+  unpublishTrack(t: LkTrack, stop?: boolean): Promise<unknown>
+}
+type LkRoom = {
+  localParticipant: LkLocal
+  remoteParticipants: Map<string, LkParticipant>
+  on(ev: string, fn: (...a: never[]) => void): LkRoom
+  connect(url: string, token: string): Promise<void>
+  disconnect(): Promise<void>
+}
+type LkNs = { Room: new (o: Record<string, unknown>) => LkRoom; RoomEvent: Record<string, string> }
+const LK_SRC = 'https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js'
+const SRC = { cam: 'camera', mic: 'microphone' } as const
+type Peer = { p: LkParticipant; stream: MediaStream | null; key: string }
+
+let lkRoom: LkRoom | null = null
+let lkConnecting: Promise<LkRoom | null> | null = null
 let localStream: MediaStream | null = null
-const peers: Record<string, Peer> = {}
-const remoteCam: Record<string, boolean> = {}
-const remoteCamOff: Record<string, boolean> = {}
+const peers: Record<string, Peer> = {}     // by party socket id
 
 const live = () => state.roster.map((u) => u?.id).filter((id): id is string => !!id && id !== state.clientId)
 export const nameOf = (id: string) => state.names[id] || 'Viewer'
 function signal(to: string, msg: Signal) { if (sock?.connected) sock.emit('signal', { to, msg }) }
-const camMsg = (on: boolean): Signal => ({ t: 'cam', on, vid: on && !state.call.camOff })
-const announce = (on: boolean) => live().forEach((id) => signal(id, camMsg(on)))
 export const localMedia = () => localStream
-/** How a connected call travels: 'host'/'srflx' are direct, 'relay' goes through TURN. */
-async function routeOf(pc: RTCPeerConnection): Promise<string> {
-  try {
-    const stats = await pc.getStats()
-    let pair: { localCandidateId?: string; remoteCandidateId?: string } | undefined
-    stats.forEach((r) => { if (r.type === 'candidate-pair' && (r.selected || r.nominated) && r.state === 'succeeded') pair = r })
-    if (!pair) return 'unknown'
-    const local = pair.localCandidateId ? stats.get(pair.localCandidateId) : null
-    const remote = pair.remoteCandidateId ? stats.get(pair.remoteCandidateId) : null
-    return `${local?.candidateType ?? '?'}/${remote?.candidateType ?? '?'}${local?.relayProtocol ? ` ${local.relayProtocol}` : ''}`
-  } catch { return 'unknown' }
-}
 export const canCall = () => typeof navigator.mediaDevices?.getUserMedia === 'function' && typeof window.RTCPeerConnection === 'function'
+const clientOf = (p: LkParticipant) => p.attributes?.client || p.identity.split('#')[1] || p.identity
 
 function audioC() {
   return { echoCancellation: true, noiseSuppression: true, autoGainControl: true, ...(state.micId ? { deviceId: { exact: state.micId } } : {}) }
@@ -990,43 +1000,129 @@ async function enumerate() {
   } catch { /* */ }
 }
 
+async function loadLk(): Promise<LkNs | null> {
+  const w = window as unknown as { LivekitClient?: LkNs }
+  if (!w.LivekitClient) await loadScript(LK_SRC).catch(() => { /* offline */ })
+  return w.LivekitClient ?? null
+}
+
+/** The party's call room, connected listening (once per party visit). */
+function connectRoom(): Promise<LkRoom | null> {
+  if (lkRoom) return Promise.resolve(lkRoom)
+  if (lkConnecting) return lkConnecting
+  lkConnecting = (async () => {
+    try {
+      const ns = await loadLk()
+      if (!ns || !state.active) return null
+      const t = await request<{ token: string; url: string; room: string }>('/api/watch/call/token', {
+        body: { room: state.room || 'crcmz', client: state.clientId }, quiet401: true })
+      const r = new ns.Room({
+        adaptiveStream: false, dynacast: true, stopLocalTrackOnUnpublish: true,
+        videoCaptureDefaults: { resolution: { width: 320, height: 320, frameRate: 15 } },
+        publishDefaults: { simulcast: false, videoEncoding: { maxBitrate: CAM_BITRATE, maxFramerate: 20 } },
+      })
+      wire(r, ns)
+      await r.connect(t.url, t.token)
+      if (!state.active) { void r.disconnect(); return null }
+      lkRoom = r
+      log('call.room', { room: t.room })
+      syncPeers()
+      return r
+    } catch (e) {
+      log('call.room_failed', { msg: String((e as Error)?.message || e).slice(0, 160) }, 'warn')
+      return null
+    } finally {
+      lkConnecting = null
+    }
+  })()
+  return lkConnecting
+}
+function disconnectRoom() {
+  const r = lkRoom
+  lkRoom = null
+  Object.keys(peers).forEach((id) => { stopAudio(id); delete peers[id] })
+  if (state.loud && Object.keys(state.loud).length) set({ loud: {} })
+  if (r) void r.disconnect().catch(() => { /* */ })
+  bumpRtc()
+}
+
+function wire(r: LkRoom, ns: LkNs) {
+  const E = ns.RoomEvent
+  const on = (ev: string | undefined, fn: (...a: never[]) => void) => { if (ev) r.on(ev, fn) }
+  for (const ev of [E.TrackSubscribed, E.TrackUnsubscribed, E.TrackMuted, E.TrackUnmuted, E.TrackPublished, E.TrackUnpublished,
+    E.ParticipantConnected, E.ParticipantDisconnected, E.LocalTrackPublished, E.LocalTrackUnpublished, E.ParticipantAttributesChanged]) {
+    on(ev, () => syncPeers())
+  }
+  on(E.ActiveSpeakersChanged, ((speakers: LkParticipant[]) => {
+    const loud: Record<string, boolean> = {}
+    for (const sp of speakers) loud[sp === r.localParticipant ? 'me' : clientOf(sp)] = true
+    set({ loud })
+  }) as never)
+  on(E.Reconnecting, () => log('call.reconnecting', undefined, 'warn'))
+  on(E.Reconnected, () => { log('call.reconnected'); syncPeers() })
+  on(E.Disconnected, () => {
+    if (lkRoom !== r) return
+    lkRoom = null
+    if (state.call.on) camStop()
+    Object.keys(peers).forEach((id) => { stopAudio(id); delete peers[id] })
+    bumpRtc()
+    // Still in the party: listen again shortly (the server restarted, the network blipped).
+    if (state.active) window.setTimeout(() => { if (state.active && !lkRoom) void connectRoom() }, 3000)
+  })
+}
+
+/** Rebuild who's in the call from the room: a MediaStream per person (camera + mic). */
+function syncPeers() {
+  const r = lkRoom
+  const seen = new Set<string>()
+  if (r) {
+    for (const p of r.remoteParticipants.values()) {
+      const id = clientOf(p)
+      seen.add(id)
+      const tracks = [p.getTrackPublication(SRC.cam), p.getTrackPublication(SRC.mic)]
+        .map((pub) => pub?.track?.mediaStreamTrack).filter((t): t is MediaStreamTrack => !!t && t.readyState === 'live')
+      const key = tracks.map((t) => t.id).join(',')
+      const have = peers[id]
+      // A new MediaStream when the tracks change, so <video>/<audio> pick it up cleanly.
+      const stream = have && have.key === key ? have.stream : (tracks.length ? new MediaStream(tracks) : null)
+      peers[id] = { p, stream, key }
+      if (stream?.getAudioTracks().length) playAudio(id, stream)
+      else stopAudio(id)
+    }
+  }
+  Object.keys(peers).forEach((id) => { if (!seen.has(id)) { stopAudio(id); delete peers[id] } })
+  const cam = r?.localParticipant.getTrackPublication(SRC.cam)?.track?.mediaStreamTrack
+  localStream = state.call.on ? (cam && cam.readyState === 'live' ? streamOf(cam) : localStream && !cam ? localStream : null) : null
+  bumpRtc()
+}
+
 export async function joinCall() {
   if (state.call.busy || state.call.on) return
   if (!canCall()) { setCall({ note: "This browser can't share a camera." }); return }
   setCall({ busy: true, note: 'Asking for permission…', micOnly: false })
-  await freshIce()
   try {
-    let stream: MediaStream
+    const r = await connectRoom()
+    if (!r) { setCall({ note: "Couldn't reach the call. Try again in a moment." }); return }
     let micOnly = false
     try {
-      // Video only. A capturing mic (even a disabled track) flips the OS into
-      // voice-call audio: Bluetooth drops to the headset profile, iOS/Android/
-      // Windows switch to communications mode and the movie sounds worse. The
-      // mic is opened only while you're unmuted.
-      stream = await navigator.mediaDevices.getUserMedia({ video: { ...VIDEO_C, facingMode: 'user' }, audio: false })
+      // Camera only. A capturing mic (even a muted one) flips the OS into voice-call
+      // audio: Bluetooth drops to the headset profile and the movie sounds worse. The mic
+      // is opened only while you're unmuted.
+      await r.localParticipant.setCameraEnabled(true, { facingMode: 'user' })
     } catch (e) {
       const n = (e as { name?: string })?.name || ''
       log('cam.error', { name: n, msg: String((e as Error)?.message || '').slice(0, 160) }, 'warn')
-      if (n === 'NotFoundError' || n === 'DevicesNotFoundError') {
-        // No camera: join anyway, muted; Unmute opens the mic.
-        stream = new MediaStream()
-        micOnly = true
-      } else {
+      if (n === 'NotFoundError' || n === 'DevicesNotFoundError' || n === 'OverconstrainedError') micOnly = true
+      else {
         setCall({ note: n === 'NotAllowedError' ? 'Camera/mic blocked — allow it in your browser settings.' : n === 'NotReadableError' ? 'Camera is in use by another app.' : 'Could not start the camera.' })
         return
       }
     }
     void enumerate()
-    localStream = stream
     // You join muted, with no mic open at all; Unmute is one tap away.
     setCall({ on: true, muted: true, camOff: false, micOnly, facing: 'user', note: micOnly ? 'No camera found — tap Unmute to talk.' : '' })
-    log('cam.on', { micOnly, tracks: stream.getTracks().map((t) => `${t.kind}:${t.readyState}`) })
-    // A camera can be revoked mid-call: video ending hangs up.
-    stream.getVideoTracks().forEach((t) => t.addEventListener('ended', () => { if (state.call.on) camStop() }))
-    announce(true)
-    live().forEach((id) => peer(id, true))
-    Object.values(peers).forEach(syncTracks)
-    bumpRtc()
+    syncPeers()
+    log('cam.on', { micOnly })
   } finally {
     setCall({ busy: false })
   }
@@ -1035,77 +1131,51 @@ function camStop() {
   log('cam.off')
   stopPip('watch')
   micGen++
+  const lp = lkRoom?.localParticipant
   setCall({ on: false, muted: true, camOff: false, micOnly: false })
-  announce(false)
-  for (const id of Object.keys(peers)) {
-    // Keep the connection if they still send us video; otherwise drop it.
-    if (remoteCam[id]) syncTracks(peers[id]!)
-    else dropPeer(id)
+  if (lp) {
+    for (const src of [SRC.cam, SRC.mic]) {
+      const t = lp.getTrackPublication(src)?.track
+      if (t) void lp.unpublishTrack(t, true).catch(() => { /* */ })
+    }
   }
   localStream?.getTracks().forEach((t) => t.stop())
   localStream = null
-  meterStop('me')
   bumpRtc()
 }
 export const leaveCall = () => { if (state.call.on) camStop() }
 function endCall() { if (state.call.on) camStop() }
 
-/** The peer's audio sender, live or parked (track null after a mute). */
-function audioSender(pc: RTCPeerConnection): RTCRtpSender | undefined {
-  const live = pc.getSenders().find((x) => x.track?.kind === 'audio')
-  if (live) return live
-  return pc.getTransceivers().find((t) => t.currentDirection !== 'stopped' && !t.sender.track && t.receiver.track?.kind === 'audio'
-    && (t.direction === 'sendrecv' || t.direction === 'sendonly'))?.sender
-}
-/** Put `track` (or nothing) on every peer's audio sender, without renegotiating where a sender exists. */
-async function swapAudio(track: MediaStreamTrack | null) {
-  await Promise.all(Object.values(peers).map(async (p) => {
-    const s = audioSender(p.pc)
-    if (s) await s.replaceTrack(track).catch(() => { /* */ })
-  }))
-}
 let micGen = 0
 /** Open the mic and send it. Returns false if the mic couldn't be opened. */
 async function micOpen(): Promise<boolean> {
-  if (!state.call.on || !localStream) return false
+  const lp = lkRoom?.localParticipant
+  if (!state.call.on || !lp) return false
   const gen = ++micGen
-  let track: MediaStreamTrack | undefined
   try {
-    track = (await navigator.mediaDevices.getUserMedia({ audio: audioC() })).getAudioTracks()[0]
+    await lp.setMicrophoneEnabled(true, audioC())
   } catch (e) {
     const n = (e as { name?: string })?.name
     setCall({ note: n === 'NotAllowedError' ? 'Mic blocked — allow it in your browser settings.' : n === 'NotFoundError' ? 'No mic found.' : 'Could not access the mic.' })
     return false
   }
-  const ls = localStream
   // Muted or left while the permission prompt was up.
-  if (!track || gen !== micGen || !state.call.on || !ls) { track?.stop(); return false }
-  const nt = track
-  await swapAudio(nt)
-  if (gen !== micGen || localStream !== ls) { nt.stop(); return false }
-  ls.getAudioTracks().forEach((t) => { try { t.stop() } catch { /* */ } ls.removeTrack(t) })
-  ls.addTrack(nt)
-  // A mic can end on its own (phone call, iOS background): reopen just the mic.
-  nt.addEventListener('ended', () => { if (state.call.on && !state.call.muted && localStream?.getAudioTracks().includes(nt)) void micOpen() })
-  // Peers with no audio sender yet get one (a one-off renegotiation).
-  Object.values(peers).forEach(syncTracks)
-  meterStop('me')
-  meter('me', ls)
+  if (gen !== micGen || !state.call.on) { micClose(); return false }
   void enumerate()
   setCall({ note: '' })
   return true
 }
-/** Stop the mic entirely, so the OS leaves voice-call mode. */
+/** Stop the mic entirely (unpublish and stop the track), so the OS leaves voice-call mode. */
 function micClose() {
   micGen++
-  meterStop('me')
-  const ls = localStream
-  if (!ls) return
-  const old = ls.getAudioTracks()
-  old.forEach((t) => ls.removeTrack(t))
-  void swapAudio(null).finally(() => old.forEach((t) => { try { t.stop() } catch { /* */ } }))
+  const lp = lkRoom?.localParticipant
+  const t = lp?.getTrackPublication(SRC.mic)?.track
+  if (lp && t) void lp.unpublishTrack(t, true).catch(() => { /* */ })
 }
-export function setMic(id: string) { set({ micId: id }); if (state.call.on && !state.call.muted) void micOpen() }
+export function setMic(id: string) {
+  set({ micId: id })
+  if (state.call.on && !state.call.muted) { micClose(); void micOpen() }
+}
 export function setSpeaker(id: string) { set({ speakerId: id }); applySink() }
 function applySink() {
   type Sinkable = HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> }
@@ -1114,192 +1184,60 @@ function applySink() {
 }
 
 export async function toggleMute() {
-  if (!state.call.on || !localStream) return
+  if (!state.call.on || !lkRoom) return
   if (!state.call.muted) { micClose(); setCall({ muted: true }); return }
   setCall({ muted: false })
   const others = muteOtherCalls('watch')
   if (others.length) toast(`Muted your ${others.join(' and ')} mic while you're talking in Watch Party`, 'info')
-  if (!(await micOpen()) && state.call.on && !localStream?.getAudioTracks().length) setCall({ muted: true })
+  if (!(await micOpen()) && state.call.on) setCall({ muted: true })
 }
 registerCall('watch', { label: 'Watch', live: () => state.call.on && !state.call.muted, mute: () => void toggleMute() })
 /** Camera off/on while staying in the call. Before joining, the same control joins. */
 export function toggleVideo() {
   if (!state.call.on) { void joinCall(); return }
-  if (state.call.micOnly || !localStream) return
+  const lp = lkRoom?.localParticipant
+  if (state.call.micOnly || !lp) return
   const camOff = !state.call.camOff
-  localStream.getVideoTracks().forEach((t) => { t.enabled = !camOff })
   setCall({ camOff })
-  announce(true)
-  bumpRtc()
+  void lp.setCameraEnabled(!camOff).catch(() => { setCall({ camOff: !camOff }) }).finally(syncPeers)
 }
 export async function flipCam() {
-  if (!state.call.on || state.call.busy || !localStream) return
+  const t = lkRoom?.localParticipant.getTrackPublication(SRC.cam)?.track
+  if (!state.call.on || state.call.busy || !t) return
   setCall({ busy: true })
   const next = state.call.facing === 'environment' ? 'user' : 'environment'
   try {
-    let track: MediaStreamTrack | undefined
-    try {
-      // {exact} first, for the true back/front camera on multi-camera phones.
-      track = (await navigator.mediaDevices.getUserMedia({ video: { ...VIDEO_C, facingMode: { exact: next } } })).getVideoTracks()[0]
-    } catch {
-      try { track = (await navigator.mediaDevices.getUserMedia({ video: { ...VIDEO_C, facingMode: next } })).getVideoTracks()[0] } catch { setCall({ note: 'Could not flip camera.' }); return }
+    if (t.restartTrack) await t.restartTrack({ facingMode: next })
+    else if (t.replaceTrack) {
+      const nt = (await navigator.mediaDevices.getUserMedia({ video: { ...VIDEO_C, facingMode: next } })).getVideoTracks()[0]
+      if (nt) await t.replaceTrack(nt, true)
     }
-    const ls = localStream
-    if (!track || !ls) return
-    const nt = track
-    nt.enabled = !state.call.camOff
-    await Promise.all(Object.values(peers).map(async (p) => {
-      const s = p.pc.getSenders().find((x) => x.track?.kind === 'video')
-      if (s) await s.replaceTrack(nt).catch(() => { /* */ })
-    }))
-    ls.getVideoTracks().forEach((t) => { try { t.stop() } catch { /* */ } ls.removeTrack(t) })
-    ls.addTrack(nt)
-    nt.addEventListener('ended', () => { if (state.call.on) camStop() })
     setCall({ facing: next })
-    bumpRtc()
+    syncPeers()
+  } catch {
+    setCall({ note: 'Could not flip camera.' })
   } finally {
     setCall({ busy: false })
   }
 }
 
-// ── Peer connections (perfect negotiation) ──────────────────────────────────
-function peer(id: string, create: boolean): Peer | null {
-  const have = peers[id]
-  if (have) return have
-  if (!create || !id || id === state.clientId) return null
-  const pc = new RTCPeerConnection({ iceServers: ICE, bundlePolicy: 'max-bundle' })
-  // The "polite" peer yields on an offer collision; comparing ids agrees without a round trip.
-  const p: Peer = { pc, polite: state.clientId > id, makingOffer: false, ignoreOffer: false, stream: null, discT: 0 }
-  peers[id] = p
-  pc.onnegotiationneeded = async () => {
-    try {
-      p.makingOffer = true
-      await pc.setLocalDescription()
-      if (pc.localDescription) signal(id, { t: 'sdp', sdp: pc.localDescription.toJSON() as RTCSessionDescriptionInit })
-    } catch { /* */ } finally { p.makingOffer = false }
-  }
-  pc.onicecandidate = (ev) => { if (ev.candidate) signal(id, { t: 'ice', ice: ev.candidate.toJSON() }) }
-  pc.ontrack = (ev) => {
-    log('peer.track', { peer: nameOf(id), kind: ev.track.kind, muted: ev.track.muted })
-    p.stream = ev.streams[0] || p.stream
-    // A remote track arrives muted and unmutes once media flows; re-render then.
-    ;(['unmute', 'mute', 'ended'] as const).forEach((n) => ev.track.addEventListener(n, bumpRtc))
-    if (p.stream) { meter(id, p.stream); playAudio(id, p.stream) }
-    bumpRtc()
-  }
-  pc.onconnectionstatechange = () => {
-    const st = pc.connectionState
-    log('peer.state', { peer: nameOf(id), st, ice: pc.iceConnectionState }, st === 'failed' || st === 'disconnected' ? 'warn' : 'info')
-    if (st === 'connected') void routeOf(pc).then((via) => log('peer.route', { peer: nameOf(id), via }))
-    if (st === 'failed') { window.clearTimeout(p.discT); dropPeer(id) }
-    else if (st === 'disconnected') {
-      // Five seconds to recover on its own, then an ICE restart.
-      p.discT = window.setTimeout(() => {
-        if (peers[id] && (pc.connectionState === 'disconnected' || pc.connectionState === 'failed')) {
-          log('peer.restart_ice', { peer: nameOf(id) }, 'warn')
-          try { pc.restartIce() } catch { dropPeer(id) }
-        }
-      }, 5000)
-    } else if (st === 'connected') window.clearTimeout(p.discT)
-    bumpRtc()
-  }
-  syncTracks(p)
-  return p
-}
-/** Idempotent: the peer's senders match what we're sending now. */
-function syncTracks(p: Peer) {
-  const want = state.call.on && localStream ? localStream.getTracks() : []
-  p.pc.getSenders().forEach((s) => { if (s.track && !want.includes(s.track)) { try { p.pc.removeTrack(s) } catch { /* */ } } })
-  want.forEach((t) => {
-    if (p.pc.getSenders().some((s) => s.track === t)) return
-    try {
-      const sender = p.pc.addTrack(t, localStream!)
-      if (t.kind === 'video') void capBitrate(sender)
-    } catch { /* */ }
-  })
-}
-async function capBitrate(sender: RTCRtpSender) {
-  try {
-    const prm = sender.getParameters()
-    prm.encodings = prm.encodings?.length ? prm.encodings : [{}]
-    prm.encodings[0]!.maxBitrate = CAM_BITRATE
-    prm.encodings[0]!.maxFramerate = 20
-    await sender.setParameters(prm)
-  } catch { /* */ }
-}
-function dropPeer(id: string) {
-  const p = peers[id]
-  if (!p) return
-  try {
-    p.pc.onnegotiationneeded = null; p.pc.onicecandidate = null; p.pc.ontrack = null; p.pc.onconnectionstatechange = null
-    p.pc.close()
-  } catch { /* */ }
-  delete peers[id]
-  meterStop(id)
-  stopAudio(id)
-  bumpRtc()
-}
-function dropAllPeers() {
-  Object.keys(peers).forEach(dropPeer)
-  Object.keys(remoteCam).forEach((k) => delete remoteCam[k])
-  Object.keys(remoteCamOff).forEach((k) => delete remoteCamOff[k])
-  bumpRtc()
-}
-async function onSignal(from: string | undefined, msg: Signal | undefined) {
+// Reactions still go peer to peer over the party socket.
+function onSignal(from: string | undefined, msg: { t?: string; e?: string } | undefined) {
   if (!from || from === state.clientId || !msg) return
-  if (msg.t === 'rx') { showRx(msg.e, nameOf(from)); return }
-  if (msg.t === 'cam') {
-    remoteCam[from] = !!msg.on
-    if (msg.on && msg.vid === false) remoteCamOff[from] = true
-    else delete remoteCamOff[from]
-    if (msg.on) peer(from, true)
-    else if (!state.call.on) dropPeer(from)
-    bumpRtc()
-    return
-  }
-  // Only negotiate with peers one of us actually wants media from.
-  const p = peer(from, state.call.on || !!remoteCam[from])
-  if (!p) return
-  const pc = p.pc
-  try {
-    if (msg.t === 'sdp' && msg.sdp) {
-      const collision = msg.sdp.type === 'offer' && (p.makingOffer || pc.signalingState !== 'stable')
-      p.ignoreOffer = !p.polite && collision
-      if (p.ignoreOffer) return
-      await pc.setRemoteDescription(msg.sdp)
-      if (msg.sdp.type === 'offer') {
-        await pc.setLocalDescription()
-        if (pc.localDescription) signal(from, { t: 'sdp', sdp: pc.localDescription.toJSON() as RTCSessionDescriptionInit })
-      }
-    } else if (msg.t === 'ice' && msg.ice) {
-      try { await pc.addIceCandidate(msg.ice) } catch (e) { if (!p.ignoreOffer) throw e }
-    }
-  } catch { /* */ }
+  if (msg.t === 'rx' && msg.e) showRx(msg.e, nameOf(from))
 }
-/** Roster changed: drop people who left, greet people who arrived. */
-function reconcilePeers() {
-  const alive = new Set(live())
-  Object.keys(peers).forEach((id) => { if (!alive.has(id)) dropPeer(id) })
-  Object.keys(remoteCam).forEach((id) => { if (!alive.has(id)) delete remoteCam[id] })
-  Object.keys(remoteCamOff).forEach((id) => { if (!alive.has(id)) delete remoteCamOff[id] })
-  if (state.call.on) {
-    alive.forEach((id) => {
-      if (peers[id]) return
-      signal(id, camMsg(true))
-      peer(id, true)
-    })
-  }
-  bumpRtc()
-}
+/** The roster changed: the tiles follow it (who's in the call is the LiveKit room). */
+function reconcilePeers() { bumpRtc() }
 
 export type PeerView = { stream: MediaStream | null; video: boolean; badge: string; connected: boolean; inCall: boolean }
 /** What an orb shows for a peer right now. */
 export function peerView(id: string): PeerView {
-  const p = peers[id]
-  const v = p?.stream?.getVideoTracks().find((t) => t.readyState === 'live' && !t.muted)
-  const st = p?.pc.connectionState
-  const badge = !p ? '' : st === 'connected' ? (p.stream ? '📷' : '') : st === 'failed' ? '⚠️' : remoteCam[id] || state.call.on ? '⋯' : ''
-  return { stream: p?.stream ?? null, video: !!v && !remoteCamOff[id], badge, connected: st === 'connected', inCall: !!remoteCam[id] }
+  const pr = peers[id]
+  const cam = pr?.p.getTrackPublication(SRC.cam)
+  const v = cam?.track?.mediaStreamTrack
+  const inCall = !!pr && pr.p.trackPublications.size > 0
+  const video = !!cam && !cam.isMuted && !!v && v.readyState === 'live'
+  return { stream: pr?.stream ?? null, video, badge: inCall && pr?.stream ? '📷' : '', connected: !!pr, inCall }
 }
 
 // ── Peer audio: hidden <audio> elements, one per peer ───────────────────────
@@ -1366,53 +1304,6 @@ export function toggleCamsMute() {
   if (!state.camMuted && state.camVol === 0) set({ camVol: 1 })
   else set({ camMuted: !state.camMuted })
   applyPeerAudio()
-}
-
-// ── Speaking detection ──────────────────────────────────────────────────────
-type Meter = { ctx: AudioContext; an: AnalyserNode; data: Uint8Array<ArrayBuffer>; stream: MediaStream; loud: boolean }
-const levels: Record<string, Meter> = {}
-let meterT = 0
-function meter(key: string, stream: MediaStream) {
-  if (!stream.getAudioTracks().length) return
-  if (levels[key]?.stream === stream) return // ontrack fires per track; meter once
-  meterStop(key)
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext
-    if (!Ctx) return
-    const ctx = new Ctx()
-    if (ctx.state === 'suspended') ctx.resume().catch(() => { /* */ })
-    const an = ctx.createAnalyser()
-    an.fftSize = 512
-    an.smoothingTimeConstant = 0.6
-    ctx.createMediaStreamSource(stream).connect(an)
-    levels[key] = { ctx, an, stream, data: new Uint8Array(an.frequencyBinCount), loud: false }
-    if (!meterT) {
-      // 8 Hz is plenty to drive a glow.
-      meterT = window.setInterval(() => {
-        const keys = Object.keys(levels)
-        if (!keys.length) { window.clearInterval(meterT); meterT = 0; return }
-        let changed = false
-        const loud: Record<string, boolean> = {}
-        keys.forEach((k) => {
-          const m = levels[k]!
-          m.an.getByteFrequencyData(m.data)
-          let sum = 0
-          for (let i = 0; i < m.data.length; i++) sum += m.data[i]!
-          const l = sum / m.data.length > 18
-          if (l !== m.loud) { m.loud = l; changed = true }
-          loud[k] = l
-        })
-        if (changed) set({ loud })
-      }, 120)
-    }
-  } catch { /* */ }
-}
-function meterStop(key: string) {
-  const m = levels[key]
-  if (!m) return
-  try { void m.ctx.close() } catch { /* */ }
-  delete levels[key]
-  if (state.loud[key]) { const loud = { ...state.loud }; delete loud[key]; set({ loud }) }
 }
 
 // ── Lock screen (Media Session) ─────────────────────────────────────────────
