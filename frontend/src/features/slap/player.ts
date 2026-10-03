@@ -9,7 +9,7 @@ import { toast } from '../../components/toast'
 import { ApiError } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
 import * as lockScreen from '../../lib/mediaSession'
-import { nativeAudio, nativeAudioElement, nativeNowPlaying, type Remote } from '../../lib/nativeAudio'
+import { nativeAudio, nativeAudioElement, nativeNowPlaying, onNativePlayingAtBoot, type Remote } from '../../lib/nativeAudio'
 import { artUrl, bumpStream, reportListen, streamUrl, together, type QueueItem, type Room, type TogetherOp, type Track } from '../../lib/slap'
 
 export type Repeat = 'off' | 'all' | 'one'
@@ -115,6 +115,19 @@ function el(): HTMLAudioElement {
   audio = a
   return a
 }
+
+// A reload while the app plays a song: the music never stopped, so the player shows it
+// playing (where it is) instead of paused at the start.
+onNativePlayingAtBoot((time, duration) => {
+  const item = current()
+  if (audio || !item || state.mode !== 'solo') return
+  const a = el() as HTMLAudioElement & { adopt?: (url: string, t: number, d?: number) => void }
+  a.adopt?.(streamUrl(item.id), time, duration)
+  loaded = item.qid
+  // No new listen: the page counted this play as it unloaded.
+  setClock(time, duration ?? item.duration)
+  set({ playing: true, loading: false })
+})
 
 function setClock(position: number, duration: number) {
   const d = Number.isFinite(duration) && duration > 0 ? duration : current()?.duration ?? 0

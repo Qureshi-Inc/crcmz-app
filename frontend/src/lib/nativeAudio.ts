@@ -75,6 +75,17 @@ class NativeAudioElement extends EventTarget {
     post({ type: 'pause' })
   }
 
+  /** The app was already playing `url` when the page (re)loaded: take it as ours, without
+   *  telling the app to load it again. */
+  adopt(url: string, time: number, duration?: number) {
+    this.url = abs(url)
+    this.t = time
+    this.at = performance.now()
+    if (duration && duration > 0) this.dur = duration
+    this.ready = 4
+    this.isPaused = false
+  }
+
   private fire(type: string) { this.dispatchEvent(new Event(type)) }
 
   private fromNative(m: FromNative) {
@@ -103,6 +114,15 @@ declare global {
 }
 
 let remote: ((a: Remote, time?: number) => void) | null = null
+
+/** After a reload the app's player can still be playing (it outlives the page). Until the
+ *  Slap player makes its element, listen: the app's clock ticks mean something is on. */
+export function onNativePlayingAtBoot(fn: (time: number, duration?: number) => void) {
+  if (!nativeAudio() || window.__crcmzAudio) return
+  window.__crcmzAudio = (m: FromNative) => {
+    if ((m.event === 'timeupdate' || m.event === 'playing') && m.time != null) fn(m.time, m.duration)
+  }
+}
 
 /** The Slap player's element in the iOS app. */
 export function nativeAudioElement(onRemote: (a: Remote, time?: number) => void): HTMLAudioElement {

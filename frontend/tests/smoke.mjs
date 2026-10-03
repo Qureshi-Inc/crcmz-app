@@ -1222,6 +1222,28 @@ try {
     check('discover: the App Store review account sees no New finds', (await off.page.locator('#disc-new-h').count()) === 0)
     await off.ctx.close()
   }
+  // ── The apps' Slap player: a reload while a song plays shows it playing ─────
+  {
+    const { ctx, page } = await newPage({ width: 390, height: 844, mocks: SLAP_BASE, match: slapMatch({}) })
+    await ctx.addInitScript(() => {
+      window.__audio = []
+      window.webkit = { messageHandlers: { crcmzAudio: { postMessage: (m) => window.__audio.push(m) } } }
+      localStorage.setItem('slap.player.v1', JSON.stringify({ queue: [{ qid: 'q1', id: 't1', title: 'Track 1', artist: 'A', duration: 200 }], index: 0, shuffle: false, repeat: 'off', position: 10, order: null }))
+    })
+    await ready(page, '/app/slap?tab=listen')
+    await page.waitForSelector('.miniplayer-bar')
+    check('app reload: before the app says anything, the restored song shows paused', await page.isVisible('.miniplayer-bar button[aria-label="Play"]'))
+    // The app's player outlived the reload and ticks its clock.
+    await page.evaluate(() => window.__crcmzAudio({ event: 'timeupdate', time: 42, duration: 200 }))
+    await page.waitForSelector('.miniplayer-bar button[aria-label="Pause"]', { timeout: 3000 }).catch(() => {})
+    check('app reload: a song still playing in the app shows playing', await page.isVisible('.miniplayer-bar button[aria-label="Pause"]'))
+    check('app reload: and the app is not told to load it again', !(await page.evaluate(() => window.__audio.some((m) => m.type === 'src'))), JSON.stringify(await page.evaluate(() => window.__audio)))
+    await page.click('.miniplayer-bar button[aria-label="Pause"]')
+    check('app reload: Pause then reaches the app', await page.evaluate(() => window.__audio.some((m) => m.type === 'pause')))
+    check('no page errors (app reload)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+  }
+
   // ── 8. Slap (PS-3): Listen, the mini-player and sheet, Together, Stats ──
   {
     const favs = [], plays = []
@@ -1841,6 +1863,9 @@ try {
           lp.publishData = async (data, o) => { window.__lkData.push({ ...JSON.parse(new TextDecoder().decode(data)), topic: o.topic, reliable: o.reliable }) }
           lp.unpublishTrack = async (t, stop) => { for (const [k, p] of lp.trackPublications) if (p.track === t) { lp.trackPublications.delete(k); if (stop) t.mediaStreamTrack.stop(); room.fire(E.LocalTrackUnpublished, p, lp) } }
           this.localParticipant = lp
+          // The test's handles stay on the first live room: a Watch call joined during a
+          // Huddle is a second room, and the Huddle checks are about the first.
+          if (window.__lkRoom && window.__lkRoom.state !== 'disconnected') return
           window.__lkRoom = this
           window.__lkFire = (ev, ...a) => room.fire(ev, ...a)
           window.__lkAdd = (id, name) => {
