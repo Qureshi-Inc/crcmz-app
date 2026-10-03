@@ -362,7 +362,10 @@ def picks_name(person: dict) -> str:
     That's the name their picks playlist has always had. Their live Mattermost
     name can drift (Moose's is mutasif now; the playlist is themoosecompany's).
     """
-    return re.sub(r"[^\w.-]", "", person.get("mm_username") or "") or slap.handle_of(person)
+    # A picks_name tag wins: someone whose Mattermost name changed (shahraiz -> shahraiz1)
+    # keeps the playlist their songs are already in.
+    override = ((person.get("tags") or {}).get("picks_name") or "").strip()
+    return re.sub(r"[^\w.-]", "", override or person.get("mm_username") or "") or slap.handle_of(person)
 
 
 def mm_id(person: dict) -> str:

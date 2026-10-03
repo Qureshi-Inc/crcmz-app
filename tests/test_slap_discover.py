@@ -573,6 +573,11 @@ def add_song_tests():
         out = assistant._slap_add_song(title=have["Name"], artist=(have.get("Artists") or [""])[0], caller={"zitadel_id": "u-moiz"})
         assert out.get("status") == "already_in_library" and not IMPORTER, out
 
+    def a_picks_name_tag_keeps_the_old_playlist():
+        renamed = {"zitadel_id": "u-sq", "mm_username": "shahraiz1", "tags": {"picks_name": "shahraiz"}}
+        assert d.picks_name(renamed) == "shahraiz"
+        assert d.picks_name({"mm_username": "shahraiz1"}) == "shahraiz1"
+
     def only_the_private_app_chat_gets_it():
         assert "slap_add_song" in assistant.write_tool_names() and "slap_add_song" not in assistant.tool_names()
         assert assistant._chat_write_specs() == [], "no writer: no write tools (group chats)"
@@ -585,7 +590,7 @@ def add_song_tests():
     try:
         for fn in (a_title_downloads_for_the_asker_credited_to_them, it_can_be_for_someone_else,
                    unknown_asker_means_ask_who_its_for, only_music_links_and_not_twice,
-                   only_the_private_app_chat_gets_it):
+                   only_the_private_app_chat_gets_it, a_picks_name_tag_keeps_the_old_playlist):
             check(fn.__name__, fn)
     finally:
         d.mm_id = old_mm

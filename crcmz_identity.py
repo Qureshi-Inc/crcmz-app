@@ -78,7 +78,7 @@ ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
 # Professional Goopers WhatsApp stats. Console-only: set_tag() refuses it, so
 # nobody can grant it to themselves through the app. Read it via is_founder().
 TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone", "wa_names", "jellyfin_user",
-            "steam_id", "primary_platform", "squad_name", "founder")
+            "steam_id", "primary_platform", "squad_name", "founder", "picks_name")
 
 # Separators accepted inside a multi-value tag.
 _TAG_SPLIT = ",;|"
