@@ -1795,10 +1795,10 @@ def _invite_page(user_id: str, code: str, error: str = "", username: str = "",
     <input type="hidden" name="code" value="{e(code)}">
     <input type="hidden" name="vip" value="{'1' if vip else ''}">
     <label for="un">Username</label>
-    <input name="username" id="un" required minlength="3" maxlength="22" value="{e(username)}"
+    <input name="username" id="un" minlength="3" maxlength="22" value="{e(username)}"
       pattern="[a-z][a-z0-9._\\-]{{2,21}}" autocapitalize="none" autocorrect="off" spellcheck="false"
       autocomplete="username" oninput="this.value=this.value.toLowerCase()">
-    <p style="margin-top:8px;font-size:12.5px">Your @name in squad chat (Mattermost) and on the app. {e(_vip.USERNAME_RULES)}</p>
+    <p style="margin-top:8px;font-size:12.5px">Optional — your @name in squad chat (Mattermost) and on the app. {e(_vip.USERNAME_RULES)}</p>
     <label for="pw">New password</label>
     <input type="password" name="pw" id="pw" required minlength="8" autocomplete="new-password">
     <label for="pw2">Confirm password</label>
@@ -1836,7 +1836,7 @@ async def invite_accept(request: Request):
     page = lambda msg: _invite_page(user_id, code, msg, username, vip)  # noqa: E731
     if not user_id.isdigit() or not code:
         return HTMLResponse(_invite_page("", "", "This invite link is incomplete."), status_code=400)
-    if not _vip.username_ok(username):
+    if username and not _vip.username_ok(username):
         return HTMLResponse(page(_vip.USERNAME_RULES), status_code=400)
     if pw != str(form.get("pw2") or ""):
         return HTMLResponse(page("The two passwords don't match."), status_code=400)
@@ -1847,6 +1847,22 @@ async def invite_accept(request: Request):
     except Exception as e:  # noqa: BLE001
         logger.error("invite: accept error: %s", e)
         return HTMLResponse(page("Auth service unavailable, try again."), status_code=503)
+
+    # Add to Mattermost team now (best-effort) so the user can sign in immediately,
+    # without waiting for the 2-minute background sweep.  Also bust the identity
+    # cache so the new mm_username tag is visible right away.
+    def _post_accept(uid: str) -> None:
+        try:
+            email = _vip.user_email(uid)
+            if email and _vip.mattermost_configured():
+                _vip.link_mattermost(uid, email)
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("invite: post-accept Mattermost link failed for %s: %s", uid, _e)
+        try:
+            crcmz_identity.people(refresh=True)
+        except Exception as _e:  # noqa: BLE001
+            logger.debug("invite: identity cache refresh failed: %s", _e)
+    _threading.Thread(target=_post_accept, args=(user_id,), daemon=True).start()
 
     # Sign them straight in with the password they just chose.
     import httpx as _hx
