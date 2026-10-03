@@ -31,7 +31,7 @@ export function Handoff({ id }: { id: DestId }) {
   }
 
   // ?upload on Clips keeps its meaning in the classic app.
-  const href = id === 'clips' && new URLSearchParams(search).has('upload') ? '/?p=upload' : d.classicHref
+  const href = id === 'clips' && new URLSearchParams(search).has('upload') ? '/dashboard?p=upload' : d.classicHref
 
   return (
     <div className="page page-reading">

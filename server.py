@@ -807,6 +807,8 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # The status page's per-dependency checks (health_deps.py): ok / not ok
                # and a plain reason, nothing secret.
                "/health/all", *(f"/health/{n}" for n in _health_deps.CHECKS),
+               # Which view app.crcmz.me opens: only sets a cookie and redirects.
+               "/view/app", "/view/classic",
                # Kuma's alerts: no session, the handler checks STATUS_ALERT_SECRET itself.
                "/api/status/alert",
                "/auth/logout", "/auth/passkey/begin", "/auth/passkey/complete",
@@ -8783,10 +8785,44 @@ def api_order_personal_board(req: BoardOrderRequest, request: Request):
     return {"status": "saved", "buttons": mine}
 
 
+_VIEW_COOKIE = "crcmz_view"   # "classic": app.crcmz.me/ opens the classic dashboard
+
+
 @app.get("/", response_class=HTMLResponse)
+def root(request: Request):
+    """app.crcmz.me opens the app (/app). Anyone who switched to the classic dashboard
+    in Settings (crcmz_view=classic) still gets it here; it's at /dashboard for everyone.
+    Old links (/?p=watch) carry their ?p= over, and /app maps it to the right page."""
+    if request.cookies.get(_VIEW_COOKIE) == "classic":
+        return dashboard(request)
+    q = request.url.query
+    return RedirectResponse(f"/app{'?' + q if q else ''}", status_code=302)
+
+
+@app.get("/view/{mode}")
+def switch_view(mode: str, request: Request):
+    """The switch in Settings (and on the classic dashboard): which one app.crcmz.me opens."""
+    if mode not in ("app", "classic"):
+        return JSONResponse({"error": "app or classic"}, status_code=404)
+    r = RedirectResponse("/dashboard" if mode == "classic" else "/app/settings/app", status_code=302)
+    if mode == "classic":
+        r.set_cookie(_VIEW_COOKIE, "classic", max_age=365 * 86400, path="/", samesite="lax", secure=True)
+    else:
+        r.delete_cookie(_VIEW_COOKIE, path="/")
+    return r
+
+
+# The classic dashboard's way back to the app, pinned to the corner.
+_NEW_APP_PILL = ('<a href="/view/app" style="position:fixed;right:14px;bottom:14px;z-index:99999;'
+                 'background:#ff2fd6;color:#05030f;font:700 14px system-ui,sans-serif;padding:10px 16px;'
+                 'border-radius:999px;text-decoration:none;box-shadow:0 4px 18px rgba(0,0,0,.5)">✨ Use the new app</a>')
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request):
     session = _get_session(request)
+    # Who still uses it, for when it's retired.
+    logger.info("classic dashboard opened (%s)", (session or {}).get("sub", "signed out"))
     user_email = session.get("email", "") if session else ""
     psn_id = ""
     if session:
@@ -8796,8 +8832,8 @@ def dashboard(request: Request):
     # The personal board is inlined so it is there on first paint, same as the
     # shared one — no empty-grid flash while /api/soundboard/personal loads.
     personal = _load_personal_buttons(session["sub"]) if session else []
-    return HTMLResponse(_dashboard_html(user_email, psn_id, personal,
-                                        signed_in=bool(session)))
+    page = _dashboard_html(user_email, psn_id, personal, signed_in=bool(session))
+    return HTMLResponse(page.replace("</body>", _NEW_APP_PILL + "</body>", 1))
 
 
 # ── The new React interface, at /app ─────────────────────────────────────────

@@ -12,6 +12,7 @@ import { ConfirmDialog } from '../clips/ClipSheet'
 import { ClaimList } from '../portal/Claim'
 import { OrbPosControl } from '../watch/WatchPage'
 import { ApiError, getJSON } from '../../lib/http'
+import { nativeShell } from '../../lib/nativeShell'
 import {
   addPasskey, changePassword, fmtDate, fmtDateTime, MCP_CONFIG, passkeysSupported, removePasskey, revokeMcp, tokenState,
   setPrimaryPlatform, setSquadName, unlinkMattermost, unlinkSteam, type McpStatus, type MmStatus, type Passkey, type PsnStatus, type SteamStatus, type ProfileStatus,
@@ -597,7 +598,21 @@ function AppTab() {
       <TabBarCard />
       <InstallCard />
       <NotificationsCard />
+      {!nativeShell() && <ClassicCard />}
     </>
+  )
+}
+
+/** app.crcmz.me opens this app; anyone who'd rather have the classic dashboard there can
+ *  switch (a cookie, per browser; server.py /view/classic). The phone apps always open this app. */
+function ClassicCard() {
+  return (
+    <section className="glass settings-card" aria-labelledby="st-classic-h">
+      <h2 className="section-h2" id="st-classic-h">Classic dashboard</h2>
+      <p className="meta">app.crcmz.me opens this app. The classic dashboard is still at <a href="/dashboard">app.crcmz.me/dashboard</a>;
+        switch to make it what app.crcmz.me opens in this browser. A button on it brings you back.</p>
+      <a className="btn btn-secondary" href="/view/classic">Use the classic dashboard</a>
+    </section>
   )
 }
 
