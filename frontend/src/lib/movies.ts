@@ -31,7 +31,13 @@ export const getLibrary = (signal?: AbortSignal) => request<Library>('/api/watch
 export const searchMovies = (q: string, signal?: AbortSignal) =>
   request<{ results: Result[] }>(`/api/watch/movies/search?q=${encodeURIComponent(q)}`, { signal, timeoutMs: 20_000 })
 export const popularMovies = (signal?: AbortSignal) => request<{ results: Result[] }>('/api/watch/movies/popular', { signal, timeoutMs: 20_000 })
-export const addMovie = (imdb: string) => request<Adding>('/api/watch/movies/add', { body: { imdb }, timeoutMs: 30_000 })
+/** `quality`: the adder's pick when both copies exist; left out, the best copy. */
+export const addMovie = (imdb: string, quality?: '4k' | '1080p') =>
+  request<Adding>('/api/watch/movies/add', { body: quality ? { imdb, quality } : { imdb }, timeoutMs: 30_000 })
+export type CopyOption = { size_gb: number; hdr: boolean; label: string }
+export type Options = { imdb: string; '4k': CopyOption | null; '1080p': CopyOption | null }
+export const getOptions = (imdb: string, signal?: AbortSignal) =>
+  request<Options>(`/api/watch/movies/options/${imdb}`, { signal, timeoutMs: 30_000 })
 export const removeMovie = (id: string) => request<{ title: string; removed: number }>('/api/watch/movies/remove', { body: { id }, timeoutMs: 30_000 })
 export const streamUrl = (id: string) => `/api/watch/movies/stream/${id}/master.m3u8`
 

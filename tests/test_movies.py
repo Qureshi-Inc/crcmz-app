@@ -330,6 +330,21 @@ def add_tests():
         assert row["status"] == "adding" and row["quality"] == "4K HDR" and "Tigole" in row["release"], row
         assert list(RD.torrents) == [row["rd_id"]], "the uncached FLUX copy we tried is deleted again"
 
+    def the_adder_can_pick_1080p_or_4k_when_both_exist():
+        reset()
+        o = run(mv.options("tt15239678"))
+        assert o["4k"] and o["1080p"] and o["1080p"]["label"] == "1080p" and o["4k"]["label"].startswith("4K"), o
+        run(add_and_wait("u-zub", "Zubair", "tt15239678", want="1080p"))
+        row = mv._row("tt15239678")
+        assert row["want"] == "1080p" and RD.torrents[row["rd_id"]]["hash"] == "2" * 40, (row["want"], RD.torrents)
+        reset()
+        run(add_and_wait("u-zub", "Zubair", "tt15239678", want="4k"))
+        row = mv._row("tt15239678")
+        assert RD.torrents[row["rd_id"]]["hash"] == "a" * 40 and len(RD.torrents) == 1, RD.torrents
+        reset()
+        run(add_and_wait("u-zub", "Zubair", "tt15239678", want="8k?"))
+        assert mv._row("tt15239678")["want"] == "", "anything else is the best copy, as before"
+
     def with_nothing_cached_the_best_seeded_4k_downloads():
         reset()
         run(add_and_wait("u-zub", "Zubair", "tt15239678"))
@@ -447,7 +462,7 @@ def add_tests():
     for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_server_wide_block_stops_at_once_and_pauses_adds, a_movie_never_costs_more_than_three_adds, a_copy_real_debrid_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
                a_cached_1080p_beats_an_uncached_4k, no_copy_says_so, already_in_the_library_is_not_added_again,
                a_second_press_joins_the_first_and_bad_ids_are_refused, five_a_day_unless_admin,
-               a_failed_add_can_be_tried_again):
+               a_failed_add_can_be_tried_again, the_adder_can_pick_1080p_or_4k_when_both_exist):
         check(fn.__name__, fn)
 
 

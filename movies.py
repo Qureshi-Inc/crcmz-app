@@ -158,7 +158,8 @@ def _conn() -> sqlite3.Connection:
                          ("local_file", "TEXT NOT NULL DEFAULT ''"),
                          ("bytes_total", "INTEGER NOT NULL DEFAULT 0"),
                          ("bytes_done", "INTEGER NOT NULL DEFAULT 0"),
-                         ("migrate", "INTEGER NOT NULL DEFAULT 0")):   # a film moved off Real-Debrid: silent
+                         ("migrate", "INTEGER NOT NULL DEFAULT 0"),
+                         ("want", "TEXT NOT NULL DEFAULT ''")):         # '' best, '4k' or '1080p': the adder's pick   # a film moved off Real-Debrid: silent
             if col not in have:
                 c.execute(f"ALTER TABLE adds ADD COLUMN {col} {ddl}")
         c.commit()
@@ -894,9 +895,28 @@ _fetch_lock = asyncio.Lock()
 _tasks: set[asyncio.Task] = set()
 
 
-async def add(sub: str, name: str, imdb: str, *, admin: bool = False) -> dict:
+async def options(imdb: str) -> dict:
+    """Which copies there are to add: the best 4K and the best 1080p (size, HDR), so the
+    adder can pick when both exist. Cached for 10 minutes; nothing is added."""
     if not _IMDB.match(imdb or ""):
         raise HTTPException(400, "which movie?")
+    if (hit := _cached(f"opts:{imdb}", 600)) is not None:
+        return hit
+    ranked = rank(await _torrentio(imdb))
+    def best(tier: int) -> dict | None:
+        c = next((x for x in ranked if x["tier"] == tier), None)
+        return {"size_gb": round(c["size_gb"], 1), "hdr": bool(c.get("hdr")),
+                "label": quality_label(c["tier"], bool(c.get("hdr")))} if c else None
+    out = {"imdb": imdb, "4k": best(2160), "1080p": best(1080)}
+    _cache[f"opts:{imdb}"] = (time.time(), out)
+    return out
+
+
+async def add(sub: str, name: str, imdb: str, *, admin: bool = False, want: str = "") -> dict:
+    """Add a film: the best copy, or `want` = '4k' / '1080p' when the adder picked one."""
+    if not _IMDB.match(imdb or ""):
+        raise HTTPException(400, "which movie?")
+    want = want if want in ("4k", "1080p") else ""
     if not RD_TOKEN:
         raise HTTPException(503, "adding movies isn't set up yet")
     if time.time() < _rd_blocked_until:
@@ -920,13 +940,13 @@ async def add(sub: str, name: str, imdb: str, *, admin: bool = False) -> dict:
         raise HTTPException(404, "that movie isn't in the catalogue")
     now = time.time()
     with _lock, _conn() as db:
-        db.execute("""INSERT INTO adds (imdb, title, year, poster, sub, name, status, created, updated)
-                      VALUES (?,?,?,?,?,?,'finding',?,?)
+        db.execute("""INSERT INTO adds (imdb, title, year, poster, sub, name, status, created, updated, want)
+                      VALUES (?,?,?,?,?,?,'finding',?,?,?)
                       ON CONFLICT(imdb) DO UPDATE SET sub=excluded.sub, name=excluded.name, status='finding',
                         progress=0, error='', rd_id='', release='', quality='', size_gb=0, src_file='',
                         local_dir='', local_file='', bytes_total=0, bytes_done=0, migrate=0,
-                        created=excluded.created, updated=excluded.updated""",
-                   (imdb, m["title"], m["year"], m["poster"], sub, name[:80], now, now))
+                        created=excluded.created, updated=excluded.updated, want=excluded.want""",
+                   (imdb, m["title"], m["year"], m["poster"], sub, name[:80], now, now, want))
     row = _row(imdb)
     _spawn(fetch(imdb))
     return _public(row)
@@ -970,10 +990,18 @@ async def _fetch(imdb: str) -> None:
                 ranked = fits
             fours = [c for c in ranked if c["tier"] == 2160]
             tens = [c for c in ranked if c["tier"] == 1080]
+            # The adder picked a quality: only those copies (as many tries as usual).
+            want = (_row(imdb) or {}).get("want") or ""
+            if want == "1080p" and tens:
+                fours = []
+                tens = tens[:MAX_ADDS]
+            elif want == "4k" and fours:
+                fours = fours[:MAX_ADDS]
+                tens = []
             # Up to MAX_ADDS copies: the best 4K ones, then the best 1080p. The first one Real-Debrid
             # takes is held (downloading) while the others are checked for a copy it already has;
             # a cached one wins and the held one is deleted. Never add, delete and re-add.
-            plan = (fours[:TRY_4K] + tens[:1])[:MAX_ADDS]
+            plan = (fours[:TRY_4K] + tens[:1])[:MAX_ADDS] if not want else (fours + tens)[:MAX_ADDS]
             held = None
             for n, c in enumerate(plan):
                 got = await _try_copy(c, keep=held is None)
@@ -1672,9 +1700,16 @@ def build_router(get_session, is_admin) -> APIRouter:
         except ValueError:
             raise HTTPException(400, "expected JSON")
         imdb = str((b or {}).get("imdb") or "") if isinstance(b, dict) else ""
+        want = str((b or {}).get("quality") or "") if isinstance(b, dict) else ""
         person = (await asyncio.to_thread(crcmz_identity.by_zitadel_id)).get(sub) or {}
         name = person.get("display_name") or person.get("username") or "someone"
-        return await add(sub, name, imdb, admin=await is_admin(sub))
+        return await add(sub, name, imdb, admin=await is_admin(sub), want=want)
+
+    @router.get("/options/{imdb}")
+    async def options_get(imdb: str, request: Request):
+        """The 4K and 1080p copies there are, for "Add 4K / Add 1080p"."""
+        library_sub(request)
+        return await options(imdb)
 
     @router.get("/poster/{jf_id}")
     async def poster(jf_id: str, request: Request):

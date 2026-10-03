@@ -1900,6 +1900,7 @@ try {
       ] }),
       'GET /api/watch/movies/home': json(200, MOVIES_HOME),
       'GET /api/watch/movies/now': json(200, { room: 'crcmz', watching: 0, video: '', title: '', poster: '', id: null, paused: true }),
+      'GET /api/watch/movies/options/tt0110912': json(200, { imdb: 'tt0110912', '4k': { size_gb: 24.9, hdr: true, label: '4K HDR' }, '1080p': { size_gb: 9.1, hdr: false, label: '1080p' } }),
       'GET /api/watch/movies/meta/tt0110912': (r) => json(200, { ...MOVIES_HOME.rows[0].items[1], state: (posts.movies || []).some((m) => m.imdb === 'tt0110912') ? 'finding' : 'new', logo: '', runtime: 154, director: ['Quentin Tarantino'], cast: ['John Travolta', 'Uma Thurman'], writer: [], awards: 'Won 1 Oscar', country: 'United States', trailers: ['s7EdQ4FqbhY'], can_add: true, by: '', can_remove: false, library_quality: '', adding: null })(r),
       'GET /api/watch/movies/meta/tt1375666': json(200, { ...MOVIES_HOME.featured, logo: '', runtime: 148, director: ['Christopher Nolan'], cast: ['Leonardo DiCaprio'], writer: [], awards: '', country: '', trailers: [], can_add: true, by: 'Goopy', can_remove: false, library_quality: '4K HDR', adding: null }),
       'POST /api/watch/movies/remove': (r) => { posts.removed = [...(posts.removed || []), r.request().postDataJSON()]; return json(200, { title: 'Heat', removed: 1 })(r) },
@@ -2056,9 +2057,11 @@ try {
     await shot(page, 'movies-375-sheet')
     await tapTargets(page, 'Movie sheet 375')
     const adds = (posts.movies || []).length
-    await page.click('.mv-sheet button:has-text("Add to library")')
+    await page.waitForSelector('.mv-sheet .mv-pick')
+    check('movies: with a 4K and a 1080p copy, you pick (and see their sizes)', (await page.textContent('.mv-pick')).includes('Add 4K HDR') && (await page.textContent('.mv-pick')).includes('9.1 GB'))
+    await page.click('.mv-sheet .mv-pick button:has-text("Add 1080p")')
     await page.waitForSelector('.mv-sheet .mv-sheet-progress')
-    check('movies: Add posts once and the sheet follows it in', (posts.movies || []).length === adds + 1 && posts.movies.at(-1).imdb === 'tt0110912' && (await page.textContent('.mv-sheet-progress')).includes('Finding'))
+    check('movies: Add posts once, with your pick, and the sheet follows it in', (posts.movies || []).length === adds + 1 && posts.movies.at(-1).imdb === 'tt0110912' && posts.movies.at(-1).quality === '1080p' && (await page.textContent('.mv-sheet-progress')).includes('Finding'))
     await page.keyboard.press('Escape')
     await page.waitForFunction(() => !document.querySelector('.mv-sheet') && !new URL(location.href).searchParams.get('m'))
     await page.click('.mv-genres .chip:has-text("Horror")')

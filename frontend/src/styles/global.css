@@ -2796,3 +2796,7 @@ html[data-native-shell] .tabbar { display: none; }
 .hu-native-status { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
 .hu-native .hu-reactions { overflow: visible; }
 .hu-native-ai { min-height: 320px; }
+
+/* Movie sheet: Add 4K / Add 1080p when both copies exist. */
+.mv-pick { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.mv-pick-size { margin-left: var(--space-2); font-size: var(--text-xs); font-weight: 600; opacity: .75; }

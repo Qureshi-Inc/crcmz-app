@@ -14,6 +14,7 @@ import { useSwipeDown } from '../../lib/gestures'
 import { ApiError } from '../../lib/http'
 import {
   addMovie, getDetails, getNow, inFlight, measured, removeMovie, stateText, streamUrl, type Details,
+  getOptions,
 } from '../../lib/movies'
 import { ConfirmDialog } from '../clips/ClipSheet'
 import { Backdrop } from './MoviesHome'
@@ -101,10 +102,19 @@ function Body({ d, onGenre, party, onGone }: { d: Details; onGenre: (g: string) 
     void qc.invalidateQueries({ queryKey: ['movies', 'catalog'] })
     void qc.invalidateQueries({ queryKey: ['movies', 'search'] })
   }
-  async function add() {
+  // Which copies there are: with both a 4K and a 1080p, the adder picks.
+  const opts = useQuery({
+    queryKey: ['movies', 'options', d.imdb],
+    queryFn: ({ signal }) => getOptions(d.imdb, signal),
+    enabled: d.can_add && (d.state === 'new' || d.state === 'failed'),
+    staleTime: 10 * 60_000,
+    retry: false,
+  }).data
+  const both = !!(opts?.['4k'] && opts?.['1080p'])
+  async function add(quality?: '4k' | '1080p') {
     setBusy(true)
     try {
-      const a = await addMovie(d.imdb)
+      const a = await addMovie(d.imdb, quality)
       qc.setQueryData<Details>(['movies', 'meta', d.imdb], (x) => x && { ...x, state: a.status, progress: a.progress, id: a.id, adding: a.status === 'ready' ? null : a })
       refresh()
       toast(a.status === 'ready' ? `${d.title} is already in the library` : `Adding ${d.title}. Everyone hears when it's ready.`, 'success')
@@ -164,6 +174,17 @@ function Body({ d, onGenre, party, onGone }: { d: Details; onGenre: (g: string) 
               </span>
               <span className="meta">We'll tell everyone when it's ready.</span>
             </div>
+          ) : d.can_add && both ? (
+            <span className="mv-pick" role="group" aria-label="Add which copy">
+              <button type="button" className="btn btn-primary mv-cta" onClick={() => void add('4k')} disabled={busy}
+                aria-label={`Add the ${opts!['4k']!.label} copy, ${opts!['4k']!.size_gb} GB`}>
+                <Icon name="plus" />{busy ? 'Adding…' : `Add ${opts!['4k']!.label}`}<span className="mv-pick-size">{opts!['4k']!.size_gb} GB</span>
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={() => void add('1080p')} disabled={busy}
+                aria-label={`Add the 1080p copy, ${opts!['1080p']!.size_gb} GB`}>
+                <Icon name="plus" />Add 1080p<span className="mv-pick-size">{opts!['1080p']!.size_gb} GB</span>
+              </button>
+            </span>
           ) : d.can_add ? (
             <button type="button" className="btn btn-primary mv-cta" onClick={() => void add()} disabled={busy}>
               <Icon name={d.state === 'failed' ? 'refresh' : 'plus'} />{busy ? 'Adding…' : d.state === 'failed' ? 'Try again' : 'Add to library'}
