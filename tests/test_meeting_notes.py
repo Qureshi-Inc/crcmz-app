@@ -178,6 +178,18 @@ def server_tests():
         assert r.status_code == 200 and r.json()["title"] == "Ranked", r.text
         assert client.get("/api/huddle/notes/nope", cookies=cookie).status_code == 404
 
+    def a_link_that_lost_its_last_underscore_still_opens():
+        reset()
+        mid = mn.add_line("crcmz", sub, "Moiz", SAID)
+        assert mid.isalnum(), "new ids are letters and digits only"
+        with mn._conn() as db:   # an older id, made before that
+            db.execute("UPDATE meetings SET id = 'dYZCAleFgjZ_' WHERE id = ?", (mid,))
+            db.execute("UPDATE people SET meeting_id = 'dYZCAleFgjZ_' WHERE meeting_id = ?", (mid,))
+        r = client.get("/api/huddle/notes/dYZCAleFgjZ", cookies=cookie)
+        assert r.status_code == 200 and r.json()["id"] == "dYZCAleFgjZ_" and r.json()["mine"] is True, r.text
+        assert client.post("/api/huddle/notes/dYZCAleFgjZ", json={"title": "Fixed"}, cookies=cookie, headers=origin).status_code == 200
+        assert client.get("/api/huddle/notes/dYZCAle", cookies=cookie).status_code == 404, "too short to guess"
+
     def a_transcript_line_without_a_room_goes_to_the_room_you_joined():
         server._huddle_rooms[sub] = ("squadnight", server._time.time())
         assert server._huddle_room_of(sub) == "squadnight"
@@ -195,7 +207,7 @@ def server_tests():
         assert "sub" not in str(got["people"])
 
     for fn in (an_empty_call_writes_the_notes_and_tells_who_was_there, a_call_where_nobody_said_much_leaves_no_notes,
-               routes_list_open_and_rename, a_transcript_line_without_a_room_goes_to_the_room_you_joined,
+               routes_list_open_and_rename, a_link_that_lost_its_last_underscore_still_opens, a_transcript_line_without_a_room_goes_to_the_room_you_joined,
                the_assistant_and_mcp_can_read_the_notes):
         check(fn.__name__, fn)
 

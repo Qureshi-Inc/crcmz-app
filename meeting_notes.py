@@ -77,6 +77,25 @@ def init() -> None:
         )
 
 
+_ALNUM = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def new_id() -> str:
+    """Letters and digits only: a link ending in '_' or '-' loses it in chat apps and Markdown."""
+    return "".join(secrets.choice(_ALNUM) for _ in range(12))
+
+
+def _find(db: sqlite3.Connection, meeting_id: str) -> sqlite3.Row | None:
+    """A meeting by id; an older id whose last '_' / '-' a chat app dropped still opens."""
+    mid = str(meeting_id or "")[:40]
+    r = db.execute("SELECT * FROM meetings WHERE id = ?", (mid,)).fetchone()
+    if r or len(mid) < 8 or not re.fullmatch(r"[\w-]+", mid):
+        return r
+    near = db.execute("SELECT * FROM meetings WHERE id IN (?, ?, ?, ?)",
+                      (mid + "_", mid + "-", "_" + mid, "-" + mid)).fetchall()
+    return near[0] if len(near) == 1 else None
+
+
 def _clean(s: str, n: int) -> str:
     return _CTRL.sub(" ", str(s or "")).strip()[:n]
 
@@ -96,7 +115,7 @@ def add_line(room: str, sub: str, name: str, text: str, *, now: float | None = N
     with _lock, _conn() as db:
         mid = _live_id(db, room)
         if not mid:
-            mid = secrets.token_urlsafe(9)
+            mid = new_id()
             db.execute("INSERT INTO meetings (id, room, started, last_line) VALUES (?, ?, ?, ?)", (mid, room, ts, ts))
         db.execute("INSERT INTO lines (meeting_id, ts, sub, name, text) VALUES (?, ?, ?, ?, ?)",
                    (mid, ts, sub, _clean(name, 80), text))
@@ -210,7 +229,7 @@ def list_meetings(*, sub: str | None = None, query: str = "", limit: int = 30) -
 
 def get(meeting_id: str, *, with_transcript: bool = True) -> dict | None:
     with _lock, _conn() as db:
-        r = db.execute("SELECT * FROM meetings WHERE id = ?", (str(meeting_id)[:40],)).fetchone()
+        r = _find(db, meeting_id)
     if not r:
         return None
     out = _summary(r) | {"notes": r["notes"], "people": attendees(r["id"])}

@@ -6508,7 +6508,7 @@ async def huddle_notes_get(request: Request, mid: str):
     m = await asyncio.to_thread(_meet.get, mid)
     if not m:
         return JSONResponse({"error": "no such meeting"}, status_code=404)
-    m["mine"] = _meet.is_attendee(mid, session.get("sub", ""))
+    m["mine"] = _meet.is_attendee(m["id"], session.get("sub", ""))
     m["people"] = [p["name"] for p in m["people"]]
     return JSONResponse(m, headers={"Cache-Control": "no-store"})
 
@@ -6523,6 +6523,8 @@ async def huddle_notes_rename(request: Request, mid: str):
         body = await request.json()
     except Exception:  # noqa: BLE001
         body = {}
+    found = _meet.get(mid, with_transcript=False)
+    mid = found["id"] if found else mid
     if not _meet.rename(mid, session.get("sub", ""), str((body or {}).get("title") or "")):
         return JSONResponse({"error": "only people who were in the meeting can rename it"}, status_code=403)
     return JSONResponse({"ok": True, "title": _meet.get(mid, with_transcript=False)["title"]})
