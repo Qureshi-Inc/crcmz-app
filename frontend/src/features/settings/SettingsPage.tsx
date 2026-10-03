@@ -1,6 +1,6 @@
 // PS-10 · Settings: sign-in methods, PSN status and connected apps. Each tab is a
 // sub-route (/app/settings/<tab>), so tabs deep-link and Back works.
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -14,7 +14,7 @@ import { OrbPosControl } from '../watch/WatchPage'
 import { ApiError, getJSON } from '../../lib/http'
 import {
   addPasskey, changePassword, fmtDate, fmtDateTime, MCP_CONFIG, passkeysSupported, removePasskey, revokeMcp, tokenState,
-  unlinkMattermost, unlinkSteam, type McpStatus, type MmStatus, type Passkey, type PsnStatus, type SteamStatus,
+  setPrimaryPlatform, setSquadName, unlinkMattermost, unlinkSteam, type McpStatus, type MmStatus, type Passkey, type PsnStatus, type SteamStatus, type ProfileStatus,
 } from '../../lib/account'
 import {
   currentSubscription, disablePush, enablePush, fetchPushConfig, isIOS, isStandalone, promptInstall, pushSupported,
@@ -25,6 +25,7 @@ import { DESTS, TAB_CHOICES } from '../../app/nav'
 import { isDefaultTabs, resetTabs, setTab, useTabs } from '../../app/tabs'
 
 const TABS = [
+  { id: 'profile', label: 'Profile' },
   { id: 'passkeys', label: 'Passkeys' },
   { id: 'security', label: 'Password' },
   { id: 'psn', label: 'PSN' },
@@ -61,6 +62,7 @@ export function SettingsPage() {
         <Tabs.List className="tabstrip" aria-label="Settings sections">
           {TABS.map((t) => <Tabs.Trigger key={t.id} value={t.id} className="tabstrip-tab">{t.label}</Tabs.Trigger>)}
         </Tabs.List>
+        <Tabs.Content value="profile" className="settings-panel"><ProfileTab /></Tabs.Content>
         <Tabs.Content value="passkeys" className="settings-panel"><PasskeysTab /></Tabs.Content>
         <Tabs.Content value="security" className="settings-panel"><SecurityTab /></Tabs.Content>
         <Tabs.Content value="psn" className="settings-panel"><PsnTab /></Tabs.Content>
@@ -75,6 +77,56 @@ export function SettingsPage() {
 }
 
 const failText = (e: unknown, fallback: string) => (e instanceof ApiError && e.status === 503 ? 'Sign-in service is not set up right now' : fallback)
+
+// ── Profile: the name shown for you on Squad (squad_name tag) ────────────────
+function ProfileTab() {
+  const qc = useQueryClient()
+  const q = useQuery({ queryKey: ['account', 'profile'], queryFn: ({ signal }) => getJSON<ProfileStatus>('/auth/settings/profile', signal) })
+  const [name, setName] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const value = name ?? q.data?.squad_name ?? ''
+
+  async function save(e: FormEvent, next = value) {
+    e.preventDefault()
+    setBusy(true); setErr(null)
+    try {
+      await setSquadName(next.trim())
+      toast(next.trim() ? 'Squad name saved' : 'Squad name cleared', 'success')
+      setName(null)
+      void qc.invalidateQueries({ queryKey: ['account', 'profile'] })
+      void qc.invalidateQueries({ queryKey: ['squad'] })
+    } catch (ex) {
+      setErr(ex instanceof ApiError && ex.status !== 502 ? ex.message : "Couldn't save. Try again.")
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <section className="glass settings-card" aria-labelledby="profile-h">
+      <h2 className="section-h2" id="profile-h">Squad name</h2>
+      {q.isPending ? <SkeletonRows n={1} />
+        : q.isError ? <ErrorStrip text="Couldn't load your profile" onRetry={() => q.refetch()} />
+        : (
+          <form onSubmit={(e) => void save(e)} noValidate>
+            <label className="field-label" htmlFor="squad-name">Name shown on Squad and in Ranks</label>
+            <input
+              id="squad-name" className="input" value={value} maxLength={q.data.max} autoComplete="nickname"
+              placeholder={q.data.default_name || 'Your name'} aria-invalid={err ? true : undefined}
+              aria-describedby="squad-name-help" onChange={(e) => { setName(e.target.value); setErr(null) }}
+            />
+            <p className="meta" id="squad-name-help" style={{ marginTop: 'var(--space-1)' }}>
+              {q.data.min}-{q.data.max} characters. Leave it blank to show {q.data.default_name ? <b>{q.data.default_name}</b> : 'your PSN name'}. The bot knows you by it too.
+            </p>
+            {err && <p className="field-err" role="alert">{err}</p>}
+            <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
+              <button type="submit" className="btn btn-primary" disabled={busy || value.trim() === (q.data.squad_name ?? '')}>{busy ? 'Saving…' : 'Save'}</button>
+              {q.data.squad_name && <button type="button" className="btn btn-secondary" disabled={busy} onClick={(e) => void save(e, '')}>Use default</button>}
+            </div>
+          </form>
+        )}
+    </section>
+  )
+}
 
 // ── Passkeys (ST-01, ST-02) ──────────────────────────────────────────────────
 function PasskeysTab() {
@@ -233,6 +285,7 @@ function PsnTab() {
         </div>
         {st.kind === 'expired' && <p className="settings-note" role="note">Your PSN sign-in ran out, so you won't show up on Squad. Re-link to fix it.</p>}
         {st.kind === 'expiring' && <p className="settings-note" role="note">Sony makes us ask again every couple of months. Re-link before it runs out.</p>}
+        <PrimaryStatsControl />
         <div><Link className={st.kind === 'active' ? 'btn btn-secondary' : 'btn btn-primary'} to="/portal"><Icon name="link" />Re-link in Link PSN</Link></div>
       </section>
     )
@@ -256,9 +309,59 @@ function PsnTab() {
 // ── Steam ────────────────────────────────────────────────────────────────────
 const STEAM_CONNECT = '/auth/settings/steam/connect'
 
+function useSteamStatus() {
+  return useQuery({ queryKey: ['account', 'steam'], queryFn: ({ signal }) => getJSON<SteamStatus>('/auth/settings/steam', signal) })
+}
+
+const PRIMARY_OPTS = [{ id: 'psn', name: 'PlayStation' }, { id: 'steam', name: 'Steam' }] as const
+
+/** Shown in both the PSN and Steam tabs, only to people with both linked. */
+function PrimaryStatsControl() {
+  const qc = useQueryClient()
+  const q = useSteamStatus()
+  const [busy, setBusy] = useState(false)
+  if (!q.data?.linked || !q.data.has_psn) return null
+  const current = q.data.primary
+  async function pick(p: 'psn' | 'steam') {
+    if (p === current || busy) return
+    setBusy(true)
+    try { await setPrimaryPlatform(p); toast(`${p === 'steam' ? 'Steam' : 'PlayStation'} stats lead your Squad row now`, 'success') }
+    catch { toast("Couldn't save. Try again.", 'error') }
+    finally {
+      setBusy(false)
+      void qc.invalidateQueries({ queryKey: ['account', 'steam'] })
+      void qc.invalidateQueries({ queryKey: ['squad'] })
+    }
+  }
+  function onKey(e: KeyboardEvent<HTMLDivElement>) {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return
+    e.preventDefault()
+    const next = current === 'psn' ? 'steam' : 'psn'
+    void pick(next)
+    e.currentTarget.querySelector<HTMLButtonElement>(`[data-platform="${next}"]`)?.focus()
+  }
+  return (
+    <div>
+      <span className="field-label" id="primary-stats-l">Main stats on Squad</span>
+      <div className="seg" role="radiogroup" aria-labelledby="primary-stats-l" aria-busy={busy || undefined} onKeyDown={onKey}>
+        {PRIMARY_OPTS.map((o) => {
+          const on = current === o.id
+          return (
+            <button key={o.id} type="button" role="radio" className="seg-tab" data-platform={o.id} aria-checked={on}
+              data-state={on ? 'active' : 'inactive'} tabIndex={on ? 0 : -1} onClick={() => void pick(o.id)}>
+              {o.name}
+            </button>
+          )
+        })}
+      </div>
+      <p className="meta" style={{ marginTop: 'var(--space-1)' }}>Picks the badge, level and last game on your row. If you're in a game on the other one, that still shows.</p>
+    </div>
+  )
+}
+
 function SteamTab() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: ['account', 'steam'], queryFn: ({ signal }) => getJSON<SteamStatus>('/auth/settings/steam', signal) })
+  const q = useSteamStatus()
   const [blocked, setBlocked] = useState(false)
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -310,7 +413,14 @@ function SteamTab() {
               </span>
               <span className="badge" data-tone="live">Linked</span>
             </div>
-            <p className="settings-note" role="note">Your games and hours only show on Squad if your Steam profile's game details are public.</p>
+            <PrimaryStatsControl />
+            {q.data.games_private ? (
+              <p className="settings-note" role="note">
+                Steam is hiding your games, so your hours and library don't count on Squad yet. In Steam, open
+                {' '}<a href="https://steamcommunity.com/my/edit/settings" target="_blank" rel="noopener noreferrer">Privacy Settings</a>{' '}
+                and set <b>Game details</b> to <b>Public</b>. It shows up here within 30 minutes.
+              </p>
+            ) : <p className="settings-note" role="note">Your games and hours only show on Squad if your Steam profile's game details are public.</p>}
             <div><button type="button" className="btn btn-secondary" onClick={() => setConfirm(true)} disabled={busy}>{busy ? 'Disconnecting…' : 'Disconnect'}</button></div>
           </>
         ) : (

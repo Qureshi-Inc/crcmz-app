@@ -429,6 +429,44 @@ def person_games(online_id: str, limit: int = 8) -> dict:
     }
 
 
+def squad_totals(online_ids: list[str], *, since: int | None = None) -> dict[str, dict]:
+    """Per-PSN-account totals for the Squad page, in one pass.
+
+    hours/titles/top/games come from PSN's own lifetime counters; hours_recent is
+    observed session time since ``since`` (default: 14 days), so it only covers
+    what our presence polling saw. Accounts with no history are absent.
+    """
+    ids = [i for i in dict.fromkeys(online_ids) if i]
+    if not ids or not DB_PATH.exists():
+        return {}
+    since = since if since is not None else int(time.time()) - 14 * 86400
+    marks = ",".join("?" * len(ids))
+    out: dict[str, dict] = {}
+    with _conn() as db:
+        for r in db.execute(
+                f"SELECT online_id, name, image_url, play_seconds FROM game_titles "
+                f"WHERE online_id IN ({marks}) ORDER BY play_seconds DESC", ids):
+            o = out.setdefault(r["online_id"], {"hours": 0.0, "titles": 0, "top": None,
+                                                "games": [], "hours_recent": 0.0})
+            h = round((r["play_seconds"] or 0) / 3600, 1)
+            o["hours"] += h
+            o["titles"] += 1
+            if r["name"]:
+                g = {"name": r["name"], "hours": h, "icon": r["image_url"]}
+                o["games"].append(g)
+                if o["top"] is None and h:
+                    o["top"] = g
+        for r in db.execute(
+                f"SELECT online_id, SUM(last_seen_at - started_at) secs FROM play_sessions "
+                f"WHERE online_id IN ({marks}) AND last_seen_at >= ? GROUP BY online_id", (*ids, since)):
+            o = out.setdefault(r["online_id"], {"hours": 0.0, "titles": 0, "top": None,
+                                                "games": [], "hours_recent": 0.0})
+            o["hours_recent"] = round((r["secs"] or 0) / 3600, 1)
+    for o in out.values():
+        o["hours"] = round(o["hours"])
+    return out
+
+
 def overview() -> dict:
     """Counts for platform_overview, cheap enough to call on every question."""
     if not DB_PATH.exists():

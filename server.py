@@ -6684,12 +6684,17 @@ async def settings_steam_status(request: Request):
     if not session:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     sid = await asyncio.to_thread(_steam.steam_id_of, session.get("sub", ""))
+    person = (await asyncio.to_thread(crcmz_identity.by_zitadel_id)).get(session.get("sub", "")) or {}
     out = {"linked": bool(sid), "steam_id": sid or None, "persona_name": None, "avatar": None,
-           "profile_url": None, "connect_available": _steam.configured()}
+           "profile_url": None, "connect_available": _steam.configured(),
+           "has_psn": bool(person.get("psn_id")), "primary": _steam.primary_of(person)}
     if sid and _steam.configured():
         s = (await asyncio.to_thread(_steam.summaries, [sid])).get(sid) or {}
+        st = await asyncio.to_thread(_steam.stats, sid)
         out.update(persona_name=s.get("personaname"), avatar=s.get("avatarmedium"),
-                   profile_url=s.get("profileurl"))
+                   profile_url=s.get("profileurl"),
+                   # Profile visible but no library back: "Game details" is private.
+                   games_private=bool(s) and st.get("game_count") is None)
     return JSONResponse(out)
 
 
@@ -6730,6 +6735,57 @@ async def settings_steam_callback(request: Request, state: str = ""):
         return _steam_done_page(False, "Couldn't save your Steam link. Try again.")
     logger.info("steam: %s linked %s", zid, steam_id)
     return _steam_done_page(True, "✅ Steam connected! You can close this window.")
+
+
+@app.get("/auth/settings/profile")
+async def settings_profile(request: Request):
+    """The logged-in user's Squad name, and what shows when it's blank."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    p = (await asyncio.to_thread(crcmz_identity.by_zitadel_id)).get(session.get("sub", "")) or {}
+    return JSONResponse({"squad_name": p.get("squad_name") or "",
+                         "default_name": p.get("psn_id") or p.get("display_name") or p.get("mm_username") or "",
+                         "min": _squad_view.NAME_MIN, "max": _squad_view.NAME_MAX})
+
+
+@app.post("/auth/settings/squad-name")
+async def settings_squad_name(request: Request):
+    """Set or clear (empty name) the name shown for you on Squad."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    _rate_limit("facts_add", session.get("sub", ""))
+    try:
+        name = str((await request.json()).get("name") or "")
+    except ValueError:
+        name = ""
+    result = await asyncio.to_thread(_squad_view.set_name, session.get("sub", ""), name)
+    if result == "invalid":
+        return JSONResponse({"error": f"Use {_squad_view.NAME_MIN}-{_squad_view.NAME_MAX} characters, no @ or < >"},
+                            status_code=400)
+    if result == "taken":
+        return JSONResponse({"error": "Someone in the squad already goes by that"}, status_code=409)
+    if result != "ok":
+        return JSONResponse({"error": "couldn't save"}, status_code=502)
+    return JSONResponse({"ok": True, "squad_name": _squad_view.clean_name(name)})
+
+
+@app.post("/auth/settings/primary-platform")
+async def settings_primary_platform(request: Request):
+    """Pick whose stats lead your Squad row when both PSN and Steam are linked."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    try:
+        platform = str((await request.json()).get("platform") or "")
+    except ValueError:
+        platform = ""
+    if platform not in _steam.PLATFORMS:
+        return JSONResponse({"error": "platform must be psn or steam"}, status_code=400)
+    if not await asyncio.to_thread(_steam.set_primary, session.get("sub", ""), platform):
+        return JSONResponse({"error": "couldn't save"}, status_code=502)
+    return JSONResponse({"ok": True, "primary": platform})
 
 
 @app.post("/auth/settings/steam/unlink")
@@ -7016,6 +7072,7 @@ PSN_AI_GROUPS = os.environ.get("PSN_AI_GROUPS", "squad").lower()
 import game_history as _games
 import mm_tokens as _mm_tokens
 import steam as _steam
+import squad_view as _squad_view
 import memory_store as _mem
 import coach as _coach
 import ig_posts as _ig
@@ -8234,22 +8291,41 @@ def api_hype():
         return {"count": 0, "pct": 0, "label": "❄️ COLD", "level": "cold"}
 
 
+def _squad_payload() -> dict:
+    """PSN squad -> Steam merged in -> names, stats, ranks (also the squad_leaderboard tool).
+
+    If PSN is down the Steam players still show; if Steam or the stats layer
+    fails, the PSN list still shows. Raises only when there is nothing at all.
+    """
+    members: list[dict] = []
+    psn_error = None
+    if not _v2_available:
+        psn_error = "auth unavailable"
+    else:
+        try:
+            members = psn_data.squad_status(psn_auth)
+        except Exception as e:  # noqa: BLE001
+            logger.error("dashboard: squad status failed: %s", e)
+            psn_error = str(e)
+    try:
+        payload = _squad_view.build(_steam.merge_into_squad(members))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("dashboard: squad view failed: %s", e)
+        payload = {"squad": members}
+    if psn_error and not payload["squad"]:
+        raise RuntimeError(psn_error)
+    if psn_error:
+        payload["psn_error"] = psn_error
+    return payload
+
+
 @app.get("/api/squad")
 def api_squad():
-    """Live presence + trophy stats for every squad member (JSON, for the UI)."""
-    if not _v2_available:
-        return JSONResponse({"squad": [], "error": "auth unavailable"})
+    """Live presence + stats for every squad member across PSN and Steam (JSON, for the UI)."""
     try:
-        members = psn_data.squad_status(psn_auth)
+        return _squad_payload()
     except Exception as e:  # noqa: BLE001
-        logger.error("dashboard: squad status failed: %s", e)
         return JSONResponse({"squad": [], "error": str(e)}, status_code=500)
-    # Steam joins the same list (steam.py); a Steam failure must not cost PSN.
-    try:
-        return {"squad": _steam.merge_into_squad(members)}
-    except Exception as e:  # noqa: BLE001
-        logger.warning("dashboard: steam merge failed: %s", e)
-        return {"squad": members}
 
 
 

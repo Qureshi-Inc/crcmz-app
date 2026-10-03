@@ -522,6 +522,31 @@ def _members() -> Any:
             "members": [m.get("display") for m in members if m.get("display")]}
 
 
+@tool("squad_leaderboard",
+      "The Squad page's rankings and squad-wide numbers, across PSN and Steam. "
+      "Modes: overall (0-100: mean of hours, last-2-weeks hours and games, each "
+      "scaled to the squad's best), hours (PSN lifetime playtime + Steam lifetime "
+      "playtime), recent (last 2 weeks: Steam's figure + PSN sessions we observed), "
+      "games (PSN titles played + Steam games owned), trophies (PSN trophy level), "
+      "steam (Steam level, with global top-% standing). Also returns the squad's "
+      "total hours, most-played game and the game the most members have played. "
+      "Steam numbers are missing for anyone whose Steam game details are private.",
+      {"type": "object",
+       "properties": {"mode": {"type": "string", "enum": ["overall", "hours", "recent", "games", "trophies", "steam"],
+                               "description": "Default overall."},
+                      "limit": {"type": "integer", "description": "1-25, default 10."}},
+       "required": []})
+def _squad_leaderboard(mode: str = "overall", limit: int = 10) -> Any:
+    import server
+    payload = server._squad_payload()
+    board = (payload.get("ranks") or {}).get(mode) or (payload.get("ranks") or {}).get("overall") or {}
+    n = max(1, min(int(limit or 10), 25))
+    return {"mode": mode, "label": board.get("label"), "unit": board.get("unit"),
+            "ranking": [{"rank": i + 1, "who": e["name"], "value": e["value"], "detail": e["detail"]}
+                        for i, e in enumerate((board.get("entries") or [])[:n])],
+            "squad": payload.get("summary")}
+
+
 @tool("steam_squad_status",
       "Steam presence and stats for squad members who linked Steam in the app "
       "(Settings -> Steam). Per person: Steam name, state (online/away/offline...), "

@@ -22,7 +22,9 @@ export type MmStatus = { linked: boolean; linked_at: number | null; connect_avai
 export type SteamStatus = {
   linked: boolean; steam_id: string | null; persona_name: string | null; avatar: string | null
   profile_url: string | null; connect_available: boolean
+  has_psn: boolean; primary: 'psn' | 'steam'; games_private?: boolean
 }
+export type ProfileStatus = { squad_name: string; default_name: string; min: number; max: number }
 export type McpStatus = { active: boolean; last_used_at: number | null }
 
 export type AdminUser = { userId: string; userName: string; displayName: string; email: string; state: string }
@@ -102,6 +104,10 @@ export const claimPsn = (key: string) => request<{ ok: boolean }>('/auth/setting
 export const linkPsn = (npsso: string) => request<{ ok: boolean; online_id?: string }>('/api/psn/link', { body: { npsso }, timeoutMs: 45_000 })
 export const unlinkMattermost = () => request<{ ok: boolean }>('/auth/settings/mattermost/unlink', { method: 'POST' })
 export const unlinkSteam = () => request<{ ok: boolean }>('/auth/settings/steam/unlink', { method: 'POST' })
+export const setSquadName = (name: string) =>
+  request<{ ok: boolean; squad_name: string }>('/auth/settings/squad-name', { body: { name } })
+export const setPrimaryPlatform = (platform: 'psn' | 'steam') =>
+  request<{ ok: boolean; primary: string }>('/auth/settings/primary-platform', { body: { platform } })
 export const revokeMcp = () => request<{ ok: boolean }>('/auth/settings/mcp/revoke', { method: 'POST' })
 export const resetUserPassword = (id: string, newPassword: string) =>
   request<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/reset-password`, { body: { newPassword } })

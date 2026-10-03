@@ -69,11 +69,16 @@ ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
 # written by the app itself the first time someone opens Slap without one.
 # steam_id is the person's 64-bit SteamID, written by the app after Steam's
 # OpenID sign-in confirms it (see steam.py) and deleted again on unlink.
+# primary_platform ("psn" or "steam") is which platform's stats lead a person's
+# Squad row when they have both linked; set from Settings. Blank means PSN.
+# squad_name is the name a person picked for the Squad page (Settings -> Profile,
+# see squad_view.py). It is unique across the squad, so resolve() treats it
+# like a display name.
 # founder ("true") marks the six people who see founder-only features, e.g. the
 # Professional Goopers WhatsApp stats. Console-only: set_tag() refuses it, so
 # nobody can grant it to themselves through the app. Read it via is_founder().
 TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone", "wa_names", "jellyfin_user",
-            "steam_id", "founder")
+            "steam_id", "primary_platform", "squad_name", "founder")
 
 # Separators accepted inside a multi-value tag.
 _TAG_SPLIT = ",;|"
@@ -110,6 +115,8 @@ def bot_person() -> dict:
         "wa_names": [],
         "jellyfin_user": "",
         "steam_id": "",
+        "primary_platform": "",
+        "squad_name": "",
         "founder": False,
         "tags": {},
         "is_bot": True,
@@ -271,6 +278,8 @@ def _fetch_people() -> list[dict]:
                 "wa_names": _split_tag(tags.get("wa_names", "")),
                 "jellyfin_user": tags.get("jellyfin_user", ""),
                 "steam_id": tags.get("steam_id", "").strip(),
+                "primary_platform": tags.get("primary_platform", "").strip().lower(),
+                "squad_name": tags.get("squad_name", "").strip(),
                 "founder": _truthy(tags.get("founder", "")),
                 "tags": tags,
             })
@@ -281,7 +290,7 @@ def _fetch_people() -> list[dict]:
 
 
 # Tags the app itself may write. Everything else is console-only.
-_APP_TAGS = ("jellyfin_user", "steam_id")
+_APP_TAGS = ("jellyfin_user", "steam_id", "primary_platform", "squad_name")
 
 
 def set_tag(zitadel_id: str, key: str, value: str) -> bool:
@@ -343,7 +352,7 @@ def resolve(needle: str, *, refresh: bool = False) -> dict | None:
     """Find one person by any identifier they are known by.
 
     Accepts a Zitadel id, PSN online id, Mattermost username, WhatsApp JID or
-    phone number, login name, email, or display name. Exact identifier matches
+    phone number, login name, email, display name, or Squad name. Exact identifier matches
     win over name matches, and a name match only counts when it is unambiguous
     -- "who is moiz" should not silently pick one of two Moizes.
     """
@@ -374,12 +383,13 @@ def resolve(needle: str, *, refresh: bool = False) -> dict | None:
 
     # Display names are free text, so fall back to them last and only when the
     # match is unique in both the exact and the substring pass.
-    named = [p for p in roster if p["display_name"].casefold() == folded]
+    named = [p for p in roster if folded in {p["display_name"].casefold(), p.get("squad_name", "").casefold()}]
     if len(named) == 1:
         return named[0]
     partial = [p for p in roster
                if folded in p["display_name"].casefold()
-               or folded in p["username"].casefold()]
+               or folded in p["username"].casefold()
+               or (p.get("squad_name") and folded in p["squad_name"].casefold())]
     if len(partial) == 1:
         return partial[0]
     return None

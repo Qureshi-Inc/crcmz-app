@@ -27,9 +27,31 @@ export type Member = {
   /** Where the shown presence comes from: the avatar's platform badge. */
   platform_source?: Platform
   platforms?: Platform[]
+  /** The person's choice in Settings: whose level leads the row. */
+  primary?: Platform
   steam?: SteamPart | null
+  stats?: MemberStats
 }
-export type SquadResponse = { squad: Member[]; error?: string }
+export type GameRef = { name: string; hours?: number; players?: number; icon: string | null; platform?: Platform }
+/** Cross-platform numbers (squad_view.py). null = unknown (no history, or private on Steam). */
+export type MemberStats = {
+  hours_total: number | null; hours_2weeks: number | null; games: number | null
+  psn_hours: number | null; steam_hours: number | null; top_game: GameRef | null
+  trophy_level: number | null; platinum: number | null; steam_level: number | null
+  steam_top_pct: number | null; steam_games_private: boolean
+}
+export type SquadSummary = {
+  hours_total: number | null; hours_2weeks: number | null; most_played: GameRef | null
+  most_shared: GameRef | null; grinder: { name: string; hours: number } | null
+  playing_now: number; members: number
+}
+export type RankMode = 'overall' | 'hours' | 'recent' | 'games' | 'trophies' | 'steam'
+export type RankEntry = { name: string; avatar: string | null; value: number; platforms: Platform[]; detail: string }
+export type RankBoard = { label: string; unit: string; entries: RankEntry[] }
+export type SquadResponse = {
+  squad: Member[]; error?: string; psn_error?: string
+  summary?: SquadSummary; ranks?: Partial<Record<RankMode, RankBoard>>
+}
 
 export type SteamGame = { name: string | null; hours?: number; icon: string | null }
 /** Present when the person signed in with Steam (Settings → Steam). null = private/unknown. */
@@ -108,4 +130,4 @@ export function useAccount() {
   })
 }
 
-export const displayName = (m: Member) => m.online_id || m.name || m.mm_username || 'Unknown'
+export const displayName = (m: Member) => m.name || m.online_id || m.mm_username || 'Unknown'
