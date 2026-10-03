@@ -358,8 +358,42 @@ def http_tests():
         r = client.post("/api/ring", json={"kind": "watch"}, cookies=cookie, headers=origin)
         assert r.status_code == 429 and int(r.headers["Retry-After"]) > 0, r.status_code
 
+    def huddle_live_asks_livekit_whether_you_are_still_in():
+        import json as _json, threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        seen: list[tuple[str, str, str]] = []
+        me = server._signer().loads(cookie[server._SESSION_COOKIE]).get("sub")
+
+        class LiveKit(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                body = _json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                seen.append((self.path, body["room"], self.headers.get("Authorization", "")[:7]))
+                who = [{"identity": me}] if body["room"] == "here" else []
+                out = _json.dumps({"participants": who}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a): pass
+
+        httpd = HTTPServer(("127.0.0.1", 0), LiveKit)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        saved = server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET, server.LIVEKIT_URL
+        server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET = "k", "s" * 32
+        server.LIVEKIT_URL = f"ws://127.0.0.1:{httpd.server_port}"
+        try:
+            assert client.get("/api/huddle/live?room=here").status_code == 401
+            r = client.get("/api/huddle/live?room=Here!", cookies=cookie)
+            assert r.status_code == 200 and r.json() == {"room": "here", "live": True}, r.text
+            r = client.get("/api/huddle/live?room=elsewhere", cookies=cookie)
+            assert r.json()["live"] is False, r.text
+            assert seen[0] == ("/twirp/livekit.RoomService/ListParticipants", "here", "Bearer "), seen
+        finally:
+            server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET, server.LIVEKIT_URL = saved
+            httpd.shutdown()
+
     for fn in (asset_links_are_public, native_needs_a_session_and_same_origin, native_registers_the_phone,
-               joining_a_huddle_never_rings_anyone, ring_route_needs_a_session_and_says_when_to_retry):
+               joining_a_huddle_never_rings_anyone, ring_route_needs_a_session_and_says_when_to_retry,
+               huddle_live_asks_livekit_whether_you_are_still_in):
         check(fn.__name__, fn)
 
 

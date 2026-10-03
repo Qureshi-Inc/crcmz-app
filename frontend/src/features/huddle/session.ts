@@ -136,6 +136,7 @@ function set(patch: Partial<HuddleState>) {
   state = { ...state, ...patch }
   listeners.forEach((l) => l())
   syncLockScreen()
+  queueSave()
 }
 export function getHuddle(): HuddleState { return state }
 export function useHuddle(): HuddleState {
@@ -774,3 +775,53 @@ function syncLockScreen() {
   if (lockScreen.holds('huddle')) lockScreen.update('huddle', spec)
   else lockScreen.claim('huddle', spec)
 }
+
+// ── Surviving a reload ──────────────────────────────────────────────────────
+// A refresh (or the app reloading its page) used to drop you back at Join, and the AI
+// chat and transcript with it. While you're in a call this tab remembers the room, the
+// AI chat and the transcript. On the way back: in the apps the call never stopped (it's
+// native), so once the server confirms you're still in the room the page picks it up
+// again; in a browser the reload ended the call, so it joins the same room again.
+const SAVE_KEY = 'crcmz.huddle'
+const SAVE_FOR_MS = 15 * 60_000
+type Saved = { room: string; native: boolean; camera: boolean; at: number; aiLog: AiMsg[]; lines: Line[]; transcribing: boolean }
+let saveT = 0
+function queueSave() {
+  if (saveT) return
+  saveT = window.setTimeout(() => {
+    saveT = 0
+    try {
+      const native = !!state.nativeRoom
+      if (!native && !inCall()) { if (state.phase === 'pre') sessionStorage.removeItem(SAVE_KEY); return }
+      const saved: Saved = {
+        room: native ? state.nativeRoom : state.room, native, camera: state.cam, at: Date.now(),
+        aiLog: state.aiLog.slice(-40), lines: state.lines.slice(-300), transcribing: state.transcribing,
+      }
+      sessionStorage.setItem(SAVE_KEY, JSON.stringify(saved))
+    } catch { /* private mode or full: nothing to keep */ }
+  }, 500)
+}
+function readSaved(): Saved | null {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(SAVE_KEY) || 'null') as Saved | null
+    return s && typeof s.room === 'string' && Date.now() - s.at < SAVE_FOR_MS ? s : null
+  } catch { return null }
+}
+async function restore() {
+  const saved = readSaved()
+  if (!saved || state.phase !== 'pre' || state.nativeRoom) return
+  const back = { aiLog: Array.isArray(saved.aiLog) ? saved.aiLog : [], lines: Array.isArray(saved.lines) ? saved.lines : [] }
+  if (saved.native) {
+    if (!nativeCalls()) return
+    try {
+      const r = await request<{ live: boolean }>(`/api/huddle/live?room=${encodeURIComponent(saved.room)}`, { quiet401: true })
+      if (!r.live || state.nativeRoom || state.phase !== 'pre') { sessionStorage.removeItem(SAVE_KEY); return }
+      set({ ...back, room: saved.room, nativeRoom: saved.room, transcribing: !!saved.transcribing })
+    } catch { /* can't tell: leave it at Join */ }
+    return
+  }
+  if (nativeCalls()) return
+  set({ ...back, room: saved.room })
+  await join({ camera: saved.camera })
+}
+if (typeof window !== 'undefined') window.setTimeout(() => void restore(), 0)

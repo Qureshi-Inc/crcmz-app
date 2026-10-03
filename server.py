@@ -6373,6 +6373,41 @@ async def huddle_token(request: Request):
     return JSONResponse({"token": token, "url": ws_url, "room": room})
 
 
+async def _livekit_identities(room: str) -> set[str]:
+    """Who is in a LiveKit room right now (the server API, with a short admin token)."""
+    import jwt as _pyjwt
+    now = int(_time.time())
+    tok = _pyjwt.encode({"iss": LIVEKIT_API_KEY, "nbf": now, "exp": now + 60,
+                         "video": {"roomAdmin": True, "room": room}}, LIVEKIT_API_SECRET, algorithm="HS256")
+    import httpx as _hx
+    base = LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://").rstrip("/")
+    async with _hx.AsyncClient(timeout=8) as c:
+        r = await c.post(f"{base}/twirp/livekit.RoomService/ListParticipants", json={"room": room},
+                         headers={"Authorization": f"Bearer {tok}"})
+    if r.status_code == 404:
+        return set()
+    r.raise_for_status()
+    return {str(p.get("identity") or "") for p in r.json().get("participants") or []}
+
+
+@app.get("/api/huddle/live")
+async def huddle_live(request: Request, room: str = "crcmz"):
+    """Are you still in this Huddle? The phone apps run the call natively, so it outlives a
+    page reload; the reloaded page asks here before showing "You're in the Huddle"."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        return JSONResponse({"error": "Huddle not configured on this server"}, status_code=503)
+    import re as _re
+    room = _re.sub(r"[^a-z0-9\-]", "", room.lower())[:64] or "crcmz"
+    try:
+        live = session.get("sub", "anon") in await _livekit_identities(room)
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"error": "couldn't reach the call server"}, status_code=502)
+    return JSONResponse({"room": room, "live": live}, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/watch/call/token")
 async def watch_call_token(request: Request):
     """The Watch Party's camera call: a LiveKit room per party room (watch-<room>).
