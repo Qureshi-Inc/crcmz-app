@@ -238,6 +238,9 @@ export async function join({ camera = true }: { camera?: boolean } = {}) {
         set({ note: (e as { name?: string })?.name === 'NotAllowedError' ? 'Camera blocked: allow it in your browser settings.' : "Couldn't start your camera." })
       }
     }
+    // Ask the room to repeat who has a hand up / is recording: a message sent while we
+    // were still connecting would otherwise be missed.
+    void sendData({ t: 'sync' })
     const others = muteOtherCalls('huddle')
     if (others.length && state.mic) toast(`Muted your ${others.join(' and ')} mic while you're in Huddle`, 'info')
     sync()
@@ -589,6 +592,11 @@ let rxSent: number[] = []
 
 /** One message from the room's data channel (or relayed by the app). */
 function onData(m: Record<string, unknown>, name: string, id: string) {
+  if (m.t === 'sync') {
+    if (state.hand) void sendData({ t: 'hand', up: true })
+    if (state.transcribing && !state.nativeRoom) void sendData({ t: 'rec', on: true })
+    return
+  }
   if (m.t === 'rec') {
     if (m.on) remoteRecorders.set(id, name)
     else remoteRecorders.delete(id)
