@@ -213,25 +213,27 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
         }
     }
 
-    /** Huddle: your hand, reactions, sharing your screen, the AI helper. */
+    /** Huddle: your hand, reactions, sharing your screen, the transcript (notes), the AI helper. */
     private fun buildExtras() {
         extras.removeAllViews()
         if (NativeCall.kind != NativeCall.Kind.HUDDLE) { extras.visibility = View.GONE; pickRow.visibility = View.GONE; return }
         extras.visibility = View.VISIBLE
         fun add(label: String, on: Boolean, desc: String, click: () -> Unit) = extras.addView(TextView(app).apply {
             text = label; setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER
-            minHeight = dp(44); setPadding(dp(14), 0, dp(14), 0)
+            minHeight = dp(44); setPadding(dp(10), 0, dp(10), 0)
             background = GradientDrawable().apply { cornerRadius = dp(22f); setColor(if (on) Color.argb(72, 255, 255, 255) else Color.argb(32, 255, 255, 255)) }
             contentDescription = desc
             setOnClickListener { click() }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(4), 0, dp(4), 0) })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(3), 0, dp(3), 0) })
         add(if (NativeCall.myHand) "✋ Lower" else "✋ Hand", NativeCall.myHand, if (NativeCall.myHand) "Lower your hand" else "Raise your hand") { NativeCall.toggleHand() }
-        add("😊 React", pickRow.visibility == View.VISIBLE, "Reactions") {
+        add("😊", pickRow.visibility == View.VISIBLE, "Reactions") {
             pickRow.visibility = if (pickRow.visibility == View.VISIBLE) View.GONE else View.VISIBLE
             extrasKey = ""; render()
         }
         add(if (NativeCall.sharing) "▣ Stop" else "▣ Share", NativeCall.sharing, if (NativeCall.sharing) "Stop sharing your screen" else "Share your screen") { NativeCall.toggleShare(app) }
-        add(if (NativeCall.transcribing) "✨ AI · rec" else "✨ AI", NativeCall.transcribing, "AI helper and transcript") { NativeCall.openAI(app) }
+        add(if (NativeCall.transcribing) "⏹ Stop" else "📝 Notes", NativeCall.transcribing,
+            if (NativeCall.transcribing) "Stop the transcript" else "Transcribe this call, for meeting notes when it ends") { NativeCall.toggleTranscript(app) }
+        add("✨ AI", false, "AI helper") { NativeCall.openAI(app) }
         if (pickRow.childCount == 0) NativeCall.REACTIONS.forEach { e ->
             pickRow.addView(TextView(app).apply {
                 text = e; textSize = 24f; gravity = Gravity.CENTER; contentDescription = "Send $e"

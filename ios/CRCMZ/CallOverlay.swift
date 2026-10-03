@@ -207,8 +207,11 @@ private struct Extras: View {
                     .buttonStyle(Pill(on: call.myHand)).accessibilityLabel(call.myHand ? "Lower your hand" : "Raise your hand")
                 Button { picking.toggle() } label: { Label("React", systemImage: "face.smiling") }
                     .buttonStyle(Pill(on: picking))
-                Button { call.openAI() } label: { Label(call.transcribing ? "AI · rec" : "AI", systemImage: "sparkles") }
-                    .buttonStyle(Pill(on: call.transcribing)).accessibilityLabel("AI helper and transcript")
+                Button { call.toggleTranscript() } label: { Label(call.transcribing ? "Stop" : "Notes", systemImage: call.transcribing ? "stop.circle" : "waveform") }
+                    .buttonStyle(Pill(on: call.transcribing))
+                    .accessibilityLabel(call.transcribing ? "Stop the transcript" : "Transcribe this call, for meeting notes when it ends")
+                Button { call.openAI() } label: { Label("AI", systemImage: "sparkles") }
+                    .buttonStyle(Pill()).accessibilityLabel("AI helper")
             }
         }
     }

@@ -279,11 +279,17 @@ object NativeCall {
             }
             "hand" -> { if (m.optBoolean("up")) hands[id] = name else hands.remove(id); refresh() }
             "rx" -> showReaction(name, m.optString("e"))
+            // Someone turned the transcript on (or off) for the whole call: this phone too.
+            "rec" -> if (m.optBoolean("all")) LauncherActivity.current?.let { setTranscript(it, m.optBoolean("on")) }
         }
         onData?.invoke(k.key, m, name, id)
     }
 
-    private fun setTranscript(app: LauncherActivity, on: Boolean) {
+    /** The call screen's Notes button: the transcript on or off for everyone in the call. */
+    fun toggleTranscript(app: LauncherActivity) = setTranscript(app, !transcribing, all = true)
+
+    /** [all]: tell everyone's phone to do the same (the whole call goes into the notes). */
+    private fun setTranscript(app: LauncherActivity, on: Boolean, all: Boolean = false) {
         if (kind != Kind.HUDDLE || on == transcribing) return
         val r = room ?: return
         if (on && !micOn) {
@@ -298,9 +304,9 @@ object NativeCall {
         } else {
             transcriber?.stop(); transcriber = null
         }
-        publish(JSONObject().put("t", "rec").put("on", on))
+        publish(JSONObject().put("t", "rec").put("on", on).apply { if (all) put("all", true) })
         onData?.invoke("huddle", JSONObject().put("t", "transcribing").put("on", on)
-            .put("note", if (on) "Transcript on. Everyone in the call can see it is on." else "Transcript off."), "You", "me")
+            .put("note", if (on) "Transcript on for everyone in the call. The meeting notes are saved when the call ends." else "Transcript off."), "You", "me")
         changed()
     }
 

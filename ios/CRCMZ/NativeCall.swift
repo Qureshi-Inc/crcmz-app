@@ -205,12 +205,19 @@ final class NativeCall: ObservableObject {
             refresh()
         case "rx":
             if let e = m["e"] as? String, Self.reactionSet.contains(e) { showReaction(name, e) }
+        case "rec":
+            // Someone turned the transcript on (or off) for the whole call: this phone too.
+            if m["all"] as? Bool == true { setTranscript(m["on"] as? Bool == true) }
         default: break
         }
         onData?(kind, m, name, id)
     }
 
-    private func setTranscript(_ on: Bool) {
+    /// The call screen's Notes button: the transcript on or off for everyone in the call.
+    func toggleTranscript() { setTranscript(!transcribing, all: true) }
+
+    /// `all`: tell everyone's phone to do the same (the whole call goes into the notes).
+    private func setTranscript(_ on: Bool, all: Bool = false) {
         guard kind == .huddle, on != transcribing else { return }
         if on && !micOn {
             onData?(.huddle, ["t": "transcribing", "on": false, "note": "Unmute your mic to start the transcript."], "You", "me")
@@ -218,9 +225,9 @@ final class NativeCall: ObservableObject {
         }
         transcribing = on
         if on { transcriber.start() } else { transcriber.stop() }
-        publish(["t": "rec", "on": on])
+        publish(all ? ["t": "rec", "on": on, "all": true] : ["t": "rec", "on": on])
         onData?(.huddle, ["t": "transcribing", "on": on,
-                          "note": on ? "Transcript on. Everyone in the call can see it is on." : "Transcript off."], "You", "me")
+                          "note": on ? "Transcript on for everyone in the call. The meeting notes are saved when the call ends." : "Transcript off."], "You", "me")
     }
 
     private func ownLine(_ text: String) {
