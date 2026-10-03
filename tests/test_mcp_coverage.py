@@ -73,6 +73,7 @@ STORES: dict[str, list[str] | None] = {
     "/data/watchparty_events.db": ["watchparty_events_list"],
     "/data/watch_history.db": ["watch_history"],
     "/data/watch_diag.db": ["watch_diagnostics"],
+    "/data/meeting_notes.db": ["huddle_meeting_notes", "huddle_meeting_get"],
     "/data/slap_thumbs.db": ["slap_thumbs"],
     "/data/slap_discover.db": ["slap_discover"],
     "/data/movies.db": ["movie_library"],

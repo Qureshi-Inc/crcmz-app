@@ -1703,6 +1703,51 @@ def _watch_history(limit: int = 10, room_id: str | None = None, person: str | No
     return {"items": out}
 
 
+@tool("huddle_meeting_notes",
+      "Huddle meetings, newest first: id, title, room, started/ended (epoch seconds), "
+      "status (live = the call is on and its transcript is still growing; writing = the "
+      "AI is writing the notes; ready = notes are in; failed = the AI couldn't write them) "
+      "and who was there. Calls where hardly anything was said have no entry. Filter by "
+      "person (name, PSN id or WhatsApp name) or by words in the title or notes. Use "
+      "huddle_meeting_get for one meeting's notes and transcript.",
+      {"type": "object", "properties": {
+          "limit":  {"type": "integer", "description": "1-50, default 10"},
+          "person": {"type": "string", "description": "only meetings this person was in"},
+          "query":  {"type": "string", "description": "words in the title or the notes"},
+      }})
+def _huddle_meeting_notes(limit: int = 10, person: str | None = None, query: str | None = None) -> dict:
+    import meeting_notes as _mn
+    sub = None
+    if person:
+        who = _ident().resolve(person)
+        if not who or not who.get("zitadel_id"):
+            return {"meetings": [], "note": f"no known person matches {person!r}"}
+        sub = who["zitadel_id"]
+    return {"meetings": _mn.list_meetings(sub=sub, query=str(query or "")[:80],
+                                          limit=max(1, min(int(limit or 10), 50)))}
+
+
+@tool("huddle_meeting_get",
+      "One Huddle meeting by id (from huddle_meeting_notes): its title, who was there, "
+      "the AI's Markdown notes (summary, decisions, follow-ups) and, with "
+      "include_transcript, the transcript lines (time, name, what they said; the newest "
+      "500). The link people open it at is https://app.crcmz.me/app/huddle/notes/<id>.",
+      {"type": "object", "properties": {
+          "id":                 {"type": "string", "description": "the meeting id"},
+          "include_transcript": {"type": "boolean", "description": "default false"},
+      }, "required": ["id"]})
+def _huddle_meeting_get(id: str, include_transcript: bool = False) -> dict:  # noqa: A002
+    import meeting_notes as _mn
+    m = _mn.get(str(id or "")[:40], with_transcript=include_transcript is True)
+    if not m:
+        return {"error": f"no meeting {id!r}"}
+    m["people"] = [p["name"] for p in m["people"]]
+    if "transcript" in m:
+        m["transcript"] = m["transcript"][-500:]
+    m["url"] = f"https://app.crcmz.me/app/huddle/notes/{m['id']}"
+    return m
+
+
 @tool("watch_diagnostics",
       "Watch Party client diagnostics: the raw timeline each viewer's browser recorded "
       "(socket connect/disconnect/reconnect, video set/play/pause/seek sent and "

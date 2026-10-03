@@ -49,7 +49,7 @@ KEEP_ROWS = 5000
 # Where each category came from, for the inbox's filter chips and icons.
 SOURCES: dict[str, str] = {
     "squad": "squad", "watch": "watch", "huddle": "huddle", "giveaway": "giveaway",
-    "clips": "clips", "mentions": "slap", "movies": "watch",
+    "clips": "clips", "mentions": "slap", "movies": "watch", "notes": "huddle",
 }
 # Personal categories: these can also DM the person on WhatsApp and Mattermost.
 DIRECT = {"mentions", "movies"}
