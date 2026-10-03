@@ -5,7 +5,7 @@
 <p align="center"><b>The squad platform for Professional Goopers</b> — one place for who's on, clips, music, movie nights and calls.</p>
 
 <p align="center">
-  <a href="https://app.crcmz.me/app"><img alt="app.crcmz.me" src="https://img.shields.io/website?url=https%3A%2F%2Fapp.crcmz.me%2Fhealth&label=app.crcmz.me&up_message=live&down_message=down&style=for-the-badge"></a>
+  <a href="https://app.crcmz.me/app"><img alt="app.crcmz.me" src="https://img.shields.io/badge/app.crcmz.me-open-ff2fd6?style=for-the-badge"></a>
   <a href="https://github.com/Qureshi-Inc/crcmz-app/releases/latest"><img alt="Android" src="https://img.shields.io/github/v/release/Qureshi-Inc/crcmz-app?filter=android-*&label=Android&logo=android&style=for-the-badge&color=3ddc84"></a>
   <a href="#iphone-testflight"><img alt="iPhone" src="https://img.shields.io/badge/iPhone-TestFlight-0d96f6?logo=apple&style=for-the-badge"></a>
 </p>
