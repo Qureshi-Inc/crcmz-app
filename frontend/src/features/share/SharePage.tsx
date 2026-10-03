@@ -181,3 +181,26 @@ function Card({ children, icon = 'slap' }: { children: ReactNode; icon?: IconNam
     </div>
   )
 }
+
+/** The iPhone's share extension can't open the app, so "Play in the Watch Party" leaves the
+ *  link on the server; the app opens it here the next time it's opened (or comes back). */
+export function usePendingShare(enabled: boolean) {
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (!enabled) return
+    const check = () => {
+      if (document.hidden) return
+      request<{ url: string }>('/api/share/pending', { quiet401: true })
+        .then((r) => {
+          if (!r.url) return
+          // A page of the app (a film in Movies), or a link to play for the party.
+          const own = /^https:\/\/app\.crcmz\.me\/app(\/[^\s]*)?$/.exec(r.url)
+          navigate(own ? own[1] || '/' : `/watch/party?${new URLSearchParams({ url: r.url })}`)
+        })
+        .catch(() => { /* signed out, offline: nothing waiting */ })
+    }
+    check()
+    document.addEventListener('visibilitychange', check)
+    return () => document.removeEventListener('visibilitychange', check)
+  }, [enabled, navigate])
+}

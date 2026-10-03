@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 import httpx
 
@@ -129,3 +130,21 @@ async def inspect(url: str = "", text: str = "", title: str = "") -> dict:
         return out
     out.update(kind="video", choices=["watch"])
     return out
+
+
+# The iPhone's share extension can't open the app: "Play in the Watch Party" leaves the
+# link here, and the app picks it up the next time it opens (GET /api/share/pending).
+_pending: dict[str, tuple[str, float]] = {}
+PENDING_S = 15 * 60
+
+
+def leave_for_app(sub: str, url: str) -> bool:
+    if not sub or not _LINK.match(url or ""):
+        return False
+    _pending[sub] = (url[:2000], time.time())
+    return True
+
+
+def take_for_app(sub: str) -> str:
+    url, at = _pending.pop(sub, ("", 0.0))
+    return url if time.time() - at < PENDING_S else ""

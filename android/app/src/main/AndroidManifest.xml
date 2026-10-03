@@ -58,11 +58,17 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Share → CRCMZ: a link from YouTube or any app opens the Watch Party with it ready. -->
+            <!-- Share → CRCMZ: a link from any app (a song, a trailer, a video) opens /app/share. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- Share → CRCMZ from Photos: a video opens Clips' Send a video with it picked (SharedFiles). -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/*" />
             </intent-filter>
             <!-- app.crcmz.me/app links open here instead of the browser. -->
             <intent-filter android:autoVerify="true">

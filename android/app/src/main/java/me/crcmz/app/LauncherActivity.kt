@@ -260,6 +260,10 @@ class LauncherActivity : AppCompatActivity() {
                 return true
             }
 
+            // A video shared from Photos, for the page's Send a video (SharedFiles).
+            override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): android.webkit.WebResourceResponse? =
+                if (req.url.host == "app.crcmz.me") SharedFiles.serve(req.url.path.orEmpty()) else null
+
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 shell.pageChanged(url?.let(Uri::parse))
             }
@@ -348,6 +352,12 @@ class LauncherActivity : AppCompatActivity() {
     /** The page a launch, a notification, a ring, a link, a shortcut or a share asks for. */
     private fun target(i: Intent?): String? {
         i ?: return null
+        if (i.action == Intent.ACTION_SEND && i.type.orEmpty().startsWith("video/")) {
+            @Suppress("DEPRECATION")
+            val uri = (if (android.os.Build.VERSION.SDK_INT >= 33) i.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                       else i.getParcelableExtra(Intent.EXTRA_STREAM)) ?: return null
+            return SharedFiles.offer(this, uri, i.type.orEmpty())
+        }
         if (i.action == Intent.ACTION_SEND && i.type == "text/plain") {
             val text = i.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
             val link = Regex("https?://\\S+").find(text)?.value.orEmpty()

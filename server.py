@@ -6542,6 +6542,29 @@ async def share_inspect(request: Request):
     return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
 
+@app.post("/api/share/pending")
+async def share_pending_set(request: Request):
+    """The iPhone share extension's "Play in the Watch Party": the app opens it next time."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    try:
+        b = await request.json()
+    except Exception:  # noqa: BLE001
+        b = {}
+    if not _share.leave_for_app(session.get("sub", ""), str((b or {}).get("url") or "")):
+        return JSONResponse({"error": "that isn't a link"}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/share/pending")
+async def share_pending_get(request: Request):
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    return JSONResponse({"url": _share.take_for_app(session.get("sub", ""))}, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/watch/call/token")
 async def watch_call_token(request: Request):
     """The Watch Party's camera call: a LiveKit room per party room (watch-<room>).

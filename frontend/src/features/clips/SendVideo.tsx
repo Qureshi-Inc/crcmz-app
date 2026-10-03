@@ -95,6 +95,25 @@ function SendForm({ d, up }: { d: UploadsResponse; up: UploadState }) {
     setFile(f)
   }
 
+  // Shared from Photos (the Android app hands the video over at /__crcmz/shared/<token>):
+  // picked here, ready for a caption and Send.
+  const [loadingShared, setLoadingShared] = useState(false)
+  useEffect(() => {
+    const q = new URLSearchParams(location.search)
+    const token = q.get('shared')
+    if (!token || !/^[\w-]{8,64}$/.test(token)) return
+    q.delete('shared')
+    const name = q.get('name') || 'video.mp4'
+    q.delete('name')
+    history.replaceState(history.state, '', `${location.pathname}${q.size ? `?${q}` : ''}`)
+    setLoadingShared(true)
+    fetch(`/__crcmz/shared/${token}`)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+      .then((b) => pick(new File([b], name, { type: b.type || 'video/mp4' })))
+      .catch(() => setProblem("Couldn't open the shared video. Pick it here instead."))
+      .finally(() => setLoadingShared(false))
+  }, []) // once, when the share opens this
+
   function send() {
     if (busy) return
     if (!file) { setProblem('Pick a video first.'); inputRef.current?.focus(); return }
@@ -142,7 +161,7 @@ function SendForm({ d, up }: { d: UploadsResponse; up: UploadState }) {
                 onChange={(e) => void pick(e.currentTarget.files?.[0] ?? null)}
               />
             </label>
-            {checking ? <p className="meta send-file">Reading the video…</p>
+            {loadingShared ? <p className="meta send-file" role="status">Opening the shared video…</p> : checking ? <p className="meta send-file">Reading the video…</p>
               : file && <p className="meta send-file">{file.name} · {fmtBytes(file.size)}</p>}
           </div>
           <div>

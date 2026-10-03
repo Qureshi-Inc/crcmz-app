@@ -8,6 +8,7 @@ import { Icon } from '../components/Icon'
 import { Toaster } from '../components/toast'
 import { InstallStrip } from '../components/InstallStrip'
 import { UpdateStrip } from '../components/UpdateStrip'
+import { usePendingShare } from '../features/share/SharePage'
 import { onWorkerNavigate } from '../lib/pwa'
 import { useStale } from '../components/states'
 import { useAccount, useAdminCheck, useSquad, SQUAD_MS, type Member } from '../lib/api'
@@ -89,6 +90,7 @@ export function Shell() {
   const watchBar = useWatchBar(onWatch)
   const huddleBar = useHuddleBar(current === 'huddle')
   const callRows = Number(watchBar) + Number(huddleBar)
+  usePendingShare(nativeShell())
   useEffect(() => {
     const html = document.documentElement
     if (callRows && !desktop) { html.dataset.watchbar = ''; html.style.setProperty('--callbar-rows', String(callRows)) }

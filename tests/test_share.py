@@ -113,7 +113,18 @@ def tests():
         r = client.post("/api/share/inspect", json={"url": "https://youtu.be/heat"}, cookies=cookie, headers=origin)
         assert r.status_code == 200 and r.json()["kind"] == "trailer", r.text
 
-    for fn in (trailer_titles_become_a_film_name_and_year, a_song_goes_straight_to_slap, a_trailer_offers_its_film_first,
+    def a_link_left_for_the_app_is_picked_up_once():
+        from fastapi.testclient import TestClient
+        import server
+        client = TestClient(server.app, base_url="https://app.crcmz.me")
+        origin = {"Origin": "https://app.crcmz.me"}
+        cookie = {server._SESSION_COOKIE: server._signer().dumps(server._make_session("u1", "a@b.co"))}
+        assert client.post("/api/share/pending", json={"url": "nope"}, cookies=cookie, headers=origin).status_code == 400
+        assert client.post("/api/share/pending", json={"url": "https://youtu.be/x"}, cookies=cookie, headers=origin).status_code == 200
+        assert client.get("/api/share/pending", cookies=cookie).json()["url"] == "https://youtu.be/x"
+        assert client.get("/api/share/pending", cookies=cookie).json()["url"] == ""
+
+    for fn in (a_link_left_for_the_app_is_picked_up_once, trailer_titles_become_a_film_name_and_year, a_song_goes_straight_to_slap, a_trailer_offers_its_film_first,
                a_trailer_for_an_unknown_film_is_just_a_video, other_videos_and_pages_go_to_the_watch_party,
                an_imdb_page_is_a_movie, the_route_needs_a_session):
         check(fn.__name__, fn)
