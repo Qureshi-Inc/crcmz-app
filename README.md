@@ -36,7 +36,7 @@ No email? Ask Moiz to add you to the **CRCMZ Squad** group. In the app, **More �
 | Surface | Where it runs | State |
 |---|---|---|
 | Web app + API | `app.crcmz.me` · Coolify app 24, `main` branch | 🟢 Live (deploys are triggered in Coolify; a push alone doesn't deploy) |
-| Android app | `android/` · TWA + Firebase rings · [GitHub Releases](https://github.com/Qureshi-Inc/crcmz-app/releases) | 🟢 Released |
+| Android app | `android/` · native shell, calls and Slap player · [GitHub Releases](https://github.com/Qureshi-Inc/crcmz-app/releases) | 🟢 Released (2.0) |
 | iPhone app | `ios/` · native shell, calls and Slap player · TestFlight | 🟡 Beta (CRCMZ Squad group) |
 | MCP server | `app.crcmz.me/mcp` | 🟢 Live |
 | Huddle + Watch Party calls | LiveKit at `huddle.crcmz.me` | 🟢 Live |
@@ -64,12 +64,14 @@ No email? Ask Moiz to add you to the **CRCMZ Squad** group. In the app, **More �
 
 ## Phone apps
 
-**Android** (`android/`, see `android/README.md`): a Trusted Web Activity around the site,
-with Firebase rings for Huddle and Watch Party (full screen, even locked), share target and
-icon shortcuts. Releases are tagged `android-v*` with the `.apk` attached.
+**Android** (`android/`, see `android/README.md`): the same split as the iPhone app, in
+Kotlin — `Shell.kt` (tab bar), `NativeCall.kt` + `CallOverlay.kt` + `CallService.kt`
+(LiveKit calls, picture in picture), `NativeAudio.kt` + `PlaybackService.kt` (Media3,
+Android Auto), `MessagingService.kt` (every alert and ring through FCM). Releases are
+tagged `android-v*` with the `.apk` attached.
 
 **iPhone** (`ios/`, see `ios/README.md`): a WKWebView around the site, with native parts
-where the web can't keep up:
+where the web can't keep up (the page side is shared with Android):
 
 | Native part | Swift | Page side |
 |---|---|---|
