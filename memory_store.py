@@ -387,9 +387,9 @@ def _run_index_cycle() -> None:
     # week with the embedding model away, WhatsApp was thousands behind at 20 a minute).
     for name, fn in (("whatsapp", _index_whatsapp), ("psn", _index_psn_clips), ("facts", _index_facts)):
         for _ in range(CATCH_UP_ROUNDS):
-            before = _get_cursor(name)
+            before = (_get_cursor(name), _get_cursor_id(name))
             fn()
-            if _get_cursor(name) == before:
+            if (_get_cursor(name), _get_cursor_id(name)) == before:
                 break
     _index_docs()
     _index_coach()
@@ -455,6 +455,19 @@ def _get_cursor(source: str) -> float:
     return float(row["value"]) if row else 0.0
 
 
+def _get_cursor_id(source: str) -> str:
+    """The id of the last record read at the cursor's timestamp (ties on timestamp)."""
+    with _conn() as conn:
+        row = conn.execute("SELECT value FROM memory_config WHERE key=?", (f"cursor_{source}_id",)).fetchone()
+    return row["value"] if row else ""
+
+
+def _set_cursor_id(source: str, rid: str) -> None:
+    with _lock, _conn() as conn:
+        conn.execute("INSERT OR REPLACE INTO memory_config(key, value) VALUES (?, ?)", (f"cursor_{source}_id", rid))
+        conn.commit()
+
+
 def _set_cursor(source: str, ts: float) -> None:
     with _lock, _conn() as conn:
         conn.execute(
@@ -478,6 +491,10 @@ def _index_whatsapp(since_ts: float | None = None) -> None:
 
     cursor_key = "whatsapp"
     since = since_ts if since_ts is not None else _get_cursor(cursor_key)
+    # The page bookmark is (timestamp, id): the exported history has minute timestamps,
+    # so dozens of messages share one, and a timestamp-only bookmark skipped all but the
+    # first 20 of them (5,800 messages were never indexed).
+    after_id = "" if since_ts is not None else _get_cursor_id(cursor_key)
     # Fetch in batches of BATCH_SIZE ordered by timestamp
     import sqlite3 as _sq3
     with _sq3.connect(wa_db, check_same_thread=False) as wa_conn:
@@ -486,17 +503,28 @@ def _index_whatsapp(since_ts: float | None = None) -> None:
             """SELECT id, sender_name, group_jid, timestamp, text, message_type,
                       from_me, reply_to
                FROM whatsapp_messages
-               WHERE timestamp > ?
+               WHERE (timestamp > ? OR (timestamp = ? AND id > ?))
                  AND text IS NOT NULL
                  AND TRIM(text) != ''
                  AND is_media_omitted = 0
                  AND message_type = 'text'
-               ORDER BY timestamp
+               ORDER BY timestamp, id
                LIMIT ?""",
-            (since, BATCH_SIZE),
+            (since, since, after_id, BATCH_SIZE),
         ).fetchall()
 
     if not rows:
+        return
+    page_end = (rows[-1]["timestamp"], rows[-1]["id"])
+    # Already indexed with the same text: skip before embedding.
+    with _lock, _conn() as conn:
+        known = {(r["source_record_id"], r["source_hash"]) for r in conn.execute(
+            "SELECT source_record_id, source_hash FROM memory_items WHERE source='whatsapp' AND deleted_at IS NULL "
+            f"AND source_record_id IN ({','.join('?' * len(rows))})", [r["id"] for r in rows])}
+    rows = [r for r in rows if (r["id"], hashlib.sha256(r["text"][:MAX_TEXT_CHARS].encode()).hexdigest()) not in known]
+    if not rows:
+        _set_cursor(cursor_key, float(page_end[0]))
+        _set_cursor_id(cursor_key, page_end[1])
         return
 
     texts = [r["text"][:MAX_TEXT_CHARS] for r in rows]
@@ -541,14 +569,10 @@ def _index_whatsapp(since_ts: float | None = None) -> None:
 
     _stats["indexed_total"] += indexed
     _stats["skipped_unchanged"] += skipped
-    if max_ts:
-        _set_cursor(cursor_key, max_ts)
+    _set_cursor(cursor_key, float(page_end[0]))
+    _set_cursor_id(cursor_key, page_end[1])
     if indexed or skipped:
         logger.debug("memory: WA indexed=%d skipped=%d", indexed, skipped)
-
-    # If we hit the batch limit there may be more records; recurse until caught up.
-    if len(rows) == BATCH_SIZE:
-        _index_whatsapp(since_ts=max_ts)
 
 
 # ── PSN clips indexer ─────────────────────────────────────────────────────────

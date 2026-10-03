@@ -842,6 +842,27 @@ def test_whole_table_sources_skip_what_is_unchanged() -> None:
         assert got.get("results") and got["results"][0]["source"] == "meetings", got
 
 
+def test_whatsapp_messages_sharing_a_minute_are_all_indexed() -> None:
+    """An exported chat has minute timestamps: 50 messages in one minute all get in."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _patch_module(tmp, EMBED_URL)
+        import memory_store as ms
+        env = _setup_env(tmp, EMBED_URL)
+        _create_wa_db(env["wa_db"], [{"id": f"m{i:03d}", "timestamp": 1759453440, "text": f"message number {i}"} for i in range(50)])
+        old = Path("/data/whatsapp.db")
+        ms.init()
+        real_path = ms.Path
+        ms.Path = lambda p: env["wa_db"] if str(p) == str(old) else real_path(p)
+        try:
+            ms._run_index_cycle()
+        finally:
+            ms.Path = real_path
+        with ms._conn() as c:
+            n = c.execute("SELECT COUNT(*) FROM memory_items WHERE source='whatsapp'").fetchone()[0]
+        assert n == 50, f"only {n} of 50 messages from one minute were indexed"
+
+
 def test_no_source_filter() -> None:
     """search() with sources=None returns results from any source."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -947,6 +968,7 @@ def main() -> int:
     check("24. source filter: multi-source", test_source_filter_multi)
     check("25. source filter: None searches all", test_no_source_filter)
     check("26. whole-table sources skip what's unchanged", test_whole_table_sources_skip_what_is_unchanged)
+    check("27. WhatsApp messages sharing a minute are all indexed", test_whatsapp_messages_sharing_a_minute_are_all_indexed)
 
     print(f"\n{PASSED} passed, {len(FAILED)} failed")
     if FAILED:
