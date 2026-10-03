@@ -57,10 +57,15 @@ object NativeCall {
     var onEnded: ((String) -> Unit)? = null
 
     fun listen(fn: () -> Unit) { listeners += fn }
+    private var lastPip = false
+    private var lastService = ""
+
     private fun changed() {
         listeners.forEach { it() }
-        LauncherActivity.current?.updatePip()
-        CallService.sync()
+        // Only on a real change: these restart system things (PiP params, the call service).
+        if (wantsPip() != lastPip) { lastPip = wantsPip(); LauncherActivity.current?.updatePip() }
+        val svc = "${live()}|$camOn|$micOn|$title"
+        if (svc != lastService) { lastService = svc; CallService.sync() }
     }
 
     // MARK: From the page

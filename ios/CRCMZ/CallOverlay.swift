@@ -61,7 +61,7 @@ private struct PanelCall: View {
     var body: some View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
-                ForEach(shown) { TileView(tile: $0, compact: true) }
+                ForEach(shown) { TileView(tile: $0, compact: true).frame(width: tileWidth, height: tileWidth * 4 / 3) }
             }
             .frame(maxHeight: .infinity)
             .onTapGesture { call.expand() }
@@ -74,6 +74,8 @@ private struct PanelCall: View {
         .background(RoundedRectangle(cornerRadius: 18).fill(ink.opacity(0.85)))
     }
 
+    private var tileWidth: CGFloat { call.kind == .huddle ? 120 : 84 }
+
     /// A Huddle shrinks to whoever's talking; the party shows everyone on camera.
     private var shown: [NativeCall.Tile] {
         if call.kind == .huddle { return call.featured.map { [$0] } ?? Array(call.tiles.prefix(1)) }
@@ -85,13 +87,22 @@ private struct Grid: View {
     let tiles: [NativeCall.Tile]
 
     var body: some View {
+        // Every tile gets an equal cell; the video fills it (cropped), whatever its own shape.
         GeometryReader { g in
             let cols = tiles.count <= 2 ? 1 : 2
             let rows = max(1, Int(ceil(Double(tiles.count) / Double(cols))))
-            let h = (g.size.height - CGFloat(rows - 1) * 8) / CGFloat(rows)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: cols), spacing: 8) {
-                ForEach(tiles) { TileView(tile: $0, compact: false).frame(height: max(h, 120)) }
+            let w = (g.size.width - CGFloat(cols - 1) * 8) / CGFloat(cols)
+            let h = max((g.size.height - CGFloat(rows - 1) * 8) / CGFloat(rows), 120)
+            VStack(spacing: 8) {
+                ForEach(0..<rows, id: \.self) { r in
+                    HStack(spacing: 8) {
+                        ForEach(tiles.indices.filter { $0 / cols == r }, id: \.self) { i in
+                            TileView(tile: tiles[i], compact: false).frame(width: w, height: h)
+                        }
+                    }
+                }
             }
+            .frame(width: g.size.width, height: g.size.height, alignment: .top)
         }
         .padding(.horizontal, 8)
     }
@@ -105,8 +116,10 @@ private struct TileView: View {
         ZStack(alignment: .bottomLeading) {
             RoundedRectangle(cornerRadius: compact ? 12 : 20).fill(Color.white.opacity(0.08))
             if let track = tile.track {
+                // The cell decides the size, never the video's own dimensions (that's what
+                // squeezed other people into thin tubes).
                 SwiftUIVideoView(track, layoutMode: .fill)
-                    .clipShape(RoundedRectangle(cornerRadius: compact ? 12 : 20))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Text(initials).font(.system(size: compact ? 20 : 40, weight: .semibold))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -119,7 +132,8 @@ private struct TileView: View {
             .background(Capsule().fill(.black.opacity(0.5)))
             .padding(6)
         }
-        .aspectRatio(compact ? 3 / 4 : nil, contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: compact ? 12 : 20))
         .overlay(RoundedRectangle(cornerRadius: compact ? 12 : 20)
             .stroke(tile.speaking ? accent : .clear, lineWidth: 3))
         .accessibilityElement(children: .combine)

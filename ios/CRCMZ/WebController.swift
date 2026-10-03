@@ -57,6 +57,11 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
         NativeAudio.shared.start(web: webView)
         #if DEBUG
         if let files = UserDefaults.standard.string(forKey: "crcmzAudioDemo") { NativeAudio.shared.demo(files.components(separatedBy: ",")) }
+        // A call against a test room: -crcmzCallDemo <LiveKit token> (the simulator has no camera).
+        if let token = UserDefaults.standard.string(forKey: "crcmzCallDemo") {
+            NativeCall.shared.handle(["type": "start", "kind": "huddle", "url": "wss://huddle.crcmz.me", "token": token,
+                                      "title": "Huddle · demo", "room": "zz-native-test", "publish": false, "camera": false, "mic": false])
+        }
         #endif
         shell.go = { [weak self] path in
             self?.webView.callAsyncJavaScript("window.__crcmzGo ? window.__crcmzGo(path) : location.assign('/app' + path)",

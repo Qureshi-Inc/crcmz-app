@@ -102,57 +102,81 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
         render()
     }
 
+    private var layoutKey = ""
+    private var controlsKey = ""
+
     private fun render() {
         val r = NativeCall.room
-        if (r !== holderRoom) { holders.values.forEach { it.release() }; holders = mutableMapOf(); holderRoom = r }
+        if (r !== holderRoom) { holders.values.forEach { it.release() }; holders = mutableMapOf(); holderRoom = r; layoutKey = "" }
         val mode = NativeCall.mode
-        listOf(grid, panelTiles, pipBox).forEach { it.removeAllViews() }
         full.visibility = if (mode == NativeCall.Mode.FULL && !inPip) View.VISIBLE else View.GONE
         panel.visibility = if (mode == NativeCall.Mode.PANEL && !inPip) View.VISIBLE else View.GONE
         pipBox.visibility = if (inPip && NativeCall.kind != null) View.VISIBLE else View.GONE
-        if (r == null || NativeCall.kind == null) return
+        if (r == null || NativeCall.kind == null) {
+            listOf(grid, panelTiles, pipBox).forEach { it.removeAllViews() }
+            layoutKey = ""; controlsKey = ""
+            return
+        }
         val tiles = NativeCall.tiles
         val live = tiles.associateBy { it.id }
         holders.entries.removeAll { (id, h) -> (id !in live).also { gone -> if (gone) h.release() } }
 
-        if (inPip) {
-            NativeCall.featured()?.let { pipBox.addView(holder(r, it).bind(it, compact = true), match()) }
-            return
+        val shown: List<NativeCall.Tile> = when {
+            inPip -> listOfNotNull(NativeCall.featured())
+            mode == NativeCall.Mode.FULL -> tiles
+            mode == NativeCall.Mode.PANEL ->
+                if (NativeCall.kind == NativeCall.Kind.HUDDLE) listOfNotNull(NativeCall.featured()) else tiles.take(4)
+            else -> emptyList()
         }
-        when (mode) {
-            NativeCall.Mode.FULL -> {
-                titleView.text = NativeCall.title
-                val others = tiles.count { !it.isLocal }
-                subView.text = when {
-                    NativeCall.connecting -> "Connecting…"
-                    others == 0 -> "Waiting for the squad"
-                    others == 1 -> "1 other person"
-                    else -> "$others others"
+        // Re-lay the views only when who's where changes. Talking, mute and quality events
+        // arrive many times a second: those just update the tiles in place (moving a video
+        // surface between parents is what made the call flicker).
+        val key = "$mode|$inPip|" + shown.joinToString(",") { it.id }
+        if (key != layoutKey) {
+            layoutKey = key
+            listOf(grid, panelTiles, pipBox).forEach { it.removeAllViews() }
+            when {
+                inPip -> shown.forEach { pipBox.addView(holder(r, it).view, match()) }
+                mode == NativeCall.Mode.FULL -> {
+                    val cols = if (shown.size <= 2) 1 else 2
+                    grid.columnCount = cols
+                    grid.rowCount = maxOf(1, (shown.size + cols - 1) / cols)
+                    shown.forEachIndexed { i, t ->
+                        val lp = GridLayout.LayoutParams(GridLayout.spec(i / cols, 1f), GridLayout.spec(i % cols, 1f))
+                            .apply { width = 0; height = 0; setMargins(dp(4), dp(4), dp(4), dp(4)) }
+                        grid.addView(holder(r, t).view, lp)
+                    }
                 }
-                val cols = if (tiles.size <= 2) 1 else 2
-                grid.columnCount = cols
-                grid.rowCount = (tiles.size + cols - 1) / cols
-                tiles.forEachIndexed { i, t ->
-                    val lp = GridLayout.LayoutParams(
-                        GridLayout.spec(i / cols, 1f), GridLayout.spec(i % cols, 1f),
-                    ).apply { width = 0; height = 0; setMargins(dp(4), dp(4), dp(4), dp(4)) }
-                    grid.addView(holder(r, t).bind(t, compact = false), lp)
+                mode == NativeCall.Mode.PANEL -> {
+                    val w = if (NativeCall.kind == NativeCall.Kind.HUDDLE) 120 else 84
+                    shown.forEach { t ->
+                        panelTiles.addView(holder(r, t).view,
+                            LinearLayout.LayoutParams(dp(w), dp(w * 4 / 3)).apply { setMargins(dp(3), 0, dp(3), 0) })
+                    }
+                    placePanel()
                 }
-                controls(fullControls, 56)
             }
-            NativeCall.Mode.PANEL -> {
-                val shown = if (NativeCall.kind == NativeCall.Kind.HUDDLE) listOfNotNull(NativeCall.featured()) else tiles.take(4)
-                val w = if (NativeCall.kind == NativeCall.Kind.HUDDLE) 120 else 84
-                shown.forEach { t ->
-                    panelTiles.addView(holder(r, t).bind(t, compact = true),
-                        LinearLayout.LayoutParams(dp(w), dp(w * 4 / 3)).apply { setMargins(dp(3), 0, dp(3), 0) })
-                }
-                val withControls = NativeCall.kind == NativeCall.Kind.HUDDLE || NativeCall.camOn || NativeCall.micOn
-                panelControls.visibility = if (withControls) View.VISIBLE else View.GONE
-                if (withControls) controls(panelControls, 36)
-                placePanel()
+        }
+        val compact = inPip || mode == NativeCall.Mode.PANEL
+        shown.forEach { holder(r, it).bind(it, compact) }
+
+        if (mode == NativeCall.Mode.FULL && !inPip) {
+            titleView.text = NativeCall.title
+            val others = tiles.count { !it.isLocal }
+            subView.text = when {
+                NativeCall.connecting -> "Connecting…"
+                others == 0 -> "Waiting for the squad"
+                others == 1 -> "1 other person"
+                else -> "$others others"
             }
-            NativeCall.Mode.HIDDEN -> Unit
+        }
+        val withControls = NativeCall.kind == NativeCall.Kind.HUDDLE || NativeCall.camOn || NativeCall.micOn
+        panelControls.visibility = if (withControls) View.VISIBLE else View.GONE
+        val ck = "$mode|${NativeCall.micOn}|${NativeCall.camOn}|$withControls"
+        if (ck != controlsKey) {
+            controlsKey = ck
+            controls(fullControls, 56)
+            if (withControls) controls(panelControls, 36) else panelControls.removeAllViews()
         }
     }
 
@@ -240,7 +264,6 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
         private var track: VideoTrack? = null
 
         fun bind(t: NativeCall.Tile, compact: Boolean): View {
-            (view.parent as? ViewGroup)?.removeView(view)
             if (track !== t.track) {
                 track?.removeRenderer(renderer)
                 track = t.track

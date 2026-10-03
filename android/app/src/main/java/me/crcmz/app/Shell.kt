@@ -49,7 +49,8 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
             tabs.getOrNull(item.itemId)?.let { go(it.path) }
             true
         }
-        bar.setOnItemReselectedListener { item -> if (item.itemId == MORE) showMore() }
+        // The page re-selects More on every update while you're on a More page: only a real tap opens it.
+        bar.setOnItemReselectedListener { item -> if (item.itemId == MORE && !settingSelection) showMore() }
     }
 
     private fun tint(): ColorStateList {
@@ -83,9 +84,12 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
         val sel = tabs.indexOfFirst { it.id == active }.takeIf { it >= 0 }
             ?: if (more.any { it.id == active }) MORE else null
         // A bottom bar always has one tab lit; a page outside the bar (Notifications…) lights More.
-        settingSelection = true
-        bar.selectedItemId = sel ?: MORE
-        settingSelection = false
+        val want = sel ?: MORE
+        if (bar.selectedItemId != want) {
+            settingSelection = true
+            bar.selectedItemId = want
+            settingSelection = false
+        }
         hidden = m.optBoolean("hidden", false)
         apply()
     }
