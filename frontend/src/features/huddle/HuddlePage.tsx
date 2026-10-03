@@ -50,6 +50,7 @@ export function HuddlePage() {
  *  behind it: back to the call, the AI helper (it reads the transcript the app records),
  *  your hand and reactions. */
 function NativeLive({ s }: { s: HuddleState }) {
+  const [ringing, setRinging] = useState(false)
   return (
     <div className="hu-native-wrap">
       <section className="glass hu-native" aria-live="polite">
@@ -57,9 +58,14 @@ function NativeLive({ s }: { s: HuddleState }) {
         <p className="meta">The call is open full screen. It keeps going if you leave the app, in a floating window.</p>
         <div className="hu-native-acts">
           <button type="button" className="btn btn-primary" onClick={showNativeCall}><Icon name="huddle" />Return to the call</button>
+          <button type="button" className="btn btn-secondary" aria-haspopup="dialog" onClick={() => setRinging(true)}>
+            <Icon name="phone" />Ring
+          </button>
           <HandButton s={s} />
           <ReactButton />
         </div>
+        {/* The app's call screen has no Ring: ring everyone, or one person, from here. */}
+        <RingSheet kind="huddle" room={s.nativeRoom} open={ringing} onOpenChange={setRinging} />
         {(s.hands.length > 0 || s.recorders.length > 0) && (
           <p className="meta hu-native-status" role="status">
             {s.hands.length > 0 && <span>✋ {s.hands.join(', ')}</span>}
