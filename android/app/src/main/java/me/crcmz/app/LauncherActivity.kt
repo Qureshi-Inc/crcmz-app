@@ -114,6 +114,20 @@ class LauncherActivity : AppCompatActivity() {
         askPermissions.launch(missing.toTypedArray())
     }
 
+    private var screenDone: ((Intent?) -> Unit)? = null
+    private val askScreen = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        val done = screenDone ?: return@registerForActivityResult
+        screenDone = null
+        done(if (r.resultCode == RESULT_OK) r.data else null)
+    }
+
+    /** Android's "start recording or casting?" prompt, for sharing the screen in a call. */
+    fun askScreenCapture(done: (Intent?) -> Unit) {
+        val mpm = getSystemService(android.media.projection.MediaProjectionManager::class.java) ?: return done(null)
+        screenDone = done
+        askScreen.launch(mpm.createScreenCaptureIntent())
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -169,6 +183,10 @@ class LauncherActivity : AppCompatActivity() {
         setUpWeb()
         NativeAudio.start(this)
         NativeCall.onEnded = { kind -> js("window.__crcmzCallEnded && window.__crcmzCallEnded('$kind')") }
+        NativeCall.onData = { kind, payload, from, fromId ->
+            val q = { v: String -> JSONObject.quote(v) }
+            js("window.__crcmzCallData && window.__crcmzCallData(${q(kind)}, $payload, ${q(from)}, ${q(fromId)})")
+        }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {

@@ -73,6 +73,15 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
         let host = CallHost(in: self)
         calls = host
         NativeCall.shared.onTiles = { [weak host] in host?.tilesChanged() }
+        NativeCall.shared.onData = { [weak self] kind, payload, from, fromId in
+            self?.webView.callAsyncJavaScript(
+                "window.__crcmzCallData && window.__crcmzCallData(kind, payload, from, fromId)",
+                arguments: ["kind": kind.rawValue, "payload": payload, "from": from, "fromId": fromId], in: nil, in: .page)
+        }
+        NativeCall.shared.onOpenPage = { [weak self] path in
+            self?.shell.goPath(path)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self?.calls?.panelToTop() }
+        }
         NativeCall.shared.onEnded = { [weak self] kind in
             self?.webView.evaluateJavaScript("window.__crcmzCallEnded && window.__crcmzCallEnded('\(kind.rawValue)')")
         }

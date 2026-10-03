@@ -14,8 +14,12 @@ import UIKit
 ///     join   Watch: put your camera on (mic stays muted until you unmute).
 ///     show   bring the call back up.
 ///     end    the page left: hang up.
+///     data   publish on the call's data channel (Huddle: hands, reactions, lines).
+///     transcript  Huddle: record this phone's mic for the transcript (Transcriber).
 ///
-/// Leave here hangs up and tells the page (window.__crcmzCallEnded).
+/// Leave here hangs up and tells the page (window.__crcmzCallEnded). What arrives on the
+/// data channel goes to the page too (window.__crcmzCallData), so its AI helper reads the
+/// whole conversation. Shared screens get their own tile.
 @MainActor
 final class NativeCall: ObservableObject {
     static let shared = NativeCall()
@@ -30,7 +34,13 @@ final class NativeCall: ObservableObject {
         let speaking: Bool
         let isLocal: Bool
         let micOn: Bool
+        var isScreen = false
+        var hand = false
     }
+
+    struct Reaction: Identifiable { let id: Int; let name: String; let emoji: String }
+    static let topic = "crcmz-huddle"
+    static let reactionSet = ["👍", "😂", "🔥", "👏", "❤️", "😮"]
 
     @Published private(set) var kind: Kind?
     @Published private(set) var title = ""
@@ -39,10 +49,21 @@ final class NativeCall: ObservableObject {
     @Published private(set) var camOn = false
     @Published private(set) var connecting = false
     @Published var mode: Mode = .hidden { didSet { if mode != oldValue { onMode?(mode) } } }
+    @Published private(set) var myHand = false
+    @Published private(set) var reactions: [Reaction] = []
+    @Published private(set) var transcribing = false
 
     var onMode: ((Mode) -> Void)?
     var onTiles: (() -> Void)?
     var onEnded: ((Kind) -> Void)?
+    /// To the page: (kind, message, from name, from id). Own transcript lines come as id "me".
+    var onData: ((Kind, [String: Any], String, String) -> Void)?
+    /// Open a page of the app (the AI helper lives on the Huddle page).
+    var onOpenPage: ((String) -> Void)?
+
+    private var hands: [String: String] = [:]   // identity -> name
+    private var reactionSeq = 0
+    private lazy var transcriber = Transcriber { [weak self] text in self?.ownLine(text) }
 
     private var room: Room?
     private var events: Events?
@@ -69,6 +90,14 @@ final class NativeCall: ObservableObject {
         case "end":
             guard self.kind == kind else { return }
             hangUp(tellPage: false)
+        case "data":
+            guard self.kind == kind, let payload = m["payload"] as? [String: Any] else { return }
+            publish(payload)
+            if payload["t"] as? String == "hand" { myHand = payload["up"] as? Bool ?? false; refresh() }
+            if payload["t"] as? String == "rx", let e = payload["e"] as? String { showReaction("You", e) }
+        case "transcript":
+            guard self.kind == kind else { return }
+            setTranscript(m["on"] as? Bool ?? false)
         default: break
         }
     }
@@ -88,6 +117,8 @@ final class NativeCall: ObservableObject {
             do {
                 try await room.connect(url: url, token: token)
                 guard self.room === room else { return }
+                // Ask the room to repeat hands / recording we'd otherwise have missed.
+                self.publish(["t": "sync"])
                 if publish {
                     if camera { try? await room.localParticipant.setCamera(enabled: true) }
                     if mic { try? await room.localParticipant.setMicrophone(enabled: true) }
@@ -124,6 +155,79 @@ final class NativeCall: ObservableObject {
         Task { _ = try? await capturer.switchCameraPosition() }
     }
 
+    func toggleHand() {
+        myHand.toggle()
+        publish(["t": "hand", "up": myHand])
+        onData?(.huddle, ["t": "hand_self", "up": myHand], "You", "me")
+        refresh()
+    }
+
+    func react(_ e: String) {
+        guard Self.reactionSet.contains(e) else { return }
+        publish(["t": "rx", "e": e])
+        showReaction("You", e)
+    }
+
+    /// The AI helper is on the Huddle page: shrink the call to its panel and open it.
+    func openAI() {
+        mode = .panel
+        onOpenPage?("/huddle")
+    }
+
+    private func showReaction(_ name: String, _ e: String) {
+        reactionSeq += 1
+        let id = reactionSeq
+        reactions = Array((reactions + [Reaction(id: id, name: name, emoji: e)]).suffix(12))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) { [weak self] in
+            self?.reactions.removeAll { $0.id == id }
+        }
+    }
+
+    // MARK: The data channel and the transcript
+
+    private func publish(_ payload: [String: Any]) {
+        guard let room, let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        Task { try? await room.localParticipant.publish(data: data, options: DataPublishOptions(topic: Self.topic, reliable: true)) }
+    }
+
+    fileprivate func receive(_ data: Data, from p: RemoteParticipant?, topic: String) {
+        guard topic == Self.topic, let p, let kind,
+              let m = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        let id = p.identity?.stringValue ?? ""
+        let name = p.name ?? "Someone"
+        switch m["t"] as? String {
+        case "sync":
+            if myHand { publish(["t": "hand", "up": true]) }
+            if transcribing { publish(["t": "rec", "on": true]) }
+            return
+        case "hand":
+            if m["up"] as? Bool == true { hands[id] = name } else { hands.removeValue(forKey: id) }
+            refresh()
+        case "rx":
+            if let e = m["e"] as? String, Self.reactionSet.contains(e) { showReaction(name, e) }
+        default: break
+        }
+        onData?(kind, m, name, id)
+    }
+
+    private func setTranscript(_ on: Bool) {
+        guard kind == .huddle, on != transcribing else { return }
+        if on && !micOn {
+            onData?(.huddle, ["t": "transcribing", "on": false, "note": "Unmute your mic to start the transcript."], "You", "me")
+            return
+        }
+        transcribing = on
+        if on { transcriber.start() } else { transcriber.stop() }
+        publish(["t": "rec", "on": on])
+        onData?(.huddle, ["t": "transcribing", "on": on,
+                          "note": on ? "Transcript on. Everyone in the call can see it is on." : "Transcript off."], "You", "me")
+    }
+
+    private func ownLine(_ text: String) {
+        publish(["t": "line", "text": text])
+        onData?(.huddle, ["t": "line", "text": text], "You", "me")
+    }
+
     func minimize() { mode = .panel }
     func expand() { mode = .full }
 
@@ -136,6 +240,10 @@ final class NativeCall: ObservableObject {
         events = nil
         kind = nil
         tiles = []
+        hands = [:]
+        myHand = false
+        reactions = []
+        if transcribing { transcriber.stop(); transcribing = false }
         micOn = false
         camOn = false
         connecting = false
@@ -156,7 +264,7 @@ final class NativeCall: ObservableObject {
         // The Huddle shows you too; the party's panel is for the others (you see the movie).
         if kind == .huddle || camOn {
             out.append(Tile(id: "me", name: "You", track: camOn ? me.firstCameraVideoTrack : nil,
-                            speaking: me.isSpeaking, isLocal: true, micOn: micOn))
+                            speaking: me.isSpeaking, isLocal: true, micOn: micOn, hand: myHand))
         }
         // One person can be on from two tabs; each connection is its own tile.
         for p in room.remoteParticipants.values.sorted(by: { ($0.joinedAt ?? .distantPast) < ($1.joinedAt ?? .distantPast) }) {
@@ -164,7 +272,13 @@ final class NativeCall: ObservableObject {
             let track = p.isCameraEnabled() ? p.firstCameraVideoTrack : nil
             if kind == .watch && track == nil && !p.isMicrophoneEnabled() { continue }   // just watching
             out.append(Tile(id: id, name: p.name ?? "Someone", track: track,
-                            speaking: p.isSpeaking, isLocal: false, micOn: p.isMicrophoneEnabled()))
+                            speaking: p.isSpeaking, isLocal: false, micOn: p.isMicrophoneEnabled(),
+                            hand: hands[id] != nil))
+            // A shared screen is its own tile, and the one the window floats.
+            if let screen = p.firstScreenShareVideoTrack {
+                out.append(Tile(id: id + ":screen", name: "\(p.name ?? "Someone")'s screen", track: screen,
+                                speaking: false, isLocal: false, micOn: true, isScreen: true))
+            }
         }
         tiles = out
         onTiles?()
@@ -173,10 +287,11 @@ final class NativeCall: ObservableObject {
         pip.show(featured?.track)
     }
 
-    /// Who the floating window shows: whoever's talking, else the first other camera.
+    /// Who the floating window shows: a shared screen, else whoever's talking, else the
+    /// first other camera.
     var featured: Tile? {
         let others = tiles.filter { !$0.isLocal }
-        return others.first { $0.speaking && $0.track != nil } ?? others.first { $0.track != nil }
+        return others.first { $0.isScreen } ?? others.first { $0.speaking && $0.track != nil } ?? others.first { $0.track != nil }
             ?? tiles.first { $0.track != nil }
     }
 
@@ -186,8 +301,23 @@ final class NativeCall: ObservableObject {
         init(owner: NativeCall) { self.owner = owner }
         private func poke() { Task { @MainActor [weak owner] in owner?.refresh() } }
 
-        func room(_ room: Room, participantDidConnect participant: RemoteParticipant) { poke() }
-        func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) { poke() }
+        func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
+            Task { @MainActor [weak owner] in
+                guard let owner else { return }
+                // Newcomers learn who has a hand up and who's recording.
+                if owner.myHand { owner.publish(["t": "hand", "up": true]) }
+                if owner.transcribing { owner.publish(["t": "rec", "on": true]) }
+                owner.refresh()
+            }
+        }
+        func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data, forTopic topic: String,
+                  encryptionType: EncryptionType) {
+            Task { @MainActor [weak owner] in owner?.receive(data, from: participant, topic: topic) }
+        }
+        func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
+            let id = participant.identity?.stringValue ?? ""
+            Task { @MainActor [weak owner] in owner?.hands.removeValue(forKey: id); owner?.refresh() }
+        }
         func room(_ room: Room, didUpdateSpeakingParticipants participants: [Participant]) { poke() }
         func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) { poke() }
         func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) { poke() }

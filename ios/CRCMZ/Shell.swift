@@ -102,6 +102,9 @@ final class Shell: NSObject, UITabBarDelegate {
         presenter.present(nav, animated: true)
     }
 
+    /// Route the page somewhere (the AI button in a call opens the Huddle page).
+    func goPath(_ path: String) { go?(path) }
+
     static func symbol(_ id: String) -> String {
         switch id {
         case "squad": return "person.3.fill"

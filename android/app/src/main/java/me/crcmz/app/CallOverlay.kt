@@ -39,6 +39,15 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
     private val grid = GridLayout(app)
     private val fullControls = LinearLayout(app).apply { gravity = Gravity.CENTER }
     private val fullColumn = LinearLayout(app).apply { orientation = LinearLayout.VERTICAL }
+    private val extras = LinearLayout(app).apply { gravity = Gravity.CENTER }
+    private val pickRow = LinearLayout(app).apply {
+        gravity = Gravity.CENTER; visibility = View.GONE
+        background = GradientDrawable().apply { cornerRadius = dp(28f); setColor(Color.argb(40, 255, 255, 255)) }
+        setPadding(dp(4), dp(2), dp(4), dp(2))
+    }
+    private val reactionsLayer = FrameLayout(app).apply { isClickable = false }
+    private val shownReactions = mutableMapOf<Int, View>()
+    private var extrasKey = ""
 
     // Panel
     private val panel = LinearLayout(app).apply {
@@ -69,7 +78,12 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
             addView(round(R.drawable.ic_expand, "Picture in picture", 44) { app.enterPip() })
         }
         fullColumn.addView(head)
-        fullColumn.addView(grid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(dp(8), 0, dp(8), dp(8)) })
+        fullColumn.addView(FrameLayout(app).apply {
+            addView(grid, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(reactionsLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(dp(8), 0, dp(8), dp(8)) })
+        fullColumn.addView(pickRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(6) })
+        fullColumn.addView(extras, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
         fullColumn.addView(fullControls, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) })
         full.addView(fullColumn)
         root.addView(full, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -114,7 +128,8 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
         pipBox.visibility = if (inPip && NativeCall.kind != null) View.VISIBLE else View.GONE
         if (r == null || NativeCall.kind == null) {
             listOf(grid, panelTiles, pipBox).forEach { it.removeAllViews() }
-            layoutKey = ""; controlsKey = ""
+            reactionsLayer.removeAllViews(); shownReactions.clear(); pickRow.visibility = View.GONE
+            layoutKey = ""; controlsKey = ""; extrasKey = ""
             return
         }
         val tiles = NativeCall.tiles
@@ -138,11 +153,24 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
             when {
                 inPip -> shown.forEach { pipBox.addView(holder(r, it).view, match()) }
                 mode == NativeCall.Mode.FULL -> {
-                    val cols = if (shown.size <= 2) 1 else 2
+                    // A shared screen goes on top, the full width (and twice the height);
+                    // cameras share the rows below.
+                    val screens = shown.filter { it.isScreen }
+                    val people = shown.filter { !it.isScreen }
+                    val cols = if (people.size <= 2 && screens.isEmpty()) 1 else 2
+                    // Android checks every tile against these as it's added: set them first.
+                    grid.rowCount = GridLayout.UNDEFINED
                     grid.columnCount = cols
-                    grid.rowCount = maxOf(1, (shown.size + cols - 1) / cols)
-                    shown.forEachIndexed { i, t ->
-                        val lp = GridLayout.LayoutParams(GridLayout.spec(i / cols, 1f), GridLayout.spec(i % cols, 1f))
+                    grid.rowCount = maxOf(1, screens.size + (people.size + cols - 1) / cols)
+                    var row = 0
+                    for (t in screens) {
+                        val lp = GridLayout.LayoutParams(GridLayout.spec(row, 1, 2f), GridLayout.spec(0, cols, 1f))
+                            .apply { width = 0; height = 0; setMargins(dp(4), dp(4), dp(4), dp(4)) }
+                        grid.addView(holder(r, t).view, lp)
+                        row++
+                    }
+                    people.forEachIndexed { i, t ->
+                        val lp = GridLayout.LayoutParams(GridLayout.spec(row + i / cols, 1f), GridLayout.spec(i % cols, 1f))
                             .apply { width = 0; height = 0; setMargins(dp(4), dp(4), dp(4), dp(4)) }
                         grid.addView(holder(r, t).view, lp)
                     }
@@ -162,13 +190,18 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
 
         if (mode == NativeCall.Mode.FULL && !inPip) {
             titleView.text = NativeCall.title
-            val others = tiles.count { !it.isLocal }
+            val others = tiles.count { !it.isLocal && !it.isScreen }
             subView.text = when {
                 NativeCall.connecting -> "Connecting…"
                 others == 0 -> "Waiting for the squad"
                 others == 1 -> "1 other person"
                 else -> "$others others"
             }
+        }
+        if (mode == NativeCall.Mode.FULL && !inPip) {
+            val ek = "${NativeCall.kind}|${NativeCall.myHand}|${NativeCall.sharing}|${NativeCall.transcribing}|${pickRow.visibility}"
+            if (ek != extrasKey) { extrasKey = ek; buildExtras() }
+            showReactions()
         }
         val withControls = NativeCall.kind == NativeCall.Kind.HUDDLE || NativeCall.camOn || NativeCall.micOn
         panelControls.visibility = if (withControls) View.VISIBLE else View.GONE
@@ -177,6 +210,57 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
             controlsKey = ck
             controls(fullControls, 56)
             if (withControls) controls(panelControls, 36) else panelControls.removeAllViews()
+        }
+    }
+
+    /** Huddle: your hand, reactions, sharing your screen, the AI helper. */
+    private fun buildExtras() {
+        extras.removeAllViews()
+        if (NativeCall.kind != NativeCall.Kind.HUDDLE) { extras.visibility = View.GONE; pickRow.visibility = View.GONE; return }
+        extras.visibility = View.VISIBLE
+        fun add(label: String, on: Boolean, desc: String, click: () -> Unit) = extras.addView(TextView(app).apply {
+            text = label; setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER
+            minHeight = dp(44); setPadding(dp(14), 0, dp(14), 0)
+            background = GradientDrawable().apply { cornerRadius = dp(22f); setColor(if (on) Color.argb(72, 255, 255, 255) else Color.argb(32, 255, 255, 255)) }
+            contentDescription = desc
+            setOnClickListener { click() }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(4), 0, dp(4), 0) })
+        add(if (NativeCall.myHand) "✋ Lower" else "✋ Hand", NativeCall.myHand, if (NativeCall.myHand) "Lower your hand" else "Raise your hand") { NativeCall.toggleHand() }
+        add("😊 React", pickRow.visibility == View.VISIBLE, "Reactions") {
+            pickRow.visibility = if (pickRow.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            extrasKey = ""; render()
+        }
+        add(if (NativeCall.sharing) "▣ Stop" else "▣ Share", NativeCall.sharing, if (NativeCall.sharing) "Stop sharing your screen" else "Share your screen") { NativeCall.toggleShare(app) }
+        add(if (NativeCall.transcribing) "✨ AI · rec" else "✨ AI", NativeCall.transcribing, "AI helper and transcript") { NativeCall.openAI(app) }
+        if (pickRow.childCount == 0) NativeCall.REACTIONS.forEach { e ->
+            pickRow.addView(TextView(app).apply {
+                text = e; textSize = 24f; gravity = Gravity.CENTER; contentDescription = "Send $e"
+                setOnClickListener { NativeCall.react(e) }
+            }, LinearLayout.LayoutParams(dp(46), dp(46)))
+        }
+    }
+
+    /** Reactions float up over the call and fade. */
+    private fun showReactions() {
+        val live = NativeCall.reactions.associateBy { it.id }
+        shownReactions.keys.filter { it !in live }.forEach { reactionsLayer.removeView(shownReactions.remove(it)) }
+        for (r in NativeCall.reactions) {
+            if (r.id in shownReactions) continue
+            val v = LinearLayout(app).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+                addView(TextView(app).apply { text = r.emoji; textSize = 34f })
+                addView(TextView(app).apply {
+                    text = r.name; setTextColor(Color.WHITE); textSize = 11f; setPadding(dp(6), 0, dp(6), 0)
+                    background = GradientDrawable().apply { cornerRadius = dp(8f); setColor(Color.argb(150, 0, 0, 0)) }
+                })
+                contentDescription = "${r.name} reacted ${r.emoji}"
+            }
+            reactionsLayer.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
+            shownReactions[r.id] = v
+            v.post {
+                v.translationX = reactionsLayer.width * (0.12f + ((r.id * 37) % 70) / 100f)
+                v.animate().translationYBy(-dp(200f)).alpha(0f).setDuration(3000).start()
+            }
         }
     }
 
@@ -210,6 +294,14 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
 
     private fun placePanel() {
         val lp = panel.layoutParams as? FrameLayout.LayoutParams ?: return
+        if (NativeCall.panelTop) {
+            NativeCall.panelTop = false
+            panel.translationX = 0f; panel.translationY = 0f
+            lp.gravity = Gravity.TOP or Gravity.END
+            lp.setMargins(dp(12), top + dp(72), dp(12), 0)
+            panel.layoutParams = lp
+            return
+        }
         if (lp.gravity == (Gravity.BOTTOM or Gravity.END)) {
             lp.setMargins(dp(12), top + dp(12), dp(12), bottom + dp(96))
             panel.layoutParams = lp
@@ -252,6 +344,10 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
             background = GradientDrawable().apply { cornerRadius = dp(10f); setColor(Color.argb(128, 0, 0, 0)) }
         }
         private val ring = GradientDrawable().apply { cornerRadius = dp(16f) }
+        private val hand = TextView(app).apply {
+            text = "✋"; textSize = 18f; visibility = View.GONE; setPadding(dp(6), dp(2), dp(6), dp(2))
+            background = GradientDrawable().apply { cornerRadius = dp(12f); setColor(Color.argb(160, 0, 0, 0)) }
+        }
         val view = FrameLayout(app).apply {
             background = GradientDrawable().apply { cornerRadius = dp(16f); setColor(ContextCompat.getColor(app, R.color.tile)) }
             clipToOutline = true
@@ -259,9 +355,11 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
             addView(initials, match())
             addView(renderer, match())
             addView(name, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(6), 0, 0, dp(6)) })
+            addView(hand, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply { setMargins(dp(6), dp(6), 0, 0) })
             foreground = ring
         }
         private var track: VideoTrack? = null
+        private var scaling = RendererCommon.ScalingType.SCALE_ASPECT_FILL
 
         fun bind(t: NativeCall.Tile, compact: Boolean): View {
             if (track !== t.track) {
@@ -271,11 +369,23 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
             }
             renderer.visibility = if (t.track != null) View.VISIBLE else View.INVISIBLE
             renderer.setMirror(t.isLocal)
+            // A shared screen shows whole (fit); cameras fill their tile.
+            val scaling = if (t.isScreen) RendererCommon.ScalingType.SCALE_ASPECT_FIT else RendererCommon.ScalingType.SCALE_ASPECT_FILL
+            if (scaling != this.scaling) {
+                this.scaling = scaling
+                renderer.setScalingType(scaling)
+                // The renderer only fits when it may size itself: a screen wraps, centred; a
+                // camera fills its tile.
+                renderer.layoutParams = if (t.isScreen)
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER)
+                else match()
+            }
+            hand.visibility = if (t.hand) View.VISIBLE else View.GONE
             initials.text = t.name.split(" ").take(2).joinToString("") { it.take(1).uppercase() }
             initials.textSize = if (compact) 20f else 40f
-            name.text = (if (!t.micOn) "🔇 " else "") + t.name
+            name.text = (if (t.isScreen) "▣ " else if (!t.micOn) "🔇 " else "") + t.name
             name.visibility = if (compact) View.GONE else View.VISIBLE
-            ring.setStroke(dp(3), if (t.speaking) accent else Color.TRANSPARENT)
+            ring.setStroke(dp(3), if (t.speaking) accent else if (t.hand) Color.rgb(255, 210, 74) else Color.TRANSPARENT)
             view.contentDescription = t.name + if (t.speaking) ", talking" else ""
             return view
         }

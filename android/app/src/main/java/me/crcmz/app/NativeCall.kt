@@ -38,8 +38,12 @@ object NativeCall {
 
     data class Tile(
         val id: String, val name: String, val track: VideoTrack?, val speaking: Boolean,
-        val isLocal: Boolean, val micOn: Boolean,
+        val isLocal: Boolean, val micOn: Boolean, val isScreen: Boolean = false, val hand: Boolean = false,
     )
+    data class Reaction(val id: Int, val name: String, val emoji: String)
+
+    const val TOPIC = "crcmz-huddle"
+    val REACTIONS = listOf("👍", "😂", "🔥", "👏", "❤️", "😮")
 
     var kind: Kind? = null; private set
     var title = ""; private set
@@ -49,6 +53,15 @@ object NativeCall {
     var connecting = false; private set
     var mode = Mode.HIDDEN
         set(v) { if (field != v) { field = v; changed() } }
+    var myHand = false; private set
+    var sharing = false; private set
+    var transcribing = false; private set
+    var reactions: List<Reaction> = emptyList(); private set
+    private val hands = mutableMapOf<String, String>()   // identity -> name
+    private var rxSeq = 0
+    private var transcriber: Transcriber? = null
+    /** To the page: (kind, message, from name, from id). Own transcript lines come as id "me". */
+    var onData: ((String, JSONObject, String, String) -> Unit)? = null
 
     var room: Room? = null; private set
     private var events: Job? = null
@@ -60,7 +73,7 @@ object NativeCall {
     private var lastPip = false
     private var lastService = ""
 
-    private fun changed() {
+    fun changed() {
         listeners.forEach { it() }
         // Only on a real change: these restart system things (PiP params, the call service).
         if (wantsPip() != lastPip) { lastPip = wantsPip(); LauncherActivity.current?.updatePip() }
@@ -85,6 +98,15 @@ object NativeCall {
             }
             "show" -> if (kind == k) mode = if (k == Kind.HUDDLE) Mode.FULL else Mode.PANEL
             "end" -> if (kind == k) hangUp(tellPage = false)
+            "data" -> if (kind == k) {
+                val payload = m.optJSONObject("payload") ?: return
+                publish(payload)
+                when (payload.optString("t")) {
+                    "hand" -> { myHand = payload.optBoolean("up"); refresh() }
+                    "rx" -> showReaction("You", payload.optString("e"))
+                }
+            }
+            "transcript" -> if (kind == k) setTranscript(app, m.optBoolean("on"))
         }
     }
 
@@ -101,6 +123,14 @@ object NativeCall {
             r.events.collect { e ->
                 when (e) {
                     is RoomEvent.Disconnected -> if (room === r) hangUp(tellPage = true)
+                    is RoomEvent.DataReceived -> receive(e.data, e.participant?.identity?.value ?: "", e.participant?.name ?: "Someone", e.topic)
+                    is RoomEvent.ParticipantConnected -> {
+                        // Newcomers learn who has a hand up and who's recording.
+                        if (myHand) publish(JSONObject().put("t", "hand").put("up", true))
+                        if (transcribing) publish(JSONObject().put("t", "rec").put("on", true))
+                        refresh()
+                    }
+                    is RoomEvent.ParticipantDisconnected -> { hands.remove(e.participant.identity?.value); refresh() }
                     else -> refresh()
                 }
             }
@@ -109,16 +139,18 @@ object NativeCall {
             try {
                 r.connect(url, token)
                 if (room !== r) return@launch
+                // Ask the room to repeat hands / recording we'd otherwise have missed.
+                publish(JSONObject().put("t", "sync"))
                 if (publish) {
                     val want = buildList {
                         if (camera) add(Manifest.permission.CAMERA)
                         if (mic) add(Manifest.permission.RECORD_AUDIO)
                     }
                     app.withPermissions(want) { granted ->
-                        scope.launch {
+                        // The call may have ended or restarted while Android asked: only this one.
+                        safely(r) {
                             if (camera && Manifest.permission.CAMERA in granted) r.localParticipant.setCameraEnabled(true)
                             if (mic && Manifest.permission.RECORD_AUDIO in granted) r.localParticipant.setMicrophoneEnabled(true)
-                            refresh()
                         }
                     }
                 }
@@ -137,7 +169,7 @@ object NativeCall {
     fun toggleMic(app: LauncherActivity) {
         val r = room ?: return
         val on = !micOn
-        val go = { scope.launch { r.localParticipant.setMicrophoneEnabled(on); refresh() } }
+        val go = { safely(r) { r.localParticipant.setMicrophoneEnabled(on) } }
         if (on && !granted(app, Manifest.permission.RECORD_AUDIO)) {
             app.withPermissions(listOf(Manifest.permission.RECORD_AUDIO)) { if (it.isNotEmpty()) go() }
         } else go()
@@ -146,18 +178,136 @@ object NativeCall {
     fun toggleCamera(app: LauncherActivity) {
         val r = room ?: return
         val on = !camOn
-        val go = { scope.launch { r.localParticipant.setCameraEnabled(on); refresh() } }
+        val go = { safely(r) { r.localParticipant.setCameraEnabled(on) } }
         if (on && !granted(app, Manifest.permission.CAMERA)) {
             app.withPermissions(listOf(Manifest.permission.CAMERA)) { if (it.isNotEmpty()) go() }
         } else go()
     }
 
+    /** Run a call action on room [r] only while it's still the call, and never crash the app
+     *  over it (a closed room throws). */
+    private fun safely(r: Room, block: suspend () -> Unit) = scope.launch {
+        if (room !== r) return@launch
+        try { block() } catch (t: Throwable) { android.util.Log.w("crcmz", "call action failed", t) }
+        if (room === r) refresh()
+    }
+
     fun flipCamera() {
         val t = room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack ?: return
-        t.switchCamera()
+        runCatching { t.switchCamera() }
     }
 
     fun leave() = hangUp(tellPage = true)
+
+    fun toggleHand() {
+        myHand = !myHand
+        publish(JSONObject().put("t", "hand").put("up", myHand))
+        onData?.invoke("huddle", JSONObject().put("t", "hand_self").put("up", myHand), "You", "me")
+        refresh()
+    }
+
+    fun react(e: String) {
+        if (e !in REACTIONS) return
+        publish(JSONObject().put("t", "rx").put("e", e))
+        showReaction("You", e)
+    }
+
+    /** The AI helper is on the Huddle page: shrink the call to its panel and open it. */
+    /** Set when the panel should move to the top (the AI helper's input is at the bottom). */
+    var panelTop = false
+
+    fun openAI(app: LauncherActivity) {
+        panelTop = true
+        mode = Mode.PANEL
+        app.go("/huddle")
+    }
+
+    /** Share this phone's screen (Android asks first), or stop. */
+    fun toggleShare(app: LauncherActivity) {
+        val r = room ?: return
+        if (sharing) {
+            safely(r) { r.localParticipant.setScreenShareEnabled(false); sharing = false }
+            return
+        }
+        app.askScreenCapture { data ->
+            if (data == null || room !== r) return@askScreenCapture
+            scope.launch {
+                try {
+                    sharing = r.localParticipant.setScreenShareEnabled(true,
+                        io.livekit.android.room.track.screencapture.ScreenCaptureParams(data, onStop = {
+                            scope.launch { sharing = false; refresh() }
+                        }))
+                } catch (t: Throwable) {
+                    android.util.Log.w("crcmz", "screen share failed", t)
+                    sharing = false
+                }
+                refresh()
+            }
+        }
+    }
+
+    private fun showReaction(name: String, e: String) {
+        if (e !in REACTIONS) return
+        val id = ++rxSeq
+        reactions = (reactions + Reaction(id, name, e)).takeLast(12)
+        changed()
+        scope.launch {
+            kotlinx.coroutines.delay(3200)
+            reactions = reactions.filter { it.id != id }
+            changed()
+        }
+    }
+
+    // MARK: The data channel and the transcript
+
+    private fun publish(payload: JSONObject) {
+        val r = room ?: return
+        scope.launch {
+            runCatching { r.localParticipant.publishData(payload.toString().toByteArray(), io.livekit.android.room.track.DataPublishReliability.RELIABLE, TOPIC) }
+        }
+    }
+
+    private fun receive(data: ByteArray, id: String, name: String, topic: String?) {
+        if (topic != TOPIC || id.isEmpty()) return
+        val k = kind ?: return
+        val m = runCatching { JSONObject(String(data)) }.getOrNull() ?: return
+        when (m.optString("t")) {
+            "sync" -> {
+                if (myHand) publish(JSONObject().put("t", "hand").put("up", true))
+                if (transcribing) publish(JSONObject().put("t", "rec").put("on", true))
+                return
+            }
+            "hand" -> { if (m.optBoolean("up")) hands[id] = name else hands.remove(id); refresh() }
+            "rx" -> showReaction(name, m.optString("e"))
+        }
+        onData?.invoke(k.key, m, name, id)
+    }
+
+    private fun setTranscript(app: LauncherActivity, on: Boolean) {
+        if (kind != Kind.HUDDLE || on == transcribing) return
+        val r = room ?: return
+        if (on && !micOn) {
+            onData?.invoke("huddle", JSONObject().put("t", "transcribing").put("on", false)
+                .put("note", "Unmute your mic to start the transcript."), "You", "me")
+            return
+        }
+        transcribing = on
+        if (on) {
+            val track = r.localParticipant.getTrackPublication(Track.Source.MICROPHONE)?.track as? io.livekit.android.room.track.LocalAudioTrack
+            transcriber = Transcriber(scope) { text -> ownLine(text) }.also { it.start(track) }
+        } else {
+            transcriber?.stop(); transcriber = null
+        }
+        publish(JSONObject().put("t", "rec").put("on", on))
+        onData?.invoke("huddle", JSONObject().put("t", "transcribing").put("on", on)
+            .put("note", if (on) "Transcript on. Everyone in the call can see it is on." else "Transcript off."), "You", "me")
+        changed()
+    }
+
+    private fun ownLine(text: String) {
+        publish(JSONObject().put("t", "line").put("text", text))
+        onData?.invoke("huddle", JSONObject().put("t", "line").put("text", text), "You", "me")
+    }
 
     private fun hangUp(tellPage: Boolean) {
         val k = kind
@@ -167,6 +317,12 @@ object NativeCall {
         events = null
         kind = null
         tiles = emptyList()
+        hands.clear()
+        myHand = false
+        sharing = false
+        reactions = emptyList()
+        transcriber?.stop(); transcriber = null
+        transcribing = false
         micOn = false
         camOn = false
         connecting = false
@@ -187,13 +343,18 @@ object NativeCall {
         val out = mutableListOf<Tile>()
         // The Huddle shows you too; the party's panel is for the others (you see the movie).
         if (kind == Kind.HUDDLE || camOn) {
-            out += Tile("me", "You", if (camOn) cameraOf(me) else null, me.isSpeaking, true, micOn)
+            out += Tile("me", "You", if (camOn) cameraOf(me) else null, me.isSpeaking, true, micOn, hand = myHand)
         }
         // One person can be on from two tabs; each connection is its own tile.
         for (p in r.remoteParticipants.values.sortedBy { it.joinedAt ?: 0L }) {
             val track = if (p.isCameraEnabled) cameraOf(p) else null
             if (kind == Kind.WATCH && track == null && !p.isMicrophoneEnabled) continue   // just watching
-            out += Tile(p.identity?.value ?: p.sid.value, p.name ?: "Someone", track, p.isSpeaking, false, p.isMicrophoneEnabled)
+            val pid = p.identity?.value ?: p.sid.value
+            out += Tile(pid, p.name ?: "Someone", track, p.isSpeaking, false, p.isMicrophoneEnabled, hand = hands.containsKey(pid))
+            // A shared screen is its own tile, and the one the floating window shows.
+            (p.getTrackPublication(Track.Source.SCREEN_SHARE)?.takeIf { !it.muted }?.track as? VideoTrack)?.let {
+                out += Tile("$pid:screen", "${p.name ?: "Someone"}'s screen", it, false, false, true, isScreen = true)
+            }
         }
         tiles = out
         if (kind == Kind.WATCH && mode == Mode.HIDDEN && out.any { it.track != null }) mode = Mode.PANEL
@@ -207,7 +368,7 @@ object NativeCall {
     /** Who the floating window shows: whoever's talking, else the first other camera. */
     fun featured(): Tile? {
         val others = tiles.filter { !it.isLocal }
-        return others.firstOrNull { it.speaking && it.track != null } ?: others.firstOrNull { it.track != null }
+        return others.firstOrNull { it.isScreen } ?: others.firstOrNull { it.speaking && it.track != null } ?: others.firstOrNull { it.track != null }
             ?: tiles.firstOrNull { it.track != null } ?: tiles.firstOrNull()
     }
 
