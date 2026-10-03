@@ -292,6 +292,15 @@ function pause() {
   if (state.kind === 'file') video?.pause()
   else if (state.kind === 'yt') yt?.pauseVideo()
 }
+/** Play a little faster or slower to catch up with the room (1 = normal). */
+let nudging = 1
+function nudge(rate: number, ahead = 0) {
+  if (!video || rate === nudging) return
+  nudging = rate
+  if (rate !== 1) log('sync.nudge', { rate, ahead: Math.round(ahead * 10) / 10 }, 'debug')
+  video.playbackRate = rate
+}
+
 function seek(ts: number) {
   if (!Number.isFinite(ts)) return
   if (state.kind === 'file' && video) video.currentTime = ts
@@ -371,8 +380,10 @@ function mount(url: string) {
   if (video) { video.pause(); video.removeAttribute('src'); video.load(); video.volume = state.playerVol; video.muted = state.playerMuted }
   if (ytBox) ytBox.replaceChildren()
   ytState = -1
+  nudging = 1
   set({ video: url, kind: '', ytFresh: false, playing: false, unblock: '', mediaError: '' })
   titleVideoChanged()
+  void movieTitle(url)
   if (!url) { lockScreen.release('watch'); return }
   const id = ytId(url)
   if (id) { set({ kind: 'yt', ytFresh: true }); mountYt(id); return }
@@ -653,16 +664,32 @@ function bind(s: Sock) {
   s.on('REC:play', (url: string) => { log('rec.play', { t: time() }); if (url && url !== state.video) mount(url); remote(play) })
   s.on('REC:pause', () => { log('rec.pause', { t: time() }); remote(pause) })
   s.on('REC:seek', (ts: number) => { log('rec.seek', { to: Number(ts), t: time() }); remote(() => seek(Number(ts))) })
-  s.on('REC:playbackRate', (r: number) => { if (video && Number(r)) video.playbackRate = Number(r) })
-  // Correct drift > 3 s against the median of the other viewers.
+  s.on('REC:playbackRate', (r: number) => { if (video && Number(r)) { video.playbackRate = Number(r); nudging = Number(r) } })
+  // Stay in step with the room. The map is everyone's last reported time (each client
+  // reports every second, the server sends the map every second), so compare OUR entry in
+  // it with the others' median: like with like. Comparing our live time with their
+  // seconds-old reports made everyone look 3-4 s off, and the seeks it caused restarted
+  // the movie's transcode and stalled everyone (the "out of sync" feeling).
+  // Small drift: play 4% faster or slower until back in step (no seek, nothing reloads).
+  // Big drift (> 8 s, a rejoin or a long stall): seek.
   s.on('REC:tsMap', (map: Record<string, number>) => {
     if (!map || applying) return
     const cur = time()
     if (cur === null) return
     const others = Object.entries(map).filter(([id]) => id !== state.clientId).map(([, t]) => Number(t)).filter((t) => Number.isFinite(t) && t >= 0).sort((a, b) => a - b)
-    if (!others.length) return
+    if (!others.length) { nudge(1); return }
     const med = others[Math.floor(others.length / 2)]!
-    if (Math.abs(cur - med) > 3) { log('sync.drift', { t: Math.round(cur * 10) / 10, median: Math.round(med * 10) / 10, n: others.length }); remote(() => seek(med)) }
+    const mine = Number(map[state.clientId])
+    const ahead = (Number.isFinite(mine) && mine >= 0 ? mine : cur) - med
+    const bigJump = state.kind === 'file' ? 8 : 3   // YouTube can't be nudged smoothly
+    if (Math.abs(ahead) > bigJump) {
+      nudge(1)
+      log('sync.drift', { t: Math.round(cur * 10) / 10, median: Math.round(med * 10) / 10, ahead: Math.round(ahead * 10) / 10, n: others.length })
+      remote(() => seek(cur - ahead))
+    } else if (state.kind === 'file' && isPlaying()) {
+      if (Math.abs(ahead) > 1) nudge(ahead > 0 ? 0.96 : 1.04, ahead)
+      else if (Math.abs(ahead) < 0.4) nudge(1)
+    }
   })
   s.on('chatinit', (arr: ChatMsg[]) => set({ chat: Array.isArray(arr) ? arr.slice(-60) : [] }))
   s.on('REC:chat', (m: ChatMsg) => {
@@ -776,8 +803,26 @@ export async function changeName(nickname: string) {
   return d.name
 }
 
+/** A film from the library plays as /api/watch/movies/stream/<id>/master.m3u8: only whoever
+ *  picked it knows its name. Everyone else (and after a reload) looks it up in the library,
+ *  so the player says the film's name, not "master". */
+const MOVIE_STREAM = /\/api\/watch\/movies\/stream\/([0-9a-f]{32})\//i
+const titleAsked = new Set<string>()
+async function movieTitle(url: string) {
+  const id = MOVIE_STREAM.exec(url)?.[1]
+  if (!id || titleOf[url] || titleAsked.has(url)) return
+  titleAsked.add(url)
+  try {
+    const lib = await request<{ movies: { id: string; title: string }[] }>('/api/watch/movies/library', { quiet401: true })
+    const m = lib.movies.find((x) => x.id === id)
+    if (m?.title) { titleOf[url] = m.title; if (state.video === url) set({}) }
+  } catch { titleAsked.delete(url) /* the review account, or offline: try again later */ }
+}
+
 export function videoLabel(typedOnly = false): string {
-  let label = state.title.trim()
+  let label = state.title.trim() || titleOf[state.video] || ''
+  // A library film whose title hasn't arrived yet: no filename ("master") meanwhile.
+  if (!label && MOVIE_STREAM.test(state.video)) { void movieTitle(state.video); return typedOnly ? '' : 'Movie' }
   if (!label && state.video && ytId(state.video)) { try { label = yt?.getVideoData?.().title || '' } catch { /* */ } }
   if (!label && state.video && !typedOnly) {
     try {

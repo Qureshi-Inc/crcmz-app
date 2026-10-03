@@ -1965,6 +1965,48 @@ try {
       await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
     }
     await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
+    // Sync: a small lag is caught up by playing a little faster (no seek); a big one seeks.
+    {
+      const seeks = await page.evaluate(() => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').length)
+      // The nudge applies while the video is actually playing: give a buffering test video a moment.
+      for (let i = 0; i < 10; i++) {
+        await page.evaluate(() => window.__wpFire('REC:tsMap', { p2: document.querySelector('.wp-video').currentTime + 2 }))
+        await page.waitForTimeout(200)
+        if ((await page.evaluate(() => document.querySelector('.wp-video').playbackRate)) !== 1) break
+      }
+      const rate = await page.evaluate(() => document.querySelector('.wp-video').playbackRate)
+      check('watch sync: 2 s behind the room plays a little faster instead of jumping', rate > 1 && rate < 1.1 && (await page.evaluate(() => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').length)) === seeks, String(rate))
+      const t2 = await page.evaluate(() => document.querySelector('.wp-video').currentTime)
+      await page.evaluate((x) => window.__wpFire('REC:tsMap', { p2: x + 0.1 }), t2)
+      await page.waitForTimeout(150)
+      check('watch sync: back in step, normal speed', (await page.evaluate(() => document.querySelector('.wp-video').playbackRate)) === 1)
+    }
+    // Fullscreen on a phone: tapping the button doesn't pin the controls; they fade and the cameras stay.
+    {
+      const fsBtn = await page.locator('.wp-ov-row button[aria-label="Fullscreen"]').boundingBox()
+      await page.touchscreen.tap(fsBtn.x + fsBtn.width / 2, fsBtn.y + fsBtn.height / 2)
+      await page.waitForFunction(() => document.querySelector('.wp-stage')?.getAttribute('data-chrome') === 'false', null, { timeout: 6000 }).catch(() => {})
+      check('watch: in fullscreen the controls fade after a tap on Fullscreen', (await page.getAttribute('.wp-stage', 'data-chrome')) === 'false')
+      const st = await page.locator('.wp-stage').boundingBox()
+      await page.touchscreen.tap(st.x + 12, st.y + st.height / 2)
+      await page.waitForFunction(() => document.querySelector('.wp-stage')?.getAttribute('data-chrome') === 'true', null, { timeout: 3000 }).catch(() => {})
+      check('watch: a touch brings the fullscreen controls back', (await page.getAttribute('.wp-stage', 'data-chrome')) === 'true')
+      const ex = await page.locator('.wp-ov-row button[aria-label="Exit fullscreen"]').boundingBox()
+      await page.touchscreen.tap(ex.x + ex.width / 2, ex.y + ex.height / 2)
+      await page.waitForSelector('.wp-ov-row button[aria-label="Fullscreen"]', { timeout: 3000 }).catch(() => {})
+      const st2 = await page.locator('.wp-stage').boundingBox()
+      if ((await page.getAttribute('.wp-stage', 'data-chrome')) === 'false') await page.touchscreen.tap(st2.x + 12, st2.y + st2.height / 2)
+      await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
+    }
+    // A library film someone else started: the player names it, not "master".
+    posts.removed = []   // an earlier step removed Heat from the fake library
+    await page.evaluate((u) => window.__wpFire('REC:host', { video: u, videoTS: 0, paused: true }), `/api/watch/movies/stream/${'c'.repeat(32)}/master.m3u8`)
+    await page.waitForFunction(() => document.querySelector('#wp-title')?.getAttribute('placeholder') === 'Heat', null, { timeout: 5000 }).catch(() => {})
+    check('watch: a library film shows its name, not "master"', (await page.getAttribute('#wp-title', 'placeholder')) === 'Heat', await page.getAttribute('#wp-title', 'placeholder'))
+    await host(page)
+    await page.waitForFunction(() => document.querySelector('.wp-video')?.readyState >= 1)
+    if (!(await page.locator('.wp-ov-mid button[aria-label="Pause"]').count())) await page.click('.wp-ov-mid button[aria-label="Play"]')
+    await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
     await page.click('.wp-ov-mid button[aria-label="Pause"]')
     await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:pause'))
     check('watch: centre pause tells the room', true)

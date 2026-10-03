@@ -34,6 +34,7 @@ export function Stage({ over, rxOpen, setRxOpen, slot }: { over?: ReactNode; rxO
   useEffect(() => () => window.clearTimeout(hideT.current), [])
   // Re-arm the hide timer whenever playback starts.
   useEffect(() => { if (s.playing) poke() }, [s.playing])
+  const focusHeld = useRef(false)
   const holdOn = () => setHold((n) => n + 1)
   const holdOff = () => { setHold((n) => Math.max(0, n - 1)); poke() }
   const [setOpen, setSetOpen] = useState(false)
@@ -87,8 +88,10 @@ export function Stage({ over, rxOpen, setRxOpen, slot }: { over?: ReactNode; rxO
       data-rx={rxOpen}
       data-kind={s.kind || 'none'}
       onPointerMove={(e) => { if (e.pointerType === 'mouse') poke() }}
-      onFocus={holdOn}
-      onBlur={holdOff}
+      // Keyboard focus keeps the controls up; a tap's focus doesn't (on a phone it never
+      // leaves the button you tapped, so the controls would never fade in fullscreen).
+      onFocus={(e) => { if (e.target.matches(':focus-visible')) { focusHeld.current = true; holdOn() } }}
+      onBlur={() => { if (focusHeld.current) { focusHeld.current = false; holdOff() } }}
     >
       <video ref={attachVideo} className="wp-video" playsInline preload="metadata" hidden={s.kind !== 'file'} />
       <div ref={attachYt} className="wp-yt" hidden={s.kind !== 'yt'} />
