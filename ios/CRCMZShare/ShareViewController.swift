@@ -4,11 +4,10 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// Share → CRCMZ. The server says what a link is (POST /api/share/inspect, share.py):
-///   a song      added to Slap straight away, in your picks, with Undo
-///   a trailer   add its film to Movies (4K / 1080p when both exist), or play the trailer
-///               in the Watch Party
-///   an IMDb page  add the film
-///   a video     the Watch Party
+///   a song         added to Slap straight away, in your picks, with Undo
+///   a film's page  added to Movies straight away, with Undo (or pick the film)
+///   a trailer      the one that asks: add its film, or play the trailer
+///   a video        ready in the Watch Party the next time the app opens
 /// A video from Photos goes to Clips' Send a video (the same upload, caption and queue as
 /// the app). Everything is sent as you: the app's session, from SharedSession.
 final class ShareViewController: UIViewController {
@@ -71,7 +70,8 @@ struct Movie { let imdb: String; let title: String; let year: String; let poster
 final class ShareModel: ObservableObject {
     enum Phase {
         case looking
-        case choose(kind: String, link: String, movie: Movie?, videoTitle: String, choices: [String])
+        case choose(kind: String, link: String, movie: Movie?, videoTitle: String, choices: [String], candidates: [Movie])
+        case filmAdded(Movie, until: Date)
         case qualities(Movie, fourK: String?, hd: String?)
         case songAdded(name: String, job: String?, downloading: Bool)
         case clip(file: URL, name: String)
@@ -104,13 +104,24 @@ final class ShareModel: ObservableObject {
                 phase = .message(title: "There's no link in that", detail: "Share a song, a video or a movie page.", undo: nil)
                 return
             }
-            if r["auto"] as? String == "slap" { await addSong(link); return }
-            let m = r["movie"] as? [String: Any]
-            let movie = m.map { Movie(imdb: $0["imdb"] as? String ?? "", title: $0["title"] as? String ?? "",
-                                      year: $0["year"] as? String ?? "", poster: URL(string: $0["poster"] as? String ?? ""),
-                                      inLibrary: $0["in_library"] as? Bool ?? false) }
+            let card = { (m: [String: Any]) in
+                Movie(imdb: m["imdb"] as? String ?? "", title: m["title"] as? String ?? "", year: m["year"] as? String ?? "",
+                      poster: URL(string: m["poster"] as? String ?? ""), inLibrary: m["in_library"] as? Bool ?? false)
+            }
+            let movie = (r["movie"] as? [String: Any]).map(card)
+            switch r["auto"] as? String {
+            case "slap": await addSong(link); return
+            case "watch": await watch(link); return
+            case "movie":
+                if let movie {
+                    if movie.inLibrary { await watch("https://app.crcmz.me/app/watch?m=\(movie.imdb)") } else { await addFilm(movie) }
+                    return
+                }
+            default: break
+            }
             phase = .choose(kind: kind, link: link, movie: movie, videoTitle: r["video_title"] as? String ?? "",
-                            choices: r["choices"] as? [String] ?? ["watch"])
+                            choices: r["choices"] as? [String] ?? ["watch"],
+                            candidates: (r["candidates"] as? [[String: Any]] ?? []).map(card))
         } catch let e as API.Failure {
             phase = .message(title: "Couldn't share that", detail: e.message, undo: nil)
         } catch {
@@ -188,12 +199,41 @@ final class ShareModel: ObservableObject {
         }
     }
 
+    /// A film added straight away: it waits a few seconds for Undo before it starts.
+    func addFilm(_ m: Movie) async {
+        busy = true
+        defer { busy = false }
+        do {
+            _ = try await API.call("/api/watch/movies/add", method: "POST", json: ["imdb": m.imdb, "from": "share"], timeout: 30)
+            phase = .filmAdded(m, until: Date().addingTimeInterval(20))
+        } catch let e as API.Failure {
+            phase = .message(title: "Couldn't add \(m.title)", detail: e.message, undo: nil)
+        } catch {
+            phase = .message(title: "Couldn't reach CRCMZ", detail: "Check your connection and try again.", undo: nil)
+        }
+    }
+
+    func undoFilm(_ m: Movie) async {
+        busy = true
+        defer { busy = false }
+        do {
+            _ = try await API.call("/api/watch/movies/undo", method: "POST", json: ["imdb": m.imdb])
+            phase = .message(title: "Undone", detail: "\(m.title) won't be added.", undo: nil)
+        } catch let e as API.Failure {
+            phase = .message(title: "Too late to undo", detail: e.message, undo: nil)
+        } catch {
+            phase = .message(title: "Couldn't reach CRCMZ", detail: "Check your connection and try again.", undo: nil)
+        }
+    }
+
     /// This can't open the app, so the link waits on the server for the app's next open.
     func watch(_ link: String) async {
         busy = true
         defer { busy = false }
         _ = try? await API.call("/api/share/pending", method: "POST", json: ["url": link])
-        phase = .message(title: "Ready in the Watch Party", detail: "Open CRCMZ and it plays there for the party.", undo: nil)
+        let own = link.hasPrefix("https://app.crcmz.me/app/")
+        phase = .message(title: own ? "Ready in CRCMZ" : "Ready in the Watch Party",
+                         detail: own ? "Open CRCMZ and it's there." : "Open CRCMZ and it plays there for the party.", undo: nil)
     }
 
     // MARK: Clips
@@ -272,7 +312,9 @@ private struct ShareCard: View {
         switch model.phase {
         case .looking:
             ProgressView("Looking at that…").tint(.white)
-        case let .choose(kind, link, movie, videoTitle, choices):
+        case let .filmAdded(m, until):
+            FilmAdded(movie: m, until: until, undo: { Task { await model.undoFilm(m) } }, done: { model.close() })
+        case let .choose(kind, link, movie, videoTitle, choices, candidates):
             if let m = movie {
                 HStack(spacing: 12) {
                     AsyncImage(url: m.poster) { $0.resizable().scaledToFill() } placeholder: { Color.white.opacity(0.08) }
@@ -287,8 +329,13 @@ private struct ShareCard: View {
                 Image(systemName: "play.rectangle.fill").font(.system(size: 30)).foregroundStyle(.cyan)
                 Text(videoTitle.isEmpty ? link : videoTitle).font(.headline).multilineTextAlignment(.center).lineLimit(3)
             }
+            if !candidates.isEmpty { Text("Not sure which film: is it this one, or…").font(.caption).foregroundStyle(.secondary) }
             ForEach(Array(choices.enumerated()), id: \.offset) { i, c in
-                button(c, primary: i == 0, link: link, movie: movie, kind: kind)
+                button(c, primary: i == 0, link: link, movie: movie, kind: kind, search: videoTitle)
+            }
+            ForEach(candidates, id: \.imdb) { c in
+                Button { Task { await model.addFilm(c) } } label: { Text(c.year.isEmpty ? c.title : "\(c.title) (\(c.year))") }
+                    .buttonStyle(Wide(primary: false))
             }
             Button("Cancel") { model.close() }.foregroundStyle(.secondary)
         case let .qualities(m, fourK, hd):
@@ -333,15 +380,21 @@ private struct ShareCard: View {
         }
     }
 
-    @ViewBuilder private func button(_ c: String, primary: Bool, link: String, movie: Movie?, kind: String) -> some View {
+    @ViewBuilder private func button(_ c: String, primary: Bool, link: String, movie: Movie?, kind: String, search: String) -> some View {
         switch c {
+        case "search":
+            Button { Task { await model.watch("https://app.crcmz.me/app/watch?q=\(search.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")") } } label: {
+                Label("Find the film in Movies", systemImage: "magnifyingglass")
+            }.buttonStyle(Wide(primary: primary))
         case "movie":
             if let m = movie {
                 if m.inLibrary {
                     Button { Task { await model.watch("https://app.crcmz.me/app/watch?m=\(m.imdb)") } } label: { Label("It's in Movies: watch it", systemImage: "play.fill") }
                         .buttonStyle(Wide(primary: primary))
+                } else if kind == "trailer" {
+                    Button { Task { await model.addMovie(m) } } label: { Label("Add the film to Movies", systemImage: "plus") }.buttonStyle(Wide(primary: primary))
                 } else {
-                    Button { Task { await model.addMovie(m) } } label: { Label("Add to Movies", systemImage: "plus") }.buttonStyle(Wide(primary: primary))
+                    Button { Task { await model.addFilm(m) } } label: { Label("Add \(m.title)", systemImage: "plus") }.buttonStyle(Wide(primary: primary))
                 }
             }
         case "slap":
@@ -350,6 +403,35 @@ private struct ShareCard: View {
             Button { Task { await model.watch(link) } } label: {
                 Label(kind == "trailer" ? "Play the trailer in the Watch Party" : "Play in the Watch Party", systemImage: "play.tv")
             }.buttonStyle(Wide(primary: primary))
+        }
+    }
+}
+
+/// "Adding Heat (1995)" with Undo for the few seconds before it starts.
+private struct FilmAdded: View {
+    let movie: Movie
+    let until: Date
+    let undo: () -> Void
+    let done: () -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            let left = max(0, Int(until.timeIntervalSince(ctx.date).rounded(.up)))
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    AsyncImage(url: movie.poster) { $0.resizable().scaledToFill() } placeholder: { Color.white.opacity(0.08) }
+                        .frame(width: 60, height: 90).clipShape(RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Adding \(movie.title)\(movie.year.isEmpty ? "" : " (\(movie.year))")").font(.headline)
+                        Text("It's on its way to Movies. Everyone hears when it's ready to watch.").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 10) {
+                    if left > 0 { Button("Undo (\(left)s)", action: undo).buttonStyle(Wide(primary: false)) }
+                    Button("Done", action: done).buttonStyle(Wide(primary: true))
+                }
+            }
         }
     }
 }
