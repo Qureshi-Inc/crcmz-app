@@ -83,6 +83,10 @@ final class Shell: NSObject, UITabBarDelegate {
         go?(tabs[item.tag].path)
     }
 
+    #if DEBUG
+    func demoMore() { showMore() }
+    #endif
+
     private func showMore() {
         guard let presenter else { return }
         let list = MoreList(items: more) { [weak self] path in
@@ -138,6 +142,9 @@ private final class MoreList: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "row")
+        // Opaque, the app's own dark: the glass sheet over a bright page washes the rows out.
+        tableView.backgroundColor = UIColor(red: 0.04, green: 0.03, blue: 0.09, alpha: 1)
+        view.tintColor = UIColor(red: 0.69, green: 0.6, blue: 1, alpha: 1)
         navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak self] _ in
             self?.done(nil)
         })
@@ -155,6 +162,7 @@ private final class MoreList: UITableViewController {
         c.image = UIImage(systemName: item.id == "edit" ? "slider.horizontal.3" : Shell.symbol(item.id))
         cell.contentConfiguration = c
         cell.accessoryType = .disclosureIndicator
+        cell.backgroundColor = UIColor(white: 1, alpha: 0.07)
         return cell
     }
 

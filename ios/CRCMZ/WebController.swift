@@ -140,6 +140,19 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         shell.pageChanged(webView.url)
         flushTokens()
+        #if DEBUG
+        // Simulator check of the native bar without signing in: -crcmzShellDemo YES.
+        if UserDefaults.standard.bool(forKey: "crcmzShellDemo") {
+            shell.pageChanged(URL(string: Self.origin + "/app"))
+            let t = { (id: String, l: String, g: String) in ["id": id, "label": l, "path": "/" + id, "group": g] }
+            shell.update(["tabs": [t("squad", "Squad", ""), t("slap", "Slap", ""), t("ask", "Ask AI", ""), t("watch", "Watch", "")],
+                          "more": [t("clips", "Clips", "squad"), t("huddle", "Huddle", "squad"), t("settings", "Settings", "account")],
+                          "active": "slap", "badge": 3, "hidden": false])
+            if UserDefaults.standard.bool(forKey: "crcmzShellDemoMore") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.shell.demoMore() }
+            }
+        }
+        #endif
     }
 
     // MARK: Navigation
