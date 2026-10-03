@@ -57,6 +57,12 @@ object NativeCall {
     var sharing = false; private set
     var transcribing = false; private set
     var reactions: List<Reaction> = emptyList(); private set
+    /** The AI chat: the page keeps it and asks the AI; the call screen's sheet shows it. */
+    data class AiMsg(val role: String, val text: String)
+    var aiLog: List<AiMsg> = emptyList(); private set
+    var aiBusy = false; private set
+    /** Told when the AI chat changes (the open sheet redraws). */
+    var onAi: (() -> Unit)? = null
     private val hands = mutableMapOf<String, String>()   // identity -> name
     private var rxSeq = 0
     private var transcriber: Transcriber? = null
@@ -107,6 +113,14 @@ object NativeCall {
                 }
             }
             "transcript" -> if (kind == k) setTranscript(app, m.optBoolean("on"))
+            "ai" -> {
+                val log = m.optJSONArray("log")
+                aiLog = (0 until (log?.length() ?: 0)).mapNotNull { i ->
+                    log?.optJSONObject(i)?.let { AiMsg(it.optString("role", "note"), it.optString("text")) }
+                }
+                aiBusy = m.optBoolean("busy")
+                onAi?.invoke()
+            }
         }
     }
 
@@ -212,15 +226,23 @@ object NativeCall {
         showReaction("You", e)
     }
 
-    /** The AI helper is on the Huddle page: shrink the call to its panel and open it. */
     /** Set when the panel should move to the top (the AI helper's input is at the bottom). */
     var panelTop = false
 
+    /** The AI chat, over the call (AiSheet). The page has the history; ask it to send it. */
     fun openAI(app: LauncherActivity) {
-        panelTop = true
-        mode = Mode.PANEL
-        app.go("/huddle")
+        AiSheet.show(app)
+        onData?.invoke("huddle", JSONObject().put("t", "ai_open"), "You", "me")
     }
+
+    /** Ask the AI. [transcribe]: start the transcript first, so it can follow the call. */
+    fun askAI(text: String, transcribe: Boolean) {
+        val q = text.trim()
+        if (q.isEmpty() || aiBusy) return
+        onData?.invoke("huddle", JSONObject().put("t", "ai_ask").put("text", q.take(1000)).put("transcribe", transcribe), "You", "me")
+    }
+
+    fun retryAI() { onData?.invoke("huddle", JSONObject().put("t", "ai_retry"), "You", "me") }
 
     /** Share this phone's screen (Android asks first), or stop. */
     fun toggleShare(app: LauncherActivity) {
@@ -327,6 +349,7 @@ object NativeCall {
         myHand = false
         sharing = false
         reactions = emptyList()
+        AiSheet.dismiss()
         transcriber?.stop(); transcriber = null
         transcribing = false
         micOn = false

@@ -83,7 +83,11 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
             addView(reactionsLayer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(dp(8), 0, dp(8), dp(8)) })
         fullColumn.addView(pickRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(6) })
-        fullColumn.addView(extras, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
+        // Scrolls sideways on a narrow phone rather than squeezing the buttons.
+        fullColumn.addView(android.widget.HorizontalScrollView(app).apply {
+            isHorizontalScrollBarEnabled = false; isFillViewport = true
+            addView(extras, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
         fullColumn.addView(fullControls, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(12) })
         full.addView(fullColumn)
         root.addView(full, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -213,7 +217,7 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
         }
     }
 
-    /** Huddle: your hand, reactions, sharing your screen, the transcript (notes), the AI helper. */
+    /** Huddle: your hand, reactions, sharing your screen, the transcript, the AI chat. */
     private fun buildExtras() {
         extras.removeAllViews()
         if (NativeCall.kind != NativeCall.Kind.HUDDLE) { extras.visibility = View.GONE; pickRow.visibility = View.GONE; return }
@@ -231,9 +235,9 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
             extrasKey = ""; render()
         }
         add(if (NativeCall.sharing) "▣ Stop" else "▣ Share", NativeCall.sharing, if (NativeCall.sharing) "Stop sharing your screen" else "Share your screen") { NativeCall.toggleShare(app) }
-        add(if (NativeCall.transcribing) "⏹ Stop" else "📝 Notes", NativeCall.transcribing,
+        add(if (NativeCall.transcribing) "⏹ Stop" else "📝 Transcribe", NativeCall.transcribing,
             if (NativeCall.transcribing) "Stop the transcript" else "Transcribe this call, for meeting notes when it ends") { NativeCall.toggleTranscript(app) }
-        add("✨ AI", false, "AI helper") { NativeCall.openAI(app) }
+        add("✨ AI", false, "AI chat") { NativeCall.openAI(app) }
         if (pickRow.childCount == 0) NativeCall.REACTIONS.forEach { e ->
             pickRow.addView(TextView(app).apply {
                 text = e; textSize = 24f; gravity = Gravity.CENTER; contentDescription = "Send $e"

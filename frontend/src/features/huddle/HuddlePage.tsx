@@ -13,7 +13,7 @@ import { loginUrl } from '../../lib/session'
 import { useSwipeDown } from '../../lib/gestures'
 import { initials, tint } from '../../lib/watch'
 import {
-  askAi, canPopOut, canShare, join, leave, popOut, showNativeCall, meetingNotes, pin, previewMedia, retryAi, setAiOpen, setCamId, setLayout, setMicId, setRoomName,
+  askAi, canPopOut, canShare, join, leave, popOut, showNativeCall, pin, previewMedia, retryAi, setAiOpen, setCamId, setLayout, setMicId, setRoomName,
   spotlightTile, startAudio, startPreview, stopPreview, tileTrack, toggleBlur, toggleCam, toggleMic, toggleShare, toggleTranscript,
   react, setAutoTranscribe, toggleHand, REACTIONS, useHuddle, type HuddleState, type Tile,
 } from './session'
@@ -432,6 +432,8 @@ function AiSheet({ s }: { s: HuddleState }) {
 
 function AiPanel({ s, titleId, sheet = false, inline = false }: { s: HuddleState; titleId: string; sheet?: boolean; inline?: boolean }) {
   const [q, setQ] = useState('')
+  // A question asked with the transcript off waits here while we ask to turn it on.
+  const [pendingQ, setPendingQ] = useState('')
   const log = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = log.current
@@ -439,7 +441,14 @@ function AiPanel({ s, titleId, sheet = false, inline = false }: { s: HuddleState
   }, [s.aiLog.length, s.aiBusy])
   function submit(e: FormEvent) {
     e.preventDefault()
+    if (!q.trim() || s.aiBusy) return
+    if (!s.transcribing) { setPendingQ(q.trim()); return }
     if (askAi(q)) setQ('')
+  }
+  function answer(transcribe: boolean) {
+    if (transcribe) toggleTranscript({ open: false })
+    if (askAi(pendingQ)) setQ('')
+    setPendingQ('')
   }
   const Title = sheet ? Dialog.Title : 'h2'
   return (
@@ -455,12 +464,11 @@ function AiPanel({ s, titleId, sheet = false, inline = false }: { s: HuddleState
           <a className="btn btn-secondary" href={loginUrl()}>Sign in</a>
         </div>
       )}
-      <div className="hu-ai-tools">
-        <button type="button" className="btn btn-secondary" aria-pressed={s.transcribing} onClick={() => toggleTranscript()}>
-          <Icon name={s.transcribing ? 'micOff' : 'mic'} />{s.transcribing ? 'Stop transcript' : 'Transcript'}
-        </button>
-        <button type="button" className="btn btn-secondary" disabled={s.aiBusy} onClick={meetingNotes}><Icon name="notes" />Notes</button>
-      </div>
+      <p className="meta hu-ai-tx" role="status">
+        {s.transcribing
+          ? <><span className="hu-rec-dot" aria-hidden="true" />Transcribing for everyone. The AI follows the call; notes are saved when it ends.</>
+          : 'The transcript is off, so the AI only knows what you ask it.'}
+      </p>
       <div className="hu-ai-log" ref={log} role="log" aria-live="polite" aria-label="AI helper messages" tabIndex={0}>
         {s.aiLog.length === 0 && !s.lines.length && (
           <p className="dim">Ask it anything about what's happening in-game. It reads the transcript.</p>
@@ -478,6 +486,15 @@ function AiPanel({ s, titleId, sheet = false, inline = false }: { s: HuddleState
           <summary>Transcript · {s.lines.length} {s.lines.length === 1 ? 'line' : 'lines'}</summary>
           <ol>{s.lines.slice(-60).map((l, i) => <li key={i}><b>{l.name}</b> {l.text}</li>)}</ol>
         </details>
+      )}
+      {pendingQ && (
+        <div className="banner hu-ai-confirm" role="alertdialog" aria-labelledby={`${titleId}-tx-q`}>
+          <span id={`${titleId}-tx-q`}><b>Start the transcript?</b> The AI follows the call through it, so it'll start for everyone in the call, and the meeting notes are saved when it ends.</span>
+          <span className="hu-ai-confirm-acts">
+            <button type="button" className="btn btn-primary" onClick={() => answer(true)}>Start and ask</button>
+            <button type="button" className="btn btn-secondary" onClick={() => answer(false)}>Just ask</button>
+          </span>
+        </div>
       )}
       <form className="comment-form" onSubmit={submit}>
         <label className="sr-only" htmlFor={`${titleId}-in`}>Ask the AI</label>

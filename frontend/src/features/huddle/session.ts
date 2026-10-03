@@ -144,6 +144,22 @@ function set(patch: Partial<HuddleState>) {
   listeners.forEach((l) => l())
   syncLockScreen()
   queueSave()
+  sendAiToNative()
+}
+
+// The call screen in the apps has its own AI chat: it shows this page's chat, and asks
+// through the page (ai_ask below), so there's one history wherever you open it.
+let aiSent = ''
+function sendAiToNative() {
+  if (!state.nativeRoom) { aiSent = ''; return }
+  const m = {
+    type: 'ai' as const, kind: 'huddle' as const, busy: state.aiBusy, transcribing: state.transcribing,
+    log: state.aiLog.slice(-80).map((x) => ({ role: x.role, text: x.text })),
+  }
+  const key = JSON.stringify(m)
+  if (key === aiSent) return
+  aiSent = key
+  toNative(m)
 }
 export function getHuddle(): HuddleState { return state }
 export function useHuddle(): HuddleState {
@@ -674,6 +690,19 @@ onNativeData((kind, m, from, fromId) => {
     return
   }
   if (m.t === 'line' && fromId === 'me') { addLine(from || 'You', String(m.text || '').slice(0, 2000)); return }
+  // The call screen's AI sheet: a question (and whether to start the transcript first),
+  // or "send me the chat" when it opens.
+  if (fromId === 'me' && m.t === 'ai_ask') {
+    if (m.transcribe === true && !state.transcribing) toggleTranscript({ open: false })
+    if (typeof m.text === 'string') askAi(m.text)
+    return
+  }
+  if (fromId === 'me' && m.t === 'ai_open') { aiSent = ''; sendAiToNative(); return }
+  if (fromId === 'me' && m.t === 'ai_retry') {
+    const last = [...state.aiLog].reverse().find((x) => x.retry)
+    if (last?.retry) retryAi(last.retry)
+    return
+  }
   if (m.t === 'hand_self') { set({ hand: !!m.up }); return }   // the call screen's own hand button
   onData(m, from, fromId)
 })

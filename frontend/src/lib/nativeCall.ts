@@ -12,6 +12,9 @@ export type ToNative =
   | { type: 'data'; kind: CallKind; payload: Record<string, unknown> }
   /** Huddle: the app records its own mic for the transcript (on) or stops (off). */
   | { type: 'transcript'; kind: CallKind; on: boolean }
+  /** Huddle: the AI chat, for the call screen's own AI sheet. The page keeps the chat
+   *  (and asks the AI); the app shows it. Sent whenever it changes. */
+  | { type: 'ai'; kind: CallKind; log: { role: string; text: string }[]; busy: boolean; transcribing: boolean }
 
 type Handler = { postMessage(m: unknown): void }
 const handler = (): Handler | undefined =>

@@ -351,7 +351,8 @@ class LauncherActivity : AppCompatActivity() {
         if (i.action == Intent.ACTION_SEND && i.type == "text/plain") {
             val text = i.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
             val link = Regex("https?://\\S+").find(text)?.value.orEmpty()
-            return Uri.parse("$ORIGIN/app/watch/party").buildUpon()
+            // /app/share sends a song (Spotify, Apple Music…) to Slap, anything else to the Watch Party.
+            return Uri.parse("$ORIGIN/app/share").buildUpon()
                 .appendQueryParameter("url", link)
                 .appendQueryParameter("text", text)
                 .appendQueryParameter("title", i.getStringExtra(Intent.EXTRA_SUBJECT).orEmpty())
