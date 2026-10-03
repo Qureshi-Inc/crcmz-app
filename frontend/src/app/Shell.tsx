@@ -7,6 +7,7 @@ import * as Menu from '@radix-ui/react-dropdown-menu'
 import { Icon } from '../components/Icon'
 import { Toaster } from '../components/toast'
 import { InstallStrip } from '../components/InstallStrip'
+import { UpdateStrip } from '../components/UpdateStrip'
 import { onWorkerNavigate } from '../lib/pwa'
 import { useStale } from '../components/states'
 import { useAccount, useAdminCheck, useSquad, SQUAD_MS, type Member } from '../lib/api'
@@ -106,6 +107,7 @@ export function Shell() {
             <a className="btn btn-secondary" href={loginUrl()}>Sign in</a>
           </div>
         )}
+        <UpdateStrip />
         {!desktop && <InstallStrip />}
         <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
         {keepWatch && <WatchPage visible={onWatch} />}

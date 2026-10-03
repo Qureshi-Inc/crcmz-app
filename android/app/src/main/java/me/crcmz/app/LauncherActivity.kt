@@ -177,6 +177,12 @@ class LauncherActivity : AppCompatActivity() {
             shell.keyboard = typing
             shell.bar.updatePadding(bottom = bars.bottom)
             content.updatePadding(bottom = if (typing) ime else 0)
+            // The page's own fullscreen (the Watch Party) sits over everything: same there.
+            val lift = if (typing) ime else 0
+            (fullscreen?.layoutParams as? FrameLayout.LayoutParams)?.takeIf { it.bottomMargin != lift }?.let {
+                it.bottomMargin = lift
+                fullscreen?.layoutParams = it
+            }
             refresh.updatePadding(top = bars.top, bottom = if (shell.bar.visibility == View.VISIBLE || typing) 0 else bars.bottom)
             calls.insets(bars.top, bars.bottom)
             insets
@@ -305,6 +311,7 @@ class LauncherActivity : AppCompatActivity() {
                 fullscreen = view
                 fullscreenDone = callback
                 root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                ViewCompat.requestApplyInsets(root)
                 WindowInsetsControllerCompat(window, window.decorView).apply {
                     hide(WindowInsetsCompat.Type.systemBars())
                     systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
