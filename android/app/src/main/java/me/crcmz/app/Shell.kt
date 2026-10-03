@@ -38,6 +38,9 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
     private var tabs: List<Item> = emptyList()
     private var more: List<Item> = emptyList()
     private var hidden = false
+    /** The keyboard is up: the bar steps aside, so what you type sits right on the keyboard. */
+    var keyboard = false
+        set(v) { if (field != v) { field = v; apply() } }
     private var onAppPage = false
     private var settingSelection = false
 
@@ -102,7 +105,7 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
     }
 
     private fun apply() {
-        val show = onAppPage && !hidden && tabs.isNotEmpty()
+        val show = onAppPage && !hidden && !keyboard && tabs.isNotEmpty()
         if (show != (bar.visibility == View.VISIBLE)) app.setBarVisible(show)
     }
 

@@ -3,7 +3,8 @@
 // party going. A port of the classic client (server.py, wp*), same wire protocol:
 //   socket   WatchParty over socket.io, a fresh Watch Ticket per connect
 //   sync     REC:host/play/pause/seek in, CMD:* out; remote applies are fenced by
-//            `applying` so they never echo back; drift > 3 s vs the room median seeks
+//            `applying` so they never echo back; only our own controls send seeks;
+//            whoever is behind the room catches up (nudge, or a seek past 8 s)
 //   call     a WebRTC mesh over the `signal` relay with perfect negotiation, STUN only;
 //            peer audio plays through hidden <audio> elements owned here, so the UI
 //            can re-render (or the page can hide) without touching sound
@@ -216,6 +217,13 @@ let applying = 0
 let intent = 0
 const echo = () => !applying || Date.now() - intent < 1000
 let pendingTS = 0
+// After any seek, give everyone's reported times a few seconds to catch up before the
+// drift check acts on them: comparing against the old positions dragged a scrub back.
+let settleUntil = 0
+const settle = (ms = 6000) => { settleUntil = Math.max(settleUntil, Date.now() + ms) }
+// Our own seeks, so the room repeating them back to us doesn't seek us again.
+let sentSeeks: { to: number; at: number }[] = []
+let seekEmitT = 0
 
 function remote(fn: () => void) {
   applying++
@@ -262,7 +270,8 @@ export function attachVideo(el: HTMLVideoElement | null) {
   el.addEventListener('pause', () => { syncPlaying(); if (echo()) sock?.emit('CMD:pause') })
   el.addEventListener('ended', syncPlaying)
   el.addEventListener('playing', () => { syncPlaying(); if (state.unblock) set({ unblock: '' }) })
-  el.addEventListener('seeked', () => { if (echo()) sock?.emit('CMD:seek', el.currentTime) })
+  // Seeks reach the room from userSeek only: a 'seeked' echo also fired for the room's own
+  // seeks once a slow stream seek outlasted the echo window, and pulled everyone back.
   el.addEventListener('error', () => {
     if (!el.getAttribute('src')) return
     log('video.error', { code: el.error?.code, video: short(state.video) }, 'error')
@@ -311,6 +320,10 @@ function nudge(rate: number, ahead = 0) {
 
 function seek(ts: number) {
   if (!Number.isFinite(ts)) return
+  settle()
+  // Already there: seeking again would only make the stream fetch again.
+  const cur = time()
+  if (cur !== null && Math.abs(cur - ts) < 0.75) return
   if (state.kind === 'file' && video) video.currentTime = ts
   else if (state.kind === 'yt') yt?.seekTo(ts, true)
 }
@@ -354,8 +367,17 @@ export function userSeek(t: number) {
   const d = duration()
   const to = Math.max(0, Number.isFinite(d) && d > 0 ? Math.min(t, d - 0.25) : t)
   intent = Date.now()
+  settle()
   if (state.kind === 'file' && video) video.currentTime = to
-  else if (state.kind === 'yt' && yt) { try { yt.seekTo(to, true) } catch { /* */ } sock?.emit('CMD:seek', to) }
+  else if (state.kind === 'yt' && yt) { try { yt.seekTo(to, true) } catch { /* */ } }
+  // Tell the room once the seeking stops (quick taps of ±10 s send one seek, not five).
+  window.clearTimeout(seekEmitT)
+  seekEmitT = window.setTimeout(() => {
+    seekEmitT = 0
+    const now = Date.now()
+    sentSeeks = [...sentSeeks.filter((x) => now - x.at < 5000), { to, at: now }]
+    sock?.emit('CMD:seek', to)
+  }, 300)
   window.setTimeout(tick, 60)
 }
 export const skip = (by: number) => userSeek((time() ?? 0) + by)
@@ -480,6 +502,14 @@ function applyHost(h: { video?: string; videoTS?: number; paused?: boolean }) {
   const url = h.video || ''
   const first = awaitHost
   awaitHost = false
+  if (first && pendingHost) {
+    const want = pendingHost
+    pendingHost = null
+    if (want !== url) { log('host.pending', { video: short(want) }); sock?.emit('CMD:host', want); return }
+    // The room is already watching it: join where they are, no restart and no resume.
+    log('host.already_on', { video: short(want), ts: Number(h.videoTS) || 0 })
+    resume = null
+  }
   roomVideo = url
   // Right after a reconnect the room came back empty although we were watching:
   // the realtime server restarted. Keep playing and put it back.
@@ -511,7 +541,7 @@ function recoverHost(): boolean {
       if (Date.now() - t0 > 30_000) { window.clearInterval(iv); return }
       if (state.video !== L.url || applying || !(duration() > 0)) return
       window.clearInterval(iv)
-      if (L.t && L.t > 3) { userSeek(L.t); sock?.emit('CMD:seek', L.t) }
+      if (L.t && L.t > 3) userSeek(L.t)
       if (L.paused) { pause(); sock?.emit('CMD:pause') }
     }, 500)
   }, delay)
@@ -631,8 +661,8 @@ function bind(s: Sock) {
     void connectRoom()   // listen to the party's call (cameras of whoever's in it)
     s.emit('watch:presence:get')
     s.emit('CMD:askHost')
-    // After askHost, so the room's current video can't arrive after the one picked.
-    if (pendingHost) { s.emit('CMD:host', pendingHost); pendingHost = null }
+    // A video picked before we connected is put on once we know what the room has
+    // (applyHost): hosting the one already on would start it over for everyone.
     set({ histTick: state.histTick + 1 })
     window.clearInterval(tsTimer)
     tsTimer = window.setInterval(() => { if (!s.connected) return; const t = time(); if (t !== null) s.emit('CMD:ts', t) }, 1000)
@@ -673,7 +703,15 @@ function bind(s: Sock) {
   })
   s.on('REC:play', (url: string) => { log('rec.play', { t: time() }); if (url && url !== state.video) mount(url); remote(play) })
   s.on('REC:pause', () => { log('rec.pause', { t: time() }); remote(pause) })
-  s.on('REC:seek', (ts: number) => { log('rec.seek', { to: Number(ts), t: time() }); remote(() => seek(Number(ts))) })
+  s.on('REC:seek', (ts: number) => {
+    const to = Number(ts)
+    log('rec.seek', { to, t: time() })
+    // The room repeating our own seek, or one we've already moved on from: stay put.
+    const now = Date.now()
+    if (sentSeeks.some((x) => now - x.at < 5000 && Math.abs(x.to - to) < 0.5)) return
+    if (now - intent < 1500 && seekEmitT) return
+    remote(() => seek(to))
+  })
   s.on('REC:playbackRate', (r: number) => { if (video && Number(r)) { video.playbackRate = Number(r); nudging = Number(r) } })
   // Stay in step with the room. The map is everyone's last reported time (each client
   // reports every second, the server sends the map every second), so compare OUR entry in
@@ -683,7 +721,7 @@ function bind(s: Sock) {
   // Small drift: play 4% faster or slower until back in step (no seek, nothing reloads).
   // Big drift (> 8 s, a rejoin or a long stall): seek.
   s.on('REC:tsMap', (map: Record<string, number>) => {
-    if (!map || applying) return
+    if (!map || applying || Date.now() < settleUntil || video?.seeking) return
     const cur = time()
     if (cur === null) return
     const others = Object.entries(map).filter(([id]) => id !== state.clientId).map(([, t]) => Number(t)).filter((t) => Number.isFinite(t) && t >= 0).sort((a, b) => a - b)
@@ -697,7 +735,9 @@ function bind(s: Sock) {
     if (behind > bigJump) {
       nudge(1)
       log('sync.drift', { t: Math.round(cur * 10) / 10, median: Math.round(med * 10) / 10, behind: Math.round(behind * 10) / 10, n: others.length })
-      remote(() => seek(cur + behind))
+      // To where the others are, not "our time + the gap": right after a seek our own
+      // entry in the map is stale, and adding the gap overshot and ratcheted the room on.
+      remote(() => seek(med + (isPlaying() ? 0.5 : 0)))
     } else if (state.kind === 'file' && isPlaying() && behind > 1) {
       nudge(1.04, -behind)
     } else if (behind < 0.4) {
@@ -791,7 +831,8 @@ export function watchTogether(url: string, title: string, resumeAt = 0) {
   resume = resumeAt > 5 ? { t: resumeAt, url, prev: state.video, at: Date.now() } : null
   if (sock?.connected) {
     set({ error: '' })
-    if (state.video === url) { if (resumeAt > 5) userSeek(resumeAt); return }
+    // Already on for the room: you join where they are (hosting it again restarts it).
+    if (state.video === url || roomVideo === url) { resume = null; return }
     sock.emit('CMD:host', url)
     return
   }

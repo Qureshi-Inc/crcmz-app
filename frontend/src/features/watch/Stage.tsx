@@ -3,13 +3,13 @@
 // call, reactions, ⚙ settings and fullscreen controls. It hides itself while playing;
 // a tap (or a mouse move) brings it back, and it never hides while you're using it.
 // The call controls and ⚙ show even with nothing playing.
-import { createPortal } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react'
 import { Icon, type IconName } from '../../components/Icon'
 import { useReducedMotion } from '../../lib/media'
 import { CAN_VOL, fmtTime, REACTIONS } from '../../lib/watch'
 import {
-  attachVideo, attachYt, clearVideo, forceSync, setSubtitle, getWatch, joinCall, leaveCall, nameOf as nameMap, onChat, onReaction, react, sendChat, setCamVol, setPlayerVol,
+  attachVideo, attachYt, clearVideo, forceSync, fsRoot, setSubtitle, getWatch, joinCall, leaveCall, nameOf as nameMap, onChat, onReaction, react, sendChat, setCamVol, setPlayerVol,
   skip, toggleCamsMute, toggleFs, toggleMute, togglePlay, togglePlayerMute, toggleVideo, unblock, userSeek, useWatch, useWatchClock,
   videoLabel, type ChatMsg, type RxEvent, type WatchState,
 } from './session'
@@ -38,6 +38,14 @@ export function Stage({ over, rxOpen, setRxOpen, slot }: { over?: ReactNode; rxO
   const holdOn = () => setHold((n) => n + 1)
   const holdOff = () => { setHold((n) => Math.max(0, n - 1)); poke() }
   const [setOpen, setSetOpen] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
+  // Opened and focused in the same tap: a phone only brings its keyboard up for a focus
+  // inside the tap itself.
+  const toggleChat = () => {
+    if (chatOpen) { setChatOpen(false); return }
+    flushSync(() => setChatOpen(true))
+    document.getElementById('wp-fs-in')?.focus({ preventScroll: true })
+  }
   const closeSettings = () => { setSetOpen(false); document.getElementById('wp-set-btn')?.focus({ preventScroll: true }) }
   const chrome = shown || hold > 0 || !s.playing || !s.video || rxOpen || setOpen
 
@@ -108,7 +116,8 @@ export function Stage({ over, rxOpen, setRxOpen, slot }: { over?: ReactNode; rxO
       )}
       {ripple && <div className="wp-ripple" data-side={ripple.side} aria-hidden="true"><Icon name={ripple.side === 'l' ? 'back10' : 'fwd10'} /><span>{ripple.n} seconds</span></div>}
       {!s.mediaError && (
-        <Overlay s={s} label={label} holdOn={holdOn} holdOff={holdOff} rxOpen={rxOpen} setRxOpen={setRxOpen} setOpen={setOpen} toggleSettings={() => (setOpen ? closeSettings() : setSetOpen(true))} />
+        <Overlay s={s} label={label} holdOn={holdOn} holdOff={holdOff} rxOpen={rxOpen} setRxOpen={setRxOpen} setOpen={setOpen} toggleSettings={() => (setOpen ? closeSettings() : setSetOpen(true))}
+          chatOpen={chatOpen} toggleChat={toggleChat} />
       )}
       {s.unblock && (
         <button type="button" className="btn btn-primary wp-unblock" onClick={unblock}>
@@ -117,6 +126,7 @@ export function Stage({ over, rxOpen, setRxOpen, slot }: { over?: ReactNode; rxO
       )}
       <RxLayer />
       {s.fs && <FsChat />}
+      {chatOpen && <ChatField fs={s.fs} online={s.status === 'live'} onDone={() => setChatOpen(false)} />}
       {over}
       {setOpen && (slot && !s.fs
         ? createPortal(<PlayerSettings s={s} onClose={closeSettings} inline />, slot)
@@ -149,13 +159,12 @@ function Ctl({ icon, label, onClick, pressed, expanded, big, disabled, className
   )
 }
 
-function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggleSettings }: {
+function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggleSettings, chatOpen, toggleChat }: {
   s: WatchState; label: string; holdOn: () => void; holdOff: () => void; rxOpen: boolean; setRxOpen: (v: boolean) => void
-  setOpen: boolean; toggleSettings: () => void
+  setOpen: boolean; toggleSettings: () => void; chatOpen: boolean; toggleChat: () => void
 }) {
   const c = useWatchClock()
   const [volOpen, setVolOpen] = useState(false)
-  const [chatOpen, setChatOpen] = useState(false)
   const rxRef = useRef<HTMLDivElement>(null)
   useDismiss(rxOpen, rxRef, () => setRxOpen(false))
   const [ccOpen, setCcOpen] = useState(false)
@@ -172,8 +181,8 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggle
       {idle ? <span /> : (
         <div className="wp-ov-top">
           <span className="wp-ov-title">{label || 'Watch Party'}</span>
-          {/* The call, subtitles and chat live up here; the bottom row is for the video. */}
-          <span className="wp-ov-topbar" role="group" aria-label="Call, subtitles and chat">
+          {/* The call lives up here; the bottom row is for the video, subtitles and chat. */}
+          <span className="wp-ov-topbar" role="group" aria-label="Call">
             {s.call.on && <Ctl icon={s.call.muted ? 'micOff' : 'mic'} label={s.call.muted ? 'Unmute mic' : 'Mute mic'} onClick={toggleMute} pressed={!s.call.muted} />}
             <Ctl
               icon={s.call.on && (s.call.camOff || s.call.micOnly) ? 'camOff' : 'cam'} label={camLabel}
@@ -181,22 +190,6 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggle
               disabled={s.call.busy || (s.call.on && s.call.micOnly)}
             />
             {s.call.on && <Ctl icon="leave" label="Leave call" onClick={leaveCall} className="wp-ctl-leave" />}
-            {hasCc && (
-              <span className="wp-cc" ref={ccRef}>
-                <Ctl icon="cc" label={s.sub !== null || s.ytCc ? 'Subtitles (on)' : 'Subtitles'} pressed={s.sub !== null || s.ytCc} expanded={s.kind === 'yt' ? undefined : ccOpen}
-                  onClick={() => (s.kind === 'yt' ? setSubtitle(s.ytCc ? null : 0) : setCcOpen(!ccOpen))} />
-                {ccOpen && s.kind !== 'yt' && (
-                  <span className="glass wp-cc-menu" role="menu" aria-label="Subtitles">
-                    <button type="button" role="menuitemradio" aria-checked={s.sub === null} className="wp-cc-item" onClick={() => { setSubtitle(null); setCcOpen(false) }}>Off</button>
-                    {s.subs.map((t) => (
-                      <button key={t.index} type="button" role="menuitemradio" aria-checked={s.sub === t.index} className="wp-cc-item"
-                        onClick={() => { setSubtitle(t.index); setCcOpen(false) }}>{t.label}{t.forced ? ' (forced)' : ''}</button>
-                    ))}
-                  </span>
-                )}
-              </span>
-            )}
-            <Ctl icon="chat" label={chatOpen ? 'Hide chat box' : 'Chat'} onClick={() => setChatOpen(!chatOpen)} pressed={chatOpen} />
             <Ctl icon="sync" label="Sync to the room" onClick={forceSync} />
           </span>
         </div>
@@ -214,7 +207,6 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggle
             {REACTIONS.map((e) => <button key={e} type="button" className="wp-rx-btn" disabled={!online} onClick={() => react(e)} aria-label={`React ${e}`}>{e}</button>)}
           </div>
         )}
-        {chatOpen && <FsChatForm online={online} onDone={() => setChatOpen(false)} />}
         {!idle && !live && <Seek t={c.t} dur={c.dur} buf={c.buf} holdOn={holdOn} holdOff={holdOff} />}
         <div className="wp-ov-row">
           {!idle && (
@@ -227,6 +219,26 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggle
             </>
           )}
           <span className="wp-ov-spacer" />
+          {hasCc && (
+            <span className="wp-cc" ref={ccRef}>
+              <Ctl icon="cc" label={s.sub !== null || s.ytCc ? 'Subtitles (on)' : 'Subtitles'} pressed={s.sub !== null || s.ytCc} expanded={s.kind === 'yt' ? undefined : ccOpen}
+                onClick={() => (s.kind === 'yt' ? setSubtitle(s.ytCc ? null : 0) : setCcOpen(!ccOpen))} />
+              {ccOpen && s.kind !== 'yt' && (
+                <span className="glass wp-cc-menu" role="menu" aria-label="Subtitles">
+                  <button type="button" role="menuitemradio" aria-checked={s.sub === null} className="wp-cc-item" onClick={() => { setSubtitle(null); setCcOpen(false) }}>Off</button>
+                  {s.subs.map((t) => (
+                    <button key={t.index} type="button" role="menuitemradio" aria-checked={s.sub === t.index} className="wp-cc-item"
+                      onClick={() => { setSubtitle(t.index); setCcOpen(false) }}>{t.label}{t.forced ? ' (forced)' : ''}</button>
+                  ))}
+                </span>
+              )}
+            </span>
+          )}
+          {/* Pressing this leaves focus in the chat field, so the field's blur can't close it first. */}
+          <button type="button" className="wp-ctl" aria-label={chatOpen ? 'Close message' : 'Message'} title="Message" aria-pressed={chatOpen}
+            onPointerDown={(e) => e.preventDefault()} onClick={toggleChat}>
+            <Icon name="chat" />
+          </button>
           <Ctl icon="smile" label={rxOpen ? 'Hide reactions' : 'Reactions'} onClick={() => setRxOpen(!rxOpen)} pressed={rxOpen} />
           <Ctl id="wp-set-btn" icon="settings" label="Settings" onClick={toggleSettings} expanded={setOpen} />
           <Ctl icon={s.fs ? 'fsExit' : 'fs'} label={s.fs ? 'Exit fullscreen' : 'Fullscreen'} onClick={toggleFs} />
@@ -239,15 +251,26 @@ function Overlay({ s, label, holdOn, holdOff, rxOpen, setRxOpen, setOpen, toggle
 /** The seek bar: a range input over a painted track (played, buffered, knob), with a time bubble while dragging. */
 function Seek({ t, dur, buf, holdOn, holdOff }: { t: number; dur: number; buf: number; holdOn: () => void; holdOff: () => void }) {
   const [drag, setDrag] = useState<number | null>(null)
+  // Where a seek is headed: the knob waits there while the stream gets to it, instead
+  // of jumping back to the old time and then forward again.
+  const [landing, setLanding] = useState<{ to: number; at: number } | null>(null)
+  useEffect(() => {
+    if (landing && (Math.abs(t - landing.to) < 1.5 || Date.now() - landing.at > 6000)) setLanding(null)
+  }, [t, landing])
   const max = Number.isFinite(dur) && dur > 0 ? dur : 0
-  const v = drag ?? t
+  const v = drag ?? landing?.to ?? t
   const pct = max ? Math.min(100, (v / max) * 100) : 0
   const bpct = max ? Math.min(100, (buf / max) * 100) : 0
   const dragging = useRef(false)
+  const dragV = useRef<number | null>(null)
+  const go = (to: number) => { userSeek(to); setLanding({ to, at: Date.now() }) }
   const end = () => {
     if (!dragging.current) return
     dragging.current = false
-    setDrag((d) => { if (d !== null) userSeek(d); return null })
+    const to = dragV.current
+    dragV.current = null
+    setDrag(null)
+    if (to !== null) go(to)
     holdOff()
   }
   useEffect(() => {
@@ -257,8 +280,8 @@ function Seek({ t, dur, buf, holdOn, holdOff }: { t: number; dur: number; buf: n
   })
   const onChange = (e: ChangeEvent<HTMLInputElement>) => {
     const x = Number(e.target.value)
-    if (dragging.current) setDrag(x)
-    else userSeek(x) // keyboard
+    if (dragging.current) { dragV.current = x; setDrag(x) }
+    else go(x) // keyboard
   }
   return (
     <div className="wp-seek" style={{ ['--p' as string]: `${pct}%`, ['--b' as string]: `${bpct}%` }}>
@@ -267,7 +290,7 @@ function Seek({ t, dur, buf, holdOn, holdOff }: { t: number; dur: number; buf: n
       <input
         type="range" className="wp-seek-input" min={0} max={max || 1} step={0.5} value={Math.min(v, max || 1)}
         aria-label="Seek" aria-valuetext={`${fmtTime(v)} of ${fmtTime(max)}`} disabled={!max}
-        onPointerDown={() => { dragging.current = true; setDrag(t); holdOn() }}
+        onPointerDown={() => { dragging.current = true; dragV.current = null; setDrag(v); holdOn() }}
         onChange={onChange}
       />
     </div>
@@ -398,35 +421,37 @@ function FsChat() {
   )
 }
 
-/** The chat box in fullscreen, where the chat panel is out of view. */
-/** The fullscreen chat field. With an on-screen keyboard it floats just above the keyboard
- *  so you can see what you type, and Send closes the keyboard and the field. With a
- *  real keyboard (a computer, a keyboard on a tablet) it stays put and stays open. */
-function FsChatForm({ online, onDone }: { online: boolean; onDone: () => void }) {
+/** The Message field. It sits outside the player's controls, so it stays while they fade.
+ *  On a phone it floats at the bottom of the screen, just above the keyboard, so you see
+ *  what you type, and Send closes the keyboard and the field. With a real keyboard (a
+ *  computer, a tablet's keyboard) it sits over the bottom of the player and stays open. */
+function ChatField({ fs, online, onDone }: { fs: boolean; online: boolean; onDone: () => void }) {
   const [msg, setMsg] = useState('')
   const ref = useRef<HTMLInputElement>(null)
   const kb = useOnScreenKeyboard()
-  // A touch-only device types on the screen even when the page can't measure the keyboard
-  // (Android's web view resizes the page around it instead).
   const onScreen = kb > 0 || touchOnly()
-  useEffect(() => { ref.current?.focus({ preventScroll: true }) }, [])
+  useEffect(() => { if (!onScreen) ref.current?.focus({ preventScroll: true }) }, [onScreen])
   function submit(e: FormEvent) {
     e.preventDefault()
     if (!sendChat(msg)) return
     setMsg('')
     if (onScreen) { ref.current?.blur(); onDone() }
   }
-  return (
-    <form className="wp-fs-form" data-float={kb > 0} style={kb > 0 ? { bottom: kb + 8 } : undefined} onSubmit={submit}
+  const form = (
+    <form className="wp-fs-form" data-float={onScreen} style={onScreen ? { bottom: kb + 8 } : undefined} onSubmit={submit}
       onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDone() } }}>
       <label className="sr-only" htmlFor="wp-fs-in">Message</label>
       <input id="wp-fs-in" ref={ref} className="input" value={msg} maxLength={500} placeholder={online ? 'Message the room' : 'Connecting…'} disabled={!online}
         onChange={(e) => setMsg(e.target.value)} enterKeyHint="send" autoComplete="off"
         // Keyboard dismissed without sending: the field goes too (on a phone).
         onBlur={() => { if (onScreen && !msg.trim()) onDone() }} />
-      <button type="submit" className="wp-ctl" aria-label="Send" disabled={!online || !msg.trim()}><Icon name="send" /></button>
+      <button type="submit" className="wp-ctl" aria-label="Send" disabled={!online || !msg.trim()}
+        onPointerDown={(e) => e.preventDefault()}><Icon name="send" /></button>
     </form>
   )
+  // Fixed to the screen, so not inside the player (its layout would hold it in). In
+  // fullscreen it has to be inside what's fullscreen to show at all.
+  return onScreen ? createPortal(form, (fs && fsRoot()) || document.body) : form
 }
 
 const touchOnly = () => typeof matchMedia === 'function' && matchMedia('(hover: none) and (pointer: coarse)').matches

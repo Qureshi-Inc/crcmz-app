@@ -1913,7 +1913,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .wp-set-slot:empty { display: none; }
 
 /* Fullscreen chat box */
-.wp-fs-form { display: flex; gap: var(--space-2); align-items: center; padding: 0 var(--space-2) var(--space-2); max-width: 560px; }
+/* The Message field (Stage ChatField): over the bottom of the player, outside its fading controls. */
+.wp-fs-form { position: absolute; left: var(--space-3); right: var(--space-3); bottom: 104px; z-index: 5; display: flex; gap: var(--space-2); align-items: center; max-width: 560px; }
 .wp-fs-form .input { flex: 1; min-width: 0; background: rgba(0, 0, 0, .6); }
 
 /* Burst: the emoji, its count, and emoji confetti from both bottom corners. */
@@ -2801,9 +2802,9 @@ html[data-native-shell] .tabbar { display: none; }
 .mv-pick { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .mv-pick-size { margin-left: var(--space-2); font-size: var(--text-xs); font-weight: 600; opacity: .75; }
 
-/* Watch Party fullscreen chat field: above an on-screen keyboard (Stage FsChatForm). */
+/* On a phone the Message field floats at the bottom of the screen, above the keyboard. */
 .wp-fs-form[data-float="true"] {
-  position: fixed; left: var(--space-2); right: var(--space-2); z-index: 60; margin: 0;
+  position: fixed; left: var(--space-2); right: var(--space-2); z-index: calc(var(--z-sheet) + 10); margin: 0; color: #fff;
   padding: var(--space-2); border-radius: var(--radius-md); background: rgba(5, 3, 15, .92);
   box-shadow: 0 -4px 20px rgba(0, 0, 0, .5); max-width: none;
 }
@@ -2819,12 +2820,12 @@ html[data-native-shell] .tabbar { display: none; }
 .ring-note { font-size: var(--text-xs); }
 .ring-row[data-reachable="false"] .ring-face { opacity: .5; }
 
-/* Watch Party player: the call, subtitles and chat at the top (Stage Overlay). */
+/* Watch Party player: the call at the top (Stage Overlay); subtitles and chat are in the bottom row. */
 .wp-ov-top:has(.wp-ov-topbar) { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; }
 .wp-ov-top:has(.wp-ov-topbar) .wp-ov-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wp-ov-topbar { grid-column: 2; display: flex; align-items: center; gap: var(--space-1); justify-content: center; }
 .wp-cc { position: relative; display: inline-flex; }
-.wp-cc-menu { position: absolute; top: calc(100% + var(--space-1)); right: 0; z-index: 30; display: grid; min-width: 180px; max-height: 240px; overflow-y: auto; padding: var(--space-1); border-radius: var(--radius-md); }
+.wp-cc-menu { position: absolute; bottom: calc(100% + var(--space-1)); right: 0; z-index: 30; display: grid; min-width: 180px; max-height: max(120px, min(240px, calc(100cqw * 9 / 16 - 72px))); overflow-y: auto; padding: var(--space-1); border-radius: var(--radius-md); }
 .wp-cc-item { min-height: 44px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
 .wp-cc-item[aria-checked="true"] { color: var(--interactive-text); font-weight: 700; }
 .wp-cc-item:hover, .wp-cc-item:focus-visible { background: rgba(255, 255, 255, .08); }

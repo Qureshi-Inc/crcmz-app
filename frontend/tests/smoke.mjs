@@ -1968,8 +1968,9 @@ try {
     }
     await page.waitForSelector('.wp-ov-mid button[aria-label="Pause"]')
     const top = await page.locator('.wp-ov-topbar button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')))
-    check('watch: camera, chat and sync sit at the top; the bottom row keeps the video controls', top.includes('Join with camera') && top.includes('Chat') && top.includes('Sync to the room')
-      && !(await page.locator('.wp-ov-row button[aria-label="Join with camera"]').count()), top.join(', '))
+    const botRow = await page.locator('.wp-ov-row button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')))
+    check('watch: the call and sync sit at the top; Message is in the bottom row with the video controls', top.includes('Join with camera') && top.includes('Sync to the room')
+      && !top.includes('Message') && botRow.includes('Message') && !botRow.includes('Join with camera'), `${top.join(', ')} | ${botRow.join(', ')}`)
     // Someone joining at 0:00 never pulls the room back: they catch up instead.
     {
       const seeks0 = await page.evaluate(() => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').length)
@@ -1996,6 +1997,19 @@ try {
       await page.waitForTimeout(150)
       check('watch sync: back in step, normal speed', (await page.evaluate(() => document.querySelector('.wp-video').playbackRate)) === 1)
     }
+    // Scrubbing back: the room's older reports and the echo of our own seek don't pull us forward again.
+    {
+      const from = await page.evaluate(() => document.querySelector('.wp-video').currentTime)
+      const seeks = await page.evaluate(() => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').length)
+      await page.focus('.wp-seek-input')
+      await page.keyboard.press('Home')
+      await page.waitForFunction((k) => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').length > k, seeks, { timeout: 3000 }).catch(() => {})
+      await page.evaluate((x) => { window.__wpFire('REC:tsMap', { p2: x + 1 }); window.__wpFire('REC:seek', 0) }, from)
+      await page.waitForTimeout(400)
+      const t = await page.evaluate(() => document.querySelector('.wp-video').currentTime)
+      const sent = await page.evaluate((k) => window.__wpEmits.filter((e) => e[0] === 'CMD:seek').slice(k).map((e) => e[1]), seeks)
+      check('watch scrub: one seek goes to the room, and older reports don\'t drag it back', t < 2 && sent.length === 1 && sent[0] === 0, `from ${from}, now ${t}, sent ${JSON.stringify(sent)}`)
+    }
     // Fullscreen on a phone: tapping the button doesn't pin the controls; they fade and the cameras stay.
     {
       const fsBtn = await page.locator('.wp-ov-row button[aria-label="Fullscreen"]').boundingBox()
@@ -2007,9 +2021,13 @@ try {
       await page.waitForFunction(() => document.querySelector('.wp-stage')?.getAttribute('data-chrome') === 'true', null, { timeout: 3000 }).catch(() => {})
       check('watch: a touch brings the fullscreen controls back', (await page.getAttribute('.wp-stage', 'data-chrome')) === 'true')
       // The fullscreen chat field: send, and on a phone the field and its keyboard go away.
-      const chatBtn = await page.locator('.wp-ov-topbar button[aria-label="Chat"]').boundingBox()
+      const chatBtn = await page.locator('.wp-ov-row button[aria-label="Message"]').boundingBox()
       await page.touchscreen.tap(chatBtn.x + chatBtn.width / 2, chatBtn.y + chatBtn.height / 2)
       await page.waitForSelector('#wp-fs-in')
+      const focused = await page.evaluate(() => document.activeElement?.id === 'wp-fs-in')
+      await page.waitForTimeout(3200)   // longer than the controls take to fade
+      const seen = await page.evaluate(() => { const f = document.querySelector('#wp-fs-in'); if (!f) return 'gone'; let e = f; while (e) { if (getComputedStyle(e).opacity === '0') return 'faded'; e = e.parentElement } const r = f.getBoundingClientRect(); return r.bottom <= innerHeight && r.top >= 0 ? 'ok' : `off ${r.top}` })
+      check('watch: the fullscreen Message field opens focused and stays in view while the controls fade', focused && seen === 'ok', `focused=${focused} ${seen}`)
       await page.fill('#wp-fs-in', 'from fullscreen')
       await page.press('#wp-fs-in', 'Enter')
       await page.waitForFunction(() => window.__wpEmits.some((e) => e[0] === 'CMD:chatV2' && e[1]?.msg === 'from fullscreen'), null, { timeout: 3000 }).catch(() => {})

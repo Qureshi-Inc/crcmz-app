@@ -169,8 +169,11 @@ class LauncherActivity : AppCompatActivity() {
         // the native bar sits above the gesture bar.
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            // The window shrinks above the keyboard; the gesture bar is under it then.
+            val typing = insets.isVisible(WindowInsetsCompat.Type.ime())
+            shell.keyboard = typing
             shell.bar.updatePadding(bottom = bars.bottom)
-            refresh.updatePadding(top = bars.top, bottom = if (shell.bar.visibility == View.VISIBLE) 0 else bars.bottom)
+            refresh.updatePadding(top = bars.top, bottom = if (shell.bar.visibility == View.VISIBLE || typing) 0 else bars.bottom)
             calls.insets(bars.top, bars.bottom)
             insets
         }
