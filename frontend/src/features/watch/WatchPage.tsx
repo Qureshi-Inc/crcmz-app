@@ -19,6 +19,7 @@ export { OrbPosControl } from './Settings'
 import {
   attachLayout, canCall, canPopOut, clearVideo, popOut, exitFs, joinCall, leave, rejoin, setTitle, setVideo, start, useWatch, videoLabel, type WatchState,
 } from './session'
+import { isMusicLink, sharedLink } from '../share/SharePage'
 import { HelpLink } from '../../components/HelpLink'
 
 export function WatchPage({ visible }: { visible: boolean }) {
@@ -131,8 +132,10 @@ function VideoForm({ s }: { s: WatchState }) {
   useEffect(() => {
     const q = new URLSearchParams(loc.search)
     if (!/^\/watch\/party/.test(loc.pathname) || !['paste', 'url', 'text'].some((k) => q.has(k))) return
-    const shared = [q.get('url'), q.get('text')].map((v) => /https?:\/\/\S+/i.exec(v || '')?.[0]).find(Boolean)
-    if (shared) setUrl(shared.replace(/[)\].,!?'"]+$/, ''))
+    const shared = sharedLink(q.get('url'), q.get('text'))
+    // A song shared from Spotify, Apple Music…, by an app that sends every share here: Slap.
+    if (isMusicLink(shared)) { navigate(`/share?${q}`, { replace: true }); return }
+    if (shared) setUrl(shared)
     navigate({ pathname: loc.pathname, search: '' }, { replace: true })
     const t = window.setTimeout(() => {
       urlRef.current?.scrollIntoView({ block: 'center' })

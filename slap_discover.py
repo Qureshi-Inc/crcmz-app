@@ -106,6 +106,19 @@ def _conn() -> sqlite3.Connection:
                 artist   TEXT NOT NULL,
                 ts       REAL NOT NULL
             );
+            -- Songs shared to the app (a phone's share sheet): followed until they land,
+            -- so the person who shared one hears it's in the library.
+            CREATE TABLE IF NOT EXISTS shares (
+                job_id   TEXT PRIMARY KEY,
+                sub      TEXT NOT NULL,
+                url      TEXT NOT NULL,
+                title    TEXT NOT NULL DEFAULT '',
+                artist   TEXT NOT NULL DEFAULT '',
+                status   TEXT NOT NULL DEFAULT 'downloading',   -- downloading | done | failed
+                track_id TEXT NOT NULL DEFAULT '',
+                error    TEXT NOT NULL DEFAULT '',
+                ts       REAL NOT NULL
+            );
         """)
         _ready = True
     return c
@@ -448,8 +461,80 @@ async def add_song(person: dict, *, url: str = "", title: str = "", artist: str 
                    (jid, sub, who, title or url, artist, time.time()))
     logger.info("discover: added for %s: %s (job %s)", who, title or url, jid)
     return {"ok": True, "status": "downloading", "title": title or None, "artist": artist or None,
-            "for": person.get("display_name") or who, "picks": who,
+            "for": person.get("display_name") or who, "picks": who, "job_id": jid,
             "note": "It lands in the Slap library in a minute or two, in their picks."}
+
+
+_LINK = re.compile(r"https?://\S+")
+
+
+def music_link(text: str) -> str:
+    """The first music link in what a share sheet sent (often 'Song by Artist https://…')."""
+    for m in _LINK.finditer(text or ""):
+        u = m.group(0).rstrip(").,;'\"")
+        if _MUSIC_HOSTS.match(u):
+            return u
+    return ""
+
+
+# Who to tell when a shared song lands: server.py wires notifications.route_in_background.
+notify = None
+
+
+async def share_song(person: dict, text: str) -> dict:
+    """A link shared to the app: download it into the library for this person (their picks),
+    and remember it so they get told when it's in."""
+    url = music_link(text)
+    if not url:
+        return {"error": "that isn't a music link I can download (Apple Music, Spotify, YouTube, SoundCloud, Deezer or Tidal)"}
+    r = await add_song(person, url=url)
+    jid = r.pop("job_id", "")
+    if r.get("ok") and r.get("status") == "downloading" and jid:
+        with _lock, _conn() as db:
+            db.execute("INSERT OR REPLACE INTO shares(job_id, sub, url, title, artist, ts) VALUES (?,?,?,?,?,?)",
+                       (jid, person.get("zitadel_id") or "", url, r.get("title") or "", r.get("artist") or "", time.time()))
+    return r
+
+
+def shares_pending() -> bool:
+    with _conn() as db:
+        return db.execute("SELECT 1 FROM shares WHERE status = 'downloading' LIMIT 1").fetchone() is not None
+
+
+async def follow_shares() -> int:
+    """Check shared songs' importer jobs; tell the sharer when one lands (or fails)."""
+    with _conn() as db:
+        rows = [dict(r) for r in db.execute("SELECT * FROM shares WHERE status = 'downloading'")]
+    changed = 0
+    for sh in rows:
+        try:
+            job = await _importer_get(f"/jobs/{sh['job_id']}")
+        except HTTPException as e:
+            if e.status_code != 404:
+                continue
+            job = {"status": "failed", "error_message": "the importer lost this one"}
+        st = str(job.get("status") or "").lower()
+        title = str(job.get("title") or sh["title"] or "Your song")
+        artist = str(job.get("artist") or sh["artist"] or "")
+        if st == "complete":
+            index = await library_index(refresh=True)
+            hit = index.find(title, artist)
+            with _lock, _conn() as db:
+                db.execute("UPDATE shares SET status='done', title=?, artist=?, track_id=? WHERE job_id=?",
+                           (title, artist, hit["id"] if hit else "", sh["job_id"]))
+            if notify:
+                notify("music", f"🎵 {title} is in Slap", f"{title}{' · ' + artist if artist else ''}: added to your picks.",
+                       "/app/slap", only=[sh["sub"]], tag=f"share-{sh['job_id']}", dms=False)
+            changed += 1
+        elif st in ("failed", "cancelled") or time.time() - sh["ts"] > 6 * 3600:
+            err = str(job.get("error_message") or "the download didn't work")[:200]
+            with _lock, _conn() as db:
+                db.execute("UPDATE shares SET status='failed', error=? WHERE job_id=?", (err, sh["job_id"]))
+            if notify:
+                notify("music", "Couldn't add that song to Slap", f"{title}: {err}", "/app/slap",
+                       only=[sh["sub"]], tag=f"share-{sh['job_id']}", dms=False)
+            changed += 1
+    return changed
 
 
 def _update(week: str, apple_id: str, **cols: Any) -> None:

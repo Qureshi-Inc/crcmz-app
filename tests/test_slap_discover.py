@@ -169,7 +169,7 @@ d.ITUNES_GAP_S = 0
 
 def reset():
     with d._conn() as db:
-        db.executescript("DELETE FROM finds; DELETE FROM weeks; DELETE FROM credits; DELETE FROM offered;")
+        db.executescript("DELETE FROM finds; DELETE FROM weeks; DELETE FROM credits; DELETE FROM offered; DELETE FROM shares;")
     slap._cache.clear()
     IMPORTER.clear(); JOBS.clear()
     d._last_poll = 0.0
@@ -463,8 +463,37 @@ def http_tests():
         for leak in ("u-zub", "job-", "music.apple.com"):
             assert leak not in out, leak
 
+    def a_shared_song_downloads_and_the_sharer_hears_when_its_in():
+        reset()
+        told: list[tuple] = []
+        d.notify = lambda *a, **k: told.append((a, k))
+        try:
+            assert client.post("/api/slap/share", json={"text": "look https://example.com/x"}, cookies=cookie, headers=origin).status_code == 400
+            r = client.post("/api/slap/share", cookies=cookie, headers=origin,
+                            json={"text": "Saturn by SZA https://open.spotify.com/track/abc?si=1)", "url": ""})
+            assert r.status_code == 200 and r.json()["status"] == "downloading" and "job_id" not in r.json(), r.text
+            assert IMPORTER[-1][1]["url"] == "https://open.spotify.com/track/abc?si=1", IMPORTER[-1]
+            assert d.shares_pending()
+            run(d.follow_shares())
+            assert told == [], "still downloading: nothing to say"
+            have = JF.tracks[0]
+            jid = list(JOBS)[-1]
+            JOBS[jid].update(status="complete", title=have["Name"], artist=(have.get("Artists") or [""])[0])
+            run(d.follow_shares())
+            (cat, title, *_), kw = told[-1]
+            assert cat == "music" and have["Name"] in title and kw["only"] == ["u-zub"] and kw["dms"] is False, told
+            assert not d.shares_pending()
+            person["tags"] = {"review": "true"}
+            try:
+                assert client.post("/api/slap/share", json={"url": "https://open.spotify.com/track/abc"}, cookies=cookie, headers=origin).status_code == 403
+            finally:
+                person.pop("tags")
+        finally:
+            d.notify = None
+
     for fn in (discover_needs_a_session_and_downloads_credit_the_caller, assistant_tool_shows_finds_without_ids,
-               the_app_review_account_gets_no_new_finds, every_member_reads_as_their_name_by_any_username):
+               the_app_review_account_gets_no_new_finds, every_member_reads_as_their_name_by_any_username,
+               a_shared_song_downloads_and_the_sharer_hears_when_its_in):
         check(fn.__name__, fn)
 
 

@@ -9,17 +9,86 @@
   "orientation": "any",
   "background_color": "#05030f",
   "theme_color": "#05030f",
-  "categories": ["social", "entertainment", "music"],
+  "categories": [
+    "social",
+    "entertainment",
+    "music"
+  ],
   "icons": [
-    { "src": "/app/pwa/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/app/pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/app/pwa/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
-    { "src": "/app/pwa/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "/app/pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app/pwa/maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/app/pwa/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
   "shortcuts": [
-    { "name": "Slap", "url": "/app/slap", "icons": [{ "src": "/app/pwa/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Watch Party", "url": "/app/watch", "icons": [{ "src": "/app/pwa/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Huddle", "url": "/app/huddle", "icons": [{ "src": "/app/pwa/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Clips", "url": "/app/clips", "icons": [{ "src": "/app/pwa/icon-192.png", "sizes": "192x192" }] }
-  ]
+    {
+      "name": "Slap",
+      "url": "/app/slap",
+      "icons": [
+        {
+          "src": "/app/pwa/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Watch Party",
+      "url": "/app/watch",
+      "icons": [
+        {
+          "src": "/app/pwa/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Huddle",
+      "url": "/app/huddle",
+      "icons": [
+        {
+          "src": "/app/pwa/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Clips",
+      "url": "/app/clips",
+      "icons": [
+        {
+          "src": "/app/pwa/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ],
+  "share_target": {
+    "action": "/app/share",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
 }

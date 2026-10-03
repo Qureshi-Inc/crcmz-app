@@ -13,6 +13,7 @@ import { AdminPage } from '../features/admin/AdminPage'
 import { Handoff, NotFound } from '../features/handoff/Handoff'
 import { HuddlePage } from '../features/huddle/HuddlePage'
 import { NoteViewPage, NotesListPage } from '../features/huddle/NotesPage'
+import { SharePage } from '../features/share/SharePage'
 import { WhatsAppPage } from '../features/whatsapp/WhatsAppPage'
 import { CoachPage } from '../features/coach/CoachPage'
 import { GiveawayPage } from '../features/giveaway/GiveawayPage'
@@ -58,6 +59,7 @@ export function App() {
               <Route path="huddle" element={<HuddlePage />} />
               <Route path="huddle/notes" element={<NotesListPage />} />
               <Route path="huddle/notes/:id" element={<NoteViewPage />} />
+              <Route path="share" element={<SharePage />} />
               <Route path="coach" element={<CoachPage />} />
               <Route path="ask" element={<Suspense fallback={null}><AskPage /></Suspense>} />
               <Route path="settings" element={<SettingsPage />} />

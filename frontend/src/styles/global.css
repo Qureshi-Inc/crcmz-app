@@ -2867,3 +2867,8 @@ html[data-native-shell] .tabbar { display: none; }
 .notes-reader-title { flex: 1; min-width: 0; margin: 0; font-size: var(--text-base); font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notes-reader-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: var(--space-5) var(--gutter) var(--space-8); }
 .notes-reader-body .notes-md { max-width: 720px; margin: 0 auto; font-size: 1.05rem; }
+
+/* Share → CRCMZ (features/share/SharePage). */
+.share-card { max-width: 520px; margin: var(--space-6) auto; padding: var(--space-6); border-radius: var(--radius-lg); display: grid; gap: var(--space-3); justify-items: center; text-align: center; }
+.share-card p { margin: 0; }
+.share-icon, .share-icon svg { width: 40px; height: 40px; color: var(--neon-cyan); }

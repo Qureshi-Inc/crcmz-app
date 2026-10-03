@@ -1218,6 +1218,21 @@ def build_router(get_session, is_admin) -> APIRouter:
             logger.info("slap: discover couldn't check downloads: %s", e.detail)
         return {**await asyncio.to_thread(discover.current), "making": discover._gen_lock.locked()}
 
+    @router.post("/share")
+    async def share(request: Request):
+        """A link shared to the app from Spotify, Apple Music…: downloaded into the library,
+        filed in the sharer's picks; they're told when it's in. Body: {url?, text?}."""
+        me = await caller(request)
+        if _reviewer(me):
+            raise HTTPException(403, "sharing songs isn't on for this account")
+        b = await body_of(request)
+        if not me.get("person"):
+            raise HTTPException(400, "you aren't in the squad's directory yet, so there are no picks to file it in")
+        r = await discover.share_song(me["person"], f"{_s(b.get('url'), 2000)} {_s(b.get('text'), 2000)}")
+        if r.get("error"):
+            raise HTTPException(400, r["error"])
+        return r
+
     @router.post("/discover/download")
     async def discover_download(request: Request):
         me = await caller(request)

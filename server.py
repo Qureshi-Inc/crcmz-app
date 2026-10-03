@@ -7230,8 +7230,21 @@ async def _start_slap_discover():
     """Expire last week's undownloaded finds, make this week's, and file every import
     into its person's picks playlist."""
     import slap_discover
+    slap_discover.notify = _notify.route_in_background
     if _slap.configured() and _slap.SLAP_ADMIN_TOKEN:
         asyncio.create_task(slap_discover.loop())
+
+    async def _follow_shares():
+        # Songs shared to the app: tell whoever shared one when it's in the library.
+        while True:
+            await asyncio.sleep(20)
+            try:
+                if await asyncio.to_thread(slap_discover.shares_pending):
+                    await slap_discover.follow_shares()
+            except Exception:  # noqa: BLE001
+                logger.exception("slap shares")
+    if _slap.configured():
+        asyncio.create_task(_follow_shares())
 
 
 @app.on_event("startup")

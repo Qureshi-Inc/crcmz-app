@@ -2355,6 +2355,23 @@ try {
       await n.ctx.close()
     }
 
+    // ── Share → CRCMZ: a music link goes to Slap; anything else to the Watch Party. ──
+    {
+      const shares = []
+      const sh = await newPage({ width: 375, height: 800, mocks: {
+        ...WATCH,
+        'POST /api/slap/share': (r) => { shares.push(r.request().postDataJSON()); return json(200, { ok: true, status: 'downloading', title: 'Saturn', artist: 'SZA' })(r) },
+      } })
+      await ready(sh.page, `/app/share?text=${encodeURIComponent('Saturn by SZA https://open.spotify.com/track/abc?si=1')}`)
+      await sh.page.waitForSelector('.share-card .empty-title:has-text("Downloading Saturn")')
+      check('share: a Spotify link goes into Slap, once', shares.length === 1 && shares[0].url === 'https://open.spotify.com/track/abc?si=1', JSON.stringify(shares))
+      await ready(sh.page, `/app/share?url=${encodeURIComponent('https://youtu.be/dQw4w9WgXcQ')}`)
+      await sh.page.waitForURL(/\/app\/watch\/party/)
+      check('share: a video link opens the Watch Party instead', shares.length === 1)
+      check('no unmocked writes and no page errors (share)', sh.page.violations.length === 0, sh.page.violations.join(', '))
+      await sh.ctx.close()
+    }
+
     // ── 14. Huddle (PS-7). LiveKit is a fake client served at the CDN URL: the room,
     // the participants and their tracks are scripted from the test. Token, AI and
     // transcribe are fixtures. Nothing reaches a real LiveKit server. ──
