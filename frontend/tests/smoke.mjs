@@ -1177,9 +1177,9 @@ try {
     check('discover: new finds show song, artist and who they were picked for', (await page.locator('.find-tile').count()) === 4
       && (await page.textContent('.find-tile >> nth=0')).includes('Fresh One') && (await page.textContent('.find-tile >> nth=0')).includes('New Artist')
       && (await page.textContent('.find-tile >> nth=0')).includes('for moiz')
-      && (await page.textContent('.find-tile[data-status=queued]')).includes('Downloading')
-      && (await page.textContent('.find-tile[data-status=done]')).includes('In the library'))
-    check('discover: a play sign on every cover that has something to play', (await page.locator('.find-art .find-play').count()) === 4
+      && (await page.getAttribute('.find-tile[data-status=queued] .find-mark', 'aria-label')).startsWith('Downloading by')
+      && (await page.getAttribute('.find-tile[data-status=done] .find-mark', 'aria-label')).startsWith('In the library'))
+    check('discover: a play sign on every tiny cover that has something to play', (await page.locator('.find-art .find-play').count()) === 4
       && (await page.locator('.find-art[aria-pressed]').count()) === 3)
     check('discover: just a download icon, on finds not in yet (Try again icon when it failed)',
       (await page.locator('.find-tile[data-status=new] .find-get[aria-label^="Download"]').count()) === 1
@@ -1191,17 +1191,17 @@ try {
     await tapTargets(page, 'Slap Discover 375')
     await page.click('.find-tile[data-status=new] .find-get')
     await page.waitForFunction(() => document.querySelector('.toasts')?.textContent?.includes('your picks'))
-    check('discover: Download credits you and says where it goes', downloads.join() === '1001' && (await page.textContent('.find-tile >> nth=0')).includes('Downloading'), downloads.join())
+    check('discover: Download credits you and says where it goes', downloads.join() === '1001' && (await page.getAttribute('.find-tile >> nth=0 >> .find-mark', 'aria-label')).startsWith('Downloading by moiz'), downloads.join())
     await page.click('.find-tile[data-status=done] .find-art')
     await page.waitForSelector('.miniplayer-bar')
     check('discover: a landed find plays from the library', (await page.textContent('.miniplayer-title')).includes('Track 1'))
     check('no unmocked writes and no page errors (Slap Discover)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
-  // ── 8a'. New finds: 30 a day, 3 across, 6 in view, the rest a scroll away ──
+  // ── 8a'. New finds: 20 a day, 2 across, 3 rows (6) in view, the rest a scroll away ──
   {
     const FIND = (i) => ({ id: String(2000 + i), title: `Song ${i}`, artist: `Artist ${i}`, album: '', art: null, preview: `https://audio-ssl.itunes.apple.com/${i}.m4a`, duration: 200, for: 'moiz', status: 'new', by: null, track_id: null, error: null })
-    const disc = { week: '2026-10-03', expires: (NOW + 86400) * 1000, ready: true, making: false, why: {}, finds: Array.from({ length: 30 }, (_, i) => FIND(i)) }
+    const disc = { week: '2026-10-03', expires: (NOW + 86400) * 1000, ready: true, making: false, why: {}, finds: Array.from({ length: 20 }, (_, i) => FIND(i)) }
     const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { ...SLAP_BASE, 'GET /api/slap/discover': json(200, disc) }, match: slapMatch({}) })
     await ready(page, '/app/slap')
     await page.waitForSelector('.find-tile')
@@ -1211,7 +1211,7 @@ try {
       const inView = tiles.filter((t) => t.top >= box.top - 1 && t.bottom <= box.bottom + 1).length
       return { n: tiles.length, cols: new Set(tiles.map((t) => Math.round(t.left))).size, inView, scrolls: el.scrollHeight > el.clientHeight + 10 }
     })
-    check('discover: 30 finds, 3 across, 6 in view, the rest scroll', g.n === 30 && g.cols === 3 && g.inView === 6 && g.scrolls, JSON.stringify(g))
+    check('discover: 20 finds, 2 across, 6 in view, the rest scroll', g.n === 20 && g.cols === 2 && g.inView === 6 && g.scrolls, JSON.stringify(g))
     await shot(page, 'slap-discover-grid-375', true)
     await ctx.close()
     const off = await newPage({ width: 375, height: 800, mocks: { ...SLAP_BASE, 'GET /api/slap/discover': json(200, { ...disc, finds: [], off: true }) }, match: slapMatch({}) })

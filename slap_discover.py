@@ -47,7 +47,7 @@ _DB_PATH = Path(os.environ.get("SLAP_DISCOVER_DB", "/data/slap_discover.db"))
 _lock = threading.Lock()
 _ready = False
 
-FINDS_MAX = 30          # a 3 x 10 grid
+FINDS_MAX = 20          # 2 across, 3 rows in view, scrolls to 20
 PER_PERSON = 8          # so one person's taste can't fill it
 RECOMMEND_FOR = 6       # the squad's most active adders get recommendations
 FRESH_DAYS = 7          # a song offered this recently waits, while there are others

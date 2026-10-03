@@ -23,6 +23,7 @@ import { CallBar, useHuddleBar, useWatchBar } from '../features/watch/WatchBar'
 import { useWatchSelect } from '../features/watch/session'
 import { DESTS, MORE_ACCOUNT, SIDEBAR_FOOT, SIDEBAR_MAIN, destForPath, moreSquad, type DestId } from './nav'
 import { useTabs } from './tabs'
+import { useSlapNames } from '../lib/slap'
 import { nativeShell, onShellGo, toShell } from '../lib/nativeShell'
 import { DrawerGrip, useDrawerNav } from './drawer'
 
@@ -35,6 +36,8 @@ export function Shell() {
   const admin = useAdminCheck()
   const isAdmin = admin.data?.admin === true // fail closed: errors and loading are non-admin
   const signedOut = useSignedOut()
+  // Slap's "added by" / "picked for" names, for everyone in the squad (lib/slap.ts).
+  useSlapNames(!signedOut)
   const collapsed = usePanelCollapsed()
   const navigate = useNavigate()
   const reducedMotion = useReducedMotion()

@@ -43,7 +43,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 import crcmz_identity
@@ -191,6 +191,12 @@ async def _create_jellyfin_user(name: str) -> dict:
     _ok(await _jf("POST", f"/Users/{uid}/Policy", json=policy))
     logger.info("slap: created Jellyfin user %s", name)
     return {"id": uid, "name": name}
+
+
+def _review_person(person: dict | None) -> bool:
+    """The App Store review account (movies.is_review)."""
+    import movies
+    return movies.is_review(person)
 
 
 async def resolve_jellyfin(sub: str, person: dict) -> tuple[dict, bool]:
@@ -1165,6 +1171,27 @@ def build_router(get_session, is_admin) -> APIRouter:
             logger.warning("slap: thumb not forwarded to slaptastic: %s", e.detail)
         return await asyncio.to_thread(thumbs_for, f["track_id"], me["sub"])
 
+    # ── Names: every username a member goes by in Slap, to their name ────────
+    @router.get("/names")
+    async def names(request: Request):
+        """{username: display name} for everyone in the identity graph: their Mattermost,
+        Jellyfin and chosen usernames (slaptastic and Slap use all three). So someone who
+        joins later reads as themselves everywhere, not as a username. Names only."""
+        await caller(request)
+        people = await asyncio.to_thread(crcmz_identity.people)
+        out: dict[str, str] = {}
+        for p in people:
+            if _review_person(p):
+                continue
+            name = (p.get("display_name") or "").strip()
+            if not name or "@" in name:
+                continue
+            tags = p.get("tags") or {}
+            for key in ("mm_username", TAG, "chosen_username"):
+                if (u := (tags.get(key) or "").strip().lower()) and u not in out:
+                    out[u] = name[:40]
+        return JSONResponse(out, headers={"Cache-Control": "private, max-age=600"})
+
     # ── Discover: today's new finds ──────────────────────────────────────────
     import slap_discover as discover
 
@@ -1176,8 +1203,7 @@ def build_router(get_session, is_admin) -> APIRouter:
 
     def _reviewer(me: dict) -> bool:
         """The App Store review account sees no New finds (songs from outside the library)."""
-        import movies
-        return movies.is_review(me.get("person"))
+        return _review_person(me.get("person"))
 
     @router.get("/discover")
     async def discover_get(request: Request):

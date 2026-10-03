@@ -173,7 +173,26 @@ const SLAP_NAMES: Record<string, string> = {
   moiz: 'moiz', themoosecompany: 'moose', mutasif: 'moose', shahraiz: 'shahraiz', zubair221b: 'zubair',
   nooramin40: 'noor', deception: 'deception', brendan: 'deception', asamad89: 'asamad', samad: 'asamad',
 }
-export const slapName = (u: string | null | undefined) => (u ? SLAP_NAMES[u.toLowerCase()] ?? u : '')
+/** Everyone else (anyone who joined later): their name from the identity graph, by every
+ *  username they go by (Mattermost, Jellyfin, chosen). Loaded once by useSlapNames(). */
+let MEMBER_NAMES: Record<string, string> = {}
+export const slapName = (u: string | null | undefined) => {
+  if (!u) return ''
+  const k = u.toLowerCase()
+  return SLAP_NAMES[k] ?? MEMBER_NAMES[k] ?? u
+}
+
+/** Fetch the member names; the component that calls it re-renders when they arrive. */
+export function useSlapNames(enabled = true) {
+  const q = useQuery({
+    queryKey: ['slap', 'names'],
+    queryFn: ({ signal }) => request<Record<string, string>>('/api/slap/names', { signal, quiet401: true }),
+    staleTime: 10 * 60_000,
+    enabled,
+  })
+  if (q.data && q.data !== MEMBER_NAMES) MEMBER_NAMES = q.data
+  return q.data
+}
 
 export function fmtTime(s: number | null | undefined): string {
   if (s == null || !Number.isFinite(s) || s < 0) return '0:00'

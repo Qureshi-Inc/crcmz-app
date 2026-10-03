@@ -417,6 +417,23 @@ def http_tests():
         return {"id": "z" * 32, "name": "zubair221b"}, False
     slap.resolve_jellyfin = fake_jf_user
 
+    def every_member_reads_as_their_name_by_any_username():
+        import crcmz_identity
+        nooni = {"zitadel_id": "u-n", "display_name": "Nooni", "username": "nuharqam@gmail.com",
+                 "tags": {"mm_username": "nuharqam", "jellyfin_user": "mythnuni", "chosen_username": "mythnuni"}}
+        reviewer = {"zitadel_id": "u-r", "display_name": "App Review", "tags": {"review": "true", "mm_username": "appreview"}}
+        old = crcmz_identity.people
+        crcmz_identity.people = lambda refresh=False: [person, nooni, reviewer]
+        try:
+            r = client.get("/api/slap/names", cookies=cookie)
+            assert r.status_code == 200, r.text
+            n = r.json()
+            assert n["nuharqam"] == "Nooni" and n["mythnuni"] == "Nooni", n
+            assert "appreview" not in n, "the App Store reviewer stays out"
+            assert client.get("/api/slap/names").status_code == 401
+        finally:
+            crcmz_identity.people = old
+
     def the_app_review_account_gets_no_new_finds():
         reset()
         run(d.generate())
@@ -447,7 +464,7 @@ def http_tests():
             assert leak not in out, leak
 
     for fn in (discover_needs_a_session_and_downloads_credit_the_caller, assistant_tool_shows_finds_without_ids,
-               the_app_review_account_gets_no_new_finds):
+               the_app_review_account_gets_no_new_finds, every_member_reads_as_their_name_by_any_username):
         check(fn.__name__, fn)
 
 

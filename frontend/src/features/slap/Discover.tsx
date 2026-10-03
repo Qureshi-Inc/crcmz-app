@@ -1,5 +1,5 @@
 // Slap · Discover, the first thing Slap shows. The week's AI mix from the library,
-// what just came in, what the squad is playing, and New finds: up to 30 AI picks a day
+// what just came in, what the squad is playing, and New finds: up to 20 AI picks a day
 // the library doesn't have. The play sign on a cover is Apple's 30-second preview; the
 // download icon brings the song in and files it in the presser's picks. Finds nobody
 // downloads leave at midnight (Pacific) and tomorrow brings new ones.
@@ -174,39 +174,44 @@ function FindTile({ f, hearing, busy, isAdmin, track, onListen, onDownload, onAp
   const canGet = f.status === 'new' || f.status === 'failed'
   return (
     <li className="find-tile" data-status={f.status}>
-      <span className="find-cover">
-        <button type="button" className="find-art" onClick={done ? () => play([track!]) : onListen} disabled={!canHear}
-          aria-pressed={done ? undefined : hearing}
-          aria-label={done ? `Play ${f.title}` : `${hearing ? 'Stop' : 'Hear'} a preview of ${f.title}`}>
-          {f.art ? <img src={f.art} alt="" loading="lazy" decoding="async" /> : <Icon name="slap" />}
-          {canHear && <span className="find-play" aria-hidden="true"><Icon name={hearing ? 'pause' : 'play'} /></span>}
-        </button>
-        {canGet && (
-          <button type="button" className="find-get" onClick={onDownload} disabled={busy}
-            aria-label={busy ? `Starting the download of ${f.title}` : f.status === 'failed' ? `Try downloading ${f.title} again` : `Download ${f.title}`}
-            title={f.status === 'failed' ? (f.error ?? "Download didn't work") : 'Download'}>
-            <Icon name={f.status === 'failed' ? 'refresh' : 'download'} />
-          </button>
-        )}
+      <button type="button" className="find-art" onClick={done ? () => play([track!]) : onListen} disabled={!canHear}
+        aria-pressed={done ? undefined : hearing}
+        aria-label={done ? `Play ${f.title}` : `${hearing ? 'Stop' : 'Hear'} a preview of ${f.title}`}>
+        {f.art ? <img src={f.art} alt="" loading="lazy" decoding="async" /> : <Icon name="slap" />}
+        {canHear && <span className="find-play" aria-hidden="true"><Icon name={hearing ? 'pause' : 'play'} /></span>}
+      </button>
+      <span className="find-text">
+        <span className="find-title" title={f.title}>{f.title}</span>
+        <span className="find-sub" title={f.artist}>{f.artist}</span>
+        {f.for && <span className="find-for">for {slapName(f.for) || f.for}</span>}
       </span>
-      <span className="find-title" title={f.title}>{f.title}</span>
-      <span className="find-sub" title={f.artist}>{f.artist}</span>
-      {f.for && <span className="find-for">for {slapName(f.for) || f.for}</span>}
-      <FindState f={f} by={by} />
+      <FindMark f={f} by={by} />
+      {canGet && (
+        <button type="button" className="find-get" onClick={onDownload} disabled={busy}
+          aria-label={busy ? `Starting the download of ${f.title}` : f.status === 'failed' ? `Try downloading ${f.title} again` : `Download ${f.title}`}
+          title={f.status === 'failed' ? (f.error ?? "Download didn't work") : 'Download'}>
+          <Icon name={f.status === 'failed' ? 'refresh' : 'download'} />
+        </button>
+      )}
       {f.status === 'review' && isAdmin && (
-        <button type="button" className="btn btn-ghost find-approve" onClick={onApprove} disabled={busy}>Approve match</button>
+        <button type="button" className="find-get" onClick={onApprove} disabled={busy} aria-label={`Approve the match for ${f.title}`} title="Approve match">
+          <Icon name="edit" />
+        </button>
       )}
     </li>
   )
 }
 
-function FindState({ f, by }: { f: Find; by: string | null }) {
+/** Where the download icon goes, once there's nothing to download: how it's going. */
+function FindMark({ f, by }: { f: Find; by: string | null }) {
   const who = by ? ` by ${by}` : ''
+  const mark = (tone: string, icon: 'sync' | 'slap', label: string) => (
+    <span className="find-mark" data-tone={tone} role="status" aria-label={label} title={label}><Icon name={icon} /></span>
+  )
   switch (f.status) {
-    case 'queued': return <span className="find-chip" data-tone="live" role="status" title={`Downloading${who}`}>Downloading…</span>
-    case 'review': return <span className="find-chip" data-tone="warn" role="status" title="Waiting for an admin to check the match">Checking match</span>
-    case 'done': return <span className="find-chip" data-tone="ok" role="status" title={by ? `Added by ${by}` : undefined}>In the library</span>
-    case 'failed': return <span className="find-chip" data-tone="bad" role="status" title={f.error ?? undefined}>Didn't work</span>
+    case 'queued': return mark('live', 'sync', `Downloading${who}`)
+    case 'review': return mark('warn', 'sync', 'Waiting for an admin to check the match')
+    case 'done': return mark('ok', 'slap', `In the library${by ? `, added by ${by}` : ''}`)
     default: return null
   }
 }

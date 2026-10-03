@@ -1139,49 +1139,55 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 .disc-chart .card-head { align-items: flex-start; gap: var(--space-3); }
 .disc-chart .card-head .meta { margin: var(--space-1) 0 0; }
 .disc-count { flex: none; white-space: nowrap; }
-/* New finds: 3 across, 2 rows in view (6 songs), the rest a scroll away (3 x 10). A row
-   is a square cover plus three lines of text, so the box shows exactly two. */
-.disc-new { container-type: inline-size; }
+/* New finds: a compact list, 2 across and 3 rows in view (6 songs), scrolling down to 20.
+   A tiny cover (tap: preview) with the song to its right and a download icon at the end. */
 .find-grid {
-  --find-cols: 3; --find-gap: var(--space-3);
-  --find-row: calc((100cqw - var(--space-1) - (var(--find-cols) - 1) * var(--find-gap)) / var(--find-cols) + 84px);
-  list-style: none; margin: var(--space-3) 0 0; padding: 2px var(--space-1) 2px 0;
-  display: grid; grid-template-columns: repeat(var(--find-cols), minmax(0, 1fr)); grid-auto-rows: var(--find-row);
-  gap: var(--find-gap);
-  max-height: calc(var(--find-row) * 2 + var(--find-gap) + 4px); overflow-y: auto; overscroll-behavior: contain;
-  scroll-snap-type: y mandatory; scrollbar-width: thin;
+  --find-row: 60px; --find-gap: var(--space-2);
+  list-style: none; margin: var(--space-3) 0 0; padding: 2px var(--space-1) 2px 2px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: var(--find-row);
+  gap: var(--find-gap) var(--space-3);
+  max-height: calc(var(--find-row) * 3 + var(--find-gap) * 2 + 4px); overflow-y: auto; overscroll-behavior: contain;
+  scroll-snap-type: y proximity; scrollbar-width: thin;
 }
-@media (min-width: 900px) { .find-grid { --find-cols: 6; } }
+@media (min-width: 900px) { .find-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .find-grid:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-md); }
-.find-tile { scroll-snap-align: start; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.find-cover { position: relative; display: block; }
+.find-tile { scroll-snap-align: start; display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .find-art {
-  position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 1; padding: 0; border: 1px solid var(--border-control);
-  border-radius: var(--radius-md); overflow: hidden; background: rgba(255, 255, 255, .06); color: var(--text-dim); cursor: pointer;
+  position: relative; flex: none; display: grid; place-items: center; width: 48px; height: 48px; padding: 0;
+  border: 1px solid var(--border-control); border-radius: var(--radius-sm, 8px); overflow: hidden;
+  background: rgba(255, 255, 255, .06); color: var(--text-dim); cursor: pointer;
 }
+.find-art::after { content: ''; position: absolute; inset: -2px; }   /* 52px to tap, with the row's gap */
 .find-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.find-art > .nav-icon { width: 36%; height: 36%; opacity: .5; }
+.find-art > .nav-icon { width: 22px; height: 22px; opacity: .5; }
 .find-art > .nav-icon svg { width: 100%; height: 100%; }
 .find-art:disabled { cursor: default; }
-.find-play { position: absolute; inset: 0; display: grid; place-items: center; }
-.find-play .nav-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: rgba(5, 3, 15, .7); color: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
-.find-play .nav-icon svg { width: 18px; height: 18px; }
+.find-play { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(5, 3, 15, .28); }
+.find-play .nav-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: rgba(5, 3, 15, .72); color: #fff; }
+.find-play .nav-icon svg { width: 12px; height: 12px; }
 .find-art[aria-pressed="true"] { border-color: var(--interactive-text); box-shadow: 0 0 0 2px var(--interactive-text); }
-/* A 44px tap target, drawn as a small badge in the cover's corner. */
+.find-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.find-tile .find-title { font-weight: 700; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-tile .find-sub { font-size: var(--text-xs); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-for { font-size: var(--text-xs); font-weight: 600; color: var(--accent-text, var(--text-dim)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-mark { flex: none; width: 30px; height: 30px; margin: 0 1px 0 7px; display: grid; place-items: center; border-radius: 50%; border: 1.5px solid currentColor; }
+.find-mark .nav-icon, .find-mark svg { width: 15px; height: 15px; }
+.find-mark[data-tone="live"] { color: var(--interactive-text); }
+.find-mark[data-tone="live"] svg { animation: find-spin 1.2s linear infinite; }
+.find-mark[data-tone="warn"] { color: var(--gold-text); }
+.find-mark[data-tone="ok"] { color: var(--live-text); }
+@keyframes find-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .find-mark[data-tone="live"] svg { animation: none; } }
+/* A 44px tap target, drawn as a small round icon. */
 .find-get {
-  position: absolute; right: 0; bottom: 0; width: 44px; height: 44px; display: grid; place-items: center;
-  border: 0; padding: 0; background: transparent; cursor: pointer;
+  flex: none; width: 44px; height: 44px; margin-right: -6px; display: grid; place-items: center;
+  border: 0; padding: 0; background: transparent; cursor: pointer; color: var(--c-btn-primary-text);
 }
-.find-get .nav-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--c-btn-primary-bg); color: var(--c-btn-primary-text); box-shadow: 0 1px 6px rgba(0,0,0,.5); }
-.find-get .nav-icon svg { width: 16px; height: 16px; }
+.find-get .nav-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--c-btn-primary-bg); }
+.find-get .nav-icon svg { width: 15px; height: 15px; }
 .find-get:disabled { opacity: .6; }
 .find-get:focus-visible { outline: none; }
 .find-get:focus-visible .nav-icon { box-shadow: var(--focus-ring); }
-.find-tile .find-title { margin-top: var(--space-1); font-weight: 700; font-size: var(--text-sm); line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.find-tile .find-sub, .find-for { font-size: var(--text-xs); line-height: 1.3; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.find-for { font-weight: 600; color: var(--accent-text, var(--text-dim)); }
-.find-tile .find-chip { align-self: flex-start; font-size: 10px; font-weight: 700; padding: 0 var(--space-2); margin-top: 1px; }
-.find-approve { min-height: 28px; padding: 0 var(--space-2); font-size: var(--text-xs); align-self: flex-start; }
 .find-tile[data-status="done"] .find-art { border-color: var(--live-text); }
 .find-chip { padding: 2px var(--space-2); border-radius: var(--radius-pill); border: 1px solid var(--border-control); color: var(--text); }
 .find-chip[data-tone="live"] { border-color: var(--interactive-text); color: var(--interactive-text); }
