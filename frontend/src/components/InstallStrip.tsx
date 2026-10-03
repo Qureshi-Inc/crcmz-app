@@ -1,5 +1,5 @@
-// One-time nudge on a phone browser: install CRCMZ to the home screen. Android gets
-// the browser's own install sheet; iOS has no API for it, so we say where the button is.
+// One-time nudge on a phone browser. Android gets the browser's own install sheet; an
+// iPhone gets pointed at the real app on TestFlight (Get the app).
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Icon } from './Icon'
@@ -18,12 +18,12 @@ export function InstallStrip() {
       <span className="install-text">
         <strong>Get the CRCMZ app</strong>
         {state === 'ios'
-          ? <span className="dim">Tap Share, then <b>Add to Home Screen</b>. You get lock-screen controls and notifications.</span>
+          ? <span className="dim">The iPhone app is on TestFlight: calls that ring, picture in picture, music with the screen locked.</span>
           : <span className="dim">Full screen, lock-screen controls and notifications.</span>}
       </span>
       {state === 'prompt'
         ? <button type="button" className="btn btn-primary" onClick={() => { void promptInstall().then((ok) => ok && dismiss()) }}>Install</button>
-        : <Link className="btn btn-secondary" to="/settings/app" onClick={dismiss}>How</Link>}
+        : <Link className="btn btn-secondary" to="/get-app" onClick={dismiss}>Get it</Link>}
       <button type="button" className="icon-btn" aria-label="Not now" onClick={dismiss}><Icon name="close" /></button>
     </div>
   )
