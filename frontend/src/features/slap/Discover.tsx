@@ -1,7 +1,8 @@
 // Slap · Discover, the first thing Slap shows. The week's AI mix from the library,
-// what just came in, what the squad is playing, and New finds: AI picks the library
-// doesn't have. Listen plays Apple's 30-second preview; Download brings the song in
-// and files it in the presser's picks. Finds nobody downloads leave when the week ends.
+// what just came in, what the squad is playing, and New finds: up to 30 AI picks a day
+// the library doesn't have. The play sign on a cover is Apple's 30-second preview; the
+// download icon brings the song in and files it in the presser's picks. Finds nobody
+// downloads leave at midnight (Pacific) and tomorrow brings new ones.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Icon } from '../../components/Icon'
@@ -136,21 +137,22 @@ function NewFinds({ isAdmin, byId }: { isAdmin: boolean; byId: Map<string, Track
   }
 
   const finds = q.data?.finds ?? []
+  if (q.data?.off) return null
   return (
     <section aria-labelledby="disc-new-h" className="disc-new">
       <div className="disc-sec-head">
         <h2 className="section-h2" id="disc-new-h">New finds</h2>
-        <p className="meta">Picked by AI for the squad, not in the library yet. Download one and it’s yours: it joins the library and your picks. The rest leave after Sunday.</p>
+        <p className="meta">Picked by AI for the squad, not in the library yet. Tap a cover to hear it; download one and it’s yours. New songs every day.</p>
       </div>
-      {q.isError ? <ErrorStrip text="Couldn't load this week's finds." onRetry={() => q.refetch()} />
+      {q.isError ? <ErrorStrip text="Couldn't load today's finds." onRetry={() => q.refetch()} />
         : q.isPending || (!finds.length && (q.data?.making || !q.data?.ready)) ? (
-          <div className="glass"><p className="meta disc-note" aria-live="polite">Finding new songs for the squad…</p><SkeletonRows n={3} height={72} /></div>
+          <div className="glass"><p className="meta disc-note" aria-live="polite">Finding new songs for the squad…</p><SkeletonRows n={2} height={120} /></div>
         ) : !finds.length ? (
-          <div className="glass empty"><p className="empty-title">No new finds this week yet</p><p className="meta">They show up once the squad has added a few songs.</p></div>
+          <div className="glass empty"><p className="empty-title">No new finds today yet</p><p className="meta">They show up once the squad has added a few songs.</p></div>
         ) : (
-          <ul className="find-list">
+          <ul className="find-grid" aria-label={`${finds.length} new finds`} tabIndex={0}>
             {finds.map((f) => (
-              <FindRow key={f.id} f={f} hearing={hearing === f.id} busy={busy === f.id} isAdmin={isAdmin}
+              <FindTile key={f.id} f={f} hearing={hearing === f.id} busy={busy === f.id} isAdmin={isAdmin}
                 track={f.track_id ? byId.get(f.track_id) : undefined}
                 onListen={() => listen(f)} onDownload={() => download(f)} onApprove={() => approve(f)} />
             ))}
@@ -160,43 +162,40 @@ function NewFinds({ isAdmin, byId }: { isAdmin: boolean; byId: Map<string, Track
   )
 }
 
-function FindRow({ f, hearing, busy, isAdmin, track, onListen, onDownload, onApprove }: {
+/** One find: the cover plays the preview (or the song, once it's in the library); the
+ *  download icon brings it in. Title, artist and who it was picked for underneath. */
+function FindTile({ f, hearing, busy, isAdmin, track, onListen, onDownload, onApprove }: {
   f: Find; hearing: boolean; busy: boolean; isAdmin: boolean; track?: Track
   onListen: () => void; onDownload: () => void; onApprove: () => void
 }) {
   const by = f.by ? slapName(f.by) || f.by : null
+  const done = f.status === 'done' && !!track
+  const canHear = done || (!!f.preview && f.status !== 'done')
+  const canGet = f.status === 'new' || f.status === 'failed'
   return (
-    <li className="glass find" data-status={f.status}>
-      <span className="slap-art find-art" aria-hidden="true">
-        {f.art ? <img src={f.art} alt="" loading="lazy" decoding="async" /> : <Icon name="slap" />}
-      </span>
-      <span className="find-text">
-        <span className="find-title">{f.title}</span>
-        <span className="find-sub">{f.artist}{f.album ? ` · ${f.album}` : ''}</span>
-        <span className="find-why">
-          {f.for ? <>Picked for {slapName(f.for) || f.for}</> : null}
-          <FindState f={f} by={by} />
-        </span>
-      </span>
-      <span className="find-acts">
-        {f.preview && f.status !== 'done' && (
-          <button type="button" className="btn btn-secondary" onClick={onListen} aria-pressed={hearing}
-            aria-label={`${hearing ? 'Stop' : 'Listen to'} a preview of ${f.title}`}>
-            <Icon name={hearing ? 'pause' : 'play'} />{hearing ? 'Stop' : 'Listen'}
+    <li className="find-tile" data-status={f.status}>
+      <span className="find-cover">
+        <button type="button" className="find-art" onClick={done ? () => play([track!]) : onListen} disabled={!canHear}
+          aria-pressed={done ? undefined : hearing}
+          aria-label={done ? `Play ${f.title}` : `${hearing ? 'Stop' : 'Hear'} a preview of ${f.title}`}>
+          {f.art ? <img src={f.art} alt="" loading="lazy" decoding="async" /> : <Icon name="slap" />}
+          {canHear && <span className="find-play" aria-hidden="true"><Icon name={hearing ? 'pause' : 'play'} /></span>}
+        </button>
+        {canGet && (
+          <button type="button" className="find-get" onClick={onDownload} disabled={busy}
+            aria-label={busy ? `Starting the download of ${f.title}` : f.status === 'failed' ? `Try downloading ${f.title} again` : `Download ${f.title}`}
+            title={f.status === 'failed' ? (f.error ?? "Download didn't work") : 'Download'}>
+            <Icon name={f.status === 'failed' ? 'refresh' : 'download'} />
           </button>
         )}
-        {(f.status === 'new' || f.status === 'failed') && (
-          <button type="button" className="btn btn-primary" onClick={onDownload} disabled={busy}>
-            <Icon name="download" />{busy ? 'Starting…' : f.status === 'failed' ? 'Try again' : 'Download'}
-          </button>
-        )}
-        {f.status === 'review' && isAdmin && (
-          <button type="button" className="btn btn-primary" onClick={onApprove} disabled={busy}>Approve match</button>
-        )}
-        {f.status === 'done' && track && (
-          <button type="button" className="btn btn-primary" onClick={() => play([track])}><Icon name="play" />Play</button>
-        )}
       </span>
+      <span className="find-title" title={f.title}>{f.title}</span>
+      <span className="find-sub" title={f.artist}>{f.artist}</span>
+      {f.for && <span className="find-for">for {slapName(f.for) || f.for}</span>}
+      <FindState f={f} by={by} />
+      {f.status === 'review' && isAdmin && (
+        <button type="button" className="btn btn-ghost find-approve" onClick={onApprove} disabled={busy}>Approve match</button>
+      )}
     </li>
   )
 }
@@ -204,10 +203,10 @@ function FindRow({ f, hearing, busy, isAdmin, track, onListen, onDownload, onApp
 function FindState({ f, by }: { f: Find; by: string | null }) {
   const who = by ? ` by ${by}` : ''
   switch (f.status) {
-    case 'queued': return <span className="find-chip" data-tone="live" role="status">Downloading{who}…</span>
-    case 'review': return <span className="find-chip" data-tone="warn" role="status">Waiting for an admin to check the match</span>
-    case 'done': return <span className="find-chip" data-tone="ok" role="status">In the library{by ? ` · added by ${by}` : ''}</span>
-    case 'failed': return <span className="find-chip" data-tone="bad" role="status" title={f.error ?? undefined}>Download didn't work</span>
+    case 'queued': return <span className="find-chip" data-tone="live" role="status" title={`Downloading${who}`}>Downloading…</span>
+    case 'review': return <span className="find-chip" data-tone="warn" role="status" title="Waiting for an admin to check the match">Checking match</span>
+    case 'done': return <span className="find-chip" data-tone="ok" role="status" title={by ? `Added by ${by}` : undefined}>In the library</span>
+    case 'failed': return <span className="find-chip" data-tone="bad" role="status" title={f.error ?? undefined}>Didn't work</span>
     default: return null
   }
 }

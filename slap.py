@@ -1165,7 +1165,7 @@ def build_router(get_session, is_admin) -> APIRouter:
             logger.warning("slap: thumb not forwarded to slaptastic: %s", e.detail)
         return await asyncio.to_thread(thumbs_for, f["track_id"], me["sub"])
 
-    # ── Discover: this week's new finds ──────────────────────────────────────
+    # ── Discover: today's new finds ──────────────────────────────────────────
     import slap_discover as discover
 
     def kick_generate() -> None:
@@ -1174,9 +1174,17 @@ def build_router(get_session, is_admin) -> APIRouter:
             _reroll_tasks.add(task)
             task.add_done_callback(_reroll_tasks.discard)
 
+    def _reviewer(me: dict) -> bool:
+        """The App Store review account sees no New finds (songs from outside the library)."""
+        import movies
+        return movies.is_review(me.get("person"))
+
     @router.get("/discover")
     async def discover_get(request: Request):
-        await caller(request)
+        me = await caller(request)
+        if _reviewer(me):
+            return {"week": discover.week_of(), "expires": 0, "finds": [], "why": {}, "ready": True,
+                    "making": False, "off": True}
         kick_generate()
         try:
             await discover.follow_downloads()
@@ -1187,6 +1195,8 @@ def build_router(get_session, is_admin) -> APIRouter:
     @router.post("/discover/download")
     async def discover_download(request: Request):
         me = await caller(request)
+        if _reviewer(me):
+            raise HTTPException(403, "finds_off")
         b = await body_of(request)
         fid = _s(b.get("id"), 20)
         if not fid.isdigit():

@@ -1171,26 +1171,55 @@ try {
     })
     await page.route('https://audio-ssl.itunes.apple.com/**', serveRange(STUDIO_VIDEO, 'video/webm'))
     await ready(page, '/app/slap')
-    await page.waitForSelector('.find')
+    await page.waitForSelector('.find-tile')
     check('discover: Slap opens on Discover', (await page.getAttribute('.seg-4 [role=tab][data-state=active]', 'id'))?.includes('discover') || (await page.textContent('.seg-4 [role=tab][data-state=active]')) === 'Discover')
     check('discover: the AI mix leads, from the library', (await page.textContent('#disc-mix-h')) === 'Friday fuel' && (await page.locator('.disc-hero .shelf-card').count()) === 1)
-    check('discover: four new finds with their state', (await page.locator('.find').count()) === 4
-      && (await page.textContent('.find[data-status=queued]')).includes('Downloading by zubair')
-      && (await page.textContent('.find[data-status=done]')).includes('added by noor'))
-    check('discover: Listen on every find not in the library', (await page.locator('.find button[aria-pressed]').count()) === 3)
-    check('discover: failed finds offer Try again', (await page.textContent('.find[data-status=failed] .btn-primary')).includes('Try again'))
+    check('discover: new finds show song, artist and who they were picked for', (await page.locator('.find-tile').count()) === 4
+      && (await page.textContent('.find-tile >> nth=0')).includes('Fresh One') && (await page.textContent('.find-tile >> nth=0')).includes('New Artist')
+      && (await page.textContent('.find-tile >> nth=0')).includes('for moiz')
+      && (await page.textContent('.find-tile[data-status=queued]')).includes('Downloading')
+      && (await page.textContent('.find-tile[data-status=done]')).includes('In the library'))
+    check('discover: a play sign on every cover that has something to play', (await page.locator('.find-art .find-play').count()) === 4
+      && (await page.locator('.find-art[aria-pressed]').count()) === 3)
+    check('discover: just a download icon, on finds not in yet (Try again icon when it failed)',
+      (await page.locator('.find-tile[data-status=new] .find-get[aria-label^="Download"]').count()) === 1
+      && (await page.locator('.find-tile[data-status=failed] .find-get[aria-label^="Try downloading"]').count()) === 1
+      && (await page.locator('.find-tile[data-status=done] .find-get, .find-tile[data-status=queued] .find-get').count()) === 0)
     check('discover: charts and recently added show', (await page.locator('#disc-fav-h').count()) === 1 && (await page.locator('#disc-hot-h').count()) === 1 && (await page.locator('#disc-recent-h').count()) === 1)
     await shot(page, 'slap-discover-375', true)
     await axe(page, 'Slap Discover 375', '.app-main')
     await tapTargets(page, 'Slap Discover 375')
-    await page.click('.find[data-status=new] .btn-primary')
+    await page.click('.find-tile[data-status=new] .find-get')
     await page.waitForFunction(() => document.querySelector('.toasts')?.textContent?.includes('your picks'))
-    check('discover: Download credits you and says where it goes', downloads.join() === '1001' && (await page.textContent('.find >> nth=0')).includes('Downloading by moiz'), downloads.join())
-    await page.click('.find[data-status=done] .btn-primary')
+    check('discover: Download credits you and says where it goes', downloads.join() === '1001' && (await page.textContent('.find-tile >> nth=0')).includes('Downloading'), downloads.join())
+    await page.click('.find-tile[data-status=done] .find-art')
     await page.waitForSelector('.miniplayer-bar')
     check('discover: a landed find plays from the library', (await page.textContent('.miniplayer-title')).includes('Track 1'))
     check('no unmocked writes and no page errors (Slap Discover)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
+  }
+  // ── 8a'. New finds: 30 a day, 3 across, 6 in view, the rest a scroll away ──
+  {
+    const FIND = (i) => ({ id: String(2000 + i), title: `Song ${i}`, artist: `Artist ${i}`, album: '', art: null, preview: `https://audio-ssl.itunes.apple.com/${i}.m4a`, duration: 200, for: 'moiz', status: 'new', by: null, track_id: null, error: null })
+    const disc = { week: '2026-10-03', expires: (NOW + 86400) * 1000, ready: true, making: false, why: {}, finds: Array.from({ length: 30 }, (_, i) => FIND(i)) }
+    const { ctx, page } = await newPage({ width: 375, height: 800, mocks: { ...SLAP_BASE, 'GET /api/slap/discover': json(200, disc) }, match: slapMatch({}) })
+    await ready(page, '/app/slap')
+    await page.waitForSelector('.find-tile')
+    const g = await page.$eval('.find-grid', (el) => {
+      const box = el.getBoundingClientRect()
+      const tiles = [...el.querySelectorAll('.find-tile')].map((t) => t.getBoundingClientRect())
+      const inView = tiles.filter((t) => t.top >= box.top - 1 && t.bottom <= box.bottom + 1).length
+      return { n: tiles.length, cols: new Set(tiles.map((t) => Math.round(t.left))).size, inView, scrolls: el.scrollHeight > el.clientHeight + 10 }
+    })
+    check('discover: 30 finds, 3 across, 6 in view, the rest scroll', g.n === 30 && g.cols === 3 && g.inView === 6 && g.scrolls, JSON.stringify(g))
+    await shot(page, 'slap-discover-grid-375', true)
+    await ctx.close()
+    const off = await newPage({ width: 375, height: 800, mocks: { ...SLAP_BASE, 'GET /api/slap/discover': json(200, { ...disc, finds: [], off: true }) }, match: slapMatch({}) })
+    await ready(off.page, '/app/slap')
+    await off.page.waitForSelector('#disc-mix-h')
+    await off.page.waitForTimeout(500)
+    check('discover: the App Store review account sees no New finds', (await off.page.locator('#disc-new-h').count()) === 0)
+    await off.ctx.close()
   }
   // ── 8. Slap (PS-3): Listen, the mini-player and sheet, Together, Stats ──
   {

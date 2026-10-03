@@ -1,22 +1,25 @@
-"""Slap Discover: this week's new finds, downloading them, and everyone's picks playlists.
+"""Slap Discover: today's new finds, downloading them, and everyone's picks playlists.
 
-    new finds    a weekly mix of songs the library doesn't have, from slaptastic's
+    new finds    a daily mix of songs the library doesn't have, from slaptastic's
                  per-person AI recommendations, checked against Apple's catalogue
                  (which also gives each one a 30-second preview and a link the
                  importer can download)
     Download     sends that link to music-importer's job queue; the card follows the
                  job until the song is in Jellyfin. Only downloaded songs ever reach
                  the library.
-    expiry       when the ISO week rolls over, every find nobody downloaded is
-                 deleted. Downloads in flight finish first.
+    expiry       when the day rolls over (midnight Pacific), every find nobody downloaded
+                 is deleted. Downloads in flight finish first. A song offered in the last
+                 week is skipped while there are others to offer, so each day is new.
     credit       the job carries the presser's Mattermost id, so slaptastic files the
                  song in their picks the moment it lands and counts it on the
                  leaderboard. Someone with no Mattermost account is filed here instead.
 
 DB: /data/slap_discover.db
-  weeks    week -> when its finds were made (an empty week retries after a few hours)
+  weeks    day -> when its finds were made (an empty day retries after a few hours). The
+           column is still called "week": it holds the day the mix belongs to.
   finds    one row per suggestion: what it is, where to preview it, and its download state
-  credits  importer job -> who pressed Download (kept after the week ends)
+  offered  apple_id -> the last day it was offered (so tomorrow brings different songs)
+  credits  importer job -> who pressed Download (kept after the day ends)
 """
 
 from __future__ import annotations
@@ -44,9 +47,11 @@ _DB_PATH = Path(os.environ.get("SLAP_DISCOVER_DB", "/data/slap_discover.db"))
 _lock = threading.Lock()
 _ready = False
 
-FINDS_MAX = 10          # one small section, never a flood
-PER_PERSON = 3          # so one person's taste can't fill it
-RECOMMEND_FOR = 5       # the squad's most active adders get recommendations
+FINDS_MAX = 30          # a 3 x 10 grid
+PER_PERSON = 8          # so one person's taste can't fill it
+RECOMMEND_FOR = 6       # the squad's most active adders get recommendations
+FRESH_DAYS = 7          # a song offered this recently waits, while there are others
+ITUNES_GAP_S = 1.0      # Apple's search allows ~20 requests a minute
 EMPTY_RETRY_S = 6 * 3600
 POLL_S = 10             # how often a page view may re-check downloads in flight
 DOWNLOADS_PER_DAY = 15  # per person
@@ -89,6 +94,10 @@ def _conn() -> sqlite3.Connection:
                 error       TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (week, apple_id)
             );
+            CREATE TABLE IF NOT EXISTS offered (
+                apple_id TEXT PRIMARY KEY,
+                day      TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS credits (
                 job_id   TEXT PRIMARY KEY,
                 sub      TEXT NOT NULL,
@@ -102,16 +111,23 @@ def _conn() -> sqlite3.Connection:
     return c
 
 
+# The squad lives on Pacific time: a new day of finds at midnight there.
+try:
+    from zoneinfo import ZoneInfo
+    _TZ: dt.tzinfo = ZoneInfo("America/Los_Angeles")
+except Exception:  # noqa: BLE001 - no tz database: UTC days
+    _TZ = dt.timezone.utc
+
+
 def week_of(now: float | None = None) -> str:
-    """The ISO week a mix belongs to, as its Monday (UTC)."""
-    d = dt.datetime.fromtimestamp(now if now is not None else time.time(), dt.timezone.utc).date()
-    return (d - dt.timedelta(days=d.weekday())).isoformat()
+    """The day a mix belongs to (Pacific), as YYYY-MM-DD. (Named for when mixes were weekly.)"""
+    return dt.datetime.fromtimestamp(now if now is not None else time.time(), _TZ).date().isoformat()
 
 
 def expires_at(week: str) -> int:
-    """ms since epoch when this week's finds go away."""
-    monday = dt.datetime.fromisoformat(week).replace(tzinfo=dt.timezone.utc)
-    return int((monday + dt.timedelta(days=7)).timestamp() * 1000)
+    """ms since epoch when this day's finds go away: the next midnight, Pacific."""
+    day = dt.date.fromisoformat(week) + dt.timedelta(days=1)
+    return int(dt.datetime(day.year, day.month, day.day, tzinfo=_TZ).timestamp() * 1000)
 
 
 # ── Matching songs ───────────────────────────────────────────────────────────
@@ -240,14 +256,19 @@ def needs_finds(week: str, now: float | None = None) -> bool:
 
 
 async def generate(week: str | None = None, *, force: bool = False) -> int:
-    """Make this week's finds once. Returns how many there are."""
+    """Make today's finds once. Returns how many there are."""
     week = week or week_of()
     async with _gen_lock:
         if not force and not needs_finds(week):
             return _week_state(week)[0]  # type: ignore[index]
         recs = await _recommendations()
         index = await library_index(refresh=True)
+        since = (dt.date.fromisoformat(week) - dt.timedelta(days=FRESH_DAYS)).isoformat()
+        with _conn() as db:
+            recent = {r["apple_id"] for r in db.execute(
+                "SELECT apple_id FROM offered WHERE day >= ? AND day < ?", (since, week))}
         picked: list[dict] = []
+        held: list[dict] = []   # offered lately: only if there aren't enough new ones
         seen: set[str] = set()
         async with httpx.AsyncClient(timeout=15) as client:
             # Round-robin over people so the mix is everyone's, not the top adder's.
@@ -259,11 +280,18 @@ async def generate(week: str | None = None, *, force: bool = False) -> int:
                     if index.find(title, artist):
                         continue
                     hit = await itunes_find(client, artist, title)
+                    await asyncio.sleep(ITUNES_GAP_S)
                     if not hit or hit["apple_id"] in seen or index.find(hit["title"], hit["artist"]):
                         continue
                     seen.add(hit["apple_id"])
-                    picked.append({**hit, "for_user": rec["user"], "why": rec["why"]})
+                    (held if hit["apple_id"] in recent else picked).append(
+                        {**hit, "for_user": rec["user"], "why": rec["why"]})
+        picked += held[:max(0, FINDS_MAX - len(picked))]
         with _lock, _conn() as db:
+            for f in picked:
+                db.execute("INSERT INTO offered(apple_id, day) VALUES (?,?) "
+                           "ON CONFLICT(apple_id) DO UPDATE SET day=excluded.day", (f["apple_id"], week))
+            db.execute("DELETE FROM offered WHERE day < ?", (since,))
             for pos, f in enumerate(picked):
                 db.execute(
                     "INSERT OR IGNORE INTO finds(week, apple_id, pos, title, artist, album, art, preview, url, "
@@ -273,12 +301,12 @@ async def generate(week: str | None = None, *, force: bool = False) -> int:
             n = db.execute("SELECT COUNT(*) FROM finds WHERE week=?", (week,)).fetchone()[0]
             db.execute("INSERT INTO weeks(week, ts, n) VALUES (?,?,?) ON CONFLICT(week) DO UPDATE SET "
                        "ts=excluded.ts, n=excluded.n", (week, time.time(), n))
-        logger.info("discover: %d new finds for the week of %s", n, week)
+        logger.info("discover: %d new finds for %s", n, week)
         return n
 
 
 def prune(now: float | None = None) -> int:
-    """Delete last week's finds nobody downloaded (and the finished ones; credits keep those)."""
+    """Delete earlier days' finds nobody downloaded (and the finished ones; credits keep those)."""
     week = week_of(now)
     with _lock, _conn() as db:
         n = db.execute("DELETE FROM finds WHERE week < ? AND status != 'queued'", (week,)).rowcount
@@ -488,7 +516,7 @@ def public(f: dict) -> dict:
 
 
 def current(week: str | None = None) -> dict:
-    """This week's finds, newest state first in their mix order."""
+    """Today's finds, newest state first in their mix order."""
     week = week or week_of()
     with _conn() as db:
         rows = [dict(r) for r in db.execute("SELECT * FROM finds WHERE week=? ORDER BY pos", (week,))]
@@ -501,7 +529,7 @@ def current(week: str | None = None) -> dict:
 
 
 def overview(limit: int = 20) -> dict:
-    """For the assistant: this week's finds and recent downloads. No ids or subs."""
+    """For the assistant: today's finds and recent downloads. No ids or subs."""
     limit = max(1, min(int(limit or 20), 100))
     cur = current()
     with _conn() as db:
@@ -516,7 +544,7 @@ def overview(limit: int = 20) -> dict:
 
 # ── Background ───────────────────────────────────────────────────────────────
 async def tick() -> None:
-    """One pass: expire, make this week's finds if missing, follow downloads, file picks."""
+    """One pass: expire, make today's finds if missing, follow downloads, file picks."""
     prune()
     if needs_finds(week_of()):
         try:

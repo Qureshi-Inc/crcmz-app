@@ -164,11 +164,12 @@ slap._social = FakeSocial()
 d._importer_get = fake_importer_get
 REAL_ITUNES = d.itunes_find
 d.itunes_find = fake_itunes
+d.ITUNES_GAP_S = 0
 
 
 def reset():
     with d._conn() as db:
-        db.executescript("DELETE FROM finds; DELETE FROM weeks; DELETE FROM credits;")
+        db.executescript("DELETE FROM finds; DELETE FROM weeks; DELETE FROM credits; DELETE FROM offered;")
     slap._cache.clear()
     IMPORTER.clear(); JOBS.clear()
     d._last_poll = 0.0
@@ -211,7 +212,7 @@ def matching_tests():
 def finds_tests():
     print("new finds")
 
-    def a_week_of_finds_skips_the_library_and_duplicates():
+    def a_day_of_finds_skips_the_library_and_duplicates():
         reset()
         assert run(d.generate()) == 3
         cur = d.current()
@@ -223,7 +224,7 @@ def finds_tests():
         assert cur["why"]["moiz"] == "You like rap."
         assert cur["expires"] > time.time() * 1000
 
-    def finds_are_made_once_a_week():
+    def finds_are_made_once_a_day():
         reset()
         run(d.generate())
         RECS["moiz"]["recommendations"].append("Someone - New Song")
@@ -232,7 +233,7 @@ def finds_tests():
         finally:
             RECS["moiz"]["recommendations"].pop()
 
-    def an_empty_week_tries_again_later():
+    def an_empty_day_tries_again_later():
         reset()
         old = d._recommendations
         async def none():
@@ -245,9 +246,9 @@ def finds_tests():
         assert not d.needs_finds(d.week_of())
         assert d.needs_finds(d.week_of(), now=time.time() + d.EMPTY_RETRY_S + 60)
 
-    def last_weeks_undownloaded_finds_are_deleted():
+    def yesterdays_undownloaded_finds_are_deleted():
         reset()
-        last = d.week_of(time.time() - 7 * 86400)
+        last = d.week_of(time.time() - 86400)
         run(d.generate(last))
         with d._conn() as db:
             db.execute("UPDATE finds SET status='queued' WHERE week=? AND apple_id='1001'", (last,))
@@ -257,8 +258,34 @@ def finds_tests():
             left = [r[0] for r in db.execute("SELECT apple_id FROM finds")]
         assert left == ["1001"], "a download still in flight is kept until it lands"
 
-    for fn in (a_week_of_finds_skips_the_library_and_duplicates, finds_are_made_once_a_week,
-               an_empty_week_tries_again_later, last_weeks_undownloaded_finds_are_deleted):
+    def a_new_day_starts_at_midnight_pacific():
+        import datetime as dt
+        day = d.week_of()
+        assert len(day) == 10 and dt.date.fromisoformat(day)
+        end = d.expires_at(day) / 1000
+        assert d.week_of(end - 1) == day and d.week_of(end + 1) != day
+        assert 23 * 3600 <= end - dt.datetime.fromisoformat(day).replace(tzinfo=d._TZ).timestamp() <= 25 * 3600
+
+    def each_day_brings_songs_it_didnt_just_offer():
+        reset()
+        yesterday = d.week_of(time.time() - 86400)
+        run(d.generate(yesterday))      # Not Like Us, Saturn, Delilah offered yesterday
+        RECS["moiz"]["recommendations"].insert(0, "Doechii - Anxiety")
+        APPLE[("Doechii", "Anxiety")] = "1004"
+        old = d.FINDS_MAX
+        d.FINDS_MAX = 2
+        try:
+            run(d.generate())
+            got = [f["title"] for f in d.current()["finds"]]
+            assert got[0] == "Anxiety" and len(got) == 2, got   # new first, then a repeat to fill
+        finally:
+            d.FINDS_MAX = old
+            RECS["moiz"]["recommendations"].pop(0)
+            APPLE.pop(("Doechii", "Anxiety"))
+
+    for fn in (a_day_of_finds_skips_the_library_and_duplicates, finds_are_made_once_a_day,
+               an_empty_day_tries_again_later, yesterdays_undownloaded_finds_are_deleted,
+               a_new_day_starts_at_midnight_pacific, each_day_brings_songs_it_didnt_just_offer):
         check(fn.__name__, fn)
 
 
@@ -390,6 +417,17 @@ def http_tests():
         return {"id": "z" * 32, "name": "zubair221b"}, False
     slap.resolve_jellyfin = fake_jf_user
 
+    def the_app_review_account_gets_no_new_finds():
+        reset()
+        run(d.generate())
+        person["tags"] = {"review": "true"}
+        try:
+            r = client.get("/api/slap/discover", cookies=cookie)
+            assert r.status_code == 200 and r.json()["off"] is True and r.json()["finds"] == [], r.text
+            assert client.post("/api/slap/discover/download", json={"id": "1001"}, cookies=cookie, headers=origin).status_code == 403
+        finally:
+            person.pop("tags")
+
     def discover_needs_a_session_and_downloads_credit_the_caller():
         reset()
         run(d.generate())
@@ -408,7 +446,8 @@ def http_tests():
         for leak in ("u-zub", "job-", "music.apple.com"):
             assert leak not in out, leak
 
-    for fn in (discover_needs_a_session_and_downloads_credit_the_caller, assistant_tool_shows_finds_without_ids):
+    for fn in (discover_needs_a_session_and_downloads_credit_the_caller, assistant_tool_shows_finds_without_ids,
+               the_app_review_account_gets_no_new_finds):
         check(fn.__name__, fn)
 
 

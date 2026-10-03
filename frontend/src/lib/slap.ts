@@ -211,7 +211,8 @@ export type Find = {
   duration: number; for: string; status: 'new' | 'queued' | 'review' | 'done' | 'failed'
   by: string | null; track_id: string | null; error: string | null
 }
-export type Discover = { week: string; expires: number; finds: Find[]; why: Record<string, string>; ready: boolean; making: boolean }
+/** `off`: the App Store review account, which gets no New finds. */
+export type Discover = { week: string; expires: number; finds: Find[]; why: Record<string, string>; ready: boolean; making: boolean; off?: boolean }
 
 export function useDiscover() {
   return useQuery({
