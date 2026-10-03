@@ -269,36 +269,18 @@ def http_tests():
         assert r.status_code == 200, r.text
         assert fcm.device_count("393") == 1
 
-    def huddle_rings_when_the_room_is_empty_not_on_every_join():
+    def joining_a_huddle_never_rings_anyone():
         rang: list[str] = []
-        others = {"n": 0}
-
-        async def fake_others(room, identity):
-            return others["n"]
-
-        real_route, real_others, key = server._notify.route_in_background, server._huddle_others, server.LIVEKIT_API_KEY
+        real_route, key = server._notify.route_in_background, server.LIVEKIT_API_KEY
         server._notify.route_in_background = lambda cat, title, *a, **k: rang.append(title)
-        server._huddle_others = fake_others
         server.LIVEKIT_API_KEY, secret = "k", server.LIVEKIT_API_SECRET
         server.LIVEKIT_API_SECRET = "s" * 32
-        server._huddle_ring_guard._seen.clear()
-        join = lambda room: client.post("/api/huddle/token", json={"room": room}, cookies=cookie, headers=origin)
         try:
-            assert join("ringtest").status_code == 200 and len(rang) == 1, rang  # first in: ring
-            others["n"] = 1
-            join("ringtest")                     # someone's already in there: no ring
-            assert len(rang) == 1, rang
-            others["n"] = 0
-            join("ringtest")                     # everyone left and came straight back: a reconnect
-            assert len(rang) == 1, rang
-            server._huddle_ring_guard._seen["ringtest"] -= 200
-            join("ringtest")                     # the room emptied, a new Huddle a few minutes later
-            assert len(rang) == 2, rang
-            others["n"] = None                   # LiveKit down: the old 30-minute rule
-            join("ringtest")
-            assert len(rang) == 2, rang
+            for _ in range(2):
+                assert client.post("/api/huddle/token", json={"room": "ringtest"}, cookies=cookie, headers=origin).status_code == 200
+            assert rang == [], "only the Ring button calls people"
         finally:
-            server._notify.route_in_background, server._huddle_others = real_route, real_others
+            server._notify.route_in_background = real_route
             server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET = key, secret
 
     def ring_route_needs_a_session_and_says_when_to_retry():
@@ -313,7 +295,7 @@ def http_tests():
         assert r.status_code == 429 and int(r.headers["Retry-After"]) > 0, r.status_code
 
     for fn in (asset_links_are_public, native_needs_a_session_and_same_origin, native_registers_the_phone,
-               huddle_rings_when_the_room_is_empty_not_on_every_join, ring_route_needs_a_session_and_says_when_to_retry):
+               joining_a_huddle_never_rings_anyone, ring_route_needs_a_session_and_says_when_to_retry):
         check(fn.__name__, fn)
 
 

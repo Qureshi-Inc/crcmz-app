@@ -6148,7 +6148,6 @@ async def watch_rally(request: Request):
 # a short guard keeps a flaky reconnect from ringing everyone twice. If LiveKit
 # can't be asked, fall back to "first join after 30 quiet minutes".
 _push_room_quiet = _push.Debounce(30 * 60)
-_huddle_ring_guard = _push.Debounce(2 * 60)
 
 
 def _push_sub(request: Request) -> str:
@@ -6328,26 +6327,6 @@ def _mk_livekit_token(identity: str, name: str, room: str) -> str:
     return token if isinstance(token, str) else token.decode()
 
 
-async def _huddle_others(room: str, identity: str) -> int | None:
-    """How many people other than ``identity`` are in the LiveKit room; None if LiveKit didn't answer."""
-    import jwt as _pyjwt, httpx as _hx
-    now = int(_time.time())
-    admin = _pyjwt.encode({"iss": LIVEKIT_API_KEY, "sub": "server", "nbf": now, "exp": now + 60,
-                           "video": {"roomAdmin": True, "room": room}}, LIVEKIT_API_SECRET, algorithm="HS256")
-    base = LIVEKIT_URL.replace("wss://", "https://", 1).replace("ws://", "http://", 1).rstrip("/")
-    try:
-        async with _hx.AsyncClient(timeout=3) as c:
-            r = await c.post(f"{base}/twirp/livekit.RoomService/ListParticipants",
-                             headers={"Authorization": f"Bearer {admin}"}, json={"room": room})
-        if r.status_code == 404:  # no such room yet: nobody's there
-            return 0
-        r.raise_for_status()
-        return sum(1 for p in r.json().get("participants") or [] if p.get("identity") != identity)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("huddle: couldn't list room %s: %s", room, exc)
-        return None
-
-
 @app.post("/api/huddle/token")
 async def huddle_token(request: Request):
     session = _get_session(request)
@@ -6367,14 +6346,7 @@ async def huddle_token(request: Request):
     name = session.get("name") or session.get("preferred_username") or identity
     token = _mk_livekit_token(identity, name, room)
     ws_url = LIVEKIT_URL
-    quiet = _push_room_quiet.first(f"huddle:{room}")
-    others = await _huddle_others(room, identity)
-    starting = quiet if others is None else (others == 0 and _huddle_ring_guard.first(room))
-    if starting:
-        _notify.route_in_background(
-            "huddle", f"🎧 {name} started a Huddle", f"Room {room}. Tap to jump in.",
-            f"/app/huddle?room={room}", exclude=identity, tag=f"huddle-{room}", urgency="high", ttl=1800,
-            caller=name)
+    # Joining never rings anyone: a call is the Ring button (POST /api/ring).
     return JSONResponse({"token": token, "url": ws_url, "room": room})
 
 

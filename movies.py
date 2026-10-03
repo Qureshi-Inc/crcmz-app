@@ -505,19 +505,14 @@ def _video_title(url: str) -> str:
 
 
 def announce_party(room: str, video: str, watching: int, to_channel: bool = True) -> None:
-    """A Watch Party has something playing: a ring/push + inbox for everyone, and ~watchparty."""
+    """A Watch Party has something playing: a post in ~watchparty. No phone ring or push:
+    calling people in is the Ring / Rally buttons."""
+    if not to_channel:
+        return
     title = _video_title(video)
     what = f"**{title}**" if title else "something"
-    n = f"{watching} watching"
-    try:
-        import notifications
-        notifications.route("watch", f"📺 Watch Party: {title or 'on now'}", f"{n}. Tap to join.",
-                            "/app/watch/party", tag=f"watch-{room}", urgency="high", ttl=1800)
-    except Exception:  # noqa: BLE001
-        logger.exception("movies: couldn't push the party start")
-    if to_channel:
-        announce_channel(f"@channel 📺 The Watch Party is on: {what} is playing ({n}). "
-                         f"Join: {PUBLIC_URL}/app/watch/party")
+    announce_channel(f"@channel 📺 The Watch Party is on: {what} is playing ({watching} watching). "
+                     f"Join: {PUBLIC_URL}/app/watch/party")
 
 
 def now_playing(room: str) -> dict:

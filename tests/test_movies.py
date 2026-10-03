@@ -897,7 +897,15 @@ def browse_tests():
         finally:
             mv._in_background, mv._started = real, started
 
-    for fn in (catalogues_build_cinemeta_paths_and_refuse_anything_else, the_party_is_announced_when_something_plays_not_when_someone_opens_it, highest_rated_is_in_rating_order_with_no_unrated_films,
+    def a_party_starting_posts_to_the_channel_but_rings_nobody():
+        CHANNEL.clear(); NOTES.clear()
+        mv.announce_party("crcmz", mv.stream_url("c" * 32), 3, True)
+        assert len(CHANNEL) == 1 and CHANNEL[0].startswith("@channel") and "3 watching" in CHANNEL[0], CHANNEL
+        assert NOTES == [], "no ring or push: that's the Ring / Rally buttons"
+        mv.announce_party("crcmz", mv.stream_url("c" * 32), 3, False)
+        assert len(CHANNEL) == 1
+
+    for fn in (catalogues_build_cinemeta_paths_and_refuse_anything_else, a_party_starting_posts_to_the_channel_but_rings_nobody, the_party_is_announced_when_something_plays_not_when_someone_opens_it, highest_rated_is_in_rating_order_with_no_unrated_films,
                home_has_a_featured_film_rows_without_repeats_and_library_state, details_bring_trailers_cast_and_safe_images,
                now_playing_names_the_film_and_forgets_a_quiet_room):
         check(fn.__name__, fn)
