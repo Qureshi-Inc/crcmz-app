@@ -1753,6 +1753,29 @@ def _huddle_meeting_get(id: str, include_transcript: bool = False) -> dict:  # n
     return m
 
 
+@tool("platform_status",
+      "Is CRCMZ healthy, and if not, what's wrong and since when. Runs the app's own "
+      "checks of everything it depends on (the AI model, speech to text, squad memory, "
+      "Jellyfin, the music importer, the Watch Party server, the link extractor, the "
+      "WhatsApp bridge and whether it's connected, voice replies, Zurg, LiveKit, "
+      "Real-Debrid and days left, the PSN sign-in and days left, Zitadel, Mattermost, "
+      "the movie catalogue), and adds Uptime Kuma's history from status.crcmz.me: each "
+      "monitor's state, its 24 h uptime, when it last changed and the last failure's "
+      "reason (Kuma also watches the public site, DNS, the TURN relay, the servers and "
+      "Coolify). Pass `check` for one dependency, e.g. 'jellyfin', 'whatsapp', 'psn'. "
+      "Times are ISO strings in Kuma's timezone (Los Angeles).",
+      {"type": "object", "properties": {
+          "check": {"type": "string", "description": "One dependency: ai, whisper, memory, jellyfin, importer, "
+                                                       "watchparty, extract, whatsapp, tts, zurg, livekit, realdebrid, "
+                                                       "psn, zitadel, mattermost, movie-catalogue. Omit for all."},
+      }})
+def _platform_status(check: str = "") -> dict:
+    import concurrent.futures
+    import health_deps
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        return pool.submit(asyncio.run, health_deps.report(str(check or "").strip().lower())).result(timeout=60)
+
+
 @tool("watch_diagnostics",
       "Watch Party client diagnostics: the raw timeline each viewer's browser recorded "
       "(socket connect/disconnect/reconnect, video set/play/pause/seek sent and "

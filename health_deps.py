@@ -215,3 +215,46 @@ async def run(name: str) -> dict | None:
     out = {"dep": name, "name": label, "ok": ok, "detail": detail[:160], "ms": int((time.monotonic() - t0) * 1000)}
     _cache[name] = (time.time(), out)
     return out
+
+
+# ── For the assistant and MCP: what's wrong, and since when ──────────────────
+KUMA_URL = _env("STATUS_KUMA_URL", "http://192.168.4.32:3001")
+KUMA_SLUG = _env("STATUS_KUMA_SLUG", "crcmz")
+
+
+async def kuma_history() -> dict:
+    """Uptime Kuma's view (status.crcmz.me): every monitor's state, 24 h uptime, and
+    when and why it last changed. Read from its public status page API."""
+    page = (await _get(f"{KUMA_URL}/api/status-page/{KUMA_SLUG}")).json()
+    beats = (await _get(f"{KUMA_URL}/api/status-page/heartbeat/{KUMA_SLUG}")).json()
+    hb, up = beats.get("heartbeatList") or {}, beats.get("uptimeList") or {}
+    out = []
+    for g in page.get("publicGroupList") or []:
+        for m in g.get("monitorList") or []:
+            bl = hb.get(str(m["id"])) or []
+            last = bl[-1] if bl else {}
+            changed = next((b for b in reversed(bl[:-1]) if b.get("status") != last.get("status")), None)
+            downs = [b for b in bl if b.get("status") == 0]
+            out.append({
+                "group": g.get("name"), "name": m.get("name"),
+                "up": last.get("status") == 1, "message": (last.get("msg") or "")[:160],
+                "since": (changed and bl[bl.index(changed) + 1].get("time")) or (bl[0].get("time") if bl else None),
+                "uptime_24h": round(100 * float(up.get(f"{m['id']}_24", 0)), 1),
+                "down_checks_recently": len(downs),
+                "last_down": (downs[-1].get("time"), (downs[-1].get("msg") or "")[:160]) if downs else None,
+            })
+    return {"page": "https://status.crcmz.me", "monitors": out}
+
+
+async def report(dep: str = "") -> dict:
+    """The live checks (or one) and Kuma's history, together."""
+    names = [dep] if dep in CHECKS else list(CHECKS)
+    live = await asyncio.gather(*(run(n) for n in names))
+    try:
+        hist = await kuma_history()
+    except Exception as e:  # noqa: BLE001
+        hist = {"error": f"Uptime Kuma didn't answer ({type(e).__name__})"}
+    down = [c["dep"] for c in live if not c["ok"]]
+    kdown = [m["name"] for m in hist.get("monitors", []) if not m["up"]]
+    return {"all_ok": not down and not kdown, "down_now": down, "kuma_down_now": kdown,
+            "live_checks": live, "kuma": hist}

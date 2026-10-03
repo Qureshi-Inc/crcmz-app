@@ -101,7 +101,33 @@ def tests():
         client.post("/api/status/alert", json={"monitor": {"name": "Jellyfin"}, "heartbeat": {"status": 1}}, headers={"X-Status-Secret": "s3cret"})
         assert "back up" in sent[-1][1], sent
 
-    for fn in (each_dependency_answers_without_a_session, kuma_alerts_need_the_secret_and_dm_the_admin, all_says_which_are_down, results_are_cached, nothing_secret_comes_back):
+    def the_assistant_and_mcp_can_ask_whats_wrong():
+        import assistant
+        async def fake_kuma():
+            return {"page": "https://status.crcmz.me", "monitors": [
+                {"group": "AI", "name": "AI model", "up": True, "message": "OK"},
+                {"group": "Messaging", "name": "Voice replies (TTS)", "up": False, "message": "503"}]}
+        real = hd.kuma_history
+        hd.kuma_history = fake_kuma
+        try:
+            hd._cache.clear()
+            assert "platform_status" in assistant.tool_names()
+            r = assistant._platform_status()
+            assert r["all_ok"] is False and set(r["down_now"]) == {"jellyfin", "tts"} and r["kuma_down_now"] == ["Voice replies (TTS)"], r
+            one = assistant._platform_status(check="AI")
+            assert [c["dep"] for c in one["live_checks"]] == ["ai"], one
+        finally:
+            hd.kuma_history = real
+
+    def app_crcmz_me_opens_the_app_unless_you_chose_classic():
+        r = client.get("/?p=watch", follow_redirects=False, cookies={server._SESSION_COOKIE: server._signer().dumps(server._make_session("u1", "a@b.co"))})
+        assert r.status_code == 302 and r.headers["location"] == "/app?p=watch", (r.status_code, r.headers.get("location"))
+        r = client.get("/view/classic", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["location"] == "/dashboard" and "crcmz_view=classic" in r.headers.get("set-cookie", "")
+        r = client.get("/view/app", follow_redirects=False)
+        assert r.headers["location"] == "/app/settings/app" and "crcmz_view=" in r.headers.get("set-cookie", "")
+
+    for fn in (each_dependency_answers_without_a_session, app_crcmz_me_opens_the_app_unless_you_chose_classic, the_assistant_and_mcp_can_ask_whats_wrong, kuma_alerts_need_the_secret_and_dm_the_admin, all_says_which_are_down, results_are_cached, nothing_secret_comes_back):
         check(fn.__name__, fn)
 
 
