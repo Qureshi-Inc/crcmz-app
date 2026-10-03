@@ -37,7 +37,8 @@ function Movies() {
   const genre = params.get('genre') || ''
   const list = params.get('list') as ListKind | null
   const imdb = params.get('m')
-  const [text, setText] = useState('')
+  // ?q= (a film shared from a site we couldn't read) starts the search with it.
+  const [text, setText] = useState(() => params.get('q') || '')
   const [q, setQ] = useState('')
   useEffect(() => { const t = window.setTimeout(() => setQ(text.trim()), 300); return () => window.clearTimeout(t) }, [text])
   const searching = q.length >= 2

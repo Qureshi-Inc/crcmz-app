@@ -2,10 +2,10 @@
 // app's share extension does the same natively). The server says what the link is
 // (POST /api/share/inspect, share.py) and this offers what to do with it:
 //   a song           added to Slap straight away, in your picks, with Undo
-//   a trailer        add its film to Movies (the movie sheet: 4K / 1080p), or play the
-//                    trailer in the Watch Party
-//   an IMDb page     add the film, or watch it together if it's in
-//   any other video  the Watch Party (or Slap, for a YouTube music video)
+//   a film's page    found and added to Movies straight away, with Undo (or pick the
+//                    film when it's not clear which)
+//   a trailer        the one that asks: add its film, or play the trailer
+//   any other video  played in the Watch Party straight away
 // The "it's in Slap" notification links back here (?done=<job>) with Undo too.
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
@@ -25,9 +25,9 @@ export function sharedLink(...parts: (string | null)[]): string {
 }
 export const isMusicLink = (u: string) => MUSIC.test(u)
 
-type Choice = 'slap' | 'watch' | 'movie'
+type Choice = 'slap' | 'watch' | 'movie' | 'search'
 type Movie = { imdb: string; title: string; year: string; poster: string; in_library: boolean }
-type Inspect = { link: string; kind: 'song' | 'movie' | 'trailer' | 'video' | 'none'; auto: Choice | null; movie: Movie | null; video_title: string; choices: Choice[] }
+type Inspect = { link: string; kind: 'song' | 'movie' | 'trailer' | 'video' | 'none'; auto: Choice | null; movie: Movie | null; candidates?: Movie[]; video_title: string; choices: Choice[] }
 type Added = { status: 'downloading' | 'already_in_library'; title?: string | null; artist?: string | null; job?: string }
 type ShareRow = { job_id: string; title: string; artist: string; status: 'downloading' | 'done' | 'failed' | 'undo' | 'undone'; error: string }
 
@@ -45,6 +45,7 @@ function Chooser({ url, text, title }: { url: string | null; text: string | null
   const [info, setInfo] = useState<Inspect | null>(null)
   const [err, setErr] = useState('')
   const [added, setAdded] = useState<Added | null>(null)
+  const [film, setFilm] = useState<Movie | null>(null)   // a film added straight away
   const [busy, setBusy] = useState(false)
   const asked = useRef(false)
   const link = sharedLink(url, text, title)
@@ -59,15 +60,34 @@ function Chooser({ url, text, title }: { url: string | null; text: string | null
     if (asked.current) return
     asked.current = true
     request<Inspect>('/api/share/inspect', { body: { url: url || '', text: text || '', title: title || '' }, timeoutMs: 20_000 })
-      .then((r) => { setInfo(r); if (r.auto === 'slap') void toSlap(r.link) })
+      .then((r) => {
+        setInfo(r)
+        if (r.auto === 'slap') void toSlap(r.link)
+        else if (r.auto === 'watch') watch(r.link)
+        else if (r.auto === 'movie' && r.movie) {
+          if (r.movie.in_library) openMovie(r.movie)
+          else void addFilm(r.movie)
+        }
+      })
       // The server can't tell: fall back on the link itself.
       .catch(() => setInfo({ link, kind: link ? (isMusicLink(link) ? 'song' : 'video') : 'none', auto: null, movie: null, video_title: '', choices: link ? (isMusicLink(link) ? ['slap', 'watch'] : ['watch']) : [] }))
   }, []) // once per share
 
-  const watch = (l: string) => navigate(`/watch/party?${new URLSearchParams({ url: l })}`, { replace: true })
-  const openMovie = (m: Movie) => navigate(`/watch?m=${m.imdb}`, { replace: true })
+  function watch(l: string) { navigate(`/watch/party?${new URLSearchParams({ url: l })}`, { replace: true }) }
+  function openMovie(m: Movie) { navigate(`/watch?m=${m.imdb}`, { replace: true }) }
+  async function addFilm(m: Movie) {
+    setBusy(true)
+    try {
+      // "from: share": it waits a few seconds for Undo before it starts.
+      await request('/api/watch/movies/add', { body: { imdb: m.imdb, from: 'share' }, timeoutMs: 30_000 })
+      setFilm(m)
+    } catch (e) { setErr(e instanceof ApiError && e.detail ? e.detail : "Couldn't add that film.") } finally { setBusy(false) }
+  }
 
-  if (!info) return <Card><p className="empty-title" role="status"><span className="spinner" aria-hidden="true" /> Looking at that link…</p></Card>
+  if (!info || info.auto === 'watch' || (info.auto === 'movie' && !film && !err)) {
+    return <Card icon="watch"><p className="empty-title" role="status"><span className="spinner" aria-hidden="true" /> {info?.auto === 'movie' ? `Adding ${info.movie?.title ?? 'the film'}…` : info ? 'Opening the Watch Party…' : 'Looking at that link…'}</p></Card>
+  }
+  if (film) return <FilmAdded m={film} />
   if (added || (info.auto === 'slap' && (busy || err))) {
     return added ? <SongAdded added={added} onWatch={() => watch(info.link)} />
       : err ? <Card><p className="empty-title">Couldn't add it</p><p className="meta">{err}</p><Link className="btn btn-secondary" to="/slap">Open Slap</Link></Card>
@@ -89,12 +109,18 @@ function Chooser({ url, text, title }: { url: string | null; text: string | null
         <p className="empty-title share-what">{info.video_title || info.link}</p>
       )}
       {err && <p className="banner" role="alert">{err}</p>}
+      {!!info.candidates?.length && <p className="meta">Not sure which film: is it this one, or…</p>}
       <div className="share-choices">
         {info.choices.map((c, i) => {
           const cls = `btn ${i === 0 ? 'btn-primary' : 'btn-secondary'}`
+          if (c === 'search') return (
+            <button key={c} type="button" className={cls} onClick={() => navigate(`/watch?${new URLSearchParams({ q: info.video_title })}`, { replace: true })}>
+              <Icon name="search" />Find the film in Movies
+            </button>
+          )
           if (c === 'movie' && m) return (
-            <button key={c} type="button" className={cls} onClick={() => openMovie(m)}>
-              <Icon name="watch" />{m.in_library ? 'Watch it together' : 'Add to Movies'}
+            <button key={c} type="button" className={cls} disabled={busy} onClick={() => (m.in_library ? openMovie(m) : info.kind === 'trailer' ? openMovie(m) : void addFilm(m))}>
+              <Icon name="watch" />{m.in_library ? 'Watch it together' : info.kind === 'trailer' ? 'Add the film to Movies' : `Add ${m.title}`}
             </button>
           )
           if (c === 'watch') return (
@@ -108,7 +134,45 @@ function Chooser({ url, text, title }: { url: string | null; text: string | null
             </button>
           )
         })}
+        {info.candidates?.map((c) => (
+          <button key={c.imdb} type="button" className="btn btn-secondary share-cand" disabled={busy} onClick={() => (c.in_library ? openMovie(c) : void addFilm(c))}>
+            {c.title}{c.year && ` (${c.year})`}{c.in_library ? ' · in Movies' : ''}
+          </button>
+        ))}
         <Link className="btn btn-ghost" to="/">Cancel</Link>
+      </div>
+    </Card>
+  )
+}
+
+/** A film added straight away: it waits a few seconds for Undo before it starts. */
+function FilmAdded({ m }: { m: Movie }) {
+  const [undone, setUndone] = useState(false)
+  const [err, setErr] = useState('')
+  const [left, setLeft] = useState(20)
+  useEffect(() => {
+    const t = window.setInterval(() => setLeft((n) => Math.max(0, n - 1)), 1000)
+    return () => window.clearInterval(t)
+  }, [])
+  async function undo() {
+    try { await request('/api/watch/movies/undo', { body: { imdb: m.imdb } }); setUndone(true) } catch (e) {
+      setErr(e instanceof ApiError && e.detail ? e.detail : "Couldn't undo that.")
+    }
+  }
+  if (undone) return <Card icon="watch"><p className="empty-title">Undone</p><p className="meta">{m.title} won't be added.</p><Link className="btn btn-secondary" to="/watch">Open Movies</Link></Card>
+  return (
+    <Card icon="watch">
+      <div className="share-movie">
+        {m.poster && <img src={m.poster} alt="" className="share-poster" />}
+        <div>
+          <p className="empty-title">Adding {m.title}{m.year && ` (${m.year})`}</p>
+          <p className="meta">It's on its way to Movies. Everyone hears when it's ready to watch.</p>
+        </div>
+      </div>
+      {err && <p className="banner" role="alert">{err}</p>}
+      <div className="share-choices">
+        <Link className="btn btn-primary" to={`/watch?m=${m.imdb}`}><Icon name="watch" />Open it in Movies</Link>
+        {left > 0 && <button type="button" className="btn btn-secondary" onClick={() => void undo()}>Undo ({left}s)</button>}
       </div>
     </Card>
   )

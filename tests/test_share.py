@@ -64,8 +64,19 @@ async def fake_title(url):
     return TITLES.get(url, "")
 
 
+PAGES = {"https://www.netflix.com/title/123": {"title": "Heat | Netflix", "type": "video.movie", "imdb": ""},
+         "https://letterboxd.com/film/heat-1995/": {"title": "Heat (1995)", "type": "video.movie", "imdb": "tt0113277"},
+         "https://cinejoy.to/movie/heat": {"title": "Watch Heat (1995) Online Free - Cinejoy", "type": "", "imdb": ""},
+         "https://www.netflix.com/title/999": {"title": "Heat | Netflix", "type": "video.movie", "imdb": ""}}
+
+
+async def fake_page(url):
+    return {"url": url, **PAGES.get(url, {"title": "", "type": "", "imdb": ""})}
+
+
 movies.search, movies.meta, movies.library_index = fake_search, fake_meta, fake_index
 share.youtube_title = fake_title
+share.page_info = fake_page
 run = asyncio.run
 
 
@@ -90,18 +101,30 @@ def tests():
 
     def a_trailer_for_an_unknown_film_is_just_a_video():
         r = run(share.inspect(url="https://youtu.be/odd"))
-        assert r["kind"] == "video" and r["movie"] is None and r["choices"] == ["watch", "slap"], r
+        assert r["kind"] == "video" and r["movie"] is None and r["auto"] == "watch", r
 
-    def other_videos_and_pages_go_to_the_watch_party():
+    def videos_and_shorts_play_in_the_watch_party_straight_away():
         r = run(share.inspect(url="https://youtu.be/song"))
-        assert r["kind"] == "video" and r["choices"][0] == "watch" and r["video_title"] == "Drake - Hotline Bling"
-        r = run(share.inspect(url="https://cdn.example.com/film.mp4"))
-        assert r["kind"] == "video" and r["choices"] == ["watch"], r
+        assert r["kind"] == "video" and r["auto"] == "watch" and r["video_title"] == "Drake - Hotline Bling"
+        for u in ("https://www.tiktok.com/@a/video/1", "https://x.com/a/status/1", "https://www.instagram.com/reel/abc/",
+                  "https://www.facebook.com/watch/?v=1", "https://www.snapchat.com/spotlight/abc", "https://cdn.example.com/film.mp4"):
+            r = run(share.inspect(url=u))
+            assert r["kind"] == "video" and r["auto"] == "watch", (u, r)
         assert run(share.inspect(text="no link here"))["kind"] == "none"
 
-    def an_imdb_page_is_a_movie():
+    def a_film_page_is_found_and_added_straight_away():
         r = run(share.inspect(url="https://m.imdb.com/title/tt0113277/?ref_=x"))
-        assert r["kind"] == "movie" and r["movie"]["title"] == "Heat" and r["choices"] == ["movie"], r
+        assert r["kind"] == "movie" and r["auto"] == "movie" and r["movie"]["title"] == "Heat", r
+        r = run(share.inspect(url="https://letterboxd.com/film/heat-1995/"))
+        assert r["auto"] == "movie" and r["movie"]["imdb"] == HEAT["imdb"], r
+        r = run(share.inspect(url="https://www.google.com/search?q=heat+1995+movie"))
+        assert r["auto"] == "movie" and r["movie"]["imdb"] == HEAT["imdb"], r
+        r = run(share.inspect(url="https://cinejoy.to/movie/heat"))
+        assert r["auto"] == "movie" and r["movie"]["year"] == "1995", r
+
+    def an_unclear_film_offers_the_likely_ones():
+        r = run(share.inspect(url="https://www.netflix.com/title/123"))
+        assert r["kind"] == "movie" and r["auto"] is None and r["movie"]["title"] == "Heat" and len(r["candidates"]) >= 1, r
 
     def the_route_needs_a_session():
         from fastapi.testclient import TestClient
@@ -125,8 +148,8 @@ def tests():
         assert client.get("/api/share/pending", cookies=cookie).json()["url"] == ""
 
     for fn in (a_link_left_for_the_app_is_picked_up_once, trailer_titles_become_a_film_name_and_year, a_song_goes_straight_to_slap, a_trailer_offers_its_film_first,
-               a_trailer_for_an_unknown_film_is_just_a_video, other_videos_and_pages_go_to_the_watch_party,
-               an_imdb_page_is_a_movie, the_route_needs_a_session):
+               a_trailer_for_an_unknown_film_is_just_a_video, videos_and_shorts_play_in_the_watch_party_straight_away,
+               a_film_page_is_found_and_added_straight_away, an_unclear_film_offers_the_likely_ones, the_route_needs_a_session):
         check(fn.__name__, fn)
 
 

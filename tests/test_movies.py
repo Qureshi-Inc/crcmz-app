@@ -1080,8 +1080,41 @@ def http_tests():
         check(fn.__name__, fn)
 
 
+def share_undo_tests():
+    print("a film shared to the app: Undo")
+
+    def undone_in_its_wait_it_never_starts():
+        reset()
+        old = mv.UNDO_S
+        mv.UNDO_S = 0.3
+        try:
+            async def go():
+                r = await mv.add("u-zub", "Zubair", "tt15239678", grace=0.3)
+                assert r["status"] == "finding"
+                assert mv.undo_add("u-zub", "tt15239678")["ok"]
+                await asyncio.gather(*list(mv._tasks))
+            run(go())
+            assert mv._row("tt15239678") is None, "undone: no add, nothing on Real-Debrid"
+        finally:
+            mv.UNDO_S = old
+
+    def only_the_adder_and_only_before_it_starts():
+        reset()
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        for who in ("someone-else", "u-zub"):
+            try:
+                mv.undo_add(who, "tt15239678")
+                raise AssertionError("undo allowed")
+            except mv.HTTPException as e:
+                assert e.status_code in (404, 409), e.status_code
+
+    for fn in (undone_in_its_wait_it_never_starts, only_the_adder_and_only_before_it_starts):
+        check(fn.__name__, fn)
+
+
 if __name__ == "__main__":
     ranking_tests()
+    share_undo_tests()
     add_tests()
     follow_tests()
     local_tests()

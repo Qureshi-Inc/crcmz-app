@@ -912,8 +912,13 @@ async def options(imdb: str) -> dict:
     return out
 
 
-async def add(sub: str, name: str, imdb: str, *, admin: bool = False, want: str = "") -> dict:
-    """Add a film: the best copy, or `want` = '4k' / '1080p' when the adder picked one."""
+UNDO_S = 20   # a film shared to the app waits this long for an Undo before anything starts
+
+
+async def add(sub: str, name: str, imdb: str, *, admin: bool = False, want: str = "", grace: float = 0) -> dict:
+    """Add a film: the best copy, or `want` = '4k' / '1080p' when the adder picked one.
+    `grace`: wait that long first (a film shared to the app, added without asking, can
+    still be undone before Real-Debrid or the squad hear of it)."""
     if not _IMDB.match(imdb or ""):
         raise HTTPException(400, "which movie?")
     want = want if want in ("4k", "1080p") else ""
@@ -948,8 +953,21 @@ async def add(sub: str, name: str, imdb: str, *, admin: bool = False, want: str 
                         created=excluded.created, updated=excluded.updated, want=excluded.want""",
                    (imdb, m["title"], m["year"], m["poster"], sub, name[:80], now, now, want))
     row = _row(imdb)
-    _spawn(fetch(imdb))
+    _spawn(fetch(imdb, grace))
     return _public(row)
+
+
+def undo_add(sub: str, imdb: str) -> dict:
+    """Undo an add that hasn't started (still in its grace period): as if it never was."""
+    r = _row(imdb or "")
+    if not r or r["sub"] != sub:
+        raise HTTPException(404, "nothing to undo")
+    if r["status"] != "finding" or time.time() - r["created"] > UNDO_S + 5:
+        raise HTTPException(409, "it's already on its way: remove it from Movies once it's in")
+    with _lock, _conn() as db:
+        db.execute("DELETE FROM adds WHERE imdb = ? AND status = 'finding'", (imdb,))
+    logger.info("movies: add of %s undone", imdb)
+    return {"ok": True, "imdb": imdb}
 
 
 def _after_rd() -> str:
@@ -957,8 +975,12 @@ def _after_rd() -> str:
     return "copying" if local_on() else "adding"
 
 
-async def fetch(imdb: str) -> None:
+async def fetch(imdb: str, grace: float = 0) -> None:
     """Find the best copy and start it on Real-Debrid, then tell people how it went."""
+    if grace:
+        await asyncio.sleep(grace)
+        if not _row(imdb):
+            return   # undone
     await _fetch(imdb)
     r = _row(imdb)
     if not r:
@@ -1732,7 +1754,19 @@ def build_router(get_session, is_admin) -> APIRouter:
         want = str((b or {}).get("quality") or "") if isinstance(b, dict) else ""
         person = (await asyncio.to_thread(crcmz_identity.by_zitadel_id)).get(sub) or {}
         name = person.get("display_name") or person.get("username") or "someone"
-        return await add(sub, name, imdb, admin=await is_admin(sub), want=want)
+        # Shared to the app and added without asking: a short wait for Undo first.
+        grace = UNDO_S if isinstance(b, dict) and b.get("from") == "share" else 0
+        return await add(sub, name, imdb, admin=await is_admin(sub), want=want, grace=grace)
+
+    @router.post("/undo")
+    async def undo_post(request: Request):
+        """Undo a film shared to the app, in its first few seconds."""
+        sub = library_sub(request)
+        try:
+            b = await request.json()
+        except ValueError:
+            raise HTTPException(400, "expected JSON")
+        return await asyncio.to_thread(undo_add, sub, str((b or {}).get("imdb") or "") if isinstance(b, dict) else "")
 
     @router.get("/options/{imdb}")
     async def options_get(imdb: str, request: Request):

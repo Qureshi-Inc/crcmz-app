@@ -5,12 +5,13 @@ web app send a link here (POST /api/share/inspect) before doing anything:
 
     song     Spotify, Apple Music, YouTube Music, SoundCloud, Deezer, Tidal: added to
              Slap straight away (auto = "slap"), with Undo.
-    movie    an IMDb page: add the film to Movies (4K / 1080p when both exist), or
-             watch it together if it's already in.
+    movie    a film's page (IMDb, Letterboxd, Netflix, Apple TV, Google, cinejoy.to…):
+             the film is found in the catalogue and added to Movies straight away
+             (auto = "movie", with Undo); when it's not clear which film, pick one.
     trailer  a YouTube video whose title says trailer / teaser and names a film we can
-             find: add that film, or play the trailer in the Watch Party.
-    video    anything else that plays (YouTube, a video file, a page with a video): the
-             Watch Party; a YouTube video can also go to Slap (a music video).
+             find: the one case that asks: add that film, or play the trailer.
+    video    TikTok, Snapchat, Facebook, Instagram, X, YouTube, a video file, any other
+             page: played in the Watch Party straight away (auto = "watch").
 
 Videos from the camera roll aren't links: the apps upload those to Clips themselves.
 The decision lives here, not in the apps, so it can get smarter without an app update.
@@ -104,9 +105,111 @@ async def _movie_card(row: dict) -> dict:
             "in_library": bool(have)}
 
 
+# Pages that are about one film: a movie link there means "get this film".
+_MOVIE_SITES = re.compile(
+    r"^https://([\w-]+\.)*(letterboxd\.com|boxd\.it|themoviedb\.org|rottentomatoes\.com|justwatch\.com|netflix\.com|"
+    r"tv\.apple\.com|primevideo\.com|amazon\.[a-z.]+|disneyplus\.com|max\.com|hbomax\.com|hulu\.com|"
+    r"paramountplus\.com|peacocktv\.com|cinejoy\.to|google\.[a-z.]+|g\.co|bing\.com|metacritic\.com|trakt\.tv|"
+    r"fandango\.com|wikipedia\.org)/", re.I)
+# Short videos and posts: always for the Watch Party.
+_SHORTS = re.compile(
+    r"^https://([\w-]+\.)*(tiktok\.com|snapchat\.com|facebook\.com|fb\.watch|instagram\.com|x\.com|twitter\.com|"
+    r"threads\.net|reddit\.com|redd\.it|twitch\.tv|vimeo\.com|dailymotion\.com|streamable\.com|kick\.com)/", re.I)
+_TT = re.compile(r"\b(tt\d{7,8})\b")
+# What sites add to a film's page title.
+_SITE_SUFFIX = re.compile(r"\s*[|\-–—:]\s*(netflix|apple tv\+?|prime video|amazon\.com.*|disney\+|max|hulu|letterboxd|"
+                          r"rotten tomatoes|the movie database.*|tmdb|justwatch|metacritic|trakt|google search|wikipedia|"
+                          r"watch .*|stream .*|official site|fandango|cinejoy.*)\s*$", re.I)
+_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+
+
+async def page_info(url: str) -> dict:
+    """A page's title, og:type and any IMDb id in it (Letterboxd and many others link IMDb)."""
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers={"User-Agent": _UA}) as c:
+            r = await c.get(url)
+        html = r.text[:400_000] if r.status_code < 400 else ""
+        final = str(r.url)
+    except httpx.HTTPError:
+        html, final = "", url
+    def meta(prop: str) -> str:
+        m = re.search(rf'<meta[^>]+(?:property|name)=["\']{prop}["\'][^>]*content=["\']([^"\']+)', html, re.I) \
+            or re.search(rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]*(?:property|name)=["\']{prop}["\']', html, re.I)
+        return _unescape(m.group(1)) if m else ""
+    t = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
+    return {"url": final, "title": meta("og:title") or (_unescape(t.group(1)) if t else ""), "type": meta("og:type"),
+            "imdb": (_TT.search(html) or _TT.search(final) or [None, ""])[1] if html or final else ""}
+
+
+def _unescape(s: str) -> str:
+    import html as _html
+    return re.sub(r"\s+", " ", _html.unescape(s)).strip()[:300]
+
+
+def title_from_url(url: str) -> str:
+    """A film's name from the address itself: Google's ?q=, or the page's slug."""
+    from urllib.parse import parse_qs, unquote, urlparse
+    u = urlparse(url)
+    if (q := parse_qs(u.query).get("q")) and q[0].strip():
+        return q[0][:120]
+    parts = [p for p in u.path.split("/") if p]
+    for i, p in enumerate(parts):
+        if p.lower() in ("movie", "movies", "film", "title", "watch", "m", "detail") and i + 1 < len(parts):
+            slug = parts[i + 1]
+            if not re.fullmatch(r"[\d]+|umc\.\S+|[A-Z0-9]{8,}", slug):
+                return re.sub(r"^\d+-", "", unquote(slug)).replace("-", " ").replace("_", " ")[:120]
+    return ""
+
+
+async def find_movie(link: str) -> tuple[dict | None, bool, list[dict]]:
+    """The film a page is about: (best match, sure?, other likely ones)."""
+    info = await page_info(link)
+    if info["imdb"]:
+        try:
+            if row := await movies.meta(info["imdb"]):
+                return row, True, []
+        except Exception:  # noqa: BLE001
+            pass
+    norm = lambda s: re.sub(r"[^a-z0-9]", "", s.lower())  # noqa: E731
+    # A search page's ?q= says it best; then the page's own title, then its address.
+    from urllib.parse import parse_qs, urlparse
+    asked = (parse_qs(urlparse(link).query).get("q") or [""])[0]
+    # (A search page's own title is "Google Search": with a ?q=, that's all there is.)
+    for raw in ((asked,) if asked else (info["title"], title_from_url(info["url"]), title_from_url(link))):
+        if not raw:
+            continue
+        name = _SITE_SUFFIX.sub("", raw)
+        year = m.group(1) if (m := re.search(r"\b(19[2-9]\d|20[0-4]\d)\b", name)) else ""
+        q = re.sub(r"\s+", " ", re.sub(r"[\(\[]?\b(19[2-9]\d|20[0-4]\d)\b[\)\]]?", " ", name)).strip(" -|:")
+        q = re.sub(r"\b(watch|stream|streaming|online|free|full|hd|movie|film|where to watch)\b", " ", q, flags=re.I)
+        q = re.sub(r"\s+", " ", q).strip(" -|:")
+        if len(q) < 2:
+            continue
+        try:
+            rows = await movies.search(q)
+        except Exception:  # noqa: BLE001
+            rows = []
+        if not rows:
+            continue
+        exact = [r for r in rows if norm(r["title"]) == norm(q)]
+        if year:
+            for r in exact + rows[:3]:
+                if r.get("year") == year:
+                    return r, r in exact, [x for x in rows[:3] if x is not r]
+        if len(exact) == 1:
+            return exact[0], True, rows[:3]
+        # Unsure: only films whose name is in what was shared (a site's home page isn't a film).
+        close = exact or [r for r in rows[:5] if norm(r["title"]) and (norm(r["title"]) in norm(q) or norm(q) in norm(r["title"]))]
+        if close:
+            return close[0], False, close[1:4]
+    return None, False, []
+
+
 async def inspect(url: str = "", text: str = "", title: str = "") -> dict:
+    """What a shared link is, and what to do. `auto` is done without asking (with Undo);
+    `choices` are offered when it isn't clear."""
     link = first_link(url, text, title)
-    out: dict = {"link": link, "kind": "none", "auto": None, "movie": None, "video_title": "", "choices": []}
+    out: dict = {"link": link, "kind": "none", "auto": None, "movie": None, "candidates": [], "video_title": "", "choices": []}
     if not link:
         return out
     if _SONG.match(link):
@@ -118,17 +221,44 @@ async def inspect(url: str = "", text: str = "", title: str = "") -> dict:
         except Exception:  # noqa: BLE001
             row = None
         if row and row.get("imdb"):
-            out.update(kind="movie", movie=await _movie_card(row), choices=["movie"])
+            out.update(kind="movie", auto="movie", movie=await _movie_card(row), choices=["movie"])
             return out
     if _YOUTUBE.match(link):
         vt = await youtube_title(link)
         out["video_title"] = vt
+        # A trailer is the one case that's unclear: the film, or the trailer itself?
         if vt and _TRAILER.search(vt) and (row := await guess_movie(vt)):
             out.update(kind="trailer", movie=await _movie_card(row), choices=["movie", "watch"])
             return out
-        out.update(kind="video", choices=["watch", "slap"])
+        out.update(kind="video", auto="watch", choices=["watch", "slap"])
         return out
-    out.update(kind="video", choices=["watch"])
+    if _SHORTS.match(link):
+        out.update(kind="video", auto="watch", choices=["watch"])
+        return out
+    if _MOVIE_SITES.match(link):
+        row, sure, others = await find_movie(link)
+        if row:
+            card = await _movie_card(row)
+            if sure:
+                out.update(kind="movie", auto="movie", movie=card, choices=["movie"])
+            else:
+                # Not sure which film: pick from the likely ones.
+                out.update(kind="movie", movie=card, choices=["movie"],
+                           candidates=[await _movie_card(r) for r in others])
+            return out
+        # A film site, but we can't tell which film: look for it in Movies.
+        out.update(kind="movie", choices=["search"], video_title=title_from_url(link))
+        return out
+    # Any other page: a film's page (og:type video.movie) or something to play.
+    info = await page_info(link)
+    if info["type"].lower() == "video.movie" or info["imdb"]:
+        row, sure, others = await find_movie(link)
+        if row:
+            card = await _movie_card(row)
+            out.update(kind="movie", auto="movie" if sure else None, movie=card, choices=["movie"],
+                       candidates=[] if sure else [await _movie_card(r) for r in others])
+            return out
+    out.update(kind="video", auto="watch", video_title=info["title"], choices=["watch"])
     return out
 
 
