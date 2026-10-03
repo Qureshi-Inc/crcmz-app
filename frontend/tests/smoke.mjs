@@ -1405,7 +1405,8 @@ try {
     await ready(page, '/app/settings')
     await page.waitForSelector('.acct-row')
     check('/app/settings opens the passkeys tab', new URL(page.url()).pathname === '/app/settings/passkeys', page.url())
-    check('settings tabs are a tablist of 7', (await page.locator('.tabstrip[role=tablist] [role=tab]').count()) === 7)
+    const setTabs = await page.locator('.tabstrip[role=tablist] [role=tab]').allTextContents()
+    check('settings tabs are a tablist: profile, passkeys, password, PSN, Steam, Mattermost, MCP, Watch, App', setTabs.join('|') === 'Profile|Passkeys|Password|PSN|Steam|Mattermost|MCP|Watch|App', setTabs.join('|'))
     check('passkeys are listed', (await page.locator('.acct-row').count()) === 2)
     await shot(page, 'settings-375-passkeys')
     await axe(page, 'Settings passkeys 375', '.app-main')
@@ -1948,7 +1949,9 @@ try {
     await page.waitForSelector('.wp-pill[data-tone="live"]')
     check('watch: joins with a ticket and goes live', page.writes.includes('POST /api/watch/join') && (await page.textContent('.wp-pill')) === '3 watching')
     check('watch: asks for presence and the host on connect', (await emits(page)).includes('watch:presence:get') && (await emits(page)).includes('CMD:askHost'))
-    check('watch: empty stage invites a link', (await page.isVisible('.wp-empty')) && !(await page.isVisible('.wp-overlay')))
+    // Nothing playing: the stage invites a link; the overlay keeps only settings / chat / fullscreen (no seek, no play).
+    check('watch: empty stage invites a link', (await page.isVisible('.wp-empty')) && !(await page.locator('.wp-seek, .wp-ov-mid').count())
+      && (await page.isVisible('.wp-stage button[aria-label="Settings"]')))
     // The party's Library: Downloaded, then Watched (history). Finding movies is the Movies home.
     await page.waitForSelector('.mv-card')
     check('library: Downloaded shows the film with Play for the party', (await page.textContent('.mv-card .mv-title')).includes('Heat') && (await page.locator('.mv-card button:has-text("Play")').count()) === 1)
@@ -2953,9 +2956,9 @@ try {
     })
     const { ctx, page } = await newPage({ width: 375, height: 800, ...ak })
     await ready(page, '/app/ask')
-    await page.waitForSelector('.ask-log li')
+    await page.waitForSelector('.ask-log .ask-msg')
     check('ask: header shows model and tool count', (await page.textContent('.ask-model')) === 'qwen3-32b · 3 tools')
-    check('ask: answers carry tools · elapsed', (await page.textContent('.ask-meta')) === 'slap_top_tracks, squad_members · 2,310ms')
+    check('ask: answers say how many lookups and how long', (await page.textContent('.ask-meta')).includes('2 lookups · 2.3s'), await page.textContent('.ask-meta'))
     check('ask: explainer is open on the first visit', await page.$eval('.ask-explain', (e) => e.open))
     check('ask: suggestions fold away once there is a thread', (await page.locator('details.ask-sugg').count()) === 1)
     check('ask: a failed answer says so', (await page.textContent('[data-status="error"]')).includes("Couldn't get an answer"))
@@ -2986,20 +2989,22 @@ try {
 
     // Send with an image → pending bubble → answer.
     askMode = 'ok'
-    await page.setInputFiles('.ask-composer input[type=file]', { name: 'shot.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64') })
+    // assistant-ui's Attach opens a file picker of its own (no input in the composer).
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('.ask-attach')])
+    await chooser.setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64') })
     await page.waitForSelector('.ask-img img')
     check('ask: a picked image shows a thumbnail', (await page.textContent('.ask-img')).includes('shot.png'))
     await page.waitForFunction(() => !document.querySelector('.ask-send').disabled, null, { timeout: 10000 })
     await page.click('.ask-send')
     await page.waitForSelector('[data-status="pending"]')
     check('ask: the ask carries the image', asks.at(-1).question === 'who yaps the most?' && asks.at(-1).image_type === 'image/png' && asks.at(-1).image_b64.length > 10)
-    check('ask: pending shows thinking… and disables Send', (await page.textContent('[data-status="pending"]')).includes('thinking…') && (await page.isDisabled('.ask-send')))
-    check('ask: pending says why', (await page.textContent('.ask-foot')).includes('Still answering your last one.'))
+    check('ask: pending shows thinking…', (await page.textContent('[data-status="pending"]')).includes('thinking…'))
+    check('ask: while it answers, Send becomes Stop', (await page.getAttribute('.ask-send', 'aria-label')) === 'Stop the answer')
     check('ask: the composer cleared after send', (await page.inputValue('#ask-q')) === '' && (await page.locator('.ask-img').count()) === 0)
     await shot(page, 'ask-375-pending')
     thread = [...thread.slice(0, -1), askMsg(6, 'assistant', 'Goopy, by a mile: 312 messages this week.', { tools: ['wa_stats'], elapsed_ms: 4100 })]
     pending = false
-    await page.waitForSelector('.ask-log li:last-child:has-text("Goopy, by a mile")', { timeout: 8000 })
+    await page.waitForSelector('.ask-msg[data-role="assistant"]:has-text("Goopy, by a mile")', { timeout: 8000 })
     check('ask: the poll lands the answer', !(await page.isDisabled('#ask-q')))
 
     // Clear: confirm first, then the thread empties and the chips come back.
@@ -3007,11 +3012,11 @@ try {
     await page.waitForSelector('[role=alertdialog]')
     check('ask: clear confirms', (await page.textContent('[role=alertdialog]')).includes('Your facts stay, just the conversation goes.'))
     await page.click('[role=alertdialog] button:has-text("Cancel")')
-    check('ask: Cancel keeps the thread', cleared === 0 && (await page.locator('.ask-log li').count()) === 6)
+    check('ask: Cancel keeps the thread', cleared === 0 && (await page.locator('.ask-log .ask-msg').count()) === 6)
     await page.click('.ask-head button:has-text("Clear")')
     await page.click('[role=alertdialog] button:has-text("Clear")')
     await page.waitForSelector('.ask-chips:not(details .ask-chips)')
-    check('ask: cleared thread shows the 6 suggestions', cleared === 1 && (await page.locator('.ask-chips .chip').count()) === 6 && (await page.locator('.ask-log li').count()) === 0)
+    check('ask: cleared thread shows the 6 suggestions', cleared === 1 && (await page.locator('.ask-chips .chip').count()) === 6 && (await page.locator('.ask-log .ask-msg').count()) === 0)
 
     // Facts sheet: counts, filter, add, delete-gone.
     await page.click('.ask-head button:has-text("Squad facts")')
@@ -3056,8 +3061,8 @@ try {
     await er.page.waitForSelector('.ask-thread .stat-err')
     down = false
     await er.page.click('.ask-thread .stat-err button:has-text("Retry")')
-    await er.page.waitForSelector('.ask-log li')
-    check('ask: Retry recovers the thread', (await er.page.locator('.ask-log li').count()) === 4)
+    await er.page.waitForSelector('.ask-log .ask-msg')
+    check('ask: Retry recovers the thread', (await er.page.locator('.ask-log .ask-msg').count()) === 4)
     await er.ctx.close()
 
     const so = await newPage({ width: 375, height: 800, ...askMocks({ tools: json(401, { error: 'sign in' }), history: json(401, { error: 'sign in' }), facts: json(401, { error: 'sign in' }) }) })
@@ -3071,7 +3076,7 @@ try {
   {
     const { ctx, page } = await newPage({ width: 1440, height: 900, ...askMocks() })
     await ready(page, '/app/ask')
-    await page.waitForSelector('.ask-log li')
+    await page.waitForSelector('.ask-log .ask-msg')
     const w = await page.$eval('.ask-page', (e) => e.getBoundingClientRect().width)
     check('ask 1440: reading width', w <= 760 && w > 600, `${w}`)
     await shot(page, 'ask-1440')

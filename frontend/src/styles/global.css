@@ -292,10 +292,11 @@ img { max-width: 100%; }
 @media (hover: hover) { .nav-row:hover { background: rgba(255, 60, 200, .07); color: var(--text); } }
 /* The ⓘ beside a page title: opens that page's section of Help. */
 .help-dot {
-  display: inline-grid; place-items: center; width: 32px; height: 32px; margin-left: var(--space-2); vertical-align: middle;
+  /* A 44 px tap target that looks 32 px: the padding takes taps, the circle is the content box. */
+  display: inline-grid; place-items: center; box-sizing: border-box; width: 44px; height: 44px; padding: 6px;
+  margin: -6px -6px -6px calc(var(--space-2) - 6px); vertical-align: middle; background-clip: content-box;
   border-radius: 50%; color: var(--text-dim); text-decoration: none; position: relative; top: -2px;
 }
-.help-dot::after { content: ""; position: absolute; inset: -6px; } /* 44 px tap target */
 .help-dot svg { width: 20px; height: 20px; }
 @media (hover: hover) { .help-dot:hover { color: var(--text); background: rgba(255, 60, 200, .1); } }
 .sidebar-account { border-top: 1px solid var(--border-decorative); padding: var(--space-2) var(--space-3); display: flex; align-items: center; gap: var(--space-2); }
@@ -1886,7 +1887,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 /* Idle player (nothing playing): only the call and settings controls, on a lighter bar. */
 .wp-ov-bottom[data-idle="true"] { background: linear-gradient(transparent, rgba(0, 0, 0, .5)); padding-top: var(--space-2); }
 /* Narrow players: smaller controls, and Leave moves into Settings below 380 px. */
-@container wpstage (max-width: 440px) { .wp-ov-row .wp-ctl { width: 40px; height: 40px; } .wp-ov-row .wp-ctl svg { width: 20px; height: 20px; } }
+/* Narrow players keep 44 px buttons (the tap minimum); the total time makes the room. */
+@container wpstage (max-width: 440px) { .wp-ov-row .wp-ctl svg { width: 20px; height: 20px; } .wp-ov-row .wp-time-sep, .wp-ov-row .wp-time-dur { display: none; } }
 @container wpstage (max-width: 380px) { .wp-ctl-leave { display: none !important; } }
 .wp-ctl-leave { color: #ff8a8a; }
 .wp-inline-icon, .wp-inline-icon svg { display: inline-block; width: 16px; height: 16px; vertical-align: -3px; }
@@ -1987,8 +1989,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   .wp-orbs-over-top .wp-orb, .wp-orbs-over-bottom .wp-orb { width: 42px; }
   .wp-orbs-over { --big-w: min(140px, 36cqw); --big-h: 72px; }
   .wp-stage[data-chrome="true"] .wp-orbs-over-top { transform: translateY(54px); }
-  .wp-stage[data-chrome="true"] .wp-orbs-over-bottom { transform: translateY(-62px); }
-  .wp-stage[data-chrome="true"][data-rx="true"] .wp-orbs-over-bottom { transform: translateY(-114px); }
+  .wp-stage[data-chrome="true"] .wp-orbs-over-bottom { transform: translateY(-66px); }
+  .wp-stage[data-chrome="true"][data-rx="true"] .wp-orbs-over-bottom { transform: translateY(-118px); }
   .wp-stage:has(.wp-orbs-over-top, .wp-orbs-over-bottom) .wp-ov-mid { display: none; }
   .wp-stage:has(.wp-orbs-over-top, .wp-orbs-over-bottom) .wp-ov-row > .wp-ctl:first-child { display: inline-flex; }
 }
@@ -2609,7 +2611,7 @@ button.co-mis-row:hover { border-color: var(--border-interactive); }
 .ask-msg .ask-meta { margin-top: var(--space-2); white-space: normal; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .ask-msg .ask-meta .meta { margin: 0; }
 .ask-actions { display: flex; gap: var(--space-1); }
-.ask-copy { width: 32px; height: 32px; min-height: 32px; color: var(--text-dim); }
+.ask-copy { width: 44px; height: 44px; min-height: 44px; margin: -6px -6px -6px 0; color: var(--text-dim); } /* 44 px to tap, the row as if 32 */
 .ask-msg-img { display: block; max-width: 180px; max-height: 180px; border-radius: var(--radius-md); margin-bottom: var(--space-2); }
 .ask-msg[data-role="assistant"] { min-width: 0; }
 /* Markdown answers: tight, chat-sized rhythm rather than document spacing. */
