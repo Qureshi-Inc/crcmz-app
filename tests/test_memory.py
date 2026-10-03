@@ -825,6 +825,23 @@ def test_source_filter_multi() -> None:
         )
 
 
+def test_whole_table_sources_skip_what_is_unchanged() -> None:
+    """_index_records embeds new/changed records only, and meetings become searchable."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        _patch_module(tmp, EMBED_URL)
+        import memory_store as ms
+        ms.init()
+        recs = [("m1:notes", "Huddle meeting about ranked night: Zubi books the lobby", time.time(), {"kind": "notes"}),
+                ("m1:t0", "Moiz: bring snacks", time.time(), {"kind": "transcript"})]
+        assert ms._index_records("meetings", recs) == 2
+        assert ms._index_records("meetings", recs) == 0, "unchanged: nothing re-embedded"
+        recs[1] = ("m1:t0", "Moiz: bring snacks and drinks", time.time(), {"kind": "transcript"})
+        assert ms._index_records("meetings", recs) == 1, "changed: only that one"
+        got = ms.search("who books the lobby", sources=["meetings"])
+        assert got.get("results") and got["results"][0]["source"] == "meetings", got
+
+
 def test_no_source_filter() -> None:
     """search() with sources=None returns results from any source."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -929,6 +946,7 @@ def main() -> int:
     check("23. source filter: empty source returns []", test_source_filter_empty_source)
     check("24. source filter: multi-source", test_source_filter_multi)
     check("25. source filter: None searches all", test_no_source_filter)
+    check("26. whole-table sources skip what's unchanged", test_whole_table_sources_skip_what_is_unchanged)
 
     print(f"\n{PASSED} passed, {len(FAILED)} failed")
     if FAILED:

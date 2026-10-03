@@ -1400,11 +1400,15 @@ def _person_profile(who: str, range: str = "all_time", group: str = "") -> dict:
 
 
 @tool("memory_search",
-      "Semantic search across indexed squad data: WhatsApp messages, PSN clip "
-      "descriptions, and squad facts. Embeds the query and returns the top "
-      "nearest items. Use this when the user asks fuzzy questions like 'what "
-      "did we say about X', 'find the clip where Y happened', or 'any facts "
-      "about Z'. Returns memory_id, source, timestamp, snippet, and score. "
+      "Semantic search across everything the squad has done: WhatsApp messages, "
+      "PSN clips (who, game, when, caption), squad facts, the docs, coaching "
+      "reviews, Huddle meeting notes and transcripts, what was watched in the Watch "
+      "Party (and its chat), films added to Movies, the PlayStation games people "
+      "play, giveaways, Slap (New finds, downloads, shared songs, thumbs) and videos "
+      "sent through Clips. Embeds the query and returns the nearest items. Use it "
+      "for fuzzy or memory questions: 'what did we decide on Saturday', 'what "
+      "movies has Zubi watched', 'find the clip where Y happened'. Returns "
+      "memory_id, source, timestamp, snippet, and score. "
       "Returns an error dict when the embedding service is not configured — "
       "that means EMBEDDING_MODEL is not set, not a code bug.",
       {"type": "object",
@@ -1413,7 +1417,8 @@ def _person_profile(who: str, range: str = "all_time", group: str = "") -> dict:
                         "description": "Natural-language question or description to search for."},
            "sources":  {"type": "array", "items": {"type": "string"},
                         "description": "Limit to these sources: whatsapp, psn, facts, "
-                                       "docs, coach, app, watchparty. "
+                                       "docs, coach, app, watchparty, meetings, watch, "
+                                       "movies, games, giveaways, slap, uploads. "
                                        "Omit or pass null to search all."},
            "after_ts": {"type": "number",
                         "description": "Only return results with source timestamp after "

@@ -125,7 +125,8 @@ _reindex_pending: dict[str, float | None] = {}
 _reindex_lock    = threading.Lock()
 
 # All recognized semantic-memory source namespaces.
-_VALID_SOURCES = frozenset({"whatsapp", "psn", "facts", "docs", "coach", "app", "watchparty"})
+_VALID_SOURCES = frozenset({"whatsapp", "psn", "facts", "docs", "coach", "app", "watchparty",
+                            "meetings", "watch", "movies", "games", "giveaways", "slap", "uploads"})
 
 # Background stats (no sensitive data)
 _stats: dict[str, Any] = {
@@ -377,15 +378,29 @@ def _indexer_loop() -> None:
         time.sleep(POLL_SECONDS)
 
 
+CATCH_UP_ROUNDS = 25   # a cursor source that's behind takes this many batches per cycle
+
+
 def _run_index_cycle() -> None:
     """Incremental index: fetch new records from each source since the cursor."""
-    _index_whatsapp()
-    _index_psn_clips()
-    _index_facts()
+    # Sources read in batches from a cursor: keep going while one is behind (after a
+    # week with the embedding model away, WhatsApp was thousands behind at 20 a minute).
+    for name, fn in (("whatsapp", _index_whatsapp), ("psn", _index_psn_clips), ("facts", _index_facts)):
+        for _ in range(CATCH_UP_ROUNDS):
+            before = _get_cursor(name)
+            fn()
+            if _get_cursor(name) == before:
+                break
     _index_docs()
     _index_coach()
     _index_app()
     _index_watchparty()
+    # Whole-table sources (small): unchanged rows are skipped before embedding.
+    for name, fn in _SNAPSHOT_SOURCES.items():
+        try:
+            _index_records(name, fn())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("memory: %s source failed: %s", name, e)
     ts = int(time.time())
     _stats["last_index_ts"] = ts
     # Persist so status() survives container restarts.
@@ -538,6 +553,20 @@ def _index_whatsapp(since_ts: float | None = None) -> None:
 
 # ── PSN clips indexer ─────────────────────────────────────────────────────────
 
+def _day(ts: float | int | None) -> str:
+    if not ts:
+        return ""
+    return time.strftime("%a %d %b %Y", time.localtime(_to_epoch_s(ts)))
+
+
+def _clip_text(r) -> str:
+    who = r["sender_online_id"] or "someone"
+    game = f" in {r['game_name']}" if r["game_name"] else ""
+    secs = f", {int(r['duration_seconds'])} s" if r["duration_seconds"] else ""
+    body = (r["body"] or "").strip()
+    return f"PSN clip by {who}{game} on {_day(r['psn_created_at'])}{secs}." + (f" Caption: {body}" if body else "")
+
+
 def _index_psn_clips(since_ts: float | None = None) -> None:
     """Index clip body/description text from clips.db."""
     clips_db = Path("/data/clips.db")
@@ -551,11 +580,9 @@ def _index_psn_clips(since_ts: float | None = None) -> None:
         cdb.row_factory = _sq3.Row
         rows = cdb.execute(
             """SELECT message_uid, ugc_id, sender_online_id,
-                      psn_created_at, psn_group_id, psn_group_name, body
+                      psn_created_at, psn_group_id, psn_group_name, body, game_name, duration_seconds
                FROM clips
-               WHERE body IS NOT NULL
-                 AND TRIM(body) != ''
-                 AND (psn_created_at * 1000) > ?
+               WHERE (psn_created_at * 1000) > ?
                ORDER BY psn_created_at
                LIMIT ?""",
             (since, BATCH_SIZE),
@@ -564,7 +591,8 @@ def _index_psn_clips(since_ts: float | None = None) -> None:
     if not rows:
         return
 
-    texts = [r["body"][:MAX_TEXT_CHARS] for r in rows]
+    # Who, which game and when, so "Zubi's clips in COD last week" finds them; the caption if any.
+    texts = [_clip_text(r)[:MAX_TEXT_CHARS] for r in rows]
     try:
         vecs = _embed(texts, _embed_base, _model_name, _embed_key)
     except Exception as e:  # noqa: BLE001
@@ -1582,6 +1610,13 @@ _SOURCE_STORES = {
     "coach":      Path("/data/coach_reviews.db"),
     "app":        Path("/data/app_events.db"),
     "watchparty": Path("/data/watchparty_events.db"),
+    "meetings":   Path("/data/meeting_notes.db"),
+    "watch":      Path("/data/watch_history.db"),
+    "movies":     Path("/data/movies.db"),
+    "games":      Path("/data/game_history.db"),
+    "giveaways":  Path("/data/giveaway.db"),
+    "slap":       Path("/data/slap_discover.db"),
+    "uploads":    Path("/data/video_uploads.db"),
 }
 
 
@@ -1589,6 +1624,8 @@ def _source_has_indexable_rows(source: str) -> bool:
     """Return True if the source store exists and contains at least one indexable row."""
     import sqlite3 as _sq3
     try:
+        if source in _SNAPSHOT_SOURCES:
+            return bool(_SNAPSHOT_SOURCES[source]())
         if source == "docs":
             p = Path("/app/docs")
             if not p.exists():
@@ -1811,3 +1848,199 @@ def _not_available() -> dict:
             "restart the server.  See docs/memory.md."
         ),
     }
+
+
+# ── Whole-table sources ───────────────────────────────────────────────────────
+# The rest of the platform: small stores, re-read each cycle. Each record is
+# (record_id, text, ts, metadata); a record whose text hasn't changed is skipped
+# before anything is embedded, so a cycle with nothing new costs a few reads.
+
+def _sq(path: str):
+    import sqlite3 as _sq3
+    p = Path(path)
+    if not p.exists():
+        return None
+    c = _sq3.connect(p, check_same_thread=False)
+    c.row_factory = _sq3.Row
+    return c
+
+
+def _index_records(source: str, records: list[tuple[str, str, float, dict]]) -> int:
+    """Embed and store whatever is new or changed in `records`. Returns how many."""
+    if not _available or not records:
+        return 0
+    with _lock, _conn() as conn:
+        have = {(r["source_record_id"], r["source_hash"]) for r in conn.execute(
+            "SELECT source_record_id, source_hash FROM memory_items WHERE source=? AND deleted_at IS NULL", (source,))}
+    todo = []
+    for rid, text, ts, meta in records:
+        text = (text or "").strip()[:MAX_TEXT_CHARS]
+        if not text:
+            continue
+        h = hashlib.sha256(text.encode()).hexdigest()
+        if (rid, h) not in have:
+            todo.append((rid, text, ts, meta, h))
+    done = 0
+    for i in range(0, len(todo), BATCH_SIZE):
+        batch = todo[i:i + BATCH_SIZE]
+        try:
+            vecs = _embed([b[1] for b in batch], _embed_base, _model_name, _embed_key)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("memory: %s embed batch failed: %s", source, e)
+            _stats["embed_errors"] += 1
+            break
+        now = int(time.time() * 1000)
+        for (rid, text, ts, meta, h), vec in zip(batch, vecs):
+            ok, new = _upsert_item(source=source, source_record_id=rid, source_hash=h, chunk_index=0, text=text,
+                                   source_ts=int(_to_epoch_s(ts) * 1000), created_at=now,
+                                   metadata_json=json.dumps(meta), vec=vec)
+            done += int(ok and new)
+    _stats["indexed_total"] += done
+    if done:
+        logger.info("memory: %s indexed %d", source, done)
+    return done
+
+
+def _src_meetings() -> list:
+    """Huddle meeting notes, and their transcripts in chunks of ~40 lines."""
+    db = _sq("/data/meeting_notes.db")
+    if not db:
+        return []
+    out = []
+    with db:
+        for m in db.execute("SELECT * FROM meetings WHERE status IN ('ready', 'live', 'writing')"):
+            people = [r["name"] for r in db.execute("SELECT name FROM people WHERE meeting_id=?", (m["id"],))]
+            head = f"Huddle meeting \"{m['title'] or m['room']}\" in room {m['room']} on {_day(m['started'])} with {', '.join(people) or 'the squad'}."
+            if m["notes"]:
+                out.append((f"{m['id']}:notes", f"{head}\n\n{m['notes']}", m["started"], {"meeting_id": m["id"], "room": m["room"], "kind": "notes"}))
+            lines = db.execute("SELECT name, text FROM lines WHERE meeting_id=? ORDER BY ts, id", (m["id"],)).fetchall()
+            for n in range(0, len(lines), 40):
+                body = "\n".join(f"{l['name']}: {l['text']}" for l in lines[n:n + 40])
+                out.append((f"{m['id']}:t{n // 40}", f"{head} Transcript part {n // 40 + 1}:\n{body}", m["started"],
+                            {"meeting_id": m["id"], "room": m["room"], "kind": "transcript"}))
+    return out
+
+
+def _src_watch() -> list:
+    """What the squad watched (who, how far), and the party chat while it was on."""
+    db = _sq("/data/watch_history.db")
+    if not db:
+        return []
+    out = []
+    with db:
+        for it in db.execute("SELECT * FROM watch_items"):
+            prog = db.execute("SELECT display_name, room, position, duration, finished, updated_at FROM watch_progress WHERE url=?", (it["url"],)).fetchall()
+            if not prog:
+                continue
+            who = ", ".join(f"{p['display_name']}{' (finished)' if p['finished'] else ''}" for p in prog)
+            last = max(p["updated_at"] or 0 for p in prog)
+            title = it["title"] or it["title_hint"] or it["url"]
+            year = f" ({it['year']})" if it["year"] else ""
+            about = (it["overview"] or it["description"] or "")[:600]
+            out.append((f"watch:{it['url'][:200]}", f"Watched in the Watch Party: {title}{year}, last on {_day(last)}. "
+                        f"Watched by {who}. {it['genres'] or ''} {about}".strip(), last, {"url": it["url"], "kind": "watched"}))
+        rooms: dict[tuple, list] = {}
+        for c in db.execute("SELECT room, ts, name, msg, video FROM watch_chat ORDER BY ts"):
+            rooms.setdefault((c["room"], c["video"] or ""), []).append(c)
+        for (room, video), msgs in rooms.items():
+            body = "\n".join(f"{m['name']}: {m['msg']}" for m in msgs[-80:])
+            out.append((f"watchchat:{room}:{video[:150]}", f"Watch Party chat in {room} while watching {video or 'a video'} "
+                        f"({_day(msgs[0]['ts'])}):\n{body}", msgs[-1]["ts"], {"room": room, "kind": "chat"}))
+    return out
+
+
+def _src_movies() -> list:
+    """Films added to the Movies library: who added which, and how it went."""
+    db = _sq("/data/movies.db")
+    if not db:
+        return []
+    with db:
+        return [(f"movie:{r['imdb']}", f"Movie {r['title']} ({r['year']}) was added to the Watch library by {r['name'] or 'someone'} "
+                 f"on {_day(r['created'])}: {r['status']}{', ' + r['quality'] if r['quality'] else ''}.", r["created"],
+                 {"imdb": r["imdb"], "kind": "movie"}) for r in db.execute("SELECT * FROM adds")]
+
+
+def _src_games() -> list:
+    """What each person plays on PlayStation: their most played games, and recent sessions."""
+    db = _sq("/data/game_history.db")
+    if not db:
+        return []
+    out = []
+    with db:
+        for (who,) in db.execute("SELECT DISTINCT online_id FROM game_titles"):
+            top = db.execute("SELECT name, play_seconds, play_count, last_played_at FROM game_titles WHERE online_id=? "
+                             "ORDER BY play_seconds DESC LIMIT 15", (who,)).fetchall()
+            games = "; ".join(f"{g['name']} ({round((g['play_seconds'] or 0) / 3600)} h, last {_day(g['last_played_at'])})" for g in top)
+            out.append((f"games:{who}", f"PlayStation games {who} plays most: {games}.", time.time(), {"online_id": who, "kind": "games"}))
+        days: dict[tuple, list] = {}
+        for r in db.execute("SELECT online_id, game, started_at, last_seen_at FROM play_sessions ORDER BY started_at"):
+            days.setdefault((r["online_id"], _day(r["started_at"])), []).append(r)
+        for (who, day), rs in days.items():
+            mins = lambda r: round(((_to_epoch_s(r["last_seen_at"]) or 0) - (_to_epoch_s(r["started_at"]) or 0)) / 60)  # noqa: E731
+            out.append((f"session:{who}:{day}", f"On {day} {who} played " + ", ".join(f"{r['game']} (~{mins(r)} min)" for r in rs) + ".",
+                        rs[0]["started_at"], {"online_id": who, "kind": "sessions"}))
+    return out
+
+
+def _src_giveaways() -> list:
+    db = _sq("/data/giveaway.db")
+    if not db:
+        return []
+    out = []
+    with db:
+        for g in db.execute("SELECT * FROM giveaways"):
+            entries = [r["display_name"] for r in db.execute("SELECT display_name FROM giveaway_entries WHERE giveaway_id=?", (g["id"],))]
+            wins = [r["winner_name"] for r in db.execute("SELECT winner_name FROM giveaway_draws WHERE giveaway_id=? AND status != 'invalidated'", (g["id"],))]
+            out.append((f"giveaway:{g['id']}", f"Giveaway \"{g['title']}\" (prize: {g['prize']}), {g['status']}, created {_day(g['created_at'])}. "
+                        f"Entered: {', '.join(entries) or 'nobody yet'}. Won by: {', '.join(wins) or 'not drawn yet'}.", g["created_at"],
+                        {"giveaway_id": g["id"], "kind": "giveaway"}))
+    return out
+
+
+def _src_slap() -> list:
+    """Slap: the daily New finds picked for people (and why), songs shared or downloaded, thumbs."""
+    out = []
+    if db := _sq("/data/slap_discover.db"):
+        with db:
+            for f in db.execute("SELECT * FROM finds"):
+                out.append((f"find:{f['week']}:{f['apple_id']}", f"Slap New find for {f['for_user'] or 'the squad'} ({f['week']}): "
+                            f"{f['title']} by {f['artist']}. Why: {f['why']}. Status: {f['status']}.", time.time(), {"kind": "find"}))
+            for c in db.execute("SELECT * FROM credits"):
+                out.append((f"credit:{c['job_id']}", f"{c['name']} downloaded {c['title']} by {c['artist']} into Slap on {_day(c['ts'])}.",
+                            c["ts"], {"kind": "download"}))
+            for sh in db.execute("SELECT * FROM shares WHERE status != 'undone'"):
+                out.append((f"share:{sh['job_id']}", f"A song was shared to Slap from {sh['url']}: {sh['title'] or '?'} by {sh['artist'] or '?'} "
+                            f"on {_day(sh['ts'])} ({sh['status']}).", sh["ts"], {"kind": "share"}))
+    if db := _sq("/data/slap_thumbs.db"):
+        with db:
+            for t in db.execute("SELECT * FROM thumbs"):
+                out.append((f"thumb:{t['track_id']}:{t['sub']}", f"{t['name']} gave {t['title']} by {t['artist']} a "
+                            f"{'thumbs up' if (t['value'] or 0) > 0 else 'thumbs down'} in Slap.", t["ts"], {"kind": "thumb"}))
+    return out
+
+
+def _src_uploads() -> list:
+    """Videos members sent through Clips to be posted (caption, who, where it went)."""
+    db = _sq("/data/video_uploads.db")
+    if not db:
+        return []
+    out = []
+    with db:
+        for v in db.execute("SELECT * FROM video_posts"):
+            links = [f"{l['platform']}: {l['url']}" for l in db.execute("SELECT platform, url FROM video_post_links WHERE video_post_id=?", (v["video_post_id"],))]
+            out.append((f"upload:{v['video_post_id']}", f"Video sent through Clips by {v['psn_id']} on {_day(v['uploaded_at'])}, {v['status']}. "
+                        f"Caption: {v['caption'] or '(none)'}." + (f" Posted: {', '.join(links)}." if links else ""), v["uploaded_at"],
+                        {"kind": "upload", "video_post_id": v["video_post_id"]}))
+    return out
+
+
+_SNAPSHOT_SOURCES = {
+    "meetings": _src_meetings,
+    "watch": _src_watch,
+    "movies": _src_movies,
+    "games": _src_games,
+    "giveaways": _src_giveaways,
+    "slap": _src_slap,
+    "uploads": _src_uploads,
+}
+_SOURCE_INDEXERS.update({name: (lambda st, fn=fn, name=name: _index_records(name, fn())) for name, fn in _SNAPSHOT_SOURCES.items()})
