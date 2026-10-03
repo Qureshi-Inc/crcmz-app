@@ -157,6 +157,11 @@ class LauncherActivity : AppCompatActivity() {
             calls.insets(bars.top, bars.bottom)
             insets
         }
+        // The space for the status bar and the tab bar is made here, natively. Newer web views
+        // (Chrome 135+) would also hand the bars' sizes to the page as env(safe-area-inset-*),
+        // and the page would make the same room again: the header pushed down, the chat board
+        // lifted off the tab bar. The page gets no insets at all, on every web view version.
+        ViewCompat.setOnApplyWindowInsetsListener(refresh) { _, _ -> WindowInsetsCompat.CONSUMED }
 
         setUpWeb()
         NativeAudio.start(this)
