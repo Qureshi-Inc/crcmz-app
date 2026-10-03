@@ -88,7 +88,20 @@ def tests():
         for word in ("token", "bearer", "key=", "secret", "password"):
             assert word not in body, word
 
-    for fn in (each_dependency_answers_without_a_session, all_says_which_are_down, results_are_cached, nothing_secret_comes_back):
+    def kuma_alerts_need_the_secret_and_dm_the_admin():
+        sent = []
+        server.mm_client.dm_user = lambda user, text, email="": sent.append((user, text)) or True
+        os.environ.pop("STATUS_ALERT_SECRET", None)
+        body = {"monitor": {"name": "Jellyfin"}, "heartbeat": {"status": 0, "msg": "answered 502"}}
+        assert client.post("/api/status/alert", json=body, headers={"X-Status-Secret": ""}).status_code == 403, "no secret set: nothing in"
+        os.environ["STATUS_ALERT_SECRET"] = "s3cret"
+        assert client.post("/api/status/alert", json=body, headers={"X-Status-Secret": "wrong"}).status_code == 403
+        r = client.post("/api/status/alert", json=body, headers={"X-Status-Secret": "s3cret"})
+        assert r.status_code == 200 and sent[-1][0] == "moiz" and "Jellyfin" in sent[-1][1] and "down" in sent[-1][1], sent
+        client.post("/api/status/alert", json={"monitor": {"name": "Jellyfin"}, "heartbeat": {"status": 1}}, headers={"X-Status-Secret": "s3cret"})
+        assert "back up" in sent[-1][1], sent
+
+    for fn in (each_dependency_answers_without_a_session, kuma_alerts_need_the_secret_and_dm_the_admin, all_says_which_are_down, results_are_cached, nothing_secret_comes_back):
         check(fn.__name__, fn)
 
 

@@ -172,6 +172,33 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/api/status/alert")
+async def status_alert(request: Request):
+    """Uptime Kuma's alerts (status.crcmz.me, on qcloud): a Mattermost DM to whoever runs
+    things (STATUS_ALERT_MM_USER, default moiz). Kuma sends X-Status-Secret, which must
+    match STATUS_ALERT_SECRET; with that unset, nothing is accepted."""
+    import hmac as _hmac
+    secret = os.environ.get("STATUS_ALERT_SECRET", "")
+    given = request.headers.get("x-status-secret", "")
+    if not secret or not _hmac.compare_digest(given, secret):
+        return JSONResponse({"error": "not allowed"}, status_code=403)
+    try:
+        b = await request.json()
+    except Exception:  # noqa: BLE001
+        b = {}
+    mon = (b or {}).get("monitor") or {}
+    beat = (b or {}).get("heartbeat") or {}
+    name = str(mon.get("name") or "Something")[:80]
+    up = beat.get("status") == 1
+    why = str(beat.get("msg") or (b or {}).get("msg") or "")[:300]
+    text = (f"✅ **{name}** is back up." if up else f"🔴 **{name}** is down: {why or 'no reason given'}") + \
+        "\nhttps://status.crcmz.me"
+    if not beat:   # Kuma's "Test" button
+        text = f"🔔 Status alerts are working. {why}".strip()
+    ok = await asyncio.to_thread(mm_client.dm_user, os.environ.get("STATUS_ALERT_MM_USER", "moiz"), text)
+    return JSONResponse({"ok": bool(ok)})
+
+
 @app.get("/health/{dep}")
 async def health_dep(dep: str):
     """One dependency's health for the status page (health_deps.py): 200 fine, 503 not.
@@ -780,6 +807,8 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # The status page's per-dependency checks (health_deps.py): ok / not ok
                # and a plain reason, nothing secret.
                "/health/all", *(f"/health/{n}" for n in _health_deps.CHECKS),
+               # Kuma's alerts: no session, the handler checks STATUS_ALERT_SECRET itself.
+               "/api/status/alert",
                "/auth/logout", "/auth/passkey/begin", "/auth/passkey/complete",
                "/.well-known/webauthn", "/.well-known/assetlinks.json",
                "/.well-known/apple-app-site-association",
