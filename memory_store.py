@@ -1963,6 +1963,17 @@ def _src_watch() -> list:
             about = (it["overview"] or it["description"] or "")[:600]
             out.append((f"watch:{it['url'][:200]}", f"Watched in the Watch Party: {title}{year}, last on {_day(last)}. "
                         f"Watched by {who}. {it['genres'] or ''} {about}".strip(), last, {"url": it["url"], "kind": "watched"}))
+        # One summary per person: "what has X watched" is a question about them, not a film.
+        per: dict[str, list] = {}
+        for p in db.execute("SELECT p.display_name, p.finished, p.updated_at, i.title, i.title_hint, i.year FROM watch_progress p "
+                            "JOIN watch_items i ON i.url = p.url ORDER BY p.updated_at DESC"):
+            t = p["title"] or p["title_hint"]
+            if t and p["display_name"]:
+                per.setdefault(p["display_name"], []).append(f"{t}{' (' + p['year'] + ')' if p['year'] else ''}"
+                                                             f"{'' if p['finished'] else ' (part)'} on {_day(p['updated_at'])}")
+        for who, seen in per.items():
+            out.append((f"watched-by:{who}", f"Movies and videos {who} has watched in the Watch Party, newest first: {'; '.join(seen[:40])}.",
+                        time.time(), {"person": who, "kind": "watched_by"}))
         rooms: dict[tuple, list] = {}
         for c in db.execute("SELECT room, ts, name, msg, video FROM watch_chat ORDER BY ts"):
             rooms.setdefault((c["room"], c["video"] or ""), []).append(c)
