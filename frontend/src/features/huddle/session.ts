@@ -14,6 +14,7 @@ import { useSyncExternalStore } from 'react'
 import { toast } from '../../components/toast'
 import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError, request } from '../../lib/http'
+import { nativeCalls, onNativeEnded, toNative } from '../../lib/nativeCall'
 import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
 import { markSignedOut } from '../../lib/session'
@@ -110,12 +111,14 @@ export type HuddleState = {
   /** Everyone recording a transcript right now, you included. */
   recorders: string[]
   lines: Line[]
+  /** In the iOS app the call runs natively: the room it's in, '' when none. */
+  nativeRoom: string
 }
 
 let state: HuddleState = {
   phase: 'pre', room: 'crcmz', error: '', errorText: '', preview: 'off', mics: [], cams: [], micId: '', camId: '',
   mic: false, cam: false, share: false, blur: false, note: '', tiles: [], tracks: 0, layout: 'spotlight', pinned: '', speaker: '',
-  audioBlocked: false, aiOpen: false, aiBusy: false, aiLog: [], aiSignedOut: false, transcribing: false, recorders: [], lines: [],
+  audioBlocked: false, aiOpen: false, aiBusy: false, aiLog: [], aiSignedOut: false, transcribing: false, recorders: [], lines: [], nativeRoom: '',
 }
 const listeners = new Set<() => void>()
 function set(patch: Partial<HuddleState>) {
@@ -204,6 +207,7 @@ export async function join({ camera = true }: { camera?: boolean } = {}) {
   set({ phase: 'joining', error: '', errorText: '', note: '' })
   stopTracks(previewStream)
   previewStream = null
+  if (nativeCalls()) { await joinNative(wanted, camera); return }
   let r: LkRoom | null = null
   try {
     const ns = await loadLk()
@@ -235,6 +239,22 @@ export async function join({ camera = true }: { camera?: boolean } = {}) {
     if (previewWanted) void startPreview()
   }
 }
+
+/** The iOS app: fetch the token here, then the app runs the call (full screen, PiP). */
+async function joinNative(wanted: string, camera: boolean) {
+  try {
+    const t = await request<{ token: string; url: string; room: string }>('/api/huddle/token', { body: { room: wanted }, quiet401: true })
+    muteOtherCalls('huddle')
+    toNative({ type: 'start', kind: 'huddle', url: t.url, token: t.token, room: t.room, title: `Huddle · ${t.room}`, publish: true, camera, mic: true })
+    set({ phase: 'pre', nativeRoom: t.room })
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) { markSignedOut(); set({ phase: 'pre', error: 'signin' }) }
+    else if (e instanceof ApiError && e.status === 503) set({ phase: 'pre', error: 'config' })
+    else set({ phase: 'pre', error: 'connect', errorText: e instanceof ApiError ? e.detail : '' })
+  }
+}
+export const showNativeCall = () => toNative({ type: 'show', kind: 'huddle' })
+onNativeEnded((kind) => { if (kind === 'huddle') { set({ nativeRoom: '' }); if (previewWanted) void startPreview() } })
 
 export async function leave() {
   const r = room

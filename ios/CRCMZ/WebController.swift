@@ -6,7 +6,7 @@ import WebKit
 /// background video, swipe back, pull to refresh. Only CRCMZ pages load here; any other
 /// site opens in Safari. Push tokens reach the server through the signed-in page
 /// (frontend/src/lib/native.ts → /api/push/native).
-final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate {
+final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     static let origin = "https://app.crcmz.me"
     /// Pages that belong in the app: the app itself and the sign-in pages.
     private static let hosts: Set<String> = ["app.crcmz.me", "auth.crcmz.me"]
@@ -14,6 +14,7 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate 
     private var webView: WKWebView!
     private var pending: [String: String] = [:]   // push token -> platform, until the server has it
     private var registering = false
+    private var calls: CallHost?
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -23,6 +24,8 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate 
         config.allowsPictureInPictureMediaPlayback = true
         config.applicationNameForUserAgent = "CRCMZ-iOS/1.0"
         config.websiteDataStore = .default()
+        // Huddle and Watch Party calls are handed to the app (NativeCall).
+        config.userContentController.add(self, name: "crcmzCall")
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -36,12 +39,35 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate 
         refresh.tintColor = .white
         refresh.addTarget(self, action: #selector(reloadPage(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refresh
-        view = webView
+        let root = UIView()
+        root.backgroundColor = webView.backgroundColor
+        webView.frame = root.bounds
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        root.addSubview(webView)
+        view = root
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        let host = CallHost(in: self)
+        calls = host
+        NativeCall.shared.onTiles = { [weak host] in host?.tilesChanged() }
+        NativeCall.shared.onEnded = { [weak self] kind in
+            self?.webView.evaluateJavaScript("window.__crcmzCallEnded && window.__crcmzCallEnded('\(kind.rawValue)')")
+        }
         webView.load(URLRequest(url: URL(string: Self.origin + "/app?crcmz_app=ios")!))
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        calls?.layout()
+    }
+
+    /// The page hands over a call (start / join / show / end; see NativeCall).
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.host == "app.crcmz.me",
+              let body = message.body as? [String: Any] else { return }
+        NativeCall.shared.handle(body)
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }

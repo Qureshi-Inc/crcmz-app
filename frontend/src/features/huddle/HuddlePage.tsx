@@ -13,7 +13,7 @@ import { loginUrl } from '../../lib/session'
 import { useSwipeDown } from '../../lib/gestures'
 import { initials, tint } from '../../lib/watch'
 import {
-  askAi, canPopOut, canShare, join, leave, popOut, meetingNotes, pin, previewMedia, retryAi, setAiOpen, setCamId, setLayout, setMicId, setRoomName,
+  askAi, canPopOut, canShare, join, leave, popOut, showNativeCall, meetingNotes, pin, previewMedia, retryAi, setAiOpen, setCamId, setLayout, setMicId, setRoomName,
   spotlightTile, startAudio, startPreview, stopPreview, tileTrack, toggleBlur, toggleCam, toggleMic, toggleShare, toggleTranscript,
   useHuddle, type HuddleState, type Tile,
 } from './session'
@@ -41,8 +41,19 @@ export function HuddlePage() {
       <div className="hu-head">
         <h1 className="page-h1" tabIndex={-1}>Huddle<HelpLink id="huddle" /></h1>
       </div>
-      {call ? <CallView s={s} /> : <PreJoin s={s} />}
+      {call ? <CallView s={s} /> : s.nativeRoom ? <NativeLive s={s} /> : <PreJoin s={s} />}
     </div>
+  )
+}
+
+/** In the iOS app the call is native and full screen; this is what's behind it. */
+function NativeLive({ s }: { s: HuddleState }) {
+  return (
+    <section className="glass hu-native" aria-live="polite">
+      <p className="empty-title">You're in the Huddle · {s.nativeRoom}</p>
+      <p className="meta">The call is open full screen. It keeps going if you leave the app, in a floating window.</p>
+      <button type="button" className="btn btn-primary" onClick={showNativeCall}><Icon name="huddle" />Return to the call</button>
+    </section>
   )
 }
 

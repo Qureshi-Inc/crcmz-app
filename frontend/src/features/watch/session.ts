@@ -12,6 +12,7 @@ import { toast } from '../../components/toast'
 import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError, request } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
+import { nativeCalls, onNativeEnded, toNative } from '../../lib/nativeCall'
 import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
 import {
@@ -679,6 +680,7 @@ export function leave() {
   endCall()
   set({ active: false })
   disconnectRoom()
+  if (nativeCalls() && nativeRoomFor) { toNative({ type: 'end', kind: 'watch' }); nativeRoomFor = '' }
   window.clearTimeout(retryT)
   window.clearTimeout(recoverT)
   dropSock()
@@ -1006,8 +1008,23 @@ async function loadLk(): Promise<LkNs | null> {
   return w.LivekitClient ?? null
 }
 
+/** In the iOS app the party's call is native (cameras, PiP): hand it the room once. */
+let nativeRoomFor = ''
+onNativeEnded((kind) => { if (kind === 'watch') nativeRoomFor = '' })   // Leave in the app: Join starts afresh
+async function connectNative() {
+  const room = state.room || 'crcmz'
+  if (nativeRoomFor === room + state.clientId) return
+  nativeRoomFor = room + state.clientId
+  try {
+    const t = await request<{ token: string; url: string; room: string }>('/api/watch/call/token', {
+      body: { room, client: state.clientId }, quiet401: true })
+    toNative({ type: 'start', kind: 'watch', url: t.url, token: t.token, room: t.room, title: 'Watch Party', publish: false, camera: false, mic: false })
+  } catch { nativeRoomFor = '' }
+}
+
 /** The party's call room, connected listening (once per party visit). */
 function connectRoom(): Promise<LkRoom | null> {
+  if (nativeCalls()) { void connectNative(); return Promise.resolve(null) }
   if (lkRoom) return Promise.resolve(lkRoom)
   if (lkConnecting) return lkConnecting
   lkConnecting = (async () => {
@@ -1097,6 +1114,7 @@ function syncPeers() {
 }
 
 export async function joinCall() {
+  if (nativeCalls()) { void connectNative(); toNative({ type: 'join', kind: 'watch' }); return }
   if (state.call.busy || state.call.on) return
   if (!canCall()) { setCall({ note: "This browser can't share a camera." }); return }
   setCall({ busy: true, note: 'Asking for permission…', micOnly: false })
