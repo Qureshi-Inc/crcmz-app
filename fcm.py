@@ -37,7 +37,10 @@ _lock = threading.Lock()
 
 # Push categories (webpush.CATEGORIES) that ring instead of buzzing once.
 RING = {"huddle", "watch"}
-_PLATFORMS = {"android", "ios", "ios-voip"}   # iPhones: apns.py sends to "ios" / "ios-voip"
+# "android": the 1.x app (Chrome full screen; every other alert is Chrome's Web Push).
+# "android-app": the native 2.x app, a web view with no Web Push, so every alert comes here.
+_PLATFORMS = {"android", "android-app", "ios", "ios-voip"}   # iPhones: apns.py sends to "ios" / "ios-voip"
+_ANDROID = ("android", "android-app")
 _MAX_DEVICES = 10
 _RING_TTL = "30s"  # a ring that can't arrive within half a minute is a missed call
 
@@ -111,7 +114,14 @@ def register(sub: str, token: str, platform: str = "android", web_endpoint: str 
     if platform not in _PLATFORMS:
         return {"error": "unknown platform"}
     now = time.time()
+    old_endpoint = ""
     with _lock, _conn() as db:
+        if platform == "android-app":
+            # Upgraded from 1.x: the phone's Chrome still holds a Web Push subscription for the
+            # site, which would now show every alert a second time beside the app's own.
+            row = db.execute("SELECT web_endpoint FROM devices WHERE token=?", (token,)).fetchone()
+            old_endpoint = (row["web_endpoint"] if row else "") or ""
+            web_endpoint = ""
         db.execute("""INSERT INTO devices(token, sub, platform, web_endpoint, created_at, seen_at)
                       VALUES (?,?,?,?,?,?)
                       ON CONFLICT(token) DO UPDATE SET sub=excluded.sub, platform=excluded.platform,
@@ -123,6 +133,11 @@ def register(sub: str, token: str, platform: str = "android", web_endpoint: str 
         db.execute("""DELETE FROM devices WHERE sub=? AND token NOT IN
                       (SELECT token FROM devices WHERE sub=? ORDER BY seen_at DESC LIMIT ?)""",
                    (sub, sub, _MAX_DEVICES))
+        if platform == "android-app":
+            db.execute("UPDATE devices SET web_endpoint='' WHERE token=?", (token,))
+    if old_endpoint:
+        import webpush
+        webpush.unsubscribe(sub, old_endpoint)
     return {"ok": True}
 
 
@@ -166,13 +181,13 @@ def ring(category: str, title: str, body: str = "", url: str = "/app", *,
     Returns the Web Push endpoints of the phones that rang, so the caller can skip
     them for the same alert.
     """
-    out = {"category": category, "recipients": 0, "delivered": 0, "gone": 0, "endpoints": set()}
+    out = {"category": category, "recipients": 0, "delivered": 0, "gone": 0, "endpoints": set(), "subs": set()}
     creds = _credentials()
     if category not in RING or creds is None:
         return out
     import webpush  # the same per-person switches decide both
     with _conn() as db:
-        rows = db.execute("SELECT * FROM devices WHERE platform='android'").fetchall()
+        rows = db.execute("SELECT * FROM devices WHERE platform IN (?,?)", _ANDROID).fetchall()
     wanted: dict[str, bool] = {}
     targets = []
     for r in rows:
@@ -190,6 +205,7 @@ def ring(category: str, title: str, body: str = "", url: str = "/app", *,
         with _lock, _conn() as db:
             if 200 <= status < 300:
                 out["delivered"] += 1
+                out["subs"].add(r["sub"])
                 if r["web_endpoint"]:
                     out["endpoints"].add(r["web_endpoint"])
                 db.execute("UPDATE devices SET last_ok_at=? WHERE token=?", (time.time(), r["token"]))
@@ -198,6 +214,45 @@ def ring(category: str, title: str, body: str = "", url: str = "/app", *,
                 db.execute("DELETE FROM devices WHERE token=?", (r["token"],))
     if targets:
         logger.info("fcm: ring %s -> %d/%d delivered, %d gone", category, out["delivered"], len(targets), out["gone"])
+    return out
+
+
+def alert(category: str, title: str, body: str = "", url: str = "/app", *, exclude: str = "",
+          only: list[str] | None = None, tag: str = "", skip: set[str] | None = None) -> dict:
+    """A normal notification on the native Android app ("android-app"), for every category.
+
+    ``skip``: people whose phone just rang for the same thing.
+    """
+    out = {"category": category, "recipients": 0, "delivered": 0, "gone": 0}
+    creds = _credentials()
+    if creds is None:
+        return out
+    import webpush
+    with _conn() as db:
+        rows = db.execute("SELECT * FROM devices WHERE platform='android-app'").fetchall()
+    wanted: dict[str, bool] = {}
+    targets = []
+    for r in rows:
+        if r["sub"] == exclude or r["sub"] in (skip or set()) or (only is not None and r["sub"] not in only):
+            continue
+        if r["sub"] not in wanted:
+            wanted[r["sub"]] = webpush.get_prefs(r["sub"]).get(category, True)
+        if wanted[r["sub"]]:
+            targets.append(r)
+    data = {"type": "alert", "category": category, "title": title[:120], "body": body[:300],
+            "url": url if url.startswith("/app") else "/app", "tag": tag or category}
+    out["recipients"] = len(targets)
+    for r in targets:
+        status, err = _send_one(creds, r["token"], data)
+        with _lock, _conn() as db:
+            if 200 <= status < 300:
+                out["delivered"] += 1
+                db.execute("UPDATE devices SET last_ok_at=? WHERE token=?", (time.time(), r["token"]))
+            elif _gone(status, err):
+                out["gone"] += 1
+                db.execute("DELETE FROM devices WHERE token=?", (r["token"],))
+    if targets:
+        logger.info("fcm: %s -> %d/%d delivered, %d gone", category, out["delivered"], len(targets), out["gone"])
     return out
 
 

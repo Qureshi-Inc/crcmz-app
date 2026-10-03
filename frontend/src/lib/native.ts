@@ -1,4 +1,5 @@
-// The phone apps. Android (android/): app.crcmz.me in Chrome, full screen; its launcher
+// The phone apps. Android 2.x (android/) is a web view that opens ?crcmz_app=android-app
+// with its FCM token (every alert and ring come through FCM). Android 1.x: app.crcmz.me in Chrome, full screen; its launcher
 // appends ?crcmz_app=android&crcmz_fcm=<token> to the first URL so this page can register
 // the phone for Huddle / Watch Party rings (fcm.py). iOS (ios/): a web view that opens
 // ?crcmz_app=ios and hands over its push tokens through window.__crcmzNative (APNs alerts
@@ -21,6 +22,12 @@ export function takeNativeLaunch() {
   url.searchParams.delete('crcmz_fcm')
   history.replaceState(history.state, '', url.pathname + url.search + url.hash)
   if (app === 'ios') { localStorage.setItem(KEY, 'ios'); return }
+  // The native Android app (2.x): a web view like the iOS app, so every alert is FCM.
+  if (app === 'android-app') {
+    localStorage.setItem(KEY, 'android-app')
+    if (token) void request('/api/push/native', { body: { token, platform: 'android-app' }, quiet401: true }).catch(() => {})
+    return
+  }
   if (app !== 'android') return
   localStorage.setItem(KEY, 'android')
   if (!token) return

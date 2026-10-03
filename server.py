@@ -136,9 +136,10 @@ ANDROID_CERT_SHA256 = os.environ.get(
 
 @app.get("/.well-known/assetlinks.json")
 def android_asset_links():
-    """Digital Asset Links: me.crcmz.app may show this origin with no browser bar."""
+    """Digital Asset Links: app.crcmz.me/app links open me.crcmz.app, and its passkeys work in
+    it (the 2.x app is a web view; crcmz.me, the passkeys' RP, says the same)."""
     return JSONResponse([{
-        "relation": ["delegate_permission/common.handle_all_urls"],
+        "relation": ["delegate_permission/common.handle_all_urls", "delegate_permission/common.get_login_creds"],
         "target": {"namespace": "android_app", "package_name": "me.crcmz.app",
                    "sha256_cert_fingerprints": [f.strip() for f in ANDROID_CERT_SHA256.split(",") if f.strip()]},
     }])

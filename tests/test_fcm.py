@@ -228,7 +228,41 @@ def route_tests():
         import assistant
         assert "ring_squad" in assistant.write_tool_names() and "ring_squad" not in assistant.tool_names()
 
+    def the_native_app_gets_every_alert_and_a_ring_only_once():
+        reset()
+        native, old_app = "n" * 40, TOKEN
+        fcm.register("u-native", native, "android-app")
+        fcm.register("u-old", old_app, "android")
+        notifications.route("mentions", "Zubair mentioned you", "banger", "/app/slap", dms=False)
+        alerts = [(t, d) for t, d in SENT if d["type"] == "alert"]
+        assert [t for t, _ in alerts] == [native], SENT   # the 1.x app keeps Chrome's Web Push
+        assert alerts[0][1]["url"] == "/app/slap" and alerts[0][1]["title"] == "Zubair mentioned you"
+        SENT.clear()
+        notifications.route("watch", "📞 Moiz is calling", "Tap to join.", "/app/watch/party", tag="watch-ring", caller="Moiz")
+        rings = sorted(t for t, d in SENT if d["type"] == "ring")
+        assert rings == sorted([native, old_app]), SENT
+        assert not [d for _, d in SENT if d["type"] == "alert"], "rung: no second buzz"
+
+    def upgrading_to_the_native_app_drops_chromes_web_push():
+        reset()
+        webpush.subscribe("u1", web_sub(1))
+        fcm.register("u1", TOKEN, "android", web_endpoint=web_sub(1)["endpoint"])
+        assert webpush.device_count("u1") == 1
+        fcm.register("u1", TOKEN, "android-app")
+        assert webpush.device_count("u1") == 0, "the old Chrome subscription would double every alert"
+        with fcm._conn() as db:
+            row = db.execute("SELECT * FROM devices").fetchone()
+        assert row["platform"] == "android-app" and row["web_endpoint"] == ""
+
+    def outside_links_never_reach_the_native_app():
+        reset()
+        fcm.register("u-native", "n" * 40, "android-app")
+        fcm.alert("mentions", "x", "", "https://evil.example/")
+        assert SENT[-1][1]["url"] == "/app"
+
     for fn in (a_phone_that_rang_is_not_also_pushed, a_failed_ring_still_pushes, other_categories_never_ring,
+               the_native_app_gets_every_alert_and_a_ring_only_once, outside_links_never_reach_the_native_app,
+               upgrading_to_the_native_app_drops_chromes_web_push,
                ring_button_rings_everyone_but_the_caller_once_a_minute, the_ring_tool_is_write_only_and_audited):
         check(fn.__name__, fn)
 

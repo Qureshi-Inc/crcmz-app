@@ -4,8 +4,12 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.NotificationManager
+import android.app.PictureInPictureParams
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,28 +17,342 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Rational
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.updatePadding
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import com.google.firebase.messaging.FirebaseMessaging
+import org.json.JSONObject
 
 /**
- * Opens app.crcmz.me/app in Chrome as a Trusted Web Activity (no URL bar).
+ * The CRCMZ app: app.crcmz.me/app in a web view, with native parts where the web can't
+ * keep up on a phone, the same split as the iOS app (ios/):
  *
- * Before launching it asks once for notification permission (rings and Web Push
- * both need it) and makes sure there's an FCM token, which rides along on the
- * launch URL as ?crcmz_app=android&crcmz_fcm=… so the signed-in page can register
- * this phone for rings (frontend/src/lib/native.ts → /api/push/native).
+ *   tab bar + More          Shell.kt        ← frontend/src/lib/nativeShell.ts
+ *   Huddle / Watch calls     NativeCall.kt   ← frontend/src/lib/nativeCall.ts
+ *   Slap music               NativeAudio.kt  ← frontend/src/lib/nativeAudio.ts
+ *   notifications + rings    MessagingService.kt (every alert is FCM: a web view gets no Web Push)
  *
- * Then, once each, the two settings a ring needs to behave like a call: full-screen
- * notifications (off by default since Android 14) and no battery restrictions (so Doze
- * doesn't hold a ring back). Either can be skipped; the app opens regardless.
+ * The page talks to the app exactly as it does on iOS: window.webkit.messageHandlers.<name>
+ * .postMessage(m). Here that's a small script at document start that forwards to a
+ * WebMessageListener only app.crcmz.me can reach. The app answers with window.__crcmz*.
+ *
+ * Before the first load it asks once for notification permission, gets the FCM token
+ * (handed to the page as ?crcmz_app=android-app&crcmz_fcm=…), and walks through the two
+ * settings a ring needs (full-screen notifications, no battery limits).
  */
-class LauncherActivity : com.google.androidbrowserhelper.trusted.LauncherActivity() {
-    private var launched = false
+class LauncherActivity : AppCompatActivity() {
+    lateinit var web: WebView
+        private set
+    private lateinit var refresh: SwipeRefreshLayout
+    private lateinit var content: LinearLayout
+    lateinit var root: FrameLayout
+        private set
+    private lateinit var shell: Shell
+    private lateinit var calls: CallOverlay
+    private var loaded = false
+    private var pendingUrl: String? = null
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingPermission: PermissionRequest? = null
+    private var fullscreen: View? = null
+    private var fullscreenDone: WebChromeClient.CustomViewCallback? = null
 
-    override fun shouldLaunchImmediately() = false
+    private val pickFiles = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        val data = r.data
+        val uris = when {
+            r.resultCode != RESULT_OK -> null
+            data?.clipData != null -> Array(data.clipData!!.itemCount) { data.clipData!!.getItemAt(it).uri }
+            data?.data != null -> arrayOf(data.data!!)
+            else -> null
+        }
+        fileCallback?.onReceiveValue(uris)
+        fileCallback = null
+    }
 
+    private val askMedia = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        val req = pendingPermission ?: return@registerForActivityResult
+        pendingPermission = null
+        val ok = req.resources.filter {
+            (it == PermissionRequest.RESOURCE_VIDEO_CAPTURE && granted[Manifest.permission.CAMERA] != false) ||
+                (it == PermissionRequest.RESOURCE_AUDIO_CAPTURE && granted[Manifest.permission.RECORD_AUDIO] != false)
+        }
+        if (ok.isEmpty()) req.deny() else req.grant(ok.toTypedArray())
+    }
+
+    private var permissionsDone: ((Set<String>) -> Unit)? = null
+    private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
+        val done = permissionsDone ?: return@registerForActivityResult
+        permissionsDone = null
+        done(r.filterValues { it }.keys + r.keys.filter { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED })
+    }
+
+    /** Ask for what's missing (camera, mic), then hand back what's granted. */
+    fun withPermissions(perms: List<String>, done: (Set<String>) -> Unit) {
+        val missing = perms.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isEmpty()) return done(perms.toSet())
+        permissionsDone = { got -> done(perms.filter { it in got || checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }.toSet()) }
+        askPermissions.launch(missing.toTypedArray())
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (isFinishing) return
+        current = this
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = getColor(R.color.bg)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+
+        web = WebView(this)
+        web.setBackgroundColor(getColor(R.color.bg))
+        refresh = SwipeRefreshLayout(this).apply {
+            addView(web)
+            setOnRefreshListener { web.reload(); postDelayed({ isRefreshing = false }, 800) }
+            setProgressBackgroundColorSchemeColor(getColor(R.color.bg))
+            setColorSchemeColors(getColor(R.color.accent))
+            // Only from the very top: a page that scrolls inside itself keeps its own pull.
+            setOnChildScrollUpCallback { _, _ -> web.scrollY > 0 }
+        }
+        shell = Shell(this) { path -> go(path) }
+        content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(refresh, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(shell.bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        root = FrameLayout(this).apply {
+            setBackgroundColor(getColor(R.color.bg))
+            addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        calls = CallOverlay(this, root)
+        setContentView(root)
+        // The page draws under the status bar (viewport-fit=cover reads it as a safe area);
+        // the native bar sits above the gesture bar.
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            shell.bar.updatePadding(bottom = bars.bottom)
+            refresh.updatePadding(top = bars.top, bottom = if (shell.bar.visibility == View.VISIBLE) 0 else bars.bottom)
+            calls.insets(bars.top, bars.bottom)
+            insets
+        }
+
+        setUpWeb()
+        NativeAudio.start(this)
+        NativeCall.onEnded = { kind -> js("window.__crcmzCallEnded && window.__crcmzCallEnded('$kind')") }
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                when {
+                    fullscreen != null -> fullscreenDone?.onCustomViewHidden()
+                    calls.back() -> Unit
+                    web.canGoBack() -> web.goBack()
+                    else -> moveTaskToBack(true)
+                }
+            }
+        })
+
+        pendingUrl = target(intent)
+        startUp()
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setUpWeb() {
+        web.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            mediaPlaybackRequiresUserGesture = false
+            allowFileAccess = false
+            setSupportMultipleWindows(true)
+            javaScriptCanOpenWindowsAutomatically = true
+            userAgentString = "$userAgentString CRCMZ-Android/${BuildConfig.VERSION_NAME}"
+        }
+        CookieManager.getInstance().setAcceptCookie(true)
+        // Passkeys in the page (sign-in and Settings → Passkeys), through the phone's
+        // credential manager. crcmz.me vouches for this app (/.well-known/assetlinks.json).
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+            WebSettingsCompat.setWebAuthenticationSupport(web.settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP)
+        }
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(web, "crcmzBridge", setOf(ORIGIN)) { _, message, origin, isMainFrame, _ ->
+                if (!isMainFrame || origin.toString().trimEnd('/') != ORIGIN) return@addWebMessageListener
+                val m = runCatching { JSONObject(message.data ?: "") }.getOrNull() ?: return@addWebMessageListener
+                val body = m.optJSONObject("m") ?: return@addWebMessageListener
+                when (m.optString("h")) {
+                    "crcmzShell" -> shell.update(body)
+                    "crcmzCall" -> NativeCall.handle(this, body)
+                    "crcmzAudio" -> NativeAudio.handle(body)
+                }
+            }
+        }
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(web, BRIDGE_JS, setOf(ORIGIN))
+        }
+
+        web.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
+                if (!req.isForMainFrame) return false
+                val u = req.url
+                if (u.scheme == "https" && u.host in HOSTS) return false
+                openOutside(u)
+                return true
+            }
+
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                shell.pageChanged(url?.let(Uri::parse))
+            }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                shell.pageChanged(url?.let(Uri::parse))
+                CookieManager.getInstance().flush()
+            }
+
+            override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+                // The page died in the background (memory): bring it back rather than crash.
+                recreate()
+                return true
+            }
+        }
+
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest) {
+                if (request.origin.host != "app.crcmz.me") return request.deny()
+                val need = mutableListOf<String>()
+                if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in request.resources) need += Manifest.permission.CAMERA
+                if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in request.resources) need += Manifest.permission.RECORD_AUDIO
+                val missing = need.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+                if (missing.isEmpty()) {
+                    request.grant(request.resources.filter {
+                        it == PermissionRequest.RESOURCE_VIDEO_CAPTURE || it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
+                    }.toTypedArray())
+                } else {
+                    pendingPermission = request
+                    askMedia.launch(missing.toTypedArray())
+                }
+            }
+
+            override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                fileCallback?.onReceiveValue(null)
+                fileCallback = callback
+                return try {
+                    pickFiles.launch(params.createIntent().putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.mode == FileChooserParams.MODE_OPEN_MULTIPLE))
+                    true
+                } catch (_: ActivityNotFoundException) {
+                    fileCallback = null
+                    false
+                }
+            }
+
+            // A video's own fullscreen (the Watch Party player, trailers).
+            override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+                fullscreen?.let { root.removeView(it) }
+                fullscreen = view
+                fullscreenDone = callback
+                root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                WindowInsetsControllerCompat(window, window.decorView).apply {
+                    hide(WindowInsetsCompat.Type.systemBars())
+                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            }
+
+            override fun onHideCustomView() {
+                fullscreen?.let { root.removeView(it) }
+                fullscreen = null
+                fullscreenDone = null
+                WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+            }
+
+            // target=_blank: CRCMZ pages open here, anything else outside.
+            override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message): Boolean {
+                val probe = WebView(this@LauncherActivity)
+                probe.webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
+                        val u = req.url
+                        if (u.scheme == "https" && u.host in HOSTS) web.loadUrl(u.toString()) else openOutside(u)
+                        probe.destroy()
+                        return true
+                    }
+                }
+                (resultMsg.obj as WebView.WebViewTransport).webView = probe
+                resultMsg.sendToTarget()
+                return true
+            }
+        }
+    }
+
+    // MARK: Opening pages
+
+    /** The page a launch, a notification, a ring, a link, a shortcut or a share asks for. */
+    private fun target(i: Intent?): String? {
+        i ?: return null
+        if (i.action == Intent.ACTION_SEND && i.type == "text/plain") {
+            val text = i.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+            val link = Regex("https?://\\S+").find(text)?.value.orEmpty()
+            return Uri.parse("$ORIGIN/app/watch/party").buildUpon()
+                .appendQueryParameter("url", link)
+                .appendQueryParameter("text", text)
+                .appendQueryParameter("title", i.getStringExtra(Intent.EXTRA_SUBJECT).orEmpty())
+                .build().toString()
+        }
+        val d = i.data ?: i.getStringExtra(EXTRA_PATH)?.let { Ringer.appUri(it) } ?: return null
+        return if (d.scheme == "https" && d.host == "app.crcmz.me" && d.path.orEmpty().startsWith("/app")) d.toString() else null
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val url = target(intent) ?: return
+        if (!loaded) { pendingUrl = url; return }
+        val u = Uri.parse(url)
+        val inApp = web.url?.let(Uri::parse)?.let { it.host == "app.crcmz.me" && it.path.orEmpty().startsWith("/app") } == true
+        // Already in the app: route in place so calls and music keep going.
+        if (inApp && u.query == null) go(u.path!!.removePrefix("/app").ifEmpty { "/" }) else web.loadUrl(url)
+    }
+
+    /** Route the page in place (client-side), like a tap on its own tab bar. */
+    fun go(path: String) {
+        val p = JSONObject.quote(path)
+        js("window.__crcmzGo ? window.__crcmzGo($p) : location.assign('/app' + $p)")
+    }
+
+    fun js(code: String) {
+        if (::web.isInitialized) web.post { web.evaluateJavascript(code, null) }
+    }
+
+    private fun openOutside(u: Uri) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, u).addCategory(Intent.CATEGORY_BROWSABLE))
+        } catch (_: ActivityNotFoundException) { /* nothing on this phone opens it */ }
+    }
+
+    fun setBarVisible(show: Boolean) {
+        shell.bar.visibility = if (show) View.VISIBLE else View.GONE
+        ViewCompat.requestApplyInsets(root)
+    }
+
+    // MARK: First launch: notifications, the FCM token, ring setup
+
+    private fun startUp() {
         val prefs = Push.prefs(this)
         if (Build.VERSION.SDK_INT >= 33 && !prefs.getBoolean(ASKED, false) &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -48,10 +366,9 @@ class LauncherActivity : com.google.androidbrowserhelper.trusted.LauncherActivit
 
     override fun onRequestPermissionsResult(code: Int, perms: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, perms, results)
-        withToken()
+        if (code == 1) withToken()
     }
 
-    // Back from a settings screen: carry on with the next step, or launch.
     private var inSettings = false
 
     override fun onResume() {
@@ -62,7 +379,26 @@ class LauncherActivity : com.google.androidbrowserhelper.trusted.LauncherActivit
         }
     }
 
-    /** The next ring setting still to ask about (each asked once, ever), or launch. */
+    /** The first launch waits up to 2.5s for a token; after that it's cached. */
+    private fun withToken() {
+        if (Push.token(this) != null) return next()
+        val timeout = Handler(Looper.getMainLooper())
+        timeout.postDelayed({ next() }, 2500)
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { t ->
+            if (t.isSuccessful && t.result != null) Push.save(this, t.result)
+            timeout.removeCallbacksAndMessages(null)
+            next()
+        }
+    }
+
+    private var settingUp = false
+    private fun next() {
+        if (settingUp || loaded || isFinishing) return
+        settingUp = true
+        setup()
+    }
+
+    /** The next ring setting still to ask about (each asked once, ever), then load. */
     @SuppressLint("BatteryLife")
     private fun setup() {
         val prefs = Push.prefs(this)
@@ -75,7 +411,7 @@ class LauncherActivity : com.google.androidbrowserhelper.trusted.LauncherActivit
             !prefs.getBoolean(ASKED_BATTERY, false) && !pm.isIgnoringBatteryOptimizations(packageName) ->
                 Triple(ASKED_BATTERY, R.string.setup_battery,
                     Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
-            else -> return go()
+            else -> return load()
         }
         prefs.edit().putBoolean(step.first, true).apply()
         AlertDialog.Builder(this)
@@ -95,44 +431,68 @@ class LauncherActivity : com.google.androidbrowserhelper.trusted.LauncherActivit
             .show()
     }
 
-    /** The first launch waits up to 2.5s for a token; after that it's cached. */
-    private fun withToken() {
-        if (Push.token(this) != null) return next()
-        val timeout = Handler(Looper.getMainLooper())
-        timeout.postDelayed({ next() }, 2500)
-        FirebaseMessaging.getInstance().token.addOnCompleteListener { t ->
-            if (t.isSuccessful && t.result != null) Push.save(this, t.result)
-            timeout.removeCallbacksAndMessages(null)
-            next()
-        }
+    private fun load() {
+        if (loaded) return
+        loaded = true
+        val start = Uri.parse(pendingUrl ?: "$ORIGIN/app").buildUpon().appendQueryParameter("crcmz_app", "android-app")
+        Push.token(this)?.let { start.appendQueryParameter("crcmz_fcm", it) }
+        pendingUrl = null
+        web.loadUrl(start.build().toString())
     }
 
-    // The token timeout and the token itself can both arrive: set up once.
-    private var settingUp = false
-    private fun next() {
-        if (settingUp || launched || isFinishing) return
-        settingUp = true
-        setup()
+    // MARK: Picture in picture (a call on screen when you leave the app)
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT in 26..30 && NativeCall.wantsPip()) enterPip()
     }
 
-    private fun go() {
-        if (launched || isFinishing) return
-        launched = true
-        launchTwa()
+    fun pipParams(): PictureInPictureParams? {
+        if (Build.VERSION.SDK_INT < 26) return null
+        val b = PictureInPictureParams.Builder().setAspectRatio(Rational(9, 16))
+        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(NativeCall.wantsPip()).setSeamlessResizeEnabled(true)
+        return b.build()
     }
 
-    override fun getLaunchingUrl(): Uri {
-        val url = super.getLaunchingUrl()
-        val token = Push.token(this) ?: return url
-        return url.buildUpon()
-            .appendQueryParameter("crcmz_app", "android")
-            .appendQueryParameter("crcmz_fcm", token)
-            .build()
+    /** Called when the call starts, stops or changes size: Android 12+ floats it by itself. */
+    fun updatePip() {
+        if (Build.VERSION.SDK_INT >= 26) pipParams()?.let { runCatching { setPictureInPictureParams(it) } }
     }
 
-    private companion object {
-        const val ASKED = "asked_notifications"
-        const val ASKED_FSI = "asked_full_screen"
-        const val ASKED_BATTERY = "asked_battery"
+    fun enterPip() {
+        if (Build.VERSION.SDK_INT >= 26) pipParams()?.let { runCatching { enterPictureInPictureMode(it) } }
+    }
+
+    override fun onPictureInPictureModeChanged(inPip: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(inPip, newConfig)
+        content.visibility = if (inPip) View.INVISIBLE else View.VISIBLE
+        calls.pip(inPip)
+    }
+
+    override fun onDestroy() {
+        if (current === this) current = null
+        super.onDestroy()
+    }
+
+    companion object {
+        const val ORIGIN = "https://app.crcmz.me"
+        const val EXTRA_PATH = "path"
+        private val HOSTS = setOf("app.crcmz.me", "auth.crcmz.me")
+        private const val ASKED = "asked_notifications"
+        private const val ASKED_FSI = "asked_full_screen"
+        private const val ASKED_BATTERY = "asked_battery"
+
+        /** The running app, for the call and music services to talk to the page. */
+        var current: LauncherActivity? = null
+            private set
+
+        /** window.webkit.messageHandlers.* as on iOS, forwarded to crcmzBridge. */
+        private val BRIDGE_JS = """
+            (function () {
+              if (!window.crcmzBridge || (window.webkit && window.webkit.messageHandlers)) return;
+              var h = function (name) { return { postMessage: function (m) { crcmzBridge.postMessage(JSON.stringify({ h: name, m: m })) } } };
+              window.webkit = { messageHandlers: { crcmzShell: h('crcmzShell'), crcmzCall: h('crcmzCall'), crcmzAudio: h('crcmzAudio') } };
+            })();
+        """.trimIndent()
     }
 }

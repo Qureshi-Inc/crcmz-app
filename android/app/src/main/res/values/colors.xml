@@ -7,4 +7,9 @@
     <color name="decline">#EF4444</color>
     <color name="join">#22C55E</color>
     <color name="launcher_bg">#090A0E</color>
+    <color name="bar">#0B0818</color>
+    <color name="bar_active">#2E1F4D</color>
+    <color name="sheet">#0E0A1C</color>
+    <color name="accent_soft">#B099FF</color>
+    <color name="tile">#1A1530</color>
 </resources>

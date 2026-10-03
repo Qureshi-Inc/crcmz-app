@@ -148,11 +148,13 @@ def route(category: str, title: str, body: str = "", url: str = "/app", *,
     url = _clean_url(url)
     out: dict = {"category": category, "inbox": len(record(category, title, body, url, only=only, exclude=exclude))}
     rang: set[str] = set()
+    rang_android: set[str] = set()
     rang_ios: set[str] = set()
     if category in fcm.RING:
         try:
             r = fcm.ring(category, title, body, url, exclude=exclude, only=only, tag=tag, caller=caller)
             rang = r.pop("endpoints")
+            rang_android = r.pop("subs")
             out["ring"] = r
         except Exception:  # noqa: BLE001 - a failed ring falls back to plain push
             logger.exception("notifications: ring failed")
@@ -168,6 +170,11 @@ def route(category: str, title: str, body: str = "", url: str = "/app", *,
         out["ios"] = apns.alert(category, title, body, url, exclude=exclude, only=only, tag=tag, skip=rang_ios)
     except Exception:  # noqa: BLE001
         logger.exception("notifications: iPhone alert failed")
+    try:
+        # The native Android app is a web view too: every alert through FCM.
+        out["android"] = fcm.alert(category, title, body, url, exclude=exclude, only=only, tag=tag, skip=rang_android)
+    except Exception:  # noqa: BLE001
+        logger.exception("notifications: Android alert failed")
     try:
         out["push"] = webpush.notify(category, title, body, url, exclude=exclude, only=only,
                                      tag=tag, ttl=ttl, urgency=urgency, skip=rang)

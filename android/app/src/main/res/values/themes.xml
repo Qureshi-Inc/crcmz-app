@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="App" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="colorPrimary">@color/accent_soft</item>
+        <item name="colorSurface">@color/sheet</item>
+        <item name="bottomSheetDialogTheme">@style/MoreSheet</item>
+    </style>
+    <style name="MoreSheet" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/MoreSheetModal</item>
+    </style>
+    <style name="MoreSheetModal" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="backgroundTint">@color/sheet</item>
+    </style>
     <style name="Ring" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
         <item name="android:statusBarColor">@color/bg</item>

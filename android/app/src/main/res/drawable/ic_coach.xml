@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- From frontend/src/components/Icon.tsx (coach). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="20" android:viewportHeight="20">
+    <path android:pathData="M2.0,10.0a8.0,8.0 0 1,0 16.0,0a8.0,8.0 0 1,0 -16.0,0" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M5.5,10.0a4.5,4.5 0 1,0 9.0,0a4.5,4.5 0 1,0 -9.0,0" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M9.0,10.0a1.0,1.0 0 1,0 2.0,0a1.0,1.0 0 1,0 -2.0,0" android:fillColor="#FFFFFFFF" />
+</vector>

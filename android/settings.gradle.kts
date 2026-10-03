@@ -3,7 +3,7 @@ pluginManagement {
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { google(); mavenCentral() }
+    repositories { google(); mavenCentral(); maven("https://jitpack.io") }  // LiveKit's audioswitch
 }
 rootProject.name = "crcmz"
 include(":app")

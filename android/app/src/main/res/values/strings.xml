@@ -19,5 +19,8 @@
     <string name="setup_go">Open settings</string>
     <string name="setup_skip">Not now</string>
     <string name="join">Join</string>
+    <string name="call_channel">Calls in progress</string>
+    <string name="call_ongoing">Call in progress. Tap to go back.</string>
+    <string name="alert_channel">CRCMZ notifications</string>
     <string name="decline">Decline</string>
 </resources>
