@@ -4059,10 +4059,9 @@ def api_video_upload_media(id: str, request: Request):  # noqa: A002
 
     auth_header = request.headers.get("authorization", "")
     caller = None
-    session = None if auth_header else _get_session(request)
-    if session and session.get("sub"):
-        caller = {"zitadel_id": session["sub"]}
-    elif not _mcp.authorised(auth_header):
+    # Bearer only, never a session cookie: this hands a member's original (queued or
+    # withdrawn, not yet posted anywhere) to Muse; no page plays it.
+    if not _mcp.authorised(auth_header):
         caller = (_mcp.resolve_caller(auth_header)
                   or _mcp.resolve_service(auth_header))
         if caller is None:

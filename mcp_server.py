@@ -72,7 +72,9 @@ def authorised(header: str) -> bool:
     Compared with hmac.compare_digest rather than `==` so the comparison does not
     leak the token's length or prefix through timing.
     """
-    if not configured():
+    # The shared token is optional now (OAuth is the other way in), so configured()
+    # is always true: with no MCP_TOKEN set, this path has to refuse everything itself.
+    if not MCP_TOKEN:
         return False
     value = (header or "").strip()
     if value.lower().startswith("bearer "):
