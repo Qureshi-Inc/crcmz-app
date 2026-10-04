@@ -25,6 +25,8 @@ import time
 
 import httpx
 
+import safe_fetch
+
 import movies
 
 logger = logging.getLogger(__name__)
@@ -108,8 +110,8 @@ async def _movie_card(row: dict) -> dict:
 # Pages that are about one film: a movie link there means "get this film".
 _MOVIE_SITES = re.compile(
     r"^https://([\w-]+\.)*(letterboxd\.com|boxd\.it|themoviedb\.org|rottentomatoes\.com|justwatch\.com|netflix\.com|"
-    r"tv\.apple\.com|primevideo\.com|amazon\.[a-z.]+|disneyplus\.com|max\.com|hbomax\.com|hulu\.com|"
-    r"paramountplus\.com|peacocktv\.com|cinejoy\.to|google\.[a-z.]+|g\.co|bing\.com|metacritic\.com|trakt\.tv|"
+    r"tv\.apple\.com|primevideo\.com|amazon\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})|disneyplus\.com|max\.com|hbomax\.com|hulu\.com|"
+    r"paramountplus\.com|peacocktv\.com|cinejoy\.to|google\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})|g\.co|bing\.com|metacritic\.com|trakt\.tv|"
     r"fandango\.com|wikipedia\.org)/", re.I)
 # Short videos and posts: always for the Watch Party.
 _SHORTS = re.compile(
@@ -126,7 +128,8 @@ _UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.
 async def page_info(url: str) -> dict:
     """A page's title, og:type and any IMDb id in it (Letterboxd and many others link IMDb)."""
     try:
-        async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers={"User-Agent": _UA}) as c:
+        # Someone else's link: never into our own network, redirects included.
+        async with safe_fetch.client(timeout=8, follow_redirects=True, headers={"User-Agent": _UA}) as c:
             r = await c.get(url)
         html = r.text[:400_000] if r.status_code < 400 else ""
         final = str(r.url)

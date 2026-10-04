@@ -81,7 +81,19 @@ _RL_LIMITS = {
     "facts_add": (12, 60.0),    # squad facts (shared prompt context, keep it civil)
     "push_subscribe": (20, 60.0),  # device push subscribe/unsubscribe/prefs
     "push_test": (4, 60.0),     # "send me a test notification"
+    "mcp": (120, 60.0),         # MCP requests per caller (tools run local LLM calls and SSH)
+    "wa_ai": (6, 60.0),         # WhatsApp questions to the bot, per sender
+    "wa_ai_all": (30, 60.0),    # ...and from everyone together: the Mac LLM serves 2 at a time
 }
+
+
+def _rate_ok(key: str, actor: str = "") -> bool:
+    """_rate_limit as a yes/no, for paths with no HTTP caller to answer (WhatsApp)."""
+    try:
+        _rate_limit(key, actor)
+    except HTTPException:
+        return False
+    return True
 
 
 def _rate_limit(key: str, actor: str = "") -> None:
@@ -2357,6 +2369,10 @@ async def wa_ingest(request: Request):
                         msg.get("reply_to") or msg.get("quotedMessageId"),
                         msg.get("message_id", ""),
                         wa_ai._recent_sent_ids[-3:], prompt)
+            if prompt and not (_rate_ok("wa_ai", msg.get("sender_jid") or wa_ai.sender_name(msg))
+                               and _rate_ok("wa_ai_all")):
+                logger.info("wa_ai: rate limited %s", (msg.get("sender_jid") or "?")[:24])
+                prompt = None
             if prompt:
                 _threading.Thread(
                     target=_answer_whatsapp, name="wa-ai",
@@ -3524,6 +3540,9 @@ async def mcp_endpoint(request: Request):
                     )
                 })
 
+    # Per caller: a personal or service token by its id, the shared token by itself
+    # plus the client address.
+    _rate_limit("mcp", (caller or {}).get("zitadel_id") or f"shared:{request.client.host if request.client else ''}")
     body, status = _mcp.handle_body(await request.body(), caller=caller)
     if body is None:
         # Notification-only request: the spec wants 202 and an empty body.
@@ -4961,9 +4980,10 @@ def assistant_add_fact(req: FactRequest, request: Request):
     if not session:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     _rate_limit("facts_add", session.get("sub", "") or request.client.host)
-    # Facts go into every answer, for everyone: only the squad may add them.
-    if not crcmz_identity.is_squad_member(session.get("sub", "")):
-        return JSONResponse({"error": "only squad members can add facts"}, status_code=403)
+    # Facts go into every answer, for everyone: founders only (squad=true is paid MCP
+    # access, not a say in the bot's prompt).
+    if not crcmz_identity.is_founder(session.get("sub", "")):
+        return JSONResponse({"error": "only founders can add facts"}, status_code=403)
     try:
         row = _facts.add(req.text, req.subject, session.get("sub", ""),
                          _session_display(session))
@@ -5993,7 +6013,9 @@ async def watch_proxy(request: Request, url: str = "", ref: str = ""):
 
     # Redirects are followed by hand so every hop can be re-checked: a public
     # URL is free to redirect somewhere internal, which would defeat the guard.
-    client = _hx.AsyncClient(timeout=60.0, follow_redirects=False)
+    # The transport re-checks every connection and pins the address it checked, so a
+    # name can't resolve public for the check and private for the fetch (rebinding).
+    client = _safe_fetch.client(timeout=60.0, follow_redirects=False)
     target = url
     r = None
     try:
@@ -6150,6 +6172,9 @@ async def watch_extract(request: Request):
         )
 
     _rate_limit("watch_extract", viewer["viewerId"])
+    # yt-dlp and the headless browser fetch it next: never an address of ours.
+    if not await _safe_fetch.is_public_url(url):
+        return JSONResponse({"detail": "that link isn't on the public internet"}, status_code=400)
 
     # 1. Try yt-dlp.
     try:
@@ -6975,8 +7000,10 @@ async def settings_psn_status(request: Request):
             base["users"] = all_users
         return JSONResponse(base)
 
-    # Not yet claimed — everyone sees unclaimed list to pick from
-    unclaimed = portal_mod.list_unclaimed()
+    # Not yet claimed. Only an admin may hand out an unclaimed record (claiming one
+    # means sending PSN messages as that person); everyone else links their own PSN
+    # in Link PSN, where their own sign-in proves it's theirs.
+    unclaimed = portal_mod.list_unclaimed() if is_admin else []
     resp: dict = {"linked": False, "unclaimed": unclaimed}
     if is_admin:
         resp["admin"] = True
@@ -6993,11 +7020,18 @@ async def settings_psn_claim(request: Request):
     user_id = session.get("sub", "")
     if not user_id:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not await _is_iam_admin(user_id):
+        return JSONResponse({"error": "only an admin can assign a PSN account. Link yours in Link PSN instead."},
+                            status_code=403)
     body = await request.json()
     key = (body.get("key") or "").strip()
     if not key or "/" in key or ".." in key:
         return JSONResponse({"error": "invalid key"}, status_code=400)
-    ok = portal_mod.claim_record(key, user_id)
+    # An admin assigns it to themselves, or to someone else with {"for": "<zitadel id>"}.
+    owner = str(body.get("for") or user_id).strip()
+    if not owner.isdigit():
+        return JSONResponse({"error": "invalid user"}, status_code=400)
+    ok = portal_mod.claim_record(key, owner)
     if not ok:
         return JSONResponse({"error": "record not found or already claimed"}, status_code=404)
     return JSONResponse({"ok": True})
@@ -7524,6 +7558,7 @@ import facts as _facts
 import meeting_notes as _meet
 import share as _share
 import wa_link as _wa_link
+import safe_fetch as _safe_fetch
 import chat_history as _chat
 import psn_ai
 import wa_ai

@@ -1378,7 +1378,7 @@ def _person_profile(who: str, range: str = "all_time", group: str = "") -> dict:
         "identity": {
             "name": person["display_name"] or person["username"],
             "username": person["username"],
-            "email": person["email"],
+            # No email: this answers anyone in a group chat or with an MCP token.
             "psn_id": person["psn_id"],
             "mm_username": person["mm_username"],
             "whatsapp_names": person["wa_names"],

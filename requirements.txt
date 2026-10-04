@@ -1,17 +1,17 @@
 PSNAWP==2.1.0
-fastapi==0.115.0
+fastapi==0.142.2
 uvicorn==0.32.0
 httpx==0.27.0
 boto3==1.35.0
-python-multipart==0.0.12
+python-multipart==0.0.32
 itsdangerous==2.2.0
 openpyxl==3.1.5
 # Watch Party tickets: ES256-signed JWTs (dedicated P-256 key, see watch.py)
 PyJWT==2.10.1
-cryptography==44.0.0
+cryptography==50.0.2
 # Video URL extraction (watch party)
 yt-dlp==2026.7.4
 # Vector search extension for SQLite — semantic memory layer
-sqlite-vec
+sqlite-vec==0.1.9
 pywebpush==2.3.0
-h2==4.1.0
+h2==4.4.1

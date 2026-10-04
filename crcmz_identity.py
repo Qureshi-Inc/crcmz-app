@@ -509,9 +509,9 @@ def by_zitadel_id(*, refresh: bool = False) -> dict[str, dict]:
 
 
 def is_squad_member(sub: str) -> bool:
-    """A founder, or someone tagged `squad=true`: who may act on the squad (MCP write
-    tools, squad facts). Paid VIP invitees and the App Review login are not. By
-    Zitadel id only; fails closed."""
+    """A founder, or someone tagged `squad=true` (for paid MCP access): who gets MCP
+    write tools. Paid VIP invitees and the App Review login are not. By Zitadel id
+    only; fails closed."""
     if not sub or not str(sub).isdigit():
         return False
     try:
