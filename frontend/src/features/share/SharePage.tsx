@@ -73,7 +73,7 @@ function Chooser({ url, text, title }: { url: string | null; text: string | null
       .catch(() => setInfo({ link, kind: link ? (isMusicLink(link) ? 'song' : 'video') : 'none', auto: null, movie: null, video_title: '', choices: link ? (isMusicLink(link) ? ['slap', 'watch'] : ['watch']) : [] }))
   }, []) // once per share
 
-  function watch(l: string) { navigate(`/watch/party?${new URLSearchParams({ url: l })}`, { replace: true }) }
+  function watch(l: string) { navigate(`/watch/party?${new URLSearchParams({ url: l, go: '1' })}`, { replace: true }) }
   function openMovie(m: Movie) { navigate(`/watch?m=${m.imdb}`, { replace: true }) }
   async function addFilm(m: Movie) {
     setBusy(true)

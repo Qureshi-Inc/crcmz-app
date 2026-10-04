@@ -122,6 +122,13 @@ def tests():
         r = run(share.inspect(url="https://cinejoy.to/movie/heat"))
         assert r["auto"] == "movie" and r["movie"]["year"] == "1995", r
 
+    def a_page_built_in_the_browser_is_found_by_the_title_the_share_sheet_sent():
+        PAGES["https://cinejoy.to/movie/949"] = {"title": "Cinejoy", "type": "", "imdb": ""}
+        r = run(share.inspect(url="https://cinejoy.to/movie/949", title="Heat (1995) | Cinejoy"))
+        assert r["auto"] == "movie" and r["movie"]["imdb"] == HEAT["imdb"], r
+        r = run(share.inspect(url="https://cinejoy.to/movie/1"))
+        assert r["choices"] == ["search"], r
+
     def an_unclear_film_offers_the_likely_ones():
         r = run(share.inspect(url="https://www.netflix.com/title/123"))
         assert r["kind"] == "movie" and r["auto"] is None and r["movie"]["title"] == "Heat" and len(r["candidates"]) >= 1, r
@@ -149,7 +156,7 @@ def tests():
 
     for fn in (a_link_left_for_the_app_is_picked_up_once, trailer_titles_become_a_film_name_and_year, a_song_goes_straight_to_slap, a_trailer_offers_its_film_first,
                a_trailer_for_an_unknown_film_is_just_a_video, videos_and_shorts_play_in_the_watch_party_straight_away,
-               a_film_page_is_found_and_added_straight_away, an_unclear_film_offers_the_likely_ones, the_route_needs_a_session):
+               a_film_page_is_found_and_added_straight_away, a_page_built_in_the_browser_is_found_by_the_title_the_share_sheet_sent, an_unclear_film_offers_the_likely_ones, the_route_needs_a_session):
         check(fn.__name__, fn)
 
 

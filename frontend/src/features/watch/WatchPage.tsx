@@ -19,7 +19,7 @@ export { OrbPosControl } from './Settings'
 import {
   attachLayout, canCall, canPopOut, clearVideo, popOut, exitFs, joinCall, leave, rejoin, setTitle, setVideo, start, useWatch, videoLabel, type WatchState,
 } from './session'
-import { isMusicLink, sharedLink } from '../share/SharePage'
+import { sharedLink } from '../share/SharePage'
 import { HelpLink } from '../../components/HelpLink'
 
 export function WatchPage({ visible }: { visible: boolean }) {
@@ -129,13 +129,24 @@ function VideoForm({ s }: { s: WatchState }) {
   // go straight to the box, with the shared link already in it.
   const loc = useLocation()
   const navigate = useNavigate()
+  // A video sent on by the share screen plays as soon as the party is connected.
+  const autoPlay = useRef('')
+  useEffect(() => {
+    if (!live || !autoPlay.current) return
+    const u = autoPlay.current
+    autoPlay.current = ''
+    void setVideo(u).then((ok) => { if (ok) setUrl('') })
+  }, [live])
   useEffect(() => {
     const q = new URLSearchParams(loc.search)
     if (!/^\/watch\/party/.test(loc.pathname) || !['paste', 'url', 'text'].some((k) => q.has(k))) return
     const shared = sharedLink(q.get('url'), q.get('text'))
-    // A song shared from Spotify, Apple Music…, by an app that sends every share here: Slap.
-    if (isMusicLink(shared)) { navigate(`/share?${q}`, { replace: true }); return }
+    // Older Android apps send every share here. Anything shared (not pasted, not sent on
+    // by the share screen with go=1) goes to the share screen first: a song to Slap, a
+    // film's page to the movie lookup, a video back here to play.
+    if (shared && !q.has('paste') && !q.has('go')) { navigate(`/share?${q}`, { replace: true }); return }
     if (shared) setUrl(shared)
+    if (shared && q.has('go')) autoPlay.current = shared
     navigate({ pathname: loc.pathname, search: '' }, { replace: true })
     const t = window.setTimeout(() => {
       urlRef.current?.scrollIntoView({ block: 'center' })

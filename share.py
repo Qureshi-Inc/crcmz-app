@@ -161,8 +161,10 @@ def title_from_url(url: str) -> str:
     return ""
 
 
-async def find_movie(link: str) -> tuple[dict | None, bool, list[dict]]:
-    """The film a page is about: (best match, sure?, other likely ones)."""
+async def find_movie(link: str, hint: str = "") -> tuple[dict | None, bool, list[dict]]:
+    """The film a page is about: (best match, sure?, other likely ones). `hint` is the
+    title the share sheet sent with the link (the page's own title in the browser):
+    sites that build their page in the browser (cinejoy.to) show the server nothing else."""
     info = await page_info(link)
     if info["imdb"]:
         try:
@@ -175,7 +177,7 @@ async def find_movie(link: str) -> tuple[dict | None, bool, list[dict]]:
     from urllib.parse import parse_qs, urlparse
     asked = (parse_qs(urlparse(link).query).get("q") or [""])[0]
     # (A search page's own title is "Google Search": with a ?q=, that's all there is.)
-    for raw in ((asked,) if asked else (info["title"], title_from_url(info["url"]), title_from_url(link))):
+    for raw in ((asked,) if asked else (hint, info["title"], title_from_url(info["url"]), title_from_url(link))):
         if not raw:
             continue
         name = _SITE_SUFFIX.sub("", raw)
@@ -209,6 +211,8 @@ async def inspect(url: str = "", text: str = "", title: str = "") -> dict:
     """What a shared link is, and what to do. `auto` is done without asking (with Undo);
     `choices` are offered when it isn't clear."""
     link = first_link(url, text, title)
+    # What the share sheet said about the page, minus the link itself.
+    hint = re.sub(r"\s+", " ", _LINK.sub(" ", f"{title} {text}")).strip()[:200]
     out: dict = {"link": link, "kind": "none", "auto": None, "movie": None, "candidates": [], "video_title": "", "choices": []}
     if not link:
         return out
@@ -236,7 +240,7 @@ async def inspect(url: str = "", text: str = "", title: str = "") -> dict:
         out.update(kind="video", auto="watch", choices=["watch"])
         return out
     if _MOVIE_SITES.match(link):
-        row, sure, others = await find_movie(link)
+        row, sure, others = await find_movie(link, hint)
         if row:
             card = await _movie_card(row)
             if sure:
@@ -247,12 +251,12 @@ async def inspect(url: str = "", text: str = "", title: str = "") -> dict:
                            candidates=[await _movie_card(r) for r in others])
             return out
         # A film site, but we can't tell which film: look for it in Movies.
-        out.update(kind="movie", choices=["search"], video_title=title_from_url(link))
+        out.update(kind="movie", choices=["search"], video_title=_SITE_SUFFIX.sub("", hint) or title_from_url(link))
         return out
     # Any other page: a film's page (og:type video.movie) or something to play.
     info = await page_info(link)
     if info["type"].lower() == "video.movie" or info["imdb"]:
-        row, sure, others = await find_movie(link)
+        row, sure, others = await find_movie(link, hint)
         if row:
             card = await _movie_card(row)
             out.update(kind="movie", auto="movie" if sure else None, movie=card, choices=["movie"],
