@@ -814,6 +814,8 @@ _PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 # This is the replacement for "you reached me on a private address, so you must be
 # trusted"; set it and callers can authenticate from anywhere, over any Host.
 MACHINE_TOKEN = os.environ.get("CRCMZ_MACHINE_TOKEN", "")
+# What CRCMZ_MACHINE_TOKEN opens: the Stream Deck plugin's buttons (psn-slapper.sdPlugin).
+_MACHINE_PATHS = frozenset({"/v2/send", "/v2/squad", "/roast/start", "/roast/stop", "/roast/once"})
 # Paths that must be reachable before authentication.
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # The status page's per-dependency checks (health_deps.py): ok / not ok
@@ -964,9 +966,11 @@ _LOCAL_NETWORKS = tuple(_ipaddress.ip_network(n) for n in (
     "127.0.0.0/8",      # loopback — the container healthcheck
     "10.0.0.0/8",       # RFC1918, incl. the Docker/Coolify bridge
     "172.16.0.0/12",    # RFC1918
-    "192.168.0.0/16",   # RFC1918 — the house LAN
+    # Not the house LAN (192.168.0.0/16) or Tailscale (100.64.0.0/10) any more: the
+    # app's port is bound to the host's loopback, and the Stream Deck uses
+    # CRCMZ_MACHINE_TOKEN over app.crcmz.me. What's left is the host itself and the
+    # containers next to it.
     "169.254.0.0/16",   # link-local
-    "100.64.0.0/10",    # CGNAT — Tailscale
     "::1/128",          # loopback v6
     "fc00::/7",         # unique local v6
     "fe80::/10",        # link-local v6
@@ -1025,9 +1029,9 @@ async def _auth_gate(request: Request, call_next):
     if path.startswith(_APP_ASSET_PREFIX) or path.startswith(_PWA_ICON_PREFIX):
         return await call_next(request)
 
-    # A machine with an explicit credential, on any Host. This is the migration
-    # target for everything that currently relies on the private-network rule.
-    if _machine_authorised(request):
+    # A machine with an explicit credential, on any Host, for just what it does
+    # (the Stream Deck's buttons): the token is not a key to the whole app.
+    if path in _MACHINE_PATHS and _machine_authorised(request):
         return await call_next(request)
 
     host = (request.headers.get("host") or "").split(":")[0]

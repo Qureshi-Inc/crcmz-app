@@ -72,18 +72,18 @@ def gate_tests():
         return client_at(peer, f"http://{host}").get(path, **kw)
 
     # ── The private-network bypass still works for the callers that need it ──────
-    def tailnet_peer_passes():
-        # The Stream Deck plugin calls http://100.101.102.103:3021 over Tailscale.
-        # 100.64.0.0/10 is CGNAT space, which ipaddress.is_private reports as False —
-        # the reason _LOCAL_NETWORKS lists the ranges explicitly instead.
-        r = lan(host="100.101.102.103:3021", peer="100.101.102.103")
-        assert r.status_code == 200, (r.status_code, r.text[:200])
-    check("a real tailnet peer still skips the gate", tailnet_peer_passes)
+    def tailnet_and_lan_peers_now_need_a_credential():
+        # The port is bound to the host's loopback and the Stream Deck uses the
+        # machine token, so the house LAN and Tailscale get no shortcut any more.
+        for host, peer in (("100.101.102.103:3021", "100.101.102.103"), ("192.168.1.20:3021", "192.168.1.20")):
+            r = lan(host=host, peer=peer)
+            assert r.status_code == 401, (peer, r.status_code)
+    check("tailnet and LAN peers need a credential", tailnet_and_lan_peers_now_need_a_credential)
 
-    def lan_peer_passes():
-        r = lan(host="192.168.1.20:3021", peer="192.168.1.20")
+    def a_neighbouring_container_passes():
+        r = lan(host="crcmz-app:3000", peer="10.0.1.23")
         assert r.status_code == 200, (r.status_code, r.text[:200])
-    check("a real LAN peer still skips the gate", lan_peer_passes)
+    check("a container on the Docker network still skips the gate", a_neighbouring_container_passes)
 
     def loopback_passes():
         r = lan(host="127.0.0.1:3000", peer="127.0.0.1")
@@ -127,8 +127,12 @@ def gate_tests():
         c = client_at("8.8.8.8", "https://app.crcmz.me")
         for hdr in ({"Authorization": f"Bearer {server.MACHINE_TOKEN}"},
                     {"X-CRCMZ-Machine-Token": server.MACHINE_TOKEN}):
+            # Past the gate: whatever the route says, it isn't "authentication required".
+            r = c.get("/v2/squad", headers=hdr)
+            assert r.status_code != 401, (hdr, r.status_code, r.text[:200])
+            # ...and only for the Stream Deck's paths.
             r = c.get(PROTECTED, headers=hdr)
-            assert r.status_code == 200, (hdr, r.status_code, r.text[:200])
+            assert r.status_code == 401, ("the machine token opened " + PROTECTED, r.status_code)
     check("CRCMZ_MACHINE_TOKEN authenticates over the public host", machine_token_works_from_anywhere)
 
     def wrong_machine_token_is_refused():

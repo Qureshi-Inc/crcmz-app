@@ -1,14 +1,23 @@
 const http = require("http");
+const https = require("https");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { StreamDock } = require("./streamdock");
 const { makeCanvas, text, rect, pngDataUri } = require("./canvas");
 const IDLE_ICON = require("./icon");
 
-// Each service is reachable two ways: opti3's Tailscale IP (works anywhere the
-// tailnet is up) and its LAN IP (works at home even if Tailscale is down). We
-// try them in order so a Tailscale hiccup doesn't kill the buttons when home.
-// Override with a comma-separated list in the env var if the IPs ever change.
+// The app is only reachable through app.crcmz.me now (its port is closed to the
+// LAN and the tailnet), with the machine token: CRCMZ_MACHINE_TOKEN, or the file
+// ~/.crcmz/streamdeck-token. It opens just these buttons' endpoints.
+// Override the address with PSN_MESSENGER_URLS (comma-separated) if it ever moves.
 const PSN_API_URLS = (process.env.PSN_MESSENGER_URLS ||
-  "http://100.123.228.75:3021,http://192.168.5.54:3021").split(",").map(s => s.trim()).filter(Boolean);
+  "https://app.crcmz.me").split(",").map(s => s.trim()).filter(Boolean);
+function machineToken() {
+  if (process.env.CRCMZ_MACHINE_TOKEN) return process.env.CRCMZ_MACHINE_TOKEN.trim();
+  try { return fs.readFileSync(path.join(os.homedir(), ".crcmz", "streamdeck-token"), "utf8").trim(); }
+  catch { return ""; }
+}
 const WHATSAPP_API_URLS = (process.env.WHATSAPP_API_URLS ||
   "http://100.123.228.75:3100,http://192.168.5.54:3100").split(",").map(s => s.trim()).filter(Boolean);
 
@@ -64,11 +73,13 @@ function postOnce(base, path, bodyObj) {
     const url = new URL(path, base);
     const body = bodyObj ? JSON.stringify(bodyObj) : "";
     const opts = { method: "POST", timeout: 8000, headers: {} };
+    const token = PSN_API_URLS.includes(base) ? machineToken() : "";
+    if (token) opts.headers["Authorization"] = `Bearer ${token}`;
     if (body) {
       opts.headers["Content-Type"] = "application/json";
       opts.headers["Content-Length"] = Buffer.byteLength(body);
     }
-    const req = http.request(url, opts, (res) => {
+    const req = (url.protocol === "https:" ? https : http).request(url, opts, (res) => {
       let data = "";
       res.on("data", (chunk) => data += chunk);
       res.on("end", () => {
@@ -83,7 +94,7 @@ function postOnce(base, path, bodyObj) {
   });
 }
 
-// Try each base URL in order (Tailscale, then LAN); return the first success.
+// Try each base URL in order; return the first success.
 async function postWithFallback(bases, path, bodyObj) {
   let lastErr;
   for (const base of bases) {

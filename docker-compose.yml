@@ -80,7 +80,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"   # the host only: the Stream Deck uses app.crcmz.me + CRCMZ_MACHINE_TOKEN
     volumes:
       - psn_data:/data
     restart: unless-stopped
