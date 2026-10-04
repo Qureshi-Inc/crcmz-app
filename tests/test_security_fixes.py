@@ -185,6 +185,29 @@ def t_ssrf_a_public_name_resolving_private_is_refused_at_connect_time():
         raise AssertionError("connected to a private address")
 
 
+def t_safe_fetch_keeps_the_real_name_on_the_request():
+    import asyncio, httpx, safe_fetch
+    seen = []
+    class Fake(safe_fetch.PublicOnlyTransport):
+        pass
+    async def fake_send(self, request):
+        seen.append((str(request.url), request.headers["host"], request.extensions.get("sni_hostname")))
+        return httpx.Response(200, request=request)
+    old_pa, old_send = safe_fetch.public_address, httpx.AsyncHTTPTransport.handle_async_request
+    async def pa(host, port): return "93.184.215.14"
+    safe_fetch.public_address = pa
+    httpx.AsyncHTTPTransport.handle_async_request = fake_send
+    try:
+        async def go():
+            async with safe_fetch.client() as c:
+                return await c.get("https://example.com/a?b=1")
+        r = asyncio.run(go())
+    finally:
+        safe_fetch.public_address, httpx.AsyncHTTPTransport.handle_async_request = old_pa, old_send
+    assert seen == [("https://93.184.215.14/a?b=1", "example.com", "example.com")], seen
+    assert str(r.url) == "https://example.com/a?b=1", r.url
+
+
 def t_movie_sites_regex_is_anchored():
     import share
     assert share._MOVIE_SITES.match("https://www.google.com/search?q=x")

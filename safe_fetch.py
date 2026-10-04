@@ -56,12 +56,17 @@ class PublicOnlyTransport(httpx.AsyncHTTPTransport):
             raise Blocked(f"{url.scheme} isn't fetched")
         host = url.host
         ip = await public_address(host, url.port or (443 if url.scheme == "https" else 80))
-        if ip != host:
-            # Connect to the address we checked; Host and SNI (so the certificate check)
-            # stay the real name.
-            request.url = url.copy_with(host=ip)
-            request.extensions = {**request.extensions, "sni_hostname": host}
-        return await super().handle_async_request(request)
+        if ip == host:
+            return await super().handle_async_request(request)
+        # Connect to the address we checked; Host and SNI (so the certificate check)
+        # stay the real name. Then put the real URL back: redirects and response.url
+        # are worked out from it.
+        request.url = url.copy_with(host=ip)
+        request.extensions = {**request.extensions, "sni_hostname": host}
+        try:
+            return await super().handle_async_request(request)
+        finally:
+            request.url = url
 
 
 def client(**kw) -> httpx.AsyncClient:
