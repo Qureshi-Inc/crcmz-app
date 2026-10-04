@@ -520,11 +520,29 @@ def add_tests():
         assert run(and_wait(mv.replace("u-noor", "Noor", "tt15239678", "d" * 40, admin=True)))["status"] == "finding"
         assert [t["hash"] for t in RD.torrents.values()] == ["d" * 40], "the pending copy's torrent went too"
 
+    def a_search_cut_off_by_a_restart_is_picked_up_again():
+        reset(cached={"d" * 40})
+        now = time.time()
+        with mv._conn() as db:
+            db.execute("INSERT INTO adds (imdb, title, sub, name, status, created, updated) VALUES (?,?,?,?,?,?,?)",
+                       ("tt15239678", "Dune: Part Two", "u-zub", "Zubair", "finding", now - 3600, now - 3600))
+        run(and_wait(mv.tick(force=True)))
+        row = mv._row("tt15239678")
+        assert row["status"] == "adding" and "Tigole" in row["release"], row
+        # A fresh one (still in its Undo wait, or being searched) is left alone.
+        reset()
+        with mv._conn() as db:
+            db.execute("INSERT INTO adds (imdb, title, sub, name, status, created, updated) VALUES (?,?,?,?,?,?,?)",
+                       ("tt15239678", "Dune: Part Two", "u-zub", "Zubair", "finding", now, now))
+        run(and_wait(mv.tick(force=True)))
+        assert mv._row("tt15239678")["status"] == "finding" and not RD.calls
+
     for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_server_wide_block_stops_at_once_and_pauses_adds, a_movie_never_costs_more_than_three_adds, a_copy_real_debrid_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
                a_cached_1080p_beats_an_uncached_4k, no_copy_says_so, already_in_the_library_is_not_added_again,
                a_second_press_joins_the_first_and_bad_ids_are_refused, five_a_day_unless_admin,
                a_failed_add_can_be_tried_again, the_adder_can_pick_1080p_or_4k_when_both_exist,
-               the_copies_list_starts_with_what_add_picks_and_one_can_be_pinned, replacing_swaps_the_copy_for_the_adder_or_an_admin_only):
+               the_copies_list_starts_with_what_add_picks_and_one_can_be_pinned, replacing_swaps_the_copy_for_the_adder_or_an_admin_only,
+               a_search_cut_off_by_a_restart_is_picked_up_again):
         check(fn.__name__, fn)
 
 

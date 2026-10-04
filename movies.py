@@ -894,6 +894,7 @@ def _spawn(coro) -> None:
 # ── Adding a movie ───────────────────────────────────────────────────────────
 _fetch_lock = asyncio.Lock()
 _tasks: set[asyncio.Task] = set()
+_finding: set[str] = set()   # adds whose copy is being looked for right now (in this process)
 
 
 async def options(imdb: str) -> dict:
@@ -1016,6 +1017,14 @@ def _after_rd() -> str:
 
 async def fetch(imdb: str, grace: float = 0) -> None:
     """Find the best copy and start it on Real-Debrid, then tell people how it went."""
+    _finding.add(imdb)
+    try:
+        await _fetch_and_tell(imdb, grace)
+    finally:
+        _finding.discard(imdb)
+
+
+async def _fetch_and_tell(imdb: str, grace: float) -> None:
     if grace:
         await asyncio.sleep(grace)
         if not _row(imdb):
@@ -1432,6 +1441,12 @@ async def tick(force: bool = False) -> int:
         return 0
     ready = 0
     for r in rows:
+        # Still "finding" with nothing looking: the app restarted mid-search. Look again.
+        if r["status"] == "finding" and r["imdb"] not in _finding and time.time() - r["updated"] > UNDO_S + 30:
+            logger.info("movies: resuming the search for %s after a restart", r["imdb"])
+            _set(r["imdb"], status="finding")
+            _spawn(fetch(r["imdb"]))
+            continue
         if r["status"] == "downloading" and r["rd_id"]:
             try:
                 info = await _rd("GET", f"/torrents/info/{r['rd_id']}") or {}
