@@ -3913,6 +3913,14 @@ def _clawbot_build(task: str, subdomain: str, caller: dict) -> dict:
         return {"ok": True, "deferred": True, "subdomain": clean,
                 "message": "Engineer is on it."}
 
+    # Deploys real sites: a founder's own token, or a service scoped to it (mcp_server
+    # checks scopes). Checked here too so no other path can reach it. (A deferred call
+    # above dispatches nothing; its caller gates the build itself.)
+    if caller.get("scopes") is None:
+        import crcmz_identity
+        if not crcmz_identity.is_founder(zid):
+            return {"ok": False, "error": "clawbot_build is for founders only"}
+
     if not mcp_oauth.within_rate_limit(zid, tool_n, 3, 1800):
         mcp_oauth.audit_write(zid, tool_n, audit, "rate_limited")
         return {"ok": False, "error": "rate limit: 3 builds per 30 minutes"}

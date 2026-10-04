@@ -533,7 +533,7 @@ def _portal_page(error: str = "", ok: str = "", known_mm: str = "") -> str:
 
     banner = ""
     if error:
-        banner = f'<div class="msg err">⚠️ {error}</div>'
+        banner = f'<div class="msg err">⚠️ {_html.escape(error)}</div>'
     # "Who are you?" dropdown of Mattermost users, so each link ties to a person
     # (like the Apple Music re-link page). Falls back to a text field if the
     # user list can't be fetched.
@@ -1050,9 +1050,21 @@ async def _auth_gate(request: Request, call_next):
     return JSONResponse({"detail": "authentication required"}, status_code=401)
 
 
+def _safe_next(next_url: str | None) -> str:
+    """Where to go after signing in: a path on this site, nothing else. "//evil.com",
+    "/\\evil.com" and anything with a scheme, a control character or a backslash would
+    leave the site (or confuse a browser into it), so they become "/"."""
+    n = (next_url or "").strip()
+    if (not n.startswith("/") or n.startswith("//") or "\\" in n
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in n) or len(n) > 500):
+        return "/"
+    return n
+
+
 def _login_page(error: str = "", next: str = "/") -> str:
-    err_html = f'<div class="msg err">⚠️ {error}</div>' if error else ""
-    safe_next = next if next.startswith("/") else "/"
+    err_html = f'<div class="msg err">⚠️ {_html.escape(error)}</div>' if error else ""
+    import urllib.parse as _up
+    safe_next = _html.escape(_up.quote(_safe_next(next), safe="/"), quote=True)
     return f"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -1367,7 +1379,7 @@ async def auth_login_submit(request: Request, next: str = "/"):
     if not sub:
         return HTMLResponse(_login_page(error="Invalid email or password.", next=next), status_code=401)
 
-    safe_next = next if next.startswith("/") else "/"
+    safe_next = _safe_next(next)
     session = _make_session(sub, user_email, name=disp_name, preferred_username=login_name)
     resp = RedirectResponse(url=safe_next, status_code=302)
     resp.set_cookie(_SESSION_COOKIE, _signer().dumps(session), httponly=True,
@@ -1417,9 +1429,7 @@ async def auth_callback(request: Request, code: str = "", state: str = "", error
         logger.error("oidc: callback error: %s", e)
         return RedirectResponse(url="/auth/login", status_code=302)
 
-    next_url = sp.get("next") or "/"
-    if not next_url.startswith("/"):
-        next_url = "/"
+    next_url = _safe_next(sp.get("next"))
     # Zitadel's own userinfo response is the authoritative source for the
     # profile claims. Cache the display-name claims for Watch Party; note
     # preferred_username is a *login name* (e.g. moiz@crcmz), not a PSN id.
@@ -1549,7 +1559,7 @@ async def passkey_complete(request: Request, next: str = "/"):
     if not sub:
         return JSONResponse({"error": "session invalid"}, status_code=401)
 
-    safe_next = next if next.startswith("/") else "/"
+    safe_next = _safe_next(next)
     session = _make_session(sub, user_email, name=disp_name, preferred_username=user_email)
     resp = JSONResponse({"ok": True, "next": safe_next})
     resp.set_cookie(_SESSION_COOKIE, _signer().dumps(session), httponly=True,
@@ -2302,7 +2312,7 @@ async def wa_ingest(request: Request):
         if (not (msg.get("from_me") or msg.get("fromMe")) and msg.get("type") != "reaction"
                 and _wa_link.CODE_RE.search(_txt)):
             linked = True
-            reply = await asyncio.to_thread(_wa_link.link_from_message, _txt, wa_ai.sender_name(msg))
+            reply = await asyncio.to_thread(_wa_link.link_from_message, _txt, wa_ai.sender_name(msg), sender_jid)
             if reply and WA_BRIDGE_URL:
                 _threading.Thread(target=wa_ai.send_reply, daemon=True,
                                   args=(WA_BRIDGE_URL, sender_jid if is_dm else group_jid, reply)).start()
@@ -2973,6 +2983,37 @@ def _extract_subdomain(text: str) -> str:
 
 
 _creator_jids: set[str] = set()
+WA_CREATOR_SUB = os.environ.get("WA_CREATOR_SUB", "389214164473618691")   # the owner's Zitadel id
+WA_BUILDS_PER_SENDER = 3            # builds per sender per WA_BUILD_WINDOW_S
+WA_BUILD_WINDOW_S = 1800
+_wa_builds: dict[str, list[float]] = {}
+
+
+def _is_creator(sender_jid: str) -> bool:
+    """The owner's WhatsApp, by id (wa_jid / wa_phone / a code-checked wa_lids id)."""
+    try:
+        p = crcmz_identity.identify_jid(sender_jid or "")
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(p) and p.get("zitadel_id") == WA_CREATOR_SUB
+
+
+def _may_build(sender_jid: str, group_jid: str) -> bool:
+    """WhatsApp builds: founders only (by WhatsApp id), WA_BUILDS_PER_SENDER per
+    half hour each. Says why when it refuses."""
+    if not crcmz_identity.is_founder_jid(sender_jid):
+        logger.info("wa_ai: build refused for %s (not a founder's WhatsApp id)", (sender_jid or "?")[:24])
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid,
+                         "builds are for founders only. Founders: link your WhatsApp once in the app "
+                         "(Settings → WhatsApp) so I know it's you.")
+        return False
+    now = _time.time()
+    recent = [t for t in _wa_builds.get(sender_jid, []) if now - t < WA_BUILD_WINDOW_S]
+    if len(recent) >= WA_BUILDS_PER_SENDER:
+        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "that's 3 builds in half an hour, give the engineer a breather and try again soon.")
+        return False
+    _wa_builds[sender_jid] = recent + [now]
+    return True
 
 
 def _diagnostic_reply(prompt: str) -> str | None:
@@ -3309,14 +3350,14 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
     if not assistant.available():
         return
 
-    # Creator diagnostic mode
-    if prompt.lower().strip() in ("i am your creator", "i am the creator"):
-        _creator_jids.add(sender_jid or author)
+    # Creator diagnostic mode: the owner only, recognised by WhatsApp id (never by
+    # name or by saying so). Anyone else asking gets an ordinary answer.
+    if prompt.lower().strip() in ("i am your creator", "i am the creator") and _is_creator(sender_jid):
+        _creator_jids.add(sender_jid)
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "creator mode enabled. ask me anything.")
         return
-    if sender_jid in _creator_jids or author in _creator_jids:
+    if sender_jid and sender_jid in _creator_jids and _is_creator(sender_jid):
         _creator_jids.discard(sender_jid)
-        _creator_jids.discard(author)
         diag = _diagnostic_reply(prompt)
         if diag:
             wa_ai.send_reply(WA_BRIDGE_URL, group_jid, diag)
@@ -3328,6 +3369,8 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
     # Build requests take priority — check before summarize so a message like
     # "build me a catchup app, I missed what we discussed" doesn't hit summarize.
     if assistant.needs_build(prompt) and not image_b64:
+        if not _may_build(sender_jid, group_jid):
+            return
         subdomain = _extract_subdomain(prompt)
         _wa_typing(group_jid, True)
         wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
@@ -3351,6 +3394,8 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         question = prompt[claw_match.end():].strip()
         # If the question is actually a build request, redirect to the build job
         if assistant.needs_build(question or prompt) and not image_b64:
+            if not _may_build(sender_jid, group_jid):
+                return
             subdomain = _extract_subdomain(question or prompt)
             _wa_typing(group_jid, False)
             wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
@@ -3390,7 +3435,7 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
     finally:
         _wa_typing(group_jid, False)
     # If the AI called clawbot_build, run the actual job instead of sending its text
-    if "clawbot_build" in (result.get("tools_used") or []):
+    if "clawbot_build" in (result.get("tools_used") or []) and _may_build(sender_jid, group_jid):
         build_step = next((s for s in (result.get("steps") or []) if s.get("tool") == "clawbot_build"), None)
         build_args = build_step.get("args", {}) if build_step else {}
         task = build_args.get("task") or prompt
@@ -3405,14 +3450,9 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         logger.info("wa_ai: build via tool-path subdomain=%r", subdomain)
         return
 
-    # Backstop: the model sometimes *says* it's dispatching the engineer without
-    # calling the tool, leaving the request silently dropped. Honour its promise.
+    # No "it said it would, so build" backstop: a reply's wording never starts a build.
     if _PROMISED_BUILD_RE.search(answer):
-        subdomain = _extract_subdomain(prompt)
-        wa_ai.send_reply(WA_BRIDGE_URL, group_jid, "alright, I'll get my engineer on it 🛠️")
-        _threading.Thread(target=_run_clawbot_job, args=(prompt, subdomain, group_jid), daemon=True).start()
-        logger.info("wa_ai: build via promise-backstop subdomain=%r answer=%r", subdomain, answer[:80])
-        return
+        logger.info("wa_ai: the reply promised a build that wasn't dispatched: %r", answer[:80])
 
     if not answer:
         return
@@ -4177,6 +4217,44 @@ def mcp_probe():
 import mcp_oauth as _mcp_oauth
 
 
+def _oauth_redirect_ok(uri: str) -> bool:
+    """A redirect an OAuth client may register: https anywhere, or http back to this
+    machine (desktop MCP clients listen on localhost). Never javascript:, data: or the
+    like, which would turn "Not now" or the code redirect into script."""
+    import urllib.parse as _up
+    try:
+        u = _up.urlsplit((uri or "").strip())
+    except ValueError:
+        return False
+    if not u.netloc or u.username or u.password or any(ord(ch) < 33 for ch in uri):
+        return False
+    if u.scheme == "https":
+        return True
+    return u.scheme == "http" and (u.hostname or "") in ("localhost", "127.0.0.1", "::1")
+
+
+def _oauth_client_error(client_id: str, redirect_uri: str) -> str:
+    """'' when client_id is a registered client and redirect_uri is exactly one of its
+    redirects; otherwise why not. Both authorize handlers check this, so a code is
+    only ever sent where its client said it may go."""
+    if not client_id:
+        return "client_id is required"
+    allowed = _mcp_oauth.get_client_redirect_uris(client_id)
+    if allowed is None:
+        return "unknown client_id: register the client first"
+    if redirect_uri not in allowed or not _oauth_redirect_ok(redirect_uri):
+        return "redirect_uri not registered for this client"
+    return ""
+
+
+def _no_framing(resp):
+    """The consent page must never sit in someone else's frame (a click-jacked Allow)."""
+    resp.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def _oauth_consent_page(
     *,
     client_id: str = "",
@@ -4191,23 +4269,27 @@ def _oauth_consent_page(
     - State 1 (no session): inline login form.
     - State 2 (session):    allow / deny buttons.
     """
-    err_html = f'<div class="msg err">⚠️ {error}</div>' if error else ""
+    e = lambda v: _html.escape(str(v or ""), quote=True)  # noqa: E731  every value is text, never markup
+    err_html = f'<div class="msg err">⚠️ {e(error)}</div>' if error else ""
     # Query params to forward through login so /oauth/authorize stays the
     # one canonical URL for the whole flow.
     import urllib.parse as _up
-    qp = _up.urlencode({
+    qp = e(_up.urlencode({
         "client_id": client_id, "redirect_uri": redirect_uri,
         "state": state, "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
-    })
+    }))
+    deny = e(f"{redirect_uri}{'&' if '?' in redirect_uri else '?'}" + _up.urlencode({"error": "access_denied", "state": state}))
+    dest = e(_up.urlsplit(redirect_uri).netloc or redirect_uri)
+    client_label = e(_mcp_oauth.get_client_name(client_id) or "An app")
     if session:
-        user_label = (session.get("preferred_username")
-                      or session.get("email") or "you")
+        user_label = e(session.get("preferred_username")
+                       or session.get("email") or "you")
         body = f"""
   {err_html}
   <div class="who">Signed in as <strong>{user_label}</strong> ✓</div>
   <div class="scope-list">
-    <p class="scope-head">This will allow Claude to:</p>
+    <p class="scope-head">{client_label} will get access, and send you back to <strong>{dest}</strong>. It will be able to:</p>
     <ul>
       <li>✓ Read squad status, games, WhatsApp history</li>
       <li>✓ Send messages as you (PSN, WhatsApp, Mattermost)</li>
@@ -4216,14 +4298,14 @@ def _oauth_consent_page(
        so recipients see the source.</p>
   </div>
   <form method="post" action="/oauth/authorize" id="cf">
-    <input type="hidden" name="client_id"             value="{client_id}">
-    <input type="hidden" name="redirect_uri"          value="{redirect_uri}">
-    <input type="hidden" name="state"                 value="{state}">
-    <input type="hidden" name="code_challenge"        value="{code_challenge}">
-    <input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
+    <input type="hidden" name="client_id"             value="{e(client_id)}">
+    <input type="hidden" name="redirect_uri"          value="{e(redirect_uri)}">
+    <input type="hidden" name="state"                 value="{e(state)}">
+    <input type="hidden" name="code_challenge"        value="{e(code_challenge)}">
+    <input type="hidden" name="code_challenge_method" value="{e(code_challenge_method)}">
     <button type="submit" class="btn" id="btn">Allow access →</button>
   </form>
-  <a href="{redirect_uri}?error=access_denied&state={state}" class="deny">Not now</a>
+  <a href="{deny}" class="deny">Not now</a>
   <p class="revoke-note">You can revoke this at any time in Settings.</p>"""
     else:
         body = f"""
@@ -4347,9 +4429,12 @@ async def oauth_register(request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid_client_metadata"}, status_code=400)
-    redirect_uris = body.get("redirect_uris", [])
-    if not redirect_uris or not isinstance(redirect_uris, list):
-        return JSONResponse({"error": "invalid_redirect_uri"}, status_code=400)
+    redirect_uris = body.get("redirect_uris", []) if isinstance(body, dict) else []
+    if (not redirect_uris or not isinstance(redirect_uris, list) or len(redirect_uris) > 10
+            or not all(isinstance(u, str) and len(u) <= 500 and _oauth_redirect_ok(u) for u in redirect_uris)):
+        return JSONResponse({"error": "invalid_redirect_uri",
+                             "error_description": "redirect_uris must be https (or http to localhost)"},
+                            status_code=400)
     client_name = str(body.get("client_name", ""))[:128]
     client_id = _mcp_oauth.register_client(redirect_uris, client_name)
     base = f"https://{_PUBLIC_HOST}"
@@ -4380,18 +4465,18 @@ async def oauth_authorize_get(
         return HTMLResponse("unsupported_response_type", status_code=400)
     if not redirect_uri:
         return HTMLResponse("redirect_uri is required", status_code=400)
-    if client_id:
-        allowed = _mcp_oauth.get_client_redirect_uris(client_id)
-        if allowed is not None and redirect_uri not in allowed:
-            return HTMLResponse("redirect_uri not registered for this client", status_code=400)
+    bad = _oauth_client_error(client_id, redirect_uri)
+    if bad:
+        # Never redirect on a bad client or redirect: show it here.
+        return _no_framing(HTMLResponse(_html.escape(bad), status_code=400))
 
     session = _get_session(request)
-    return HTMLResponse(_oauth_consent_page(
+    return _no_framing(HTMLResponse(_oauth_consent_page(
         client_id=client_id, redirect_uri=redirect_uri,
         state=state, code_challenge=code_challenge,
         code_challenge_method=code_challenge_method,
         session=session,
-    ))
+    )))
 
 
 @app.post("/oauth/login")
@@ -4418,7 +4503,7 @@ async def oauth_login_post(
     })
 
     def _bad(err: str) -> HTMLResponse:
-        return HTMLResponse(
+        return _no_framing(HTMLResponse(
             _oauth_consent_page(
                 client_id=client_id, redirect_uri=redirect_uri,
                 state=state, code_challenge=code_challenge,
@@ -4426,7 +4511,11 @@ async def oauth_login_post(
                 error=err,
             ),
             status_code=401,
-        )
+        ))
+
+    bad_client = _oauth_client_error(client_id, redirect_uri)
+    if bad_client:
+        return _no_framing(HTMLResponse(_html.escape(bad_client), status_code=400))
 
     if not email or not password:
         return _bad("Email and password are required.")
@@ -4506,6 +4595,13 @@ async def oauth_authorize_post(request: Request):
 
     if not redirect_uri or not code_challenge:
         return JSONResponse({"error": "missing required params"}, status_code=400)
+    bad = _oauth_client_error(client_id, redirect_uri)
+    if bad:
+        return JSONResponse({"error": "invalid_request", "error_description": bad}, status_code=400)
+    # The Allow button is a form on our own page: a cross-site POST isn't it.
+    origin = request.headers.get("origin", "")
+    if origin and origin != f"https://{_PUBLIC_HOST}":
+        return JSONResponse({"error": "cross-site request refused"}, status_code=403)
 
     if code_challenge_method != "S256":
         return JSONResponse({"error": "only S256 PKCE is supported"}, status_code=400)
@@ -4520,7 +4616,7 @@ async def oauth_authorize_post(request: Request):
         return JSONResponse({"error": "server_error"}, status_code=500)
 
     params = _up.urlencode({"code": code, "state": state})
-    return RedirectResponse(url=f"{redirect_uri}?{params}", status_code=302)
+    return RedirectResponse(url=f"{redirect_uri}{'&' if '?' in redirect_uri else '?'}{params}", status_code=302)
 
 
 @app.post("/oauth/token")
@@ -4865,6 +4961,9 @@ def assistant_add_fact(req: FactRequest, request: Request):
     if not session:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     _rate_limit("facts_add", session.get("sub", "") or request.client.host)
+    # Facts go into every answer, for everyone: only the squad may add them.
+    if not crcmz_identity.is_squad_member(session.get("sub", "")):
+        return JSONResponse({"error": "only squad members can add facts"}, status_code=403)
     try:
         row = _facts.add(req.text, req.subject, session.get("sub", ""),
                          _session_display(session))

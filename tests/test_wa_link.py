@@ -45,7 +45,10 @@ WRITES: list[tuple] = []
 
 
 def fake_set(sub, key, value):
-    assert key == "wa_names"
+    assert key in ("wa_names", "wa_lids")
+    if key == "wa_lids":
+        PEOPLE[sub].setdefault("tags", {})["wa_lids"] = value
+        return True
     WRITES.append((sub, value))
     PEOPLE[sub]["wa_names"] = [v.strip() for v in value.split(",") if v.strip()]
     return True

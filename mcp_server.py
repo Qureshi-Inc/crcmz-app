@@ -181,6 +181,39 @@ def _tools() -> list[dict]:
     return out
 
 
+# Write tools only a founder may call, even among squad members.
+FOUNDER_ONLY_WRITES = frozenset({"clawbot_build"})
+
+
+def _allowed_writes(caller: dict | None) -> set[str]:
+    """The write tools this caller may see and call.
+
+    A service token: exactly its scopes. A personal token: founders get every write
+    tool; anyone tagged `squad=true` in Zitadel gets all but FOUNDER_ONLY_WRITES; any
+    other account (a paid VIP invitee, the App Review login) gets none: signing in
+    to the app is not a licence to message the squad. Fails closed when Zitadel
+    can't be read.
+    """
+    if not caller:
+        return set()
+    names = {t["name"] for t in _write_tools()}
+    scopes = caller.get("scopes")
+    if scopes is not None:
+        return names & set(scopes)
+    sub = str(caller.get("zitadel_id") or "")
+    if not sub or sub.startswith("service:"):
+        return set()
+    try:
+        import crcmz_identity
+        if crcmz_identity.is_founder(sub):
+            return names
+        if crcmz_identity.is_squad_member(sub):
+            return names - FOUNDER_ONLY_WRITES
+    except Exception as e:  # noqa: BLE001
+        logger.warning("mcp: couldn't check write access for %s: %s", sub, e)
+    return set()
+
+
 def _write_tools() -> list[dict]:
     """Write-capable tools, only served to user-token callers."""
     import assistant
@@ -238,7 +271,7 @@ def handle(message: dict, caller: dict | None = None) -> dict | None:
             "names together. Call squad_roster first when a question names a "
             "person, then person_profile for everything about them."
         )
-        if caller:
+        if _allowed_writes(caller):
             instructions += (
                 " You are authenticated as a squad member and have write access: "
                 "you can send messages to the PSN group, the WhatsApp group, "
@@ -261,13 +294,10 @@ def handle(message: dict, caller: dict | None = None) -> dict | None:
         with assistant.wa_viewer(_founder_sub(caller)):
             tools = _tools()
         if caller:
-            wt = _write_tools()
-            # Advertise only what this caller may actually call, so a scoped service
-            # is not shown messaging tools it will be refused for.
-            scopes = caller.get("scopes")
-            if scopes is not None:
-                wt = [t for t in wt if t["name"] in scopes]
-            tools = tools + wt
+            # Advertise only what this caller may actually call, so nobody is shown
+            # messaging tools they will be refused for.
+            allowed = _allowed_writes(caller)
+            tools = tools + [t for t in _write_tools() if t["name"] in allowed]
         return _result(rid, {"tools": tools})
 
     if method == "tools/call":
@@ -288,16 +318,14 @@ def handle(message: dict, caller: dict | None = None) -> dict | None:
                                  "to get write access."}],
                     "isError": True,
                 })
-            # A service token is scoped; a user token is not. Checking scopes here
-            # rather than at auth time keeps one dispatch path for both.
-            scopes = caller.get("scopes")
-            if scopes is not None and name not in scopes:
-                return _result(rid, {
-                    "content": [{"type": "text", "text":
-                                 f"'{name}' is not in this service token's scope "
-                                 f"({', '.join(sorted(scopes)) or 'none'})."}],
-                    "isError": True,
-                })
+            # Service tokens: their scopes. Personal tokens: founders and squad
+            # members only (see _allowed_writes). One check for both.
+            if name not in _allowed_writes(caller):
+                scopes = caller.get("scopes")
+                why = (f"'{name}' is not in this service token's scope "
+                       f"({', '.join(sorted(scopes)) or 'none'})." if scopes is not None else
+                       f"'{name}' is only for squad members" + (" (founders only)." if name in FOUNDER_ONLY_WRITES else "."))
+                return _result(rid, {"content": [{"type": "text", "text": why}], "isError": True})
             tok = _caller.set(caller)
             try:
                 text, ok = assistant.call_write_tool(name, args, caller)

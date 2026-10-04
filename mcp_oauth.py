@@ -116,6 +116,20 @@ def register_client(redirect_uris: list[str], client_name: str = "") -> str:
     return client_id
 
 
+def get_client_name(client_id: str) -> str:
+    """The name a client registered with ('' if none or unknown). Self-chosen, so the
+    consent page shows it next to where the code goes, never instead of it."""
+    if not client_id:
+        return ""
+    try:
+        with _connect() as db:
+            row = db.execute("SELECT client_name FROM client_registrations WHERE client_id=?",
+                             (client_id,)).fetchone()
+        return (row["client_name"] or "")[:60] if row else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def get_client_redirect_uris(client_id: str) -> list[str] | None:
     """Return registered redirect_uris for a client_id, or None if unknown."""
     if not client_id:

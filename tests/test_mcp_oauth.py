@@ -311,10 +311,16 @@ def tool_tests():
     def t_write_tools_visible_in_mcp_with_caller():
         import mcp_server
         # Simulate a user-token tools/list request.
-        resp = mcp_server.handle(
-            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
-            caller={"zitadel_id": "test-zid"},
-        )
+        import crcmz_identity
+        old = crcmz_identity.is_founder
+        crcmz_identity.is_founder = lambda x, refresh=False: x == "1234"   # a founder's token
+        try:
+            resp = mcp_server.handle(
+                {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                caller={"zitadel_id": "1234"},
+            )
+        finally:
+            crcmz_identity.is_founder = old
         names = {t["name"] for t in resp["result"]["tools"]}
         for wt in assistant.write_tool_names():
             assert wt in names, f"{wt} missing from user-token tools/list"

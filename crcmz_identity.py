@@ -78,7 +78,8 @@ ZITADEL_SERVICE_TOKEN = os.environ.get("ZITADEL_SERVICE_TOKEN", "")
 # Professional Goopers WhatsApp stats. Console-only: set_tag() refuses it, so
 # nobody can grant it to themselves through the app. Read it via is_founder().
 TAG_KEYS = ("mm_username", "psn_id", "wa_jid", "wa_phone", "wa_names", "jellyfin_user",
-            "steam_id", "primary_platform", "squad_name", "founder", "picks_name")
+            "steam_id", "primary_platform", "squad_name", "founder", "picks_name",
+            "squad", "wa_lids")   # wa_lids: WhatsApp privacy ids, written by a code-checked link; squad=true: MCP write tools for a non-founder (mcp_server._allowed_writes)
 
 # Separators accepted inside a multi-value tag.
 _TAG_SPLIT = ",;|"
@@ -291,7 +292,7 @@ def _fetch_people() -> list[dict]:
 
 # Tags the app itself may write. Everything else is console-only.
 _APP_TAGS = ("jellyfin_user", "steam_id", "primary_platform", "squad_name", "picks_name",
-             "wa_names")   # wa_names: Settings → WhatsApp (wa_link.py), with a one-time code
+             "wa_names", "wa_lids")   # wa_names: Settings → WhatsApp (wa_link.py), with a one-time code
 
 
 def set_tag(zitadel_id: str, key: str, value: str) -> bool:
@@ -400,7 +401,7 @@ def by_wa_jid(*, refresh: bool = False) -> dict[str, dict]:
     """Normalised WhatsApp JID -> person, for joining `whatsapp_messages` rows."""
     out: dict[str, dict] = {}
     for p in people(refresh=refresh):
-        for raw in (p["wa_jid"], p["wa_phone"]):
+        for raw in (p["wa_jid"], p["wa_phone"], *_split_tag((p.get("tags") or {}).get("wa_lids", ""))):
             key = _normalise_jid(raw)
             if key:
                 out.setdefault(key, p)
@@ -505,6 +506,32 @@ def by_psn_id(*, refresh: bool = False) -> dict[str, dict]:
 def by_zitadel_id(*, refresh: bool = False) -> dict[str, dict]:
     """Zitadel id -> person, for soundboards, giveaways, facts and chat history."""
     return {p["zitadel_id"]: p for p in people(refresh=refresh)}
+
+
+def is_squad_member(sub: str) -> bool:
+    """A founder, or someone tagged `squad=true`: who may act on the squad (MCP write
+    tools, squad facts). Paid VIP invitees and the App Review login are not. By
+    Zitadel id only; fails closed."""
+    if not sub or not str(sub).isdigit():
+        return False
+    try:
+        if is_founder(sub):
+            return True
+        p = by_zitadel_id().get(str(sub)) or {}
+    except Exception:  # noqa: BLE001
+        return False
+    return str((p.get("tags") or {}).get("squad") or "").strip().lower() in ("true", "1", "yes")
+
+
+def is_founder_jid(jid: str) -> bool:
+    """A WhatsApp sender id belongs to a founder. By id only (wa_jid, wa_phone, or a
+    wa_lids id recorded by a code-checked link), never by display name: anyone in a
+    group can rename themselves "Moiz". Unknown or empty is False."""
+    try:
+        p = identify_jid(jid or "")
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(p) and is_founder(p)
 
 
 def is_founder(sub_or_person: str | dict | None, *, refresh: bool = False) -> bool:

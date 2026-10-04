@@ -89,7 +89,20 @@ def _write_names(sub: str, names: list[str]) -> bool:
     return ok
 
 
-def link_from_message(text: str, sender_name: str) -> str | None:
+def _record_lid(sub: str, p: dict, sender_jid: str) -> None:
+    """Remember the sender's WhatsApp id too (most are privacy "@lid" ids that no tag
+    holds), so founder-only bot features can trust the id rather than the name."""
+    jid = (sender_jid or "").strip()
+    if not jid or crcmz_identity._normalise_jid(jid) in {
+            crcmz_identity._normalise_jid(x) for x in (p.get("wa_jid"), p.get("wa_phone")) if x}:
+        return
+    have = crcmz_identity._split_tag((p.get("tags") or {}).get("wa_lids", ""))
+    if jid not in have:
+        crcmz_identity.set_tag(sub, "wa_lids", ", ".join(have + [jid]))
+        crcmz_identity.people(refresh=True)
+
+
+def link_from_message(text: str, sender_name: str, sender_jid: str = "") -> str | None:
     """A message with a live code in it: link the sender's WhatsApp name to the code's
     account and return the reply. None when the message has no code (not ours to answer)."""
     m = CODE_RE.search(text or "")
@@ -112,6 +125,7 @@ def link_from_message(text: str, sender_name: str) -> str | None:
     if other and other.get("zitadel_id") != sub:
         logger.info("wa_link: %r is already linked to someone else", name)
         return f"“{name}” is already linked to another CRCMZ account. Ask Soup to sort it out."
+    _record_lid(sub, p, sender_jid)
     names = list(p.get("wa_names") or [])
     if name.casefold() in {n.casefold() for n in names}:
         return f"You're already linked, {_call_name(p)}: “{name}” counts as you."

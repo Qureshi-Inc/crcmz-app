@@ -245,6 +245,8 @@ def http_tests():
     import server
 
     server._facts._DB_PATH = facts._DB_PATH
+    import crcmz_identity
+    crcmz_identity.is_squad_member = lambda sub: True   # adding facts is for the squad (tested in test_security_fixes)
     client = TestClient(server.app, base_url="https://app.crcmz.me")
     HDR = {"Origin": "https://app.crcmz.me", "Content-Type": "application/json"}
     COOKIE = server._SESSION_COOKIE
