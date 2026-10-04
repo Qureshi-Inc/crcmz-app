@@ -7,6 +7,9 @@
 	<array>
 		<string>applinks:app.crcmz.me</string>
 		<string>webcredentials:app.crcmz.me</string>
+		<!-- Passkeys belong to crcmz.me (new) or auth.crcmz.me (older): both say this app may use them. -->
+		<string>webcredentials:crcmz.me</string>
+		<string>webcredentials:auth.crcmz.me</string>
 	</array>
 	<!-- The session, for the share extension (SharedSession.swift). -->
 	<key>keychain-access-groups</key>
