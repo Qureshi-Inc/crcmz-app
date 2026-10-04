@@ -246,6 +246,19 @@ def t_mcp_and_whatsapp_are_rate_limited():
     server._rl_hits.clear()
 
 
+def t_a_host_header_with_a_path_in_it_opens_nothing():
+    """Host: app.crcmz.me/health? made the gate see /health (an open path) while the
+    router served the real one. The gate now reads the router's own path."""
+    for host in ("app.crcmz.me/health?", "app.crcmz.me/health#", "app.crcmz.me/.well-known/webauthn?"):
+        r = client.get("/api/watch/movies/library", headers={"Host": host, "Accept": "application/json"})
+        assert r.status_code == 401, (host, r.status_code, r.text[:80])
+    assert client.get("/health").status_code == 200
+    # Starlette >= 1.3.1 also fixed this; the gate must not rely on it.
+    import inspect
+    gate = inspect.getsource(server._auth_gate)
+    assert 'path = request.scope.get("path")' in gate, "the gate must read the router's path"
+
+
 # ── 6 ──
 def t_6_next_never_leaves_the_site_and_is_escaped():
     for bad in ("//evil.com", "/\\evil.com", "https://evil.com", "javascript:x", "/ok\nSet-Cookie:x", "", None):

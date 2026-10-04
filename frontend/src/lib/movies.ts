@@ -15,7 +15,7 @@ export type Row = { id: string; title: string; kind: ListKind; genre: string; it
 export type Home = { featured: Result | null; rows: Row[]; genres: string[] }
 export type Details = Result & {
   logo: string; runtime: number; director: string[]; cast: string[]; writer: string[]; awards: string; country: string
-  trailers: string[]; can_add: boolean; by: string; can_remove: boolean; library_quality: string; adding: Adding | null
+  trailers: string[]; can_add: boolean; by: string; can_remove: boolean; can_dismiss?: boolean; library_quality: string; adding: Adding | null
   /** The Real-Debrid release it was added from ('' when the app didn't add it). */
   release?: string
 }
@@ -49,6 +49,8 @@ export type Options = { imdb: string; '4k': CopyOption | null; '1080p': CopyOpti
 export const getOptions = (imdb: string, signal?: AbortSignal) =>
   request<Options>(`/api/watch/movies/options/${imdb}`, { signal, timeoutMs: 30_000 })
 export const removeMovie = (id: string) => request<{ title: string; removed: number }>('/api/watch/movies/remove', { body: { id }, timeoutMs: 30_000 })
+/** Clear a failed add from On the way. */
+export const dismissMovie = (imdb: string) => request<{ ok: boolean }>('/api/watch/movies/dismiss', { body: { imdb } })
 export const streamUrl = (id: string) => `/api/watch/movies/stream/${id}/master.m3u8`
 
 /** In flight: still worth polling for. */

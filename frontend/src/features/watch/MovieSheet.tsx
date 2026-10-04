@@ -15,7 +15,7 @@ import { useSwipeDown } from '../../lib/gestures'
 import { ApiError } from '../../lib/http'
 import {
   addMovie, getDetails, getNow, inFlight, measured, removeMovie, stateText, streamUrl, type Details,
-  getOptions, getCopies, addCopy, replaceCopy, type Copy,
+  getOptions, getCopies, addCopy, replaceCopy, dismissMovie, type Copy,
 } from '../../lib/movies'
 import { ConfirmDialog } from '../clips/ClipSheet'
 import { Backdrop } from './MoviesHome'
@@ -123,6 +123,17 @@ function Body({ d, onGenre, party, onGone }: { d: Details; onGenre: (g: string) 
       toast((e instanceof ApiError && e.detail) || "That movie didn't add", 'error')
     } finally { setBusy(false) }
   }
+  async function dismiss() {
+    setBusy(true)
+    try {
+      await dismissMovie(d.imdb)
+      refresh()
+      toast(`${d.title} is off the list`, 'success')
+      onGone()
+    } catch (e) {
+      toast((e instanceof ApiError && e.detail) || "That didn't come off the list", 'error')
+    } finally { setBusy(false) }
+  }
   async function remove() {
     if (!d.id) return
     setBusy(true)
@@ -198,6 +209,11 @@ function Body({ d, onGenre, party, onGone }: { d: Details; onGenre: (g: string) 
             <button type="button" className="btn btn-secondary" title="Play the trailer for everyone in the Watch Party"
               onClick={() => party.play(`https://www.youtube.com/watch?v=${d.trailers[0]}`, `${d.title} · trailer`)}>
               <Icon name="play" />Trailer
+            </button>
+          )}
+          {d.state === 'failed' && d.can_dismiss && (
+            <button type="button" className="icon-btn" onClick={() => void dismiss()} disabled={busy} aria-label={`Remove the failed add of ${d.title}`} title="Remove it from On the way">
+              <Icon name="trash" />
             </button>
           )}
           {d.can_remove && (

@@ -544,12 +544,36 @@ def add_tests():
                                      f"/api/watch/movies/stream/{'f' * 32}/master.m3u8", "https://youtu.be/x"]))
         assert got == {f"/api/watch/movies/stream/{'e' * 32}/master.m3u8": f"/api/watch/movies/poster/{'e' * 32}"}, got
 
+    def a_failed_add_can_be_cleared_by_its_adder_or_an_admin():
+        reset()
+        run(add_and_wait("u-zub", "Zubair", "tt0000001"))   # no copy: failed
+        assert mv._row("tt0000001")["status"] == "failed"
+        for who, admin, code in (("u-noor", False, 403),):
+            try:
+                mv.dismiss_failed(who, "tt0000001", admin=admin)
+            except HTTPException as e:
+                assert e.status_code == code
+            else:
+                raise AssertionError("someone else cleared it")
+        assert mv.dismiss_failed("u-zub", "tt0000001") == {"ok": True, "imdb": "tt0000001"} and mv._row("tt0000001") is None
+        run(add_and_wait("u-zub", "Zubair", "tt0000001"))
+        assert mv.dismiss_failed("u-noor", "tt0000001", admin=True)["ok"]
+        reset(cached={"d" * 40})
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        try:
+            mv.dismiss_failed("u-zub", "tt15239678")
+        except HTTPException as e:
+            assert e.status_code == 409, "only failed ones"
+        else:
+            raise AssertionError("cleared an add that's working")
+
     for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_server_wide_block_stops_at_once_and_pauses_adds, a_movie_never_costs_more_than_three_adds, a_copy_real_debrid_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
                a_cached_1080p_beats_an_uncached_4k, no_copy_says_so, already_in_the_library_is_not_added_again,
                a_second_press_joins_the_first_and_bad_ids_are_refused, five_a_day_unless_admin,
                a_failed_add_can_be_tried_again, the_adder_can_pick_1080p_or_4k_when_both_exist,
                the_copies_list_starts_with_what_add_picks_and_one_can_be_pinned, replacing_swaps_the_copy_for_the_adder_or_an_admin_only,
-               a_search_cut_off_by_a_restart_is_picked_up_again, history_gets_the_library_poster_for_a_stream):
+               a_search_cut_off_by_a_restart_is_picked_up_again, history_gets_the_library_poster_for_a_stream,
+               a_failed_add_can_be_cleared_by_its_adder_or_an_admin):
         check(fn.__name__, fn)
 
 

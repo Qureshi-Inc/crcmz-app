@@ -1010,6 +1010,22 @@ async def replace(sub: str, name: str, imdb: str, copy_id: str, *, admin: bool =
     return await add(sub, name, imdb, admin=admin, want=f"hash:{copy_id}")
 
 
+def dismiss_failed(sub: str, imdb: str, *, admin: bool = False) -> dict:
+    """Clear an add that failed, so it stops showing in On the way. Whoever added it,
+    or an admin. Nothing on Real-Debrid or the disk to clean: a failed add holds none."""
+    r = _row(imdb or "")
+    if not r:
+        raise HTTPException(404, "nothing to remove")
+    if r["status"] != "failed":
+        raise HTTPException(409, "it isn't a failed add")
+    if not (admin or r["sub"] == sub):
+        raise HTTPException(403, "only the person who added it, or an admin, can remove it")
+    with _lock, _conn() as db:
+        db.execute("DELETE FROM adds WHERE imdb = ? AND status = 'failed'", (imdb,))
+    logger.info("movies: failed add of %s cleared", imdb)
+    return {"ok": True, "imdb": imdb}
+
+
 def undo_add(sub: str, imdb: str) -> dict:
     """Undo an add that hasn't started (still in its grace period): as if it never was."""
     r = _row(imdb or "")
@@ -1796,7 +1812,9 @@ def build_router(get_session, is_admin) -> APIRouter:
         lib = await library(sub, await is_admin(sub))
         card = next((m for m in lib["movies"] if m["imdb"] == imdb), None)
         adding = next((a for a in lib["adding"] if a["imdb"] == imdb), None)
+        row = await asyncio.to_thread(_row, imdb)
         return {**state, "can_add": lib["can_add"], "by": (card or adding or {}).get("by", ""),
+                "can_dismiss": bool(row and row["status"] == "failed" and (row["sub"] == sub or await is_admin(sub))),
                 "can_remove": bool(card and card["can_remove"]), "library_quality": (card or {}).get("quality", ""),
                 "adding": adding, "release": ((await asyncio.to_thread(_row, imdb)) or {}).get("release", "")}
 
@@ -1853,6 +1871,17 @@ def build_router(get_session, is_admin) -> APIRouter:
         person = (await asyncio.to_thread(crcmz_identity.by_zitadel_id)).get(sub) or {}
         name = person.get("display_name") or person.get("username") or "someone"
         return await replace(sub, name, str(b.get("imdb") or ""), str(b.get("copy") or ""), admin=await is_admin(sub))
+
+    @router.post("/dismiss")
+    async def dismiss_post(request: Request):
+        """Clear a failed add from On the way. Body: {imdb}."""
+        sub = library_sub(request)
+        try:
+            b = await request.json()
+        except ValueError:
+            raise HTTPException(400, "expected JSON")
+        imdb = str((b or {}).get("imdb") or "") if isinstance(b, dict) else ""
+        return await asyncio.to_thread(dismiss_failed, sub, imdb, admin=await is_admin(sub))
 
     @router.post("/undo")
     async def undo_post(request: Request):

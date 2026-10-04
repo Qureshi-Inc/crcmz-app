@@ -1010,7 +1010,10 @@ def _machine_authorised(request: Request) -> bool:
 
 @app.middleware("http")
 async def _auth_gate(request: Request, call_next):
-    path = request.url.path
+    # The path the router will use. Never request.url.path: that is rebuilt from the
+    # Host header, so "Host: app.crcmz.me/health?" made any path look like /health
+    # (an open path) to this gate while routing went to the real one.
+    path = request.scope.get("path") or "/"
     if path in _OPEN_PATHS:
         return await call_next(request)
 
@@ -1055,9 +1058,9 @@ async def _auth_gate(request: Request, call_next):
 
     accept = request.headers.get("accept", "")
     if request.method == "GET" and "text/html" in accept:
-        next_url = request.url.path
-        if request.url.query:
-            next_url += "?" + request.url.query
+        next_url = path
+        if request.scope.get("query_string"):
+            next_url += "?" + request.scope["query_string"].decode("latin-1")
         return RedirectResponse(url=f"/auth/login?next={next_url}", status_code=302)
     return JSONResponse({"detail": "authentication required"}, status_code=401)
 
