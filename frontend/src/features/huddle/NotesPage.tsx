@@ -3,7 +3,7 @@
 // the notes rendered from Markdown, a full-screen reader, Share and Rename. A link to
 // one opens for anyone signed in, which is how notes get shared.
 import { useState, type ComponentProps, type FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
@@ -12,6 +12,7 @@ import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
 import { request } from '../../lib/http'
+import { ConfirmDialog } from '../clips/ClipSheet'
 
 type Status = 'live' | 'writing' | 'ready' | 'failed' | 'empty'
 export type MeetingSummary = { id: string; room: string; started: number; ended: number | null; status: Status; title: string; people: string[] }
@@ -81,8 +82,15 @@ export function NoteViewPage() {
   })
   const m = q.data
   useTitle(m?.title || 'Meeting notes')
+  const navigate = useNavigate()
   const [reading, setReading] = useState(false)
   const [renaming, setRenaming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const del = useMutation({
+    mutationFn: () => request(`/api/huddle/notes/${encodeURIComponent(id)}/delete`, { body: {} }),
+    onSuccess: () => { toast('Meeting deleted', 'success'); void qc.invalidateQueries({ queryKey: ['huddle', 'notes'] }); navigate('/huddle/notes', { replace: true }) },
+    onError: () => toast("Couldn't delete it", 'error'),
+  })
   const [title, setTitle] = useState('')
   const rename = useMutation({
     mutationFn: (t: string) => request<{ title: string }>(`/api/huddle/notes/${encodeURIComponent(id)}`, { body: { title: t } }),
@@ -131,7 +139,11 @@ export function NoteViewPage() {
         <button type="button" className="btn btn-secondary" onClick={() => void share()}><Icon name="external" />Share</button>
         {m.notes && <button type="button" className="btn btn-secondary" onClick={() => void copyNotes()}><Icon name="notes" />Copy</button>}
         {m.mine && !renaming && <button type="button" className="btn btn-secondary" onClick={() => { setTitle(m.title); setRenaming(true) }}><Icon name="edit" />Rename</button>}
+        {m.mine && <button type="button" className="btn btn-ghost notes-delete" disabled={del.isPending} onClick={() => setDeleting(true)}><Icon name="trash" />Delete</button>}
       </div>
+      <ConfirmDialog open={deleting} onOpenChange={setDeleting} title="Delete this meeting?" action="Delete"
+        body={<p className="meta">The notes and the transcript go for everyone who was in it, and the AI forgets them. This can't be undone.</p>}
+        onConfirm={() => del.mutate()} />
       {m.notes && <section className="glass notes-card"><Notes md={m.notes} /></section>}
       {m.transcript.length > 0 && (
         <details className="glass notes-transcript">

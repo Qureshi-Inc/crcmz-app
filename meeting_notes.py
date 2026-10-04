@@ -236,3 +236,28 @@ def get(meeting_id: str, *, with_transcript: bool = True) -> dict | None:
     if with_transcript:
         out["transcript"] = [{"ts": l["ts"], "name": l["name"], "text": l["text"]} for l in transcript(r["id"])]
     return out
+
+
+def live_meeting(room: str) -> dict | None:
+    """The room's meeting while the call is on: its id and the transcript so far (for
+    someone who joins, or rejoins, partway through)."""
+    with _lock, _conn() as db:
+        mid = _live_id(db, room)
+    if not mid:
+        return None
+    return {"id": mid, "lines": [{"ts": l["ts"], "name": l["name"], "text": l["text"]} for l in transcript(mid)]}
+
+
+def delete(meeting_id: str, sub: str) -> list[str] | None:
+    """Delete a meeting for everyone (anyone who was in it may). Returns the memory record
+    ids it had, so the squad memory forgets it too; None if not allowed."""
+    m = get(meeting_id, with_transcript=False)
+    if not m or not is_attendee(m["id"], sub):
+        return None
+    mid = m["id"]
+    with _lock, _conn() as db:
+        n = db.execute("SELECT COUNT(*) FROM lines WHERE meeting_id=?", (mid,)).fetchone()[0]
+        for t in ("lines", "people"):
+            db.execute(f"DELETE FROM {t} WHERE meeting_id=?", (mid,))
+        db.execute("DELETE FROM meetings WHERE id=?", (mid,))
+    return [f"{mid}:notes"] + [f"{mid}:t{i}" for i in range((n + 39) // 40 or 1)]

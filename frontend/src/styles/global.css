@@ -2881,3 +2881,4 @@ html[data-native-shell] .tabbar { display: none; }
 .share-poster { width: 72px; height: 108px; object-fit: cover; border-radius: var(--radius-sm); flex: none; }
 .share-what { overflow-wrap: anywhere; }
 .share-choices { display: grid; gap: var(--space-2); width: 100%; }
+.notes-delete { color: #ff8a8a; }

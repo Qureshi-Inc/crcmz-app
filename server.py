@@ -6562,6 +6562,40 @@ async def huddle_notes_get(request: Request, mid: str):
     return JSONResponse(m, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/huddle/meeting/live")
+async def huddle_meeting_live(request: Request, room: str = "crcmz"):
+    """The transcript so far of the call going on in `room`, for someone in it: joining (or
+    rejoining) partway through, the AI and the transcript start from the beginning."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    import re as _re
+    room = _re.sub(r"[^a-z0-9\-]", "", room.lower())[:64] or "crcmz"
+    m = await asyncio.to_thread(_meet.live_meeting, room)
+    if not m or not _meet.is_attendee(m["id"], session.get("sub", "")):
+        return JSONResponse({"id": None, "lines": []}, headers={"Cache-Control": "no-store"})
+    return JSONResponse(m, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/huddle/notes/{mid}/delete")
+async def huddle_notes_delete(request: Request, mid: str):
+    """Delete a meeting (notes and transcript) for everyone; anyone who was in it may.
+    The squad memory forgets it too."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    gone = await asyncio.to_thread(_meet.delete, mid, session.get("sub", ""))
+    if gone is None:
+        return JSONResponse({"error": "only people who were in the meeting can delete it"}, status_code=403)
+    import memory_store
+    for rid in gone:
+        try:
+            await asyncio.to_thread(memory_store.deactivate, "meetings", rid)
+        except Exception:  # noqa: BLE001
+            logger.warning("meeting notes: memory didn't forget %s", rid)
+    return JSONResponse({"ok": True})
+
+
 @app.post("/api/huddle/notes/{mid}")
 async def huddle_notes_rename(request: Request, mid: str):
     """Rename a meeting (anyone who was in it)."""

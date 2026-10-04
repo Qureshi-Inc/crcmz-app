@@ -190,6 +190,34 @@ def server_tests():
         assert client.post("/api/huddle/notes/dYZCAleFgjZ", json={"title": "Fixed"}, cookies=cookie, headers=origin).status_code == 200
         assert client.get("/api/huddle/notes/dYZCAle", cookies=cookie).status_code == 404, "too short to guess"
 
+    def rejoining_gets_the_transcript_so_far():
+        reset()
+        mn.add_line("crcmz", sub, "Moiz", "first thing we said")
+        mn.add_line("crcmz", "u2", "Zubi", "then this")
+        r = client.get("/api/huddle/meeting/live?room=crcmz", cookies=cookie)
+        assert [l["text"] for l in r.json()["lines"]] == ["first thing we said", "then this"], r.text
+        stranger = {server._SESSION_COOKIE: server._signer().dumps(server._make_session("nobody", "n@b.co"))}
+        assert client.get("/api/huddle/meeting/live?room=crcmz", cookies=stranger).json()["lines"] == [], "only people in the call"
+        assert client.get("/api/huddle/meeting/live?room=quiet", cookies=cookie).json() == {"id": None, "lines": []}
+
+    def a_meeting_can_be_deleted_by_someone_who_was_in_it():
+        reset()
+        mid = mn.add_line("crcmz", sub, "Moiz", SAID)
+        mn.finish(mid, "ready", "# Plan", "Plan")
+        forgot = []
+        import memory_store
+        real = memory_store.deactivate
+        memory_store.deactivate = lambda source, rid: forgot.append((source, rid)) or 1
+        try:
+            stranger = {server._SESSION_COOKIE: server._signer().dumps(server._make_session("nobody", "n@b.co"))}
+            assert client.post(f"/api/huddle/notes/{mid}/delete", json={}, cookies=stranger, headers=origin).status_code == 403
+            assert mn.get(mid) is not None
+            r = client.post(f"/api/huddle/notes/{mid}/delete", json={}, cookies=cookie, headers=origin)
+            assert r.status_code == 200 and mn.get(mid) is None and mn.transcript(mid) == [], r.text
+            assert ("meetings", f"{mid}:notes") in forgot and ("meetings", f"{mid}:t0") in forgot, forgot
+        finally:
+            memory_store.deactivate = real
+
     def a_transcript_line_without_a_room_goes_to_the_room_you_joined():
         server._huddle_rooms[sub] = ("squadnight", server._time.time())
         assert server._huddle_room_of(sub) == "squadnight"
@@ -207,7 +235,7 @@ def server_tests():
         assert "sub" not in str(got["people"])
 
     for fn in (an_empty_call_writes_the_notes_and_tells_who_was_there, a_call_where_nobody_said_much_leaves_no_notes,
-               routes_list_open_and_rename, a_link_that_lost_its_last_underscore_still_opens, a_transcript_line_without_a_room_goes_to_the_room_you_joined,
+               routes_list_open_and_rename, a_link_that_lost_its_last_underscore_still_opens, rejoining_gets_the_transcript_so_far, a_meeting_can_be_deleted_by_someone_who_was_in_it, a_transcript_line_without_a_room_goes_to_the_room_you_joined,
                the_assistant_and_mcp_can_read_the_notes):
         check(fn.__name__, fn)
 

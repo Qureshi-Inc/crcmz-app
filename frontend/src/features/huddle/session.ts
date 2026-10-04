@@ -268,6 +268,7 @@ export async function join({ camera = true }: { camera?: boolean } = {}) {
     const others = muteOtherCalls('huddle')
     if (others.length && state.mic) toast(`Muted your ${others.join(' and ')} mic while you're in Huddle`, 'info')
     sync()
+    void catchUpTranscript(t.room)
     if (state.autoTranscribe && !state.transcribing) toggleTranscript({ open: false })
   } catch (e) {
     if (r) { try { await r.disconnect() } catch { /* */ } }
@@ -286,6 +287,7 @@ async function joinNative(wanted: string, camera: boolean) {
     muteOtherCalls('huddle')
     toNative({ type: 'start', kind: 'huddle', url: t.url, token: t.token, room: t.room, title: `Huddle · ${t.room}`, publish: true, camera, mic: true })
     set({ phase: 'pre', nativeRoom: t.room })
+    void catchUpTranscript(t.room)
     if (state.autoTranscribe) nativeTranscriptOn()
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) { markSignedOut(); set({ phase: 'pre', error: 'signin' }) }
@@ -600,6 +602,23 @@ async function runAi(req: AiRequest) {
 // ── Live transcript ─────────────────────────────────────────────────────────
 let recorder: MediaRecorder | null = null
 let chunkTimer = 0
+
+/** Joining (or rejoining) a call that's already going: the meeting's transcript so far,
+ *  so the AI and the transcript have everything from the beginning, not just from now. */
+async function catchUpTranscript(room: string) {
+  try {
+    const m = await request<{ id: string | null; lines: { ts: number; name: string; text: string }[] }>(
+      `/api/huddle/meeting/live?room=${encodeURIComponent(room)}`, { quiet401: true })
+    if (!m.lines.length) return
+    const have = new Set(state.lines.map((l) => `${l.name}|${l.text}`))
+    const earlier = m.lines.filter((l) => !have.has(`${l.name}|${l.text}`)).map((l) => ({ name: l.name, text: l.text, ts: l.ts * 1000 }))
+    if (!earlier.length) return
+    set({
+      lines: [...earlier, ...state.lines].sort((a, b) => a.ts - b.ts).slice(-500),
+      aiLog: [...state.aiLog, { role: 'note', text: `Caught up on the call so far: ${earlier.length} transcript ${earlier.length === 1 ? 'line' : 'lines'}.` }],
+    })
+  } catch { /* no meeting yet, or offline: nothing to catch up on */ }
+}
 
 function addLine(name: string, text: string) {
   set({ lines: [...state.lines, { name, text, ts: Date.now() }].slice(-500) })

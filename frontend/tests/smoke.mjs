@@ -537,7 +537,7 @@ try {
       const u = new URL(page.url())
       check(`legacy ?p=${k} → ${want}`, u.pathname + u.search === want || (want === '/app' && u.pathname === '/app'), u.pathname + u.search)
     }
-    const classic = { 'clips/x': '/?p=pipeline' }
+    const classic = { 'clips/x': '/dashboard?p=pipeline' }   // / opens /app now; the classic dashboard is /dashboard
     for (const [route, href] of Object.entries(classic)) {
       await page.goto(`${BASE}/app/${route}`)
       await page.waitForSelector('.handoff a.btn')
@@ -2361,6 +2361,7 @@ try {
         'GET /api/huddle/notes': json(200, { meetings: [NOTE, { ...NOTE, id: 'mt2', status: 'writing', title: 'Huddle · crcmz' }] }),
         'GET /api/huddle/notes/mt1': json(200, { ...NOTE, mine: true, notes: '# Ranked night plan\n\n## Follow-ups\n- **Zubi** books the lobby\n- Moiz brings snacks', transcript: [{ ts: 1759500100, name: 'Zubi', text: 'I can book it' }] }),
         'POST /api/huddle/notes/mt1': (r) => { renames.push(r.request().postDataJSON()); return json(200, { ok: true, title: 'Ranked' })(r) },
+        'POST /api/huddle/notes/mt1/delete': (r) => { renames.push({ deleted: true }); return json(200, { ok: true })(r) },
       } })
       await ready(n.page, '/app/huddle/notes')
       await n.page.waitForSelector('.notes-row')
@@ -2378,6 +2379,12 @@ try {
       await n.page.click('.notes-rename button[type=submit]')
       await n.page.waitForFunction(() => !document.querySelector('.notes-rename'))
       check('notes: Rename posts the new name', renames.at(-1)?.title === 'Ranked', JSON.stringify(renames))
+      await n.page.click('button.notes-delete')
+      await n.page.waitForSelector('.dialog-confirm')
+      check('notes: Delete asks first', (await n.page.textContent('.dialog-confirm .dialog-title')) === 'Delete this meeting?' && !renames.some((x) => x.deleted))
+      await n.page.click('.dialog-confirm .btn-primary')
+      await n.page.waitForURL(/\/app\/huddle\/notes$/)
+      check('notes: Delete deletes it and goes back to the list', renames.some((x) => x.deleted))
       await axe(n.page, 'Meeting notes 375', '.app-main')
       check('no unmocked writes and no page errors (meeting notes)', n.page.violations.length === 0, n.page.violations.join(', '))
       await n.ctx.close()
@@ -2456,6 +2463,7 @@ try {
           return json(200, { message: { role: 'assistant', content: aiMode === 'notes' ? 'Summary: push B.' : 'Bizzle is carrying.' } })(r)
         },
         'POST /api/huddle/transcribe': (r) => { hposts.tr++; return json(200, { text: 'push B site' })(r) },
+        'GET /api/huddle/meeting/live': json(200, { id: 'mt9', lines: [{ ts: 1759500000, name: 'Noor', text: 'said before you came' }] }),
       }
       const hs = (page) => page.evaluate(() => ({ audio: document.querySelectorAll('[data-huddle-audio] audio').length }))
       const spotName = (page) => page.textContent('.hu-spot .hu-tile-name')
@@ -2553,8 +2561,9 @@ try {
       check('huddle: transcript chunks go to the transcriber and the room', hposts.tr >= 1 && (await h.page.evaluate(() => window.__lkData.find((d) => d.t === 'line')?.text)) === 'push B site')
       await h.page.evaluate(() => window.__lkSay('p2', { t: 'line', text: 'rotate A' }))
       await h.page.evaluate(() => window.__lkSay('p3', { t: 'rec', on: true }))
-      await h.page.waitForSelector('.hu-lines summary:has-text("2 lines")')
+      await h.page.waitForSelector('.hu-lines summary:has-text("3 lines")')
       check("huddle: other people's lines join the transcript", true)
+      check('huddle: joining partway through brings the transcript so far', (await h.page.textContent('.hu-lines ol')).includes('said before you came'))
       check('huddle: no mid-call Notes button (the notes come when the call ends)', !(await h.page.locator('.hu-ai-sheet button:has-text("Notes")').count()))
       await h.page.fill('.hu-ai-sheet input', 'what did we say?')
       await h.page.press('.hu-ai-sheet input', 'Enter')
