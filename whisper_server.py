@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone Whisper transcription server for Huddle.
 Usage: python whisper_server.py
-Then set WHISPER_BASE_URL=http://192.168.4.38:8765/v1 in Coolify.
+Then set WHISPER_BASE_URL=http://<this machine>:8765/v1 in the app's env.
 """
 import os, tempfile
 from fastapi import FastAPI, File, Form, UploadFile

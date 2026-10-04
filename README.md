@@ -33,13 +33,14 @@ No email? Reach out to **InterestingSoup** to get added to the **CRCMZ Squad** g
 
 ## Status
 
-| Surface | Where it runs | State |
-|---|---|---|
-| Web app + API | `app.crcmz.me` · Coolify app 24, `main` branch | 🟢 Live (deploys are triggered in Coolify; a push alone doesn't deploy) |
-| Android app | `android/` · native shell, calls and Slap player · [GitHub Releases](https://github.com/Qureshi-Inc/crcmz-app/releases) | 🟢 Released (2.0) |
-| iPhone app | `ios/` · native shell, calls and Slap player · TestFlight | 🟡 Beta (CRCMZ Squad group) |
-| MCP server | `app.crcmz.me/mcp` | 🟢 Live |
-| Huddle + Watch Party calls | LiveKit at `huddle.crcmz.me` | 🟢 Live |
+Live status of every part of CRCMZ: **[status.crcmz.me](https://status.crcmz.me)**.
+
+| Surface | State |
+|---|---|
+| Web app (`app.crcmz.me`) | 🟢 Live |
+| Android app | 🟢 Released on [GitHub Releases](https://github.com/Qureshi-Inc/crcmz-app/releases) |
+| iPhone app | 🟡 Beta on TestFlight (invite only) |
+| MCP server | 🟢 Live |
 
 ---
 
@@ -47,351 +48,66 @@ No email? Reach out to **InterestingSoup** to get added to the **CRCMZ Squad** g
 
 | Area | What it is |
 |---|---|
-| Squad | Who's online and in what game, ranks, hype meter, the Chat Board (posts to the PSN group) |
-| Clips | PSN clip webhooks → WhatsApp / Discord, reels, the Studio editor, the monthly montage |
-| Slap | The squad's music on Jellyfin: Discover, charts, thumbs, @mentions, Listen Together |
-| Watch | Movies home (Real-Debrid → Jellyfin library) and the Watch Party: synced video plus a LiveKit camera call |
-| Huddle | Drop-in voice and video calls (LiveKit), with picture in picture |
-| Ask AI | Tool-calling assistant over all the squad's data, in the app, WhatsApp and PSN (`ai <question>`) |
-| Notifications | Web Push, Android (FCM) and iPhone (APNs) alerts; Huddle / Watch Party rings like a call |
-| WhatsApp | Baileys bridge: group analytics, awards, the AI bot |
+| Squad | Who's online and in what game, ranks, hype meter, the Chat Board |
+| Clips | PSN clips in one place: reels, the Studio editor, the monthly montage |
+| Slap | The squad's own music library: daily New finds, charts, thumbs, Listen Together; share a song from Spotify or Apple Music and it's added |
+| Watch | A movie library and the Watch Party: video in sync for everyone, with a camera call |
+| Huddle | Voice and video calls with picture in picture, a live transcript, an AI helper and meeting notes |
+| Ask AI | An assistant that knows the squad's data and remembers it, in the app, WhatsApp and PSN |
+| Notifications | Web Push and native alerts on Android and iPhone; Huddle and Watch Party rings like a call |
 | Giveaway | Entries, countdown and the draw |
-| Soundboard | Personal + shared button boards for the Stream Deck plugin |
-| MCP server | `POST /mcp` — every assistant tool; per-user OAuth for write access |
-| Identity graph | Zitadel metadata tags tie PSN / WhatsApp / Mattermost / Slap identities together |
+| MCP server | Plug your own AI into the squad: every assistant tool over MCP |
 
 ---
 
 ## Phone apps
 
-**Android** (`android/`, see `android/README.md`): the same split as the iPhone app, in
-Kotlin — `Shell.kt` (tab bar), `NativeCall.kt` + `CallOverlay.kt` + `CallService.kt`
-(LiveKit calls, picture in picture), `NativeAudio.kt` + `PlaybackService.kt` (Media3,
-Android Auto), `MessagingService.kt` (every alert and ring through FCM). Releases are
-tagged `android-v*` with the `.apk` attached.
-
-**iPhone** (`ios/`, see `ios/README.md`): a WKWebView around the site, with native parts
-where the web can't keep up (the page side is shared with Android):
-
-| Native part | Swift | Page side |
-|---|---|---|
-| Tab bar + More sheet | `Shell.swift` | `frontend/src/lib/nativeShell.ts` |
-| Huddle / Watch Party calls, picture in picture | `NativeCall.swift`, `CallOverlay.swift` | `frontend/src/lib/nativeCall.ts` |
-| Slap player (keeps going locked, lock screen, CarPlay Now Playing) | `NativeAudio.swift` | `frontend/src/lib/nativeAudio.ts` |
-| Notifications (APNs) and call rings (PushKit + CallKit) | `Push.swift`, `Calls.swift` | `frontend/src/lib/native.ts`, `apns.py` |
-
-Builds run on the MacBook with `ios/build.sh` (archive + upload to TestFlight). Bump
-`CURRENT_PROJECT_VERSION` in `ios/project.yml` first.
+Both phone apps are web views around `app.crcmz.me/app` with native parts where the web
+can't keep up: the tab bar, calls with picture in picture, the music player (lock screen,
+CarPlay / Android Auto), notifications and call rings, and Share → CRCMZ. A website update
+reaches both apps; only native changes need a new build. See `ios/README.md` and
+`android/README.md`.
 
 ---
 
-## Architecture
+## Built with
 
-```
-app.crcmz.me (Cloudflare) → Coolify reverse proxy → this container (port 3000)
-                                                    ↑
-                               Baileys bridge  ─────┤ /api/whatsapp/ingest
-                               PSN AI poller   ─────┤ internal
-                               Stream Deck     ─────┤ /sd/*
-```
-
-**Auth:** Zitadel at `auth.crcmz.me`. Sessions are signed cookies (itsdangerous).
-`SESSION_SECRET` is mandatory: without it the app answers 503 on the public host rather
-than signing cookies with a guessable key.
-
-The middleware enforces auth when `Host == PORTAL_PUBLIC_HOST`. A request for any other
-Host may skip it, but only if it *also* comes from a genuinely local address
-(loopback/RFC1918/link-local/Tailscale) and was not relayed by a proxy — the Host header
-alone is caller-supplied and is not a credential. `CRCMZ_MACHINE_TOKEN` is the explicit
-alternative. Any new private endpoint still needs its own check. Detail in
-`docs/ux/ROUTES.md`.
-
-**Data:** Everything lives in `/data/` (mounted volume). SQLite for structured data,
-JSON for small config. See the table below.
+Python (FastAPI) and SQLite on the server; React + TypeScript (Vite) for the interface;
+Swift (iOS) and Kotlin (Android); LiveKit for calls; Jellyfin for music and movies;
+Zitadel for sign-in; a local LLM for the AI. It runs self-hosted in Docker.
 
 ---
 
-## Data stores
-
-| Path | What it holds | MCP tool |
-|---|---|---|
-| `/data/whatsapp.db` | ~10k group messages, reactions, analytics | `whatsapp_*`, `person_profile` |
-| `/data/clips.db` | PSN clip records | `recent_clips`, `person_profile` |
-| `/data/game_history.db` | PS5 game sessions per user | `games_played`, `game_sessions`, `platform_overview` |
-| `/data/assistant_facts.db` | Squad facts the bot has been told | `squad_facts`, `person_profile` |
-| `/data/soundboard.json` | Shared soundboard buttons | `soundboard_buttons` |
-| `/data/soundboard_personal.json` | Per-user soundboard boards (keyed by Zitadel ID) | `soundboard_buttons` |
-| `/data/users/` | Portal PSN user records (contains live tokens) | `squad_members`, `squad_roster` |
-| `/data/mcp_user_tokens.db` | OAuth codes/tokens for MCP write access | — never exposed |
-| `/data/assistant_chat.db` | Bot's own conversation history | — not exposed |
-| `/data/psn_tokens.json` | Live PSN access/refresh tokens | — never exposed |
-| `/data/video_jobs.db` | Clip forwarding work queue | — internal |
-| `/data/push.db` | Push subscriptions per device, per-person category toggles, sent log (no endpoints in the tool) | `push_notifications_log` |
-| `/data/fcm.db` | Android app phones registered for Huddle / Watch Party rings (FCM tokens never leave it) | `push_notifications_log` |
-| `/data/vapid_private.pem` | VAPID key that signs Web Push | — secret, never exposed |
-| `/data/vip_invites.db` | VIP Clan Member invites sent to app.crcmz.me (emails stay out of the tool) | `vip_invites_recent` |
-
-**Rule:** every new data store needs an `@tool()` in `assistant.py` and an entry in
-`tests/test_mcp_coverage.py`. Run `python3 tests/test_mcp_coverage.py` to enforce this.
-
----
-
-## Member invites
-
-Everyone joins through one pipeline (`vip_invites.py`), started one of two ways:
-
-* **Self-service (VIP):** a Stripe checkout completes, and the Stripe bot
-  (`discord-stripe-bot`, on `checkout.session.completed`) calls the endpoint below.
-* **Manual:** an admin opens **/app/admin → Invites → Invite member** (email, optional
-  name/gamer tag, optional VIP). It calls the same endpoint with their session.
-
-```
-POST /api/invites/vip
-X-Invite-Secret: <VIP_INVITE_SECRET>          (or an admin session)
-{"email": "...", "name": "...", "gamerTag": "...", "platform": "...", "discordUsername": "...",
- "stripeSessionId": "cs_...", "source": "stripe" | "admin", "vip": true}
-```
-
-A new email gets a Zitadel user (email verified) and a 72-hour invite code, sent as a link to
-`/invite`. On that page the member **picks their username** (suggested from their gamer tag)
-and a password, then is signed straight in. The username is checked (format, Mattermost, other
-people's tags) *before* the code is spent, then saved as the `chosen_username` and
-`mm_username` tags. An existing account that can already sign in gets a "you're in" email
-instead, and its password is never touched. `vip` (default true) controls the `vip` tag
-and the VIP copy. The Stripe session id makes webhook retries send only once.
-`GET /api/invites/vip` lists the sends.
-
-The username follows them without being asked for again:
-
-* **Mattermost** (mm.qureshi.io) signs in through Authentik → Zitadel. The Authentik
-  Zitadel source requests the `urn:zitadel:iam:user:metadata` scope, and the mapping
-  `zitadel-chosen-username` stores `chosen_username` on the Authentik user at first
-  enrollment. The Mattermost provider's `mattermost-profile` scope mapping sends it as
-  `preferred_username`, and Mattermost has `UsePreferredUsername` on. The app never creates
-  Mattermost accounts, because bot-made password accounts clash with SSO. The invite email
-  carries the team join link, and a 2-minute background sweep adds the member to the
-  `crcmz` team once they have signed in.
-* **PSN link** (`/portal`): there is no name picker. A signed-in member is linked under their
-  portal record, their `chosen_username`/`mm_username` tag, or else their email prefix.
-
-Env: `VIP_INVITE_SECRET`, `SMTP_USER`, `SMTP_PASS` (required), and optionally `SMTP_HOST`
-(`smtp.gmail.com`), `SMTP_PORT` (587), `EMAIL_FROM_ADDRESS` (`auth@crcmz.me`),
-`EMAIL_FROM_NAME` (`CRCMZ`), `EMAIL_REPLY_TO` (`admin@crcmz.me`). The defaults match the
-SMTP provider Zitadel itself uses on auth.crcmz.me.
-
----
-
-## MCP server
-
-Endpoint: `POST /mcp` (Streamable HTTP, JSON-RPC 2.0)
-
-**Read-only access** — `Authorization: Bearer <MCP_TOKEN>`. Token is set in Coolify env.
-All `@tool()` functions in `assistant.py` are exposed automatically. No second list to maintain.
-
-**Write access (per-user OAuth)** — OAuth 2.0 + PKCE against `app.crcmz.me`.
-
-```
-claude mcp add --transport http crcmz https://app.crcmz.me/mcp
-```
-
-Claude Code will open the browser, user signs in with their CRCMZ account, clicks Allow.
-Write tools then appear: `send_psn_group_message`, `send_whatsapp_group_message`,
-`send_whatsapp_dm`, `send_mattermost_dm`.
-
-OAuth endpoints: `/.well-known/oauth-authorization-server`, `/oauth/register`,
-`/oauth/authorize`, `/oauth/token`, `/oauth/revoke`.
-
-MCP connection status and revoke: **Settings → 🤖 MCP** in the portal.
-
----
-
-## Identity graph
-
-Zitadel user metadata tags are the single source of truth for cross-platform identity.
-
-| Tag | Meaning |
-|---|---|
-| `psn_id` | PlayStation Online ID |
-| `wa_jid` | WhatsApp JID (e.g. `4479...@s.whatsapp.net` or `...@lid`) |
-| `wa_phone` | WhatsApp phone number |
-| `wa_names` | Known display names in WhatsApp messages |
-| `mm_username` | Mattermost username |
-| `chosen_username` | The username picked on the invite page; Mattermost's @name via Authentik |
-
-`psn_id` falls back to the portal's PSN link when the tag is unset.
-`wa_jid` falls back to the most recent `sender_jid` in `whatsapp_messages` by `wa_names`.
-
-Always resolve people through `crcmz_identity.resolve(who)` — never match by display name.
-
----
-
-## WhatsApp DM relay
-
-When `send_whatsapp_dm` is called via MCP, the bot DMs the recipient on WhatsApp.
-If the recipient replies, the bot relays it back to the sender's WhatsApp as
-`[Name replied] text`. Threads expire after 24 h of inactivity. Replies are never
-stored in `whatsapp.db`.
-
-Requires: Baileys bridge (`whatsapp-worker`) redeployed with DM forwarding enabled.
-
----
-
-## Environment variables
-
-### Required
-
-| Var | Purpose |
-|---|---|
-| `NPSSO_TOKEN` | PSN session token (~60 day TTL). Refresh via Sony SSO cookie endpoint |
-| `GROUP_ID` | PSN group thread ID for the main mod group |
-| `SQUAD_GROUP_ID` | PSN group thread ID for the squad (write tools post here) |
-| `SESSION_SECRET` | Signs session cookies — must be long random string |
-| `ZITADEL_CLIENT_ID` | OIDC client ID registered in Zitadel |
-| `ZITADEL_SERVICE_TOKEN` | Zitadel service account PAT for user management API |
-| `WA_INGEST_SECRET` | Shared secret between this app and the Baileys bridge |
-| `WA_MAIN_JID` | CRCMZ BOYZ group JID: every bot interaction (clips, forwards, coaching, reactions, the AI bot, announcements) and the stats everyone sees. Falls back to `WA_GOOPERS_JID` for posting if unset |
-| `WA_GOOPERS_JID` | Professional Goopers group JID: stats only, readable by founders (Zitadel tag `founder=true`) |
-| `WA_BRIDGE_URL` | Internal URL of the Baileys bridge (e.g. `http://10.0.1.1:3100`) |
-| `MCP_TOKEN` | Shared bearer token for read-only MCP access |
-
-### Optional / feature flags
-
-| Var | Default | Purpose |
-|---|---|---|
-| `PORTAL_PUBLIC_HOST` | `app.crcmz.me` | Host header used to enforce session auth |
-| `CRCMZ_MACHINE_TOKEN` | — | Explicit credential for machine callers (Stream Deck, scripts), over any Host. The migration path off the private-network bypass — see `docs/ux/ROUTES.md` |
-| `ZITADEL_ISSUER` | `https://auth.crcmz.me` | Zitadel OIDC issuer |
-| `OLLAMA_BASE_URL` | — | Local LLM base URL (OpenAI-compatible) |
-| `OLLAMA_MODEL` | `llama3.2` | Model name for the AI assistant |
-| `OLLAMA_API_KEY` | — | API key if the LLM endpoint requires one |
-| `WA_AI_ENABLED` | `1` | Set to `0` to disable WhatsApp AI responses |
-| `PSN_AI_ENABLED` | `1` | Set to `0` to disable PSN AI polling |
-| `PSN_AI_POLL_SECONDS` | `20` | How often to poll PSN for new messages |
-| `DISCORD_BOT_TOKEN` | — | Discord bot token for clip forwarding |
-| `DISCORD_CLIPS_CHANNEL_ID` | — | Discord channel to post clips to |
-| `LIVEKIT_URL` | `wss://huddle.crcmz.me` | LiveKit server for Huddle |
-| `LIVEKIT_API_KEY` / `_SECRET` | — | LiveKit credentials |
-| `WHISPER_BASE_URL` | — | Whisper-compatible STT endpoint |
-| `WHISPER_API_KEY` | — | STT API key (Groq / OpenAI) |
-| `MM_OAUTH_CLIENT_ID` / `_SECRET` | — | Mattermost OAuth app credentials |
-| `ARC_ALERT_ENABLED` | `0` | Set to `1` to enable Arc Raiders session alerts |
-| `BROWSER_EXTRACT_URL` | `http://crcmz-browser-extract:8091` | Internal URL for video URL extraction |
-
----
-
-## PSN token refresh
-
-**You should rarely need to do this manually.** Here is what the app does automatically:
-
-```
-NPSSO_TOKEN (env var, ~60 day TTL)
-    │
-    └─▶ on first use: exchanges for access_token + refresh_token
-              │                         │
-              │  expires in ~1 h        │  expires in ~90 days
-              │                         │
-              ▼                         ▼
-        auto-refreshed             auto-refreshed using refresh_token
-        5 min before expiry        (no NPSSO needed)
-              │
-              └─▶ persisted to /data/psn_tokens.json
-```
-
-So as long as the container is running and the refresh token stays valid (~90 days),
-nothing needs touching. The container persists `psn_tokens.json` across restarts.
-
-**When you do need to act:** if PSN calls start failing with auth errors (check logs),
-the refresh token has expired. Then:
-
-1. Log into playstation.com
-2. Visit `https://ca.account.sony.com/api/v1/ssocookie`
-3. Copy the `npsso` value
-4. Update `NPSSO_TOKEN` in Coolify → **Restart** (not redeploy)
-
-The app will use the new NPSSO to do a fresh auth and persist new tokens immediately.
-
----
-
-## Deployment (Coolify)
-
-- Build: Docker (uses `Dockerfile` in repo root)
-- Port: `3000`
-- Health check: `GET /health`
-- Volume: mount persistent storage at `/data`
-- Branch: `main`
-
-After any config change to env vars: **Restart** (not redeploy) is enough unless
-`Dockerfile` or `requirements.txt` changed.
-
----
-
-## The web interface
-
-Two interfaces are served:
-
-| Path | What |
-|---|---|
-| `/`, `/dashboard` | the original dashboard, inlined in `server.py`. **Still the default.** |
-| `/app` | a React + TypeScript interface in `frontend/`, built into the image |
-
-`/app` is additive and opt-in — nothing redirects to it and no existing route changed. See
-**`docs/ux/STATUS.md`** for what is migrated, what is not, and why; `docs/ux/RELEASE.md`
-for deploying it and for the gates on switching the default.
-
-Ask AI (`/app/ask`) is [assistant-ui](https://github.com/assistant-ui/assistant-ui) over an
-external store. Answers stream: `POST /api/assistant/ask` queues the turn, then
-`GET /api/assistant/stream?reply_id=N` (SSE) replays text deltas and tool steps from the start
-and ends with the stored answer; `POST /api/assistant/stop` cuts it short and keeps what was
-written. The stored row stays the truth, so history polling is the fallback. The page is
-lazy-loaded, so only it pays for assistant-ui's ~140 kB.
-
-Watch Party and Huddle are **not** migrated: `/app/watch` and `/app/huddle` hand off to the
-classic interface.
+## Developing
 
 ```bash
 cd frontend
 npm ci
-npm run build       # tsc then vite; the Dockerfile runs this in a build stage
 npm run dev         # component work; API calls proxy to CRCMZ_BACKEND
+npm run build       # tsc then vite; the Dockerfile runs this in a build stage
 ```
 
 Two traps, both of which were live bugs:
 
-* Use `text-sm`, never `text-[var(--text-sm)]` — Tailwind cannot tell a length from a
+* Use `text-sm`, never `text-[var(--text-sm)]`: Tailwind cannot tell a length from a
   colour inside `var()`, so the arbitrary form compiles to `color:` and silently removes
   the font size *and* the text colour.
 * `to()` in `app/routes.ts` returns **router-relative** paths. `basename` is `/app`, so
   returning `/app/clips` gives `href="/app/app/clips"`.
+
+New features follow one rule: every data store gets a read tool in `assistant.py`, which
+makes it available to the AI and over MCP; `tests/test_mcp_coverage.py` enforces it.
 
 ---
 
 ## Running tests
 
 ```bash
-tests/run-all.sh                          # every Python suite
+tests/run-all.sh                          # every Python suite, inside the app image
 tests/run-all.sh test_auth_gate           # one suite
-tests/browser/run.sh dashboard.spec.mjs   # the legacy dashboard, real browser
-tests/browser/run.sh app.spec.mjs         # the React interface
-tests/browser/run.sh a11y.spec.mjs        # axe-core over every screen
-node tests/browser/contrast.mjs           # colour contrast, computed from the tokens
+cd frontend && node tests/smoke.mjs       # the web app in a real browser (needs `npx vite --port 5199`)
 ```
 
-**Do not run the Python suites directly on the host.** Every module hardcodes its store
-under `/data`, `/data` here is root-owned, and nine suites die at boot with `unable to open
-database file`. `tests/run-all.sh` runs them inside the app image with a tmpfs `/data`.
-
-The browser specs boot a throwaway container with a tmpfs `/data` and intercept every API
-call, so no test sends a message to a real PSN or WhatsApp group or mutates a real giveaway.
-
-Five suites have failed since before the UI work — each is listed with its cause in
-`docs/ux/VALIDATION.md`. `test_mcp_coverage.py` enforces the rule that every `/data/` store
-must be declared with its tool (or `None` with a reason); it currently fails because
-`/data/mm_tokens.db` has no entry.
-
----
-
-## Stream Deck plugin
-
-Located in `psn-slapper.sdPlugin/`. Buttons call the portal API directly.
-Installed via Elgato Stream Deck software — copy the plugin folder to the plugins
-directory or use the `.streamDeckPlugin` bundle.
+Run the Python suites through `tests/run-all.sh`, not on the host: it runs them in the app
+image with a throwaway data directory and no network. Every test fakes the outside world, so
+nothing is ever sent to a real PSN, WhatsApp or Mattermost group.

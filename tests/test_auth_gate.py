@@ -73,15 +73,15 @@ def gate_tests():
 
     # ── The private-network bypass still works for the callers that need it ──────
     def tailnet_peer_passes():
-        # The Stream Deck plugin calls http://100.123.228.75:3021 over Tailscale.
+        # The Stream Deck plugin calls http://100.101.102.103:3021 over Tailscale.
         # 100.64.0.0/10 is CGNAT space, which ipaddress.is_private reports as False —
         # the reason _LOCAL_NETWORKS lists the ranges explicitly instead.
-        r = lan(host="100.123.228.75:3021", peer="100.123.228.75")
+        r = lan(host="100.101.102.103:3021", peer="100.101.102.103")
         assert r.status_code == 200, (r.status_code, r.text[:200])
     check("a real tailnet peer still skips the gate", tailnet_peer_passes)
 
     def lan_peer_passes():
-        r = lan(host="192.168.5.54:3021", peer="192.168.5.54")
+        r = lan(host="192.168.1.20:3021", peer="192.168.1.20")
         assert r.status_code == 200, (r.status_code, r.text[:200])
     check("a real LAN peer still skips the gate", lan_peer_passes)
 

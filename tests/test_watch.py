@@ -205,8 +205,9 @@ def t_client_config_has_no_secrets():
 
 def t_turn_relay_passwords_expire_and_hide_the_secret():
     import base64, hashlib, hmac
-    old = watch.TURN_SECRET
+    old, old_host = watch.TURN_SECRET, watch.TURN_HOST
     try:
+        watch.TURN_HOST = "turn.example.test"   # the real host comes from the deploy env
         watch.TURN_SECRET = ""
         assert watch.ice_servers("v1") == [{"urls": watch.STUN_URLS}], "no secret: STUN only"
         watch.TURN_SECRET = "s3cret-for-tests"
@@ -219,7 +220,7 @@ def t_turn_relay_passwords_expire_and_hide_the_secret():
         assert turn["credential"] == want
         assert "s3cret" not in json.dumps(watch.ice_servers("v1"))
     finally:
-        watch.TURN_SECRET = old
+        watch.TURN_SECRET, watch.TURN_HOST = old, old_host
 
 
 def t_short_viewer_is_short_and_hashed():
@@ -378,7 +379,7 @@ def http_tests():
     def t_dashboard_has_watch_tab_and_no_key():
         client.cookies.set(COOKIE, session_cookie("dash-user", name="Zed"))
         try:
-            r = client.get("/", headers={"Accept": "text/html"})
+            r = client.get("/dashboard", headers={"Accept": "text/html"})
             assert r.status_code == 200, r.status_code
             assert 'data-p="watch"' in r.text
             assert "loadWatch" in r.text

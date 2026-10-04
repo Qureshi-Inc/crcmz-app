@@ -123,8 +123,7 @@ Two things went wrong in writing these and are worth recording, because both pro
 
 `tests/test_auth_gate.py`, 16 checks, all passing:
 
-* a real tailnet peer (`100.123.228.75`), LAN peer (`192.168.5.54`) and loopback still skip
-  the gate — the Stream Deck plugin and the container healthcheck keep working
+* the legacy local callers keep working (detail in the private operations handbook)
 * a public-internet peer sending any `Host` it likes is refused
 * a request carrying `X-Forwarded-For` does not inherit the proxy's private address
 * an unidentifiable peer (a hostname, or no peer at all) is refused
@@ -140,11 +139,9 @@ Two things went wrong in writing these and are worth recording, because both pro
 
 Two findings came out of writing those tests, not out of reading the code:
 
-* `ipaddress.is_private` is **False** for `100.64.0.0/10`. Using it would have locked the
-  Stream Deck plugin out of the app.
-* `ipaddress.is_private` is **True** for `203.0.113.0/24` and the other documentation
-  ranges — it means "not globally routable", not "on my LAN". Hence an explicit network
-  list.
+* Python's `ipaddress.is_private` is the wrong test for "on my network", in both
+  directions (it isn't true for every private range we use, and it is true for the
+  documentation ranges). Hence an explicit list.
 
 ## Phase 2/3 — the React interface
 

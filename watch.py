@@ -371,7 +371,7 @@ def mint_ticket(*, viewer: str, room: str, display_name: str, mod: bool = False)
 # shared secret stays here; each viewer gets a username/password that expires
 # (coturn's "use-auth-secret" scheme: password = base64(HMAC-SHA1(secret, username))).
 TURN_SECRET = os.environ.get("TURN_SECRET", "")
-TURN_HOST = os.environ.get("TURN_HOST", "45.41.205.64")
+TURN_HOST = os.environ.get("TURN_HOST", "")
 TURN_TTL = int(os.environ.get("TURN_TTL", str(12 * 3600)))
 STUN_URLS = ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]
 

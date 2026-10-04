@@ -31,7 +31,7 @@ A site deploy updates every page; rebuild only for changes in this folder.
   `crcmz.me/.well-known/assetlinks.json` (repo `crcmz-coming-soon`) and
   `app.crcmz.me/.well-known/assetlinks.json` (server.py) list this app's signing key
   with `get_login_creds`.
-- Share → CRCMZ: a shared link opens `/app/watch/party?url=…&text=…`. Shortcuts
+- Share → CRCMZ: a shared link opens `/app/share` (a song goes to Slap, a film to Movies, a video to the Watch Party); a video from Photos opens Clips' Send a video. Shortcuts
   (long-press the icon): Watch Party, Movies, Slap, Huddle, Clips.
 - Android Auto shows Slap's Now Playing. Sideloaded apps only appear there with Android
   Auto's developer setting "Unknown sources" on.
@@ -40,21 +40,12 @@ A site deploy updates every page; rebuild only for changes in this folder.
 
 ## Build
 
-Needs JDK 17 and the Android SDK (both on opti: `~/jdk-17.0.2`, `~/android-sdk`).
+Needs JDK 17 and the Android SDK.
 
     cd android
-    JAVA_HOME=~/jdk-17.0.2 ANDROID_HOME=~/android-sdk ./gradlew assembleRelease
+    ./gradlew assembleRelease
     # → app/build/outputs/apk/release/app-release.apk
 
 Bump `versionCode` in `app/build.gradle.kts` for every APK you hand out, or
-phones refuse it as an update.
-
-## Secrets (never in the repo)
-
-`~/.crcmz-android/` on opti, back it up:
-
-- `crcmz-upload.jks` + `keystore.pass`: the signing key. Lose it and every phone
-  must uninstall before it can take a new build. SHA-256
-  `9F:99:EC:CA:…:A9:29` (full value in server.py).
-- `fcm-service-account.json`: Firebase project `crcmz-app`. The server reads it as
-  `/data/fcm_service_account.json` (or `FCM_SERVICE_ACCOUNT_B64`).
+phones refuse it as an update. Release builds are signed with the CRCMZ upload key, which
+is never in the repo (see the private operations handbook).

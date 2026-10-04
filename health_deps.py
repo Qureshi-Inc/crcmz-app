@@ -113,7 +113,9 @@ async def check_whatsapp() -> tuple[bool, str]:
 
 
 async def check_tts() -> tuple[bool, str]:
-    base = _env("WA_TTS_URL", "http://100.65.68.108:8880").rstrip("/")
+    base = _env("WA_TTS_URL").rstrip("/")
+    if not base:
+        return False, "no voice server set up (WA_TTS_URL)"
     r = await _get(f"{base}/health")
     return r.status_code < 500, f"answered {r.status_code}"
 
@@ -218,13 +220,15 @@ async def run(name: str) -> dict | None:
 
 
 # ── For the assistant and MCP: what's wrong, and since when ──────────────────
-KUMA_URL = _env("STATUS_KUMA_URL", "http://192.168.4.32:3001")
+KUMA_URL = _env("STATUS_KUMA_URL")   # set in the deploy env
 KUMA_SLUG = _env("STATUS_KUMA_SLUG", "crcmz")
 
 
 async def kuma_history() -> dict:
     """Uptime Kuma's view (status.crcmz.me): every monitor's state, 24 h uptime, and
     when and why it last changed. Read from its public status page API."""
+    if not KUMA_URL:
+        raise RuntimeError("STATUS_KUMA_URL isn't set")
     page = (await _get(f"{KUMA_URL}/api/status-page/{KUMA_SLUG}")).json()
     beats = (await _get(f"{KUMA_URL}/api/status-page/heartbeat/{KUMA_SLUG}")).json()
     hb, up = beats.get("heartbeatList") or {}, beats.get("uptimeList") or {}

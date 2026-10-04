@@ -145,34 +145,6 @@ the screen says that will happen.
 
 ## Machine access
 
-The auth gate used to treat "your Host header is not `PORTAL_PUBLIC_HOST`" as
-authentication. That value is chosen by the caller, so it was not a check at all.
-
-It now requires all three:
-
-1. `Host` is not the public host, **and**
-2. the peer address is in `_LOCAL_NETWORKS` (loopback, RFC1918, link-local, and
-   `100.64.0.0/10` for Tailscale), **and**
-3. no proxy header is present (`X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`,
-   `X-Real-IP`, `Forwarded`, `CF-Connecting-IP`) — behind Traefik the peer *is* the proxy
-   and its address is private, so the address test alone would pass for a public caller.
-
-`_LOCAL_NETWORKS` lists the ranges explicitly rather than using
-`ipaddress.is_private`, which is the wrong predicate in both directions: it is **False**
-for Tailscale's CGNAT range (so it would have locked the Stream Deck plugin out) and
-**True** for the documentation ranges like `203.0.113.0/24`. Both were caught by
-`tests/test_auth_gate.py` before this shipped.
-
-**The forward path** is `CRCMZ_MACHINE_TOKEN`, which authenticates from anywhere over any
-Host. Callers still on the old path, all of which must be migrated before branch 1–3 can
-be deleted:
-
-| Caller | How it authenticates today | Endpoints |
-|---|---|---|
-| Stream Deck plugin (`psn-slapper.sdPlugin`) | Nothing — it calls `http://100.123.228.75:3021` and `http://192.168.5.54:3021` | `/send`, `/v2/send`, `/v2/squad`, `/roast/{start,stop,once}` |
-| Container healthcheck | loopback | `/health` |
-| Baileys bridge | `WA_INGEST_SECRET`, already explicit | `/api/whatsapp/ingest` |
-| MCP clients | Bearer token or OAuth, already explicit | `/mcp` |
-
-Only the Stream Deck plugin actually blocks removal, and it needs a rebuild and a
-re-install on the user's hardware.
+Machine callers (scripts, bots, the MCP clients) authenticate with an explicit credential,
+never with where they connect from or which Host they send. The details of each caller and
+the remaining legacy exception are in the private operations handbook, not in this repo.

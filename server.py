@@ -1018,7 +1018,7 @@ async def _auth_gate(request: Request, call_next):
     host = (request.headers.get("host") or "").split(":")[0]
     if host != _PUBLIC_HOST:
         # Historical bypass for direct-IP hits from the tailnet/LAN (the Stream Deck
-        # plugin has no credential at all — it just calls http://100.123.228.75:3021).
+        # plugin has no credential at all — it just calls the app's LAN / tailnet address).
         #
         # It used to trust the Host header alone, which is caller-supplied: "give me
         # a Host that isn't app.crcmz.me" was the entire authentication check. Now the
@@ -7223,7 +7223,7 @@ def _check_arc_alert(squad: list[dict]) -> None:
 
 # === PSN → WhatsApp / Discord video forwarder ================================
 WA_BRIDGE_URL  = os.environ.get("WA_BRIDGE_URL", "")
-WA_TTS_URL     = os.environ.get("WA_TTS_URL", "http://100.65.68.108:8880")
+WA_TTS_URL     = os.environ.get("WA_TTS_URL", "")
 WA_GOOPERS_JID = os.environ.get("WA_GOOPERS_JID", "")  # stats only (founders group)
 # Every bot interaction (clips, forwards, coaching, reactions, the AI bot,
 # typing, announcements) lives in CRCMZ BOYZ. Falls back to the old group so

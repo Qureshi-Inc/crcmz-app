@@ -352,7 +352,7 @@ _PUBLIC_GROUP_DESC = ("Which WhatsApp group. Only crcmz_boyz (CRCMZ BOYZ, the ma
 # Both live outside this app, so they are fetched server-side and cached: a
 # question can trigger several tool calls, and nobody needs eight HTTP round
 # trips to the same dashboard to answer "tell me about the squad".
-AI_CONTROLLER_SSH = os.environ.get("AI_CONTROLLER_SSH", "ai@100.68.46.42")
+AI_CONTROLLER_SSH = os.environ.get("AI_CONTROLLER_SSH", "")   # user@host, set in the deploy env
 AI_CONTROLLER_KEY = os.environ.get("AI_CONTROLLER_KEY",
                                    "/home/opti3/.ssh/id_ed25519_aicontroller")
 

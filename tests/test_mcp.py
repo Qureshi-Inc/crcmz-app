@@ -223,7 +223,7 @@ def http_tests():
     def lan_request_still_needs_the_token():
         # This is the whole reason the check lives in the handler: the auth
         # middleware waves through anything whose Host is not the public host.
-        lan = TestClient(server.app, headers={"host": "100.76.195.46:8000"})
+        lan = TestClient(server.app, headers={"host": "100.101.102.103:8000"})
         r = lan.post("/mcp", json=ping)
         assert r.status_code == 401, (r.status_code, r.text)
         r = lan.post("/mcp", json=ping, headers={"Authorization": f"Bearer {TOKEN}"})

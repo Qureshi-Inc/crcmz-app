@@ -478,7 +478,7 @@ def http_tests():
 
     def t_upload_section_lives_in_clips():
         login("zid-h")
-        html = client.get("/", headers={"Accept": "text/html"}).text
+        html = client.get("/dashboard", headers={"Accept": "text/html"}).text
         clips = html.index('id="p-pipeline"')
         assert clips < html.index('id="clips-upload"') < html.index('id="reels-inner"')
         assert 'data-p="upload"' not in html, "upload should not be its own menu item"

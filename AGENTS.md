@@ -44,36 +44,15 @@ Rules that keep the three in step:
 
 ## Shipping
 
-**Web:** `git fetch && git pull --rebase` (another AI also pushes here; keep its commits,
-never force-push), push `main`, check the Coolify queue is empty, then queue **one** deploy
-for app 24:
+Web changes ship when `main` is deployed; the phone apps ship as builds (iPhone through
+TestFlight, Android as a GitHub release). The exact deploy and release steps, the machines
+and where the signing keys live are private: `AGENTS.local.md` on the dev machine (not in
+git), and the Outline doc "CRCMZ — Private operations handbook".
 
-    docker exec coolify php artisan tinker --execute='$a=App\Models\Application::find(24); $u=(string) new Visus\Cuid2\Cuid2(); queue_application_deployment(application:$a, deployment_uuid:$u, commit:"HEAD", is_api:true); echo $u;'
-
-Then check `SOURCE_COMMIT` on the container and `GET /health` on :3021.
-
-**iPhone** (`ios/README.md`): bump `CURRENT_PROJECT_VERSION` in `ios/project.yml`, rsync
-`ios/` to the MacBook (`moizqureshi@100.65.68.108`, key `~/.ssh/macbook_automation`,
-folder `~/crcmz-ios`), run `./build.sh` there (it uploads to TestFlight). Then, through
-`~/.crcmz-ios/asc.py`, add the build to the **CRCMZ Squad** group and submit it for Beta
-App Review. Simulator checks: a Debug build with `-crcmzShellDemo YES` or
-`-crcmzAudioDemo …`, run with `xcrun simctl` in the background (it's the owner's Mac;
-don't bring the Simulator to the front).
-
-**Android** (`android/README.md`): bump `versionCode` and `versionName` in
-`android/app/build.gradle.kts`, then
-`JAVA_HOME=~/jdk-17.0.2 ANDROID_HOME=~/android-sdk ./gradlew assembleRelease`. Test on
-the Mac's emulator (AVD `slap_test`, `adb` works over SSH), then publish a GitHub release
-tagged `android-vX.Y.Z` with the APK attached. "Get the app" links to the latest release.
-
-## Never
-
-- Print or commit secrets: signing keys and passwords in `~/.crcmz-android`,
-  `~/.crcmz-ios`, `~/.crcmz-build`, Coolify env values, tokens. Read them in scripts, pipe
-  them over stdin.
-- Add app-development@deentek.com (Fahad) to TestFlight.
-- Touch the auth / passkey code.
-- Let tests reach production (no real pushes, rings or posts).
+* Pull with rebase before pushing (another AI also pushes here); never force-push.
+* Never print or commit secrets: read them in scripts and pipe them over stdin.
+* Never touch the auth / passkey code.
+* Never let tests reach production (no real pushes, rings or posts).
 
 ## Tests
 

@@ -1,6 +1,6 @@
 # CRCMZ iOS app
 
-`me.crcmz.app` (team CF6R3NUAP7): app.crcmz.me/app in a full-screen web view, plus what
+`me.crcmz.app`: app.crcmz.me/app in a full-screen web view, plus what
 a web page can't do on an iPhone:
 
 - **Notifications** through APNs (`apns.py`): the web view gets no Web Push.
@@ -23,17 +23,8 @@ Pages, sign-in, calls and the party are the website, so a site deploy updates th
 
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
     xcodegen generate
-    xcodebuild -project CRCMZ.xcodeproj -scheme CRCMZ -configuration Release \
-      -destination generic/platform=iOS -archivePath build/CRCMZ.xcarchive archive \
-      -allowProvisioningUpdates -authenticationKeyPath <ASC .p8> \
-      -authenticationKeyID 2Z72V6RA9Q -authenticationKeyIssuerID c6fedaac-bbca-41a4-94ed-8b3d2835321a
-    xcodebuild -exportArchive -archivePath build/CRCMZ.xcarchive -exportPath build/out \
-      -exportOptionsPlist ExportOptions.plist -allowProvisioningUpdates (same key flags)
+    ./build.sh            # archive, sign and upload to TestFlight
 
-`ExportOptions.plist` uploads straight to App Store Connect (TestFlight). Bump
-`CURRENT_PROJECT_VERSION` in project.yml for every upload.
-
-## Secrets (never in the repo)
-
-`~/.crcmz-ios/` on opti: `AuthKey_6J4DUKY9AR.p8` (APNs, the server reads it as
-`APNS_KEY_B64`) and `AuthKey_2Z72V6RA9Q.p8` (App Store Connect API, for uploads).
+`build.sh` needs the App Store Connect API key and the signing keychain on the build Mac.
+Bump `CURRENT_PROJECT_VERSION` in project.yml for every upload. Where the keys live and how
+builds reach testers is in the private operations handbook, not here.
