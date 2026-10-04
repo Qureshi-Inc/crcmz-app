@@ -184,6 +184,7 @@ def _public(r: dict) -> dict:
     return {"imdb": r["imdb"], "title": r["title"], "year": r["year"], "poster": r["poster"],
             "status": r["status"], "progress": round(r["progress"], 1), "quality": r["quality"],
             "size_gb": r["size_gb"], "by": r["name"], "error": r["error"], "id": r["jf_id"] or None,
+            "release": r.get("release") or "",
             "at": int(r["created"] * 1000)}
 
 
@@ -912,6 +913,21 @@ async def options(imdb: str) -> dict:
     return out
 
 
+async def copies(imdb: str, limit: int = 8) -> dict:
+    """The best copies of a film, best first, by name (the release), quality and size:
+    what "Add" would pick (the first), and what else there is to pick or swap in."""
+    if not _IMDB.match(imdb or ""):
+        raise HTTPException(400, "which movie?")
+    if (hit := _cached(f"copies:{imdb}", 600)) is None:
+        hit = rank(await _torrentio(imdb))
+        _cache[f"copies:{imdb}"] = (time.time(), hit)
+    return {"imdb": imdb, "copies": [{"id": c["hash"], "release": c["release"][:200], "size_gb": round(c["size_gb"], 1),
+                                      "label": quality_label(c["tier"], bool(c.get("hdr"))), "seeders": c.get("seeders") or 0}
+                                     for c in hit[:max(1, min(limit, 20))]]}
+
+
+_HASH_WANT = re.compile(r"^hash:[0-9a-fA-F]{40}$")
+
 UNDO_S = 20   # a film shared to the app waits this long for an Undo before anything starts
 
 
@@ -921,7 +937,7 @@ async def add(sub: str, name: str, imdb: str, *, admin: bool = False, want: str 
     still be undone before Real-Debrid or the squad hear of it)."""
     if not _IMDB.match(imdb or ""):
         raise HTTPException(400, "which movie?")
-    want = want if want in ("4k", "1080p") else ""
+    want = want if want in ("4k", "1080p") or _HASH_WANT.match(want or "") else ""
     if not RD_TOKEN:
         raise HTTPException(503, "adding movies isn't set up yet")
     if time.time() < _rd_blocked_until:
@@ -955,6 +971,29 @@ async def add(sub: str, name: str, imdb: str, *, admin: bool = False, want: str 
     row = _row(imdb)
     _spawn(fetch(imdb, grace))
     return _public(row)
+
+
+async def replace(sub: str, name: str, imdb: str, copy_id: str, *, admin: bool = False) -> dict:
+    """Swap the film's copy for another (one from copies()): the current one is removed
+    (as Remove does: whoever added it, or an admin) and the picked one is added."""
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", copy_id or ""):
+        raise HTTPException(400, "which copy?")
+    card = next((c for c in await jellyfin_movies(refresh=True) if c["imdb"] == imdb), None)
+    if card:
+        await remove(sub, card["versions"][0]["id"], admin=admin)
+        await jellyfin_movies(refresh=True)   # so the add below doesn't find the old copy "already in"
+    elif (r := _row(imdb)) and r["status"] != "failed" and not (admin or r["sub"] == sub):
+        raise HTTPException(403, "only the person who added it, or an admin, can change its copy")
+    elif r:
+        if r["rd_id"]:   # still on its way: its Real-Debrid copy goes too
+            try:
+                await _rd("DELETE", f"/torrents/delete/{r['rd_id']}")
+            except HTTPException:
+                pass
+        with _lock, _conn() as db:
+            db.execute("DELETE FROM adds WHERE imdb = ?", (imdb,))
+        _part(imdb).unlink(missing_ok=True)
+    return await add(sub, name, imdb, admin=admin, want=f"hash:{copy_id}")
 
 
 def undo_add(sub: str, imdb: str) -> dict:
@@ -1014,7 +1053,14 @@ async def _fetch(imdb: str) -> None:
             tens = [c for c in ranked if c["tier"] == 1080]
             # The adder picked a quality: only those copies (as many tries as usual).
             want = (_row(imdb) or {}).get("want") or ""
-            if want == "1080p" and tens:
+            if want.startswith("hash:"):
+                # One copy picked by name ("Add this copy", "Replace with this copy").
+                pick = [c for c in ranked if c["hash"].lower() == want[5:].lower()]
+                if not pick:
+                    _set(imdb, status="failed", error="That copy isn't available any more; pick another")
+                    return
+                fours, tens = ([pick[0]], []) if pick[0]["tier"] == 2160 else ([], [pick[0]])
+            elif want == "1080p" and tens:
                 fours = []
                 tens = tens[:MAX_ADDS]
             elif want == "4k" and fours:
@@ -1724,7 +1770,7 @@ def build_router(get_session, is_admin) -> APIRouter:
         adding = next((a for a in lib["adding"] if a["imdb"] == imdb), None)
         return {**state, "can_add": lib["can_add"], "by": (card or adding or {}).get("by", ""),
                 "can_remove": bool(card and card["can_remove"]), "library_quality": (card or {}).get("quality", ""),
-                "adding": adding}
+                "adding": adding, "release": ((await asyncio.to_thread(_row, imdb)) or {}).get("release", "")}
 
     @router.get("/now")
     async def now_get(request: Request, room: str = "crcmz"):
@@ -1756,7 +1802,29 @@ def build_router(get_session, is_admin) -> APIRouter:
         name = person.get("display_name") or person.get("username") or "someone"
         # Shared to the app and added without asking: a short wait for Undo first.
         grace = UNDO_S if isinstance(b, dict) and b.get("from") == "share" else 0
+        copy = str((b or {}).get("copy") or "") if isinstance(b, dict) else ""
+        if re.fullmatch(r"[0-9a-fA-F]{40}", copy):
+            want = f"hash:{copy}"
         return await add(sub, name, imdb, admin=await is_admin(sub), want=want, grace=grace)
+
+    @router.get("/copies/{imdb}")
+    async def copies_get(imdb: str, request: Request):
+        """The best copies there are: the one Add picks first, and the others."""
+        library_sub(request)
+        return await copies(imdb)
+
+    @router.post("/replace")
+    async def replace_post(request: Request):
+        """Swap a film's copy for another one. Body: {imdb, copy}."""
+        sub = library_sub(request)
+        try:
+            b = await request.json()
+        except ValueError:
+            raise HTTPException(400, "expected JSON")
+        b = b if isinstance(b, dict) else {}
+        person = (await asyncio.to_thread(crcmz_identity.by_zitadel_id)).get(sub) or {}
+        name = person.get("display_name") or person.get("username") or "someone"
+        return await replace(sub, name, str(b.get("imdb") or ""), str(b.get("copy") or ""), admin=await is_admin(sub))
 
     @router.post("/undo")
     async def undo_post(request: Request):

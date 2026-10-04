@@ -282,6 +282,12 @@ def reset(cached=()):
     CHANNEL.clear()
 
 
+async def and_wait(coro):
+    r = await coro
+    await asyncio.gather(*list(mv._tasks))
+    return r
+
+
 async def add_and_wait(sub, name, imdb, **kw):
     r = await mv.add(sub, name, imdb, **kw)
     await asyncio.gather(*list(mv._tasks))
@@ -459,10 +465,66 @@ def add_tests():
         adds = [p for m, p in RD.calls if p == "/torrents/addMagnet"]
         assert len(adds) <= mv.MAX_ADDS and mv._row("tt15239678")["status"] == "downloading", (len(adds), mv._row("tt15239678"))
 
+    def the_copies_list_starts_with_what_add_picks_and_one_can_be_pinned():
+        reset()
+        c = run(mv.copies("tt15239678"))["copies"]
+        assert c and c[0]["id"] == "a" * 40 and "FLUX" in c[0]["release"] and c[0]["label"].startswith("4K"), c[0]
+        assert {"id", "release", "size_gb", "label", "seeders"} == set(c[0]) and len({x["id"] for x in c}) == len(c)
+        reset()
+        run(add_and_wait("u-zub", "Zubair", "tt15239678", want="hash:" + "2" * 40))
+        row = mv._row("tt15239678")
+        assert row["want"] == "hash:" + "2" * 40 and list(RD.torrents.values())[0]["hash"] == "2" * 40 and len(RD.torrents) == 1
+        reset()
+        run(add_and_wait("u-zub", "Zubair", "tt15239678", want="hash:" + "9" * 40))
+        row = mv._row("tt15239678")
+        assert row["status"] == "failed" and "pick another" in row["error"] and not RD.torrents, row
+        for bad in ("tt12", "../x"):
+            try:
+                run(mv.copies(bad))
+            except HTTPException as e:
+                assert e.status_code == 400
+            else:
+                raise AssertionError(bad)
+
+    def replacing_swaps_the_copy_for_the_adder_or_an_admin_only():
+        reset(cached={"d" * 40})
+        run(add_and_wait("u-zub", "Zubair", "tt15239678"))
+        tid = mv._row("tt15239678")["rd_id"]
+        RD.torrents[tid]["filename"] = "Dune.Tigole"
+        JF.movie("c" * 32, "Dune: Part Two", "tt15239678", path="/zurg/movies/Dune.Tigole/Movie.mkv")
+        try:
+            run(mv.replace("u-noor", "Noor", "tt15239678", "2" * 40))
+        except HTTPException as e:
+            assert e.status_code == 403
+        else:
+            raise AssertionError("someone else replaced it")
+        assert tid in RD.torrents, "a refused replace leaves the copy alone"
+        for bad in ("", "x" * 40, "2" * 39):
+            try:
+                run(mv.replace("u-zub", "Zubair", "tt15239678", bad))
+            except HTTPException as e:
+                assert e.status_code == 400
+            else:
+                raise AssertionError(bad)
+        r = run(and_wait(mv.replace("u-zub", "Zubair", "tt15239678", "2" * 40)))
+        row = mv._row("tt15239678")
+        assert r["status"] == "finding" and tid not in RD.torrents, (r, RD.torrents)
+        assert row["want"] == "hash:" + "2" * 40 and [t["hash"] for t in RD.torrents.values()] == ["2" * 40], RD.torrents
+        # An add that hasn't reached Jellyfin yet: still only the adder.
+        try:
+            run(mv.replace("u-noor", "Noor", "tt15239678", "d" * 40))
+        except HTTPException as e:
+            assert e.status_code == 403
+        else:
+            raise AssertionError("someone else replaced a pending add")
+        assert run(and_wait(mv.replace("u-noor", "Noor", "tt15239678", "d" * 40, admin=True)))["status"] == "finding"
+        assert [t["hash"] for t in RD.torrents.values()] == ["d" * 40], "the pending copy's torrent went too"
+
     for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_server_wide_block_stops_at_once_and_pauses_adds, a_movie_never_costs_more_than_three_adds, a_copy_real_debrid_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
                a_cached_1080p_beats_an_uncached_4k, no_copy_says_so, already_in_the_library_is_not_added_again,
                a_second_press_joins_the_first_and_bad_ids_are_refused, five_a_day_unless_admin,
-               a_failed_add_can_be_tried_again, the_adder_can_pick_1080p_or_4k_when_both_exist):
+               a_failed_add_can_be_tried_again, the_adder_can_pick_1080p_or_4k_when_both_exist,
+               the_copies_list_starts_with_what_add_picks_and_one_can_be_pinned, replacing_swaps_the_copy_for_the_adder_or_an_admin_only):
         check(fn.__name__, fn)
 
 

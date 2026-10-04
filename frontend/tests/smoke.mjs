@@ -1929,7 +1929,16 @@ try {
       'GET /api/watch/movies/now': json(200, { room: 'crcmz', watching: 0, video: '', title: '', poster: '', id: null, paused: true }),
       'GET /api/watch/movies/options/tt0110912': json(200, { imdb: 'tt0110912', '4k': { size_gb: 24.9, hdr: true, label: '4K HDR' }, '1080p': { size_gb: 9.1, hdr: false, label: '1080p' } }),
       'GET /api/watch/movies/meta/tt0110912': (r) => json(200, { ...MOVIES_HOME.rows[0].items[1], state: (posts.movies || []).some((m) => m.imdb === 'tt0110912') ? 'finding' : 'new', logo: '', runtime: 154, director: ['Quentin Tarantino'], cast: ['John Travolta', 'Uma Thurman'], writer: [], awards: 'Won 1 Oscar', country: 'United States', trailers: ['s7EdQ4FqbhY'], can_add: true, by: '', can_remove: false, library_quality: '', adding: null })(r),
-      'GET /api/watch/movies/meta/tt1375666': json(200, { ...MOVIES_HOME.featured, logo: '', runtime: 148, director: ['Christopher Nolan'], cast: ['Leonardo DiCaprio'], writer: [], awards: '', country: '', trailers: [], can_add: true, by: 'Goopy', can_remove: false, library_quality: '4K HDR', adding: null }),
+      'GET /api/watch/movies/meta/tt1375666': json(200, { ...MOVIES_HOME.featured, logo: '', runtime: 148, director: ['Christopher Nolan'], cast: ['Leonardo DiCaprio'], writer: [], awards: '', country: '', trailers: [], can_add: true, by: 'Goopy', can_remove: true, library_quality: '4K HDR', adding: null, release: 'Inception.2010.2160p.HDR.x265-OLD' }),
+      'GET /api/watch/movies/copies/tt0110912': json(200, { imdb: 'tt0110912', copies: [
+        { id: 'a'.repeat(40), release: 'Pulp.Fiction.1994.2160p.HDR.x265-BEST', size_gb: 24.9, label: '4K HDR', seeders: 120 },
+        { id: 'b'.repeat(40), release: 'Pulp.Fiction.1994.1080p.BluRay.x264-OK', size_gb: 9.1, label: '1080p', seeders: 300 },
+      ] }),
+      'GET /api/watch/movies/copies/tt1375666': json(200, { imdb: 'tt1375666', copies: [
+        { id: 'c'.repeat(40), release: 'Inception.2010.2160p.HDR.x265-OLD', size_gb: 20.1, label: '4K HDR', seeders: 90 },
+        { id: 'e'.repeat(40), release: 'Inception.2010.2160p.DV.WEB-NEW', size_gb: 15.2, label: '4K DV', seeders: 60 },
+      ] }),
+      'POST /api/watch/movies/replace': (r) => { posts.replace = [...(posts.replace || []), r.request().postDataJSON()]; return json(200, { imdb: 'tt1375666', title: 'Inception', year: '2010', poster: '', status: 'finding', progress: 0, quality: '', size_gb: 0, by: 'Goopy', error: '', id: null, at: NOW * 1000, release: '' })(r) },
       'POST /api/watch/movies/remove': (r) => { posts.removed = [...(posts.removed || []), r.request().postDataJSON()]; return json(200, { title: 'Heat', removed: 1 })(r) },
       'POST /api/watch/movies/add': (r) => { posts.movies = [...(posts.movies || []), r.request().postDataJSON()]; return json(200, { imdb: 'tt15239678', title: 'Dune: Part Two', year: '2024', poster: '', status: 'finding', progress: 0, quality: '', size_gb: 0, by: 'Goopy', error: '', id: null, at: NOW * 1000 })(r) },
       'POST /api/watch/log': (r) => { posts.log++; return json(200, { ok: true })(r) },
@@ -2146,6 +2155,9 @@ try {
     const adds = (posts.movies || []).length
     await page.waitForSelector('.mv-sheet .mv-pick')
     check('movies: with a 4K and a 1080p copy, you pick (and see their sizes)', (await page.textContent('.mv-pick')).includes('Add 4K HDR') && (await page.textContent('.mv-pick')).includes('9.1 GB'))
+    await page.click('.mv-sheet .mv-copies summary')
+    await page.waitForSelector('.mv-sheet .mv-copy')
+    check('movies: Copies lists the Real-Debrid releases, the one Add picks first', (await page.locator('.mv-copy').count()) === 2 && (await page.locator('.mv-copy').first().textContent()).includes('BEST') && (await page.locator('.mv-copy').first().textContent()).includes('Add picks this one') && (await page.locator('.mv-copy button:has-text("Add this")').count()) === 2)
     await page.click('.mv-sheet .mv-pick button:has-text("Add 1080p")')
     await page.waitForSelector('.mv-sheet .mv-sheet-progress')
     check('movies: Add posts once, with your pick, and the sheet follows it in', (posts.movies || []).length === adds + 1 && posts.movies.at(-1).imdb === 'tt0110912' && posts.movies.at(-1).quality === '1080p' && (await page.textContent('.mv-sheet-progress')).includes('Finding'))
@@ -2158,6 +2170,18 @@ try {
     await shot(page, 'movies-375-home')
     await tapTargets(page, 'Movies home 375')
     await axe(page, 'Movies home 375', '.app-main')
+    // In the library: its copy, and Replace with another one (after a confirm).
+    await page.click('#mv-row-popular .mv-tile:has-text("Inception")')
+    await page.waitForSelector('.mv-sheet .mv-release')
+    await page.click('.mv-sheet .mv-copies summary')
+    await page.waitForSelector('.mv-sheet .mv-copy')
+    check('movies: a library film shows its copy and marks it in Other copies', (await page.textContent('.mv-release')).includes('x265-OLD') && (await page.locator('.mv-copy').first().textContent()).includes('the one we have') && (await page.locator('.mv-copy button:has-text("Replace")').count()) === 1)
+    await page.click('.mv-copy button:has-text("Replace")')
+    await page.click('.dialog-confirm button:has-text("Replace")')
+    await page.waitForTimeout(400)
+    check('movies: Replace swaps in the picked copy', (posts.replace || []).length === 1 && posts.replace[0].imdb === 'tt1375666' && posts.replace[0].copy === 'e'.repeat(40), JSON.stringify(posts.replace))
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => !document.querySelector('.mv-sheet'))
     await page.click('#mv-row-popular .mv-tile:has-text("Inception")')
     await page.click('.mv-sheet button:has-text("Watch together")')
     await page.waitForFunction(() => location.pathname === '/app/watch/party')
@@ -3142,7 +3166,6 @@ try {
     await page.click('.notif-chips .chip:has-text("All")')
     await page.waitForFunction(() => document.querySelectorAll('.notif-row').length === 3)
     await page.click('.notif-delivery label:has-text("WhatsApp") input')
-    await page.waitForFunction(() => true)
     await page.waitForTimeout(200)
     check('notif: switching WhatsApp off saves just that', chans.length === 1 && chans[0].whatsapp === false && Object.keys(chans[0]).length === 1, JSON.stringify(chans))
     await page.click('.notif-head button:has-text("Mark all read")')
@@ -3201,7 +3224,6 @@ try {
     check('slap: the box clears after posting', (await page.inputValue('#slap-comment')) === '')
     check('slap: the player sheet shows the track thread', (await page.locator('.sheet-player .comment-thread').count()) === 1)
     await page.click('.sheet-player .reaction-btn >> nth=0')
-    await page.waitForFunction(() => true)
     await page.waitForTimeout(200)
     check('slap: a reaction posts as a reaction', posted.length === 2 && posted[1].is_reaction === true && posted[1].text === '🔥', JSON.stringify(posted))
     await axe(page, 'Slap sheet with thread 375', '.sheet-player')

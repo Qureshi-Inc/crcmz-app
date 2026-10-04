@@ -16,6 +16,8 @@ export type Home = { featured: Result | null; rows: Row[]; genres: string[] }
 export type Details = Result & {
   logo: string; runtime: number; director: string[]; cast: string[]; writer: string[]; awards: string; country: string
   trailers: string[]; can_add: boolean; by: string; can_remove: boolean; library_quality: string; adding: Adding | null
+  /** The Real-Debrid release it was added from ('' when the app didn't add it). */
+  release?: string
 }
 export type NowPlaying = { room: string; watching: number; video: string; title: string; poster: string; id: string | null; paused: boolean }
 
@@ -34,6 +36,14 @@ export const popularMovies = (signal?: AbortSignal) => request<{ results: Result
 /** `quality`: the adder's pick when both copies exist; left out, the best copy. */
 export const addMovie = (imdb: string, quality?: '4k' | '1080p') =>
   request<Adding>('/api/watch/movies/add', { body: quality ? { imdb, quality } : { imdb }, timeoutMs: 30_000 })
+/** The copies Real-Debrid can get, best first: the first is the one Add picks. */
+export type Copy = { id: string; release: string; size_gb: number; label: string; seeders: number }
+export const getCopies = (imdb: string, signal?: AbortSignal) =>
+  request<{ imdb: string; copies: Copy[] }>(`/api/watch/movies/copies/${imdb}`, { signal, timeoutMs: 30_000 })
+/** Add one copy by name rather than the best one. */
+export const addCopy = (imdb: string, copy: string) => request<Adding>('/api/watch/movies/add', { body: { imdb, copy }, timeoutMs: 30_000 })
+/** Swap a film's copy for another: the old one is removed, this one added. */
+export const replaceCopy = (imdb: string, copy: string) => request<Adding>('/api/watch/movies/replace', { body: { imdb, copy }, timeoutMs: 60_000 })
 export type CopyOption = { size_gb: number; hdr: boolean; label: string }
 export type Options = { imdb: string; '4k': CopyOption | null; '1080p': CopyOption | null }
 export const getOptions = (imdb: string, signal?: AbortSignal) =>

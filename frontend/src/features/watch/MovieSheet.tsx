@@ -2,7 +2,8 @@
 // screen, for everyone), and the one thing to do
 // next. In the library: Watch together (the party switches to it, after asking if it's
 // on something else). Not yet: Add to library, then the sheet follows it in. Whoever
-// added it, or an admin, can remove it again.
+// added it, or an admin, can remove it again. "Copies" lists what Real-Debrid has, the
+// one Add picks first: add a particular one, or swap the library's copy for another.
 import { useState, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useNavigate } from 'react-router-dom'
@@ -14,7 +15,7 @@ import { useSwipeDown } from '../../lib/gestures'
 import { ApiError } from '../../lib/http'
 import {
   addMovie, getDetails, getNow, inFlight, measured, removeMovie, stateText, streamUrl, type Details,
-  getOptions,
+  getOptions, getCopies, addCopy, replaceCopy, type Copy,
 } from '../../lib/movies'
 import { ConfirmDialog } from '../clips/ClipSheet'
 import { Backdrop } from './MoviesHome'
@@ -210,6 +211,9 @@ function Body({ d, onGenre, party, onGone }: { d: Details; onGenre: (g: string) 
           <p className="meta">We find the best copy (4K when there is one, else 1080p) and keep it on our server.</p>
         )}
 
+        {d.release && (ready || coming) && <p className="meta mv-release" title={d.release}>Copy: {d.release}</p>}
+        {(d.can_add && !coming && (ready ? d.can_remove : true)) && <Copies d={d} ready={ready} onDone={refresh} />}
+
         {d.overview && <p className="mv-sheet-overview">{d.overview}</p>}
         <dl className="mv-facts">
           {d.director.length > 0 && <><dt>Director</dt><dd>{d.director.join(', ')}</dd></>}
@@ -224,5 +228,66 @@ function Body({ d, onGenre, party, onGone }: { d: Details; onGenre: (g: string) 
         onConfirm={() => void remove()}
       />
     </div>
+  )
+}
+
+/** The copies Real-Debrid has, best first (the first is the one Add picks). Loaded when
+ *  opened. Not in the library: add a particular one. In it, for whoever added it or an
+ *  admin: replace its copy with another. */
+function Copies({ d, ready, onDone }: { d: Details; ready: boolean; onDone: () => void }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [swap, setSwap] = useState<Copy | null>(null)
+  const q = useQuery({
+    queryKey: ['movies', 'copies', d.imdb],
+    queryFn: ({ signal }) => getCopies(d.imdb, signal),
+    enabled: open, staleTime: 10 * 60_000, retry: false,
+  })
+  async function go(c: Copy, replace: boolean) {
+    setBusy(c.id)
+    try {
+      const a = await (replace ? replaceCopy(d.imdb, c.id) : addCopy(d.imdb, c.id))
+      qc.setQueryData<Details>(['movies', 'meta', d.imdb], (x) => x && { ...x, state: a.status, progress: a.progress, id: a.id, adding: a.status === 'ready' ? null : a })
+      onDone()
+      toast(replace ? `Swapping ${d.title} for that copy. Everyone hears when it's ready.` : `Adding that copy of ${d.title}.`, 'success')
+    } catch (e) {
+      toast((e instanceof ApiError && e.detail) || "That copy didn't add", 'error')
+    } finally { setBusy('') }
+  }
+  const current = (d.release || '').toLowerCase()
+  return (
+    <details className="mv-copies" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{ready ? 'Other copies' : 'Copies on Real-Debrid'}</summary>
+      {q.isLoading && <p className="meta" role="status"><span className="spinner" aria-hidden="true" /> Looking for copies…</p>}
+      {q.isError && <ErrorStrip text="Couldn't list the copies" onRetry={() => q.refetch()} />}
+      {q.data && !q.data.copies.length && <p className="meta">No good copy of this one yet.</p>}
+      {q.data && q.data.copies.length > 0 && (
+        <ol className="mv-copy-list">
+          {q.data.copies.map((c, i) => {
+            const mine = !!current && c.release.toLowerCase() === current
+            return (
+              <li key={c.id} className="mv-copy">
+                <div className="mv-copy-text">
+                  <span className="mv-copy-name" title={c.release}>{c.release}</span>
+                  <span className="meta num">{[c.label, `${c.size_gb} GB`, `${c.seeders} seeders`, i === 0 ? 'Add picks this one' : '', mine ? 'the one we have' : ''].filter(Boolean).join(' · ')}</span>
+                </div>
+                {!mine && (
+                  <button type="button" className="btn btn-secondary" disabled={!!busy}
+                    onClick={() => (ready ? setSwap(c) : void go(c, false))} aria-label={`${ready ? 'Replace with' : 'Add'} ${c.release}`}>
+                    {busy === c.id ? '…' : ready ? 'Replace' : 'Add this'}
+                  </button>
+                )}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+      <ConfirmDialog
+        open={!!swap} onOpenChange={(v) => { if (!v) setSwap(null) }} title="Replace the copy?" action="Replace"
+        body={<p>Take out the copy of ‘{d.title}’ we have and add {swap?.label} ({swap?.size_gb} GB) instead? It's unwatchable until the new one is in.</p>}
+        onConfirm={() => { const c = swap; setSwap(null); if (c) void go(c, true) }}
+      />
+    </details>
   )
 }
