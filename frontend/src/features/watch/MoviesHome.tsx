@@ -258,7 +258,7 @@ function ContinueRow({ onResume }: { onResume: (it: HistItem) => void }) {
             <button type="button" className="mv-tile" onClick={() => onResume(it)}
               aria-label={`Resume ${it.title || 'this movie'} at ${fmtTime(resumeAt(it))} with the party`}>
               <span className="mv-tile-art">
-                {it.poster ? <img src={it.poster} alt="" loading="lazy" decoding="async" /> : <span className="mv-tile-fallback" aria-hidden="true">{it.title}</span>}
+                {it.poster ? <img src={it.poster} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : <span className="mv-tile-fallback" aria-hidden="true">{it.title}</span>}
                 <span className="mv-have" aria-hidden="true"><Icon name="play" /></span>
                 <span className="mv-tile-bar" aria-hidden="true"><i style={{ width: `${Math.max(4, pct)}%` }} /></span>
               </span>

@@ -5656,6 +5656,15 @@ async def watch_history_list(request: Request, room: str = "", mine: int = 0, li
         it["mine"] = ({"position": me["position"], "finished": me["finished"],
                        "updated_at": me["updated_at"]} if me else None)
         out.append(it)
+    # Films from our library: history keeps only the stream URL, so bring the poster.
+    try:
+        posters = await _movies.stream_posters([it["url"] for it in out if not it.get("poster")])
+    except Exception as e:  # noqa: BLE001
+        logger.info("watch history: no library posters (%s)", e)
+        posters = {}
+    for it in out:
+        if not it.get("poster") and posters.get(it["url"]):
+            it["poster"] = posters[it["url"]]
     return JSONResponse({"items": out}, headers={"Cache-Control": "no-store"})
 
 

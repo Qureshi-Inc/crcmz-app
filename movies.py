@@ -625,6 +625,19 @@ async def library_index() -> dict[str, dict]:
     return {m["imdb"]: m for m in await jellyfin_movies() if m["imdb"]}
 
 
+_STREAM_ID = re.compile(r"^/api/watch/movies/stream/([0-9a-f]{32})/")
+
+
+async def stream_posters(urls: list[str]) -> dict[str, str]:
+    """Library stream URL -> the film's poster, for watch history (which only keeps the
+    URL, so Continue watching had no artwork)."""
+    ids = {u: m.group(1) for u in urls if (m := _STREAM_ID.match(u or ""))}
+    if not ids:
+        return {}
+    by_id = {v["id"]: c.get("poster") or "" for c in await jellyfin_movies() for v in c.get("versions") or []}
+    return {u: by_id[i] for u, i in ids.items() if by_id.get(i)}
+
+
 async def _rescan() -> None:
     lib = await _movies_library_id()
     path = f"/Items/{lib}/Refresh" if lib else "/Library/Refresh"
