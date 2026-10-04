@@ -135,6 +135,42 @@ def test_daily_caption_is_a_generic_announcement():
     assert "@all" in msg and "*ASamad89*" in msg and "@everyone" not in msg, msg
 
 
+def test_daily_reel_is_one_message_with_every_link_and_a_date_id():
+    real_get = clips.get
+    clips.get = lambda cid: None          # a daily pseudo-id has no clip record
+    try:
+        before = len(SENT)
+        r = call("ig_reel_share", clip_id="daily-2026-10-01", reel_type="daily",
+                 instagram_url="https://www.instagram.com/reel/Dd-RFwyCfNO/", instagram_media_id="18129206734692862",
+                 tiktok_url="https://www.tiktok.com/@crcmzclan/video/7691922305043254542",
+                 youtube_url="https://www.youtube.com/shorts/ERiXluND1vc", caption="Daily highlights have dropped!")
+        assert r["ok"] and r["group_notified"] and len(SENT) == before + 1, r
+        msg = SENT[-1]["message"]
+        for want in ("@all Daily highlights have dropped!", "Instagram: https://www.instagram.com/reel/Dd-RFwyCfNO/",
+                     "TikTok: https://www.tiktok.com/@crcmzclan/video/7691922305043254542",
+                     "YouTube: https://www.youtube.com/shorts/ERiXluND1vc"):
+            assert want in msg, (want, msg)
+        assert SENT[-1]["mentionAll"] is True
+        r = call("ig_reel_share", clip_id="daily-2026-10-01", reel_type="daily",
+                 instagram_url="https://www.instagram.com/reel/Dd-RFwyCfNO/",
+                 tiktok_url="https://www.tiktok.com/@crcmzclan/video/7691922305043254542")
+        assert r.get("already_shared") and len(SENT) == before + 1, "a retry never resends"
+        # A missing platform just isn't listed.
+        r = call("ig_reel_share", clip_id="daily-2026-10-02", reel_type="daily",
+                 instagram_url="https://www.instagram.com/reel/DeA43h9E_qy/",
+                 youtube_url="https://www.youtube.com/shorts/dtU8fWBuV98", tiktok_url="")
+        assert r["ok"] and "TikTok" not in SENT[-1]["message"] and "YouTube: " in SENT[-1]["message"], SENT[-1]
+        # Only the date form skips the clip check; anything else still needs a clip.
+        r = call("ig_reel_share", clip_id="daily-oops", reel_type="daily",
+                 instagram_url="https://www.instagram.com/reel/DeA43h9E_qz/")
+        assert not r["ok"] and "no clip" in r["error"], r
+        r = call("ig_reel_share", clip_id="daily-2026-10-03", reel_type="fire",
+                 instagram_url="https://www.instagram.com/reel/DeDod1sjt3M/")
+        assert not r["ok"], "a date id is only for the daily reel"
+    finally:
+        clips.get = real_get
+
+
 def test_recording_a_post_clears_that_clips_force_post():
     CLEARED.clear()
     r = call("ig_post_record", clip_id="15#force1", ig_url="https://www.instagram.com/reel/Forced1234/")

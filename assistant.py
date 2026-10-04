@@ -2369,6 +2369,9 @@ _REEL_TYPES = ("fire", "fail", "daily", "goop", "review", "member")
 _DAILY_CAPTION = "Daily highlights have dropped! \U0001f525"
 
 
+_DAILY_ID = re.compile(r"^daily-\d{4}-\d{2}-\d{2}$")
+
+
 def _clear_reel_force_post(clip_id: str) -> None:
     """A recorded post consumes Reel Review's force-post flag for that clip."""
     try:
@@ -2484,7 +2487,8 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
     {"type": "object",
      "properties": {
          "clip_id":             {"type": "string",
-                                 "description": "Clip message_uid from recent_clips."},
+                                 "description": "Clip message_uid from recent_clips, or daily-YYYY-MM-DD "
+                                                "for the daily highlights reel (no clip record needed)."},
          "instagram_url":       {"type": "string",
                                  "description": "Shortcode permalink, "
                                                 "https://www.instagram.com/reel/<shortcode>/. "
@@ -2521,11 +2525,11 @@ def _ig_post_record(caller: dict, clip_id: str = "", ig_url: str = "",
                                                 "resolve the uploader's name. Pass clip_id as empty string "
                                                 "when using this."},
          "tiktok_url":          {"type": "string",
-                                 "description": "Optional, reel_type 'member' only: the live TikTok permalink "
+                                 "description": "Optional, reel_type 'member' or 'daily': the live TikTok permalink "
                                                 "(https://www.tiktok.com/@crcmzclan/video/<id>). Announced once "
                                                 "per video, in this call's message."},
          "youtube_url":         {"type": "string",
-                                 "description": "Optional, reel_type 'member' only: the live YouTube permalink "
+                                 "description": "Optional, reel_type 'member' or 'daily': the live YouTube permalink "
                                                 "(https://www.youtube.com/shorts/<id> or watch?v=<id>). Announced "
                                                 "once per video, in this call's message."},
      },
@@ -2578,8 +2582,8 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
     more_links = {}
     if (tiktok_url or "").strip() or (youtube_url or "").strip():
         import video_uploads as vu
-        if reel_type != "member":
-            return {"ok": False, "error": "tiktok_url and youtube_url are only for reel_type 'member'"}
+        if reel_type not in ("member", "daily"):
+            return {"ok": False, "error": "tiktok_url and youtube_url are only for reel_type 'member' or 'daily'"}
         if (tiktok_url or "").strip():
             clean, bad = vu.normalise_tiktok(tiktok_url)
             if bad or "/@crcmzclan/video/" not in clean.lower():
@@ -2627,7 +2631,11 @@ def _ig_reel_share(caller: dict, clip_id: str = "", instagram_url: str = "",
         return {"ok": False, "error": "resend_correction corrects the Instagram link; pass instagram_url"}
 
     ig_mod.init()
-    if reel_type != "member":
+    if reel_type == "daily" and _DAILY_ID.match(clip_id):
+        # The daily reel is a montage of the day, not one clip: its pseudo-id
+        # (daily-YYYY-MM-DD) has no clip record and no sender.
+        psn_user = ""
+    elif reel_type != "member":
         clip = clips_mod.get(clip_id)
         if not clip:
             return {"ok": False, "error": "no clip with that clip_id"}
@@ -3404,7 +3412,13 @@ def _notify_ig_posted(psn_user: str, ig_url: str, caller: dict | None = None,
         return False, "WA_MAIN_JID not configured"
 
     if reel_type == "daily":
-        text = "@all Daily highlights have dropped! \U0001f525\n" + ig_url
+        # One message for the day's reel, with every platform it's on so far.
+        text = "@all Daily highlights have dropped! \U0001f525"
+        if ig_url:
+            text += "\nInstagram: " + ig_url
+        for label, key in (("TikTok", "tiktok"), ("YouTube", "youtube")):
+            if (more_links or {}).get(key):
+                text += f"\n{label}: {more_links[key]}"
     elif reel_type == "member":
         label = (caller or {}).get("label", "")
         tag = f"[{label[:32].strip().title()}] " if label else ""
