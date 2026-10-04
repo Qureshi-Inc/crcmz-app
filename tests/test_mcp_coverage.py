@@ -35,6 +35,7 @@ SKILL = ".claude/skills/crcmz-mcp-tool/SKILL.md"
 
 # store path -> the assistant tool(s) that expose it, or None with a reason.
 STORES: dict[str, list[str] | None] = {
+    "/data/wa_link.db": None,   # one-time WhatsApp link codes; the link itself is the wa_names tag
     "/data/whatsapp.db": ["whatsapp_stats", "whatsapp_search", "whatsapp_members",
                           "whatsapp_activity", "whatsapp_words", "whatsapp_emojis",
                           "whatsapp_awards", "whatsapp_response_times",

@@ -11,7 +11,7 @@ import { toast } from '../../components/toast'
 import { ConfirmDialog } from '../clips/ClipSheet'
 import { ClaimList } from '../portal/Claim'
 import { OrbPosControl } from '../watch/WatchPage'
-import { ApiError, getJSON } from '../../lib/http'
+import { ApiError, getJSON, request } from '../../lib/http'
 import { nativeShell } from '../../lib/nativeShell'
 import {
   addPasskey, changePassword, fmtDate, fmtDateTime, MCP_CONFIG, passkeysSupported, removePasskey, revokeMcp, tokenState,
@@ -32,6 +32,7 @@ const TABS = [
   { id: 'psn', label: 'PSN' },
   { id: 'steam', label: 'Steam' },
   { id: 'mattermost', label: 'Mattermost' },
+  { id: 'whatsapp', label: 'WhatsApp' },
   { id: 'mcp', label: 'MCP' },
   { id: 'watch', label: 'Watch' },
   { id: 'app', label: 'App' },
@@ -69,6 +70,7 @@ export function SettingsPage() {
         <Tabs.Content value="psn" className="settings-panel"><PsnTab /></Tabs.Content>
         <Tabs.Content value="steam" className="settings-panel"><SteamTab /></Tabs.Content>
         <Tabs.Content value="mattermost" className="settings-panel"><MattermostTab /></Tabs.Content>
+        <Tabs.Content value="whatsapp" className="settings-panel"><WhatsappTab /></Tabs.Content>
         <Tabs.Content value="mcp" className="settings-panel"><McpTab /></Tabs.Content>
         <Tabs.Content value="watch" className="settings-panel"><WatchTab /></Tabs.Content>
         <Tabs.Content value="app" className="settings-panel"><AppTab /></Tabs.Content>
@@ -510,6 +512,94 @@ function MattermostTab() {
         body={<p>The assistant won't be able to post as you until you connect again.</p>}
         action="Disconnect"
         onConfirm={() => void unlink()}
+      />
+    </section>
+  )
+}
+
+// ── WhatsApp ─────────────────────────────────────────────────────────────────
+// Your WhatsApp messages count for you once your WhatsApp name is linked. Send the bot the
+// message below: its one-time code is what tells it the name is yours (wa_link.py).
+type WaLink = { names: string[]; bot: string; code: string; message: string; expires_in: number }
+
+function WhatsappTab() {
+  const qc = useQueryClient()
+  const q = useQuery({
+    queryKey: ['account', 'whatsapp'],
+    queryFn: ({ signal }) => getJSON<WaLink>('/api/settings/whatsapp', signal),
+    refetchInterval: 5000,   // the bot links you in the background: show it when it does
+  })
+  const seen = useRef<number | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [drop, setDrop] = useState('')
+  const n = q.data?.names.length
+  useEffect(() => {
+    if (n === undefined) return
+    if (seen.current !== null && n > seen.current) toast('WhatsApp linked', 'success')
+    seen.current = n
+  }, [n])
+
+  async function copy() {
+    if (!q.data) return
+    try { await navigator.clipboard.writeText(q.data.message); setCopied(true); window.setTimeout(() => setCopied(false), 2000) }
+    catch { toast('Copy was blocked. Select the text and copy it.', 'warning') }
+  }
+  async function unlink(name: string) {
+    try {
+      await request('/api/settings/whatsapp/unlink', { body: { name } })
+      toast(`“${name}” isn't linked any more`, 'success')
+    } catch (e) { toast(failText(e, "Couldn't unlink. Try again."), 'error') }
+    finally { void qc.invalidateQueries({ queryKey: ['account', 'whatsapp'] }) }
+  }
+
+  return (
+    <section className="glass settings-card" aria-labelledby="wa-h">
+      <h2 className="section-h2" id="wa-h">WhatsApp</h2>
+      {q.isPending ? <SkeletonRows n={2} />
+        : q.isError ? <ErrorStrip text="Couldn't load WhatsApp" onRetry={() => q.refetch()} />
+        : (
+          <>
+            {q.data.names.length ? (
+              <div className="acct-status">
+                <span className="acct-status-emoji" aria-hidden="true">🟢</span>
+                <span className="acct-row-text">
+                  <span className="acct-row-title">Linked</span>
+                  <span className="meta">Messages from these WhatsApp names count as yours.</span>
+                </span>
+                <span className="badge" data-tone="live">Active</span>
+              </div>
+            ) : (
+              <p className="dim">Not linked yet, so your WhatsApp messages don't count for you in Squad stats or the assistant.</p>
+            )}
+            {q.data.names.length > 0 && (
+              <ul className="wa-names" aria-label="Linked WhatsApp names">
+                {q.data.names.map((name) => (
+                  <li key={name} className="chip wa-name">{name}
+                    <button type="button" className="icon-btn" onClick={() => setDrop(name)} aria-label={`Unlink ${name}`}><Icon name="close" /></button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <ol className="steps-plain">
+              <li>Copy this message.</li>
+              <li>Send it in the CRCMZ WhatsApp group, or straight to {q.data.bot}. Tagging the bot is optional: the code is what it looks for.</li>
+              <li>The bot answers “Linked”, and it shows up here.</li>
+            </ol>
+            <div className="code-block">
+              <pre aria-label="Message to send on WhatsApp" tabIndex={0}>{q.data.message}</pre>
+              <button type="button" className="btn btn-secondary" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+            </div>
+            <div className="wa-acts">
+              <a className="btn btn-primary" href={`https://wa.me/?text=${encodeURIComponent(q.data.message)}`} target="_blank" rel="noopener"><Icon name="send" />Open in WhatsApp</a>
+            </div>
+            <p className="meta">The code ({q.data.code}) is what proves it's you. It works once, for the next {Math.max(1, Math.round(q.data.expires_in / 60))} minutes. Posting under another name too? Send it again from there.</p>
+          </>
+        )}
+      <ConfirmDialog
+        open={!!drop} onOpenChange={(v) => { if (!v) setDrop('') }}
+        title="Unlink this WhatsApp name?" action="Unlink"
+        body={<p>Messages from “{drop}” won't count as yours any more.</p>}
+        onConfirm={() => { const d = drop; setDrop(''); if (d) void unlink(d) }}
       />
     </section>
   )

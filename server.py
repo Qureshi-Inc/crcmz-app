@@ -2295,6 +2295,20 @@ async def wa_ingest(request: Request):
         sender_jid = msg.get("sender_jid") or msg.get("from") or ""
         is_dm = bool(sender_jid) and not group_jid.endswith("@g.us") and not (msg.get("from_me") or msg.get("fromMe"))
 
+        # A Settings → WhatsApp link code (wa_link.py): the bot links the sender's
+        # WhatsApp name and says so; it isn't a question for the AI.
+        linked = False
+        _txt = msg.get("text") or msg.get("body") or ""
+        if (not (msg.get("from_me") or msg.get("fromMe")) and msg.get("type") != "reaction"
+                and _wa_link.CODE_RE.search(_txt)):
+            linked = True
+            reply = await asyncio.to_thread(_wa_link.link_from_message, _txt, wa_ai.sender_name(msg))
+            if reply and WA_BRIDGE_URL:
+                _threading.Thread(target=wa_ai.send_reply, daemon=True,
+                                  args=(WA_BRIDGE_URL, sender_jid if is_dm else group_jid, reply)).start()
+            if is_dm:
+                continue
+
         # DM relay: if this is a reply from a tracked recipient, forward it to
         # the original sender via WhatsApp DM and skip storing in the shared DB.
         if is_dm:
@@ -2326,7 +2340,7 @@ async def wa_ingest(request: Request):
         # not left holding this request open for the length of a model run.
         if WA_AI_ENABLED:
             wa_ai.learn_member(msg)
-            prompt = wa_ai.trigger_from(msg, WA_MAIN_JID)
+            prompt = None if linked else wa_ai.trigger_from(msg, WA_MAIN_JID)
             logger.info("wa_ingest: type=%s from_me=%s reply_to=%s msg_id=%r sent_ids=%s prompt=%r",
                         msg.get("message_type") or msg.get("type"),
                         msg.get("from_me") or msg.get("fromMe"),
@@ -6577,6 +6591,33 @@ async def huddle_meeting_live(request: Request, room: str = "crcmz"):
     return JSONResponse(m, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/settings/whatsapp")
+async def settings_whatsapp(request: Request):
+    """Settings → WhatsApp: the WhatsApp names linked to you, and the message (with a
+    one-time code) to send the bot to link another."""
+    session = _get_session(request)
+    if not session or not session.get("sub"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    return await asyncio.to_thread(_wa_link.status, session["sub"])
+
+
+@app.post("/api/settings/whatsapp/unlink")
+async def settings_whatsapp_unlink(request: Request):
+    """Take one WhatsApp name off your account. Body: {name}."""
+    session = _get_session(request)
+    if not session or not session.get("sub"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    try:
+        b = await request.json()
+    except ValueError:
+        return JSONResponse({"error": "expected JSON"}, status_code=400)
+    name = str((b or {}).get("name") or "") if isinstance(b, dict) else ""
+    try:
+        return await asyncio.to_thread(_wa_link.unlink, session["sub"], name)
+    except RuntimeError:
+        return JSONResponse({"error": "couldn't save that; try again"}, status_code=502)
+
+
 @app.post("/api/huddle/notes/{mid}/delete")
 async def huddle_notes_delete(request: Request, mid: str):
     """Delete a meeting (notes and transcript) for everyone; anyone who was in it may.
@@ -7383,6 +7424,7 @@ import mcp_audit as _mcp_audit
 import facts as _facts
 import meeting_notes as _meet
 import share as _share
+import wa_link as _wa_link
 import chat_history as _chat
 import psn_ai
 import wa_ai

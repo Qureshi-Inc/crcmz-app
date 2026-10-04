@@ -212,6 +212,7 @@ const ACCT_BASE = {
   'GET /auth/settings/psn': json(200, { linked: true, online_id: 'Goopy', account_id: 'a1', linked_at: NOW - 57 * 86400, npsso_ok: true, token_ok: true, refresh_expires_at: NOW + 2.5 * 86400 }),
   'GET /auth/settings/mattermost': json(200, { linked: false, linked_at: null, connect_available: true }),
   'GET /auth/settings/mcp': json(200, { active: false, last_used_at: null }),
+  'GET /api/settings/whatsapp': json(200, { names: ['Goopy 🔥'], bot: 'CRCMZ_BOT', code: 'CRCMZ-K7QF29', message: "@CRCMZ_BOT link my WhatsApp, I'm Goopy: CRCMZ-K7QF29", expires_in: 3540 }),
 }
 const ADMIN_READS = {
   'GET /api/pipeline-status': json(200, { services: { psn_messenger: { status: 'ok', ms: 0 }, psn_montage: { status: 'ok', ms: 12 }, wa_bridge: { status: 'down', ms: null } } }),
@@ -1406,7 +1407,7 @@ try {
     await page.waitForSelector('.acct-row')
     check('/app/settings opens the passkeys tab', new URL(page.url()).pathname === '/app/settings/passkeys', page.url())
     const setTabs = await page.locator('.tabstrip[role=tablist] [role=tab]').allTextContents()
-    check('settings tabs are a tablist: profile, passkeys, password, PSN, Steam, Mattermost, MCP, Watch, App', setTabs.join('|') === 'Profile|Passkeys|Password|PSN|Steam|Mattermost|MCP|Watch|App', setTabs.join('|'))
+    check('settings tabs are a tablist: profile, passkeys, password, PSN, Steam, Mattermost, WhatsApp, MCP, Watch, App', setTabs.join('|') === 'Profile|Passkeys|Password|PSN|Steam|Mattermost|WhatsApp|MCP|Watch|App', setTabs.join('|'))
     check('passkeys are listed', (await page.locator('.acct-row').count()) === 2)
     await shot(page, 'settings-375-passkeys')
     await axe(page, 'Settings passkeys 375', '.app-main')
@@ -1464,9 +1465,15 @@ try {
     check('blocked Mattermost pop-up offers the connect page', (await page.getAttribute('.field-err a', 'href')) === '/auth/settings/mattermost/connect')
     await axe(page, 'Settings Mattermost 375', '.app-main')
 
+    await page.click('.tabstrip-tab:has-text("WhatsApp")')
+    await page.waitForSelector('.wa-names')
+    check('WhatsApp tab lists linked names and the message to send, with its code', (await page.textContent('.wa-names')).includes('Goopy 🔥') && (await page.textContent('.code-block pre')) === "@CRCMZ_BOT link my WhatsApp, I'm Goopy: CRCMZ-K7QF29" && (await page.getAttribute('a:has-text("Open in WhatsApp")', 'href')).startsWith('https://wa.me/?text=%40CRCMZ_BOT'))
+    await axe(page, 'Settings WhatsApp 375', '.app-main')
+    await tapTargets(page, 'Settings WhatsApp 375')
+
     await page.click('.tabstrip-tab:has-text("MCP")')
-    await page.waitForSelector('.code-block pre')
-    check('MCP not connected shows the config block', (await page.textContent('.code-block pre')).includes('https://app.crcmz.me/mcp'))
+    await page.waitForSelector('.code-block pre[aria-label="Claude Desktop config"]')
+    check('MCP not connected shows the config block', (await page.textContent('.code-block pre[aria-label="Claude Desktop config"]')).includes('https://app.crcmz.me/mcp'))
     await shot(page, 'settings-375-mcp', true)
     await axe(page, 'Settings MCP 375', '.app-main')
     await tapTargets(page, 'Settings MCP 375')

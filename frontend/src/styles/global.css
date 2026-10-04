@@ -2802,6 +2802,9 @@ html[data-native-shell] .tabbar { display: none; }
 
 /* Movie sheet: Add 4K / Add 1080p when both copies exist. */
 .mv-pick { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.wa-names { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.wa-name { display: inline-flex; align-items: center; gap: var(--space-1); padding-right: 0; }
+.wa-acts { display: flex; gap: var(--space-2); }
 .mv-release { overflow-wrap: anywhere; margin-top: var(--space-2); }
 .mv-copies { margin-top: var(--space-3); }
 .mv-copies > summary { cursor: pointer; font-size: var(--text-sm); font-weight: 600; padding: var(--space-2) 0; }

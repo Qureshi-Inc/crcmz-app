@@ -290,7 +290,8 @@ def _fetch_people() -> list[dict]:
 
 
 # Tags the app itself may write. Everything else is console-only.
-_APP_TAGS = ("jellyfin_user", "steam_id", "primary_platform", "squad_name", "picks_name")
+_APP_TAGS = ("jellyfin_user", "steam_id", "primary_platform", "squad_name", "picks_name",
+             "wa_names")   # wa_names: Settings → WhatsApp (wa_link.py), with a one-time code
 
 
 def set_tag(zitadel_id: str, key: str, value: str) -> bool:
