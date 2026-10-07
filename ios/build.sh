@@ -16,12 +16,11 @@ KC="$HOME/Library/Keychains/crcmz-build.keychain-db"
 security unlock-keychain -p "$(cat ~/.crcmz-build/keychain.pass)" "$KC"
 "$HOME/bin/xcodegen-app/bin/xcodegen" generate --quiet
 rm -rf build/CRCMZ.xcarchive build/out
-# Archive uses pre-installed manual profiles; -allowProvisioningUpdates is omitted here
-# because it triggers dev-profile creation (requires registered devices) even for archives.
+# Archive step uses only the locally pre-installed manual profiles. No Apple auth flags
+# here — they would trigger dev-profile creation (requires registered devices) even for
+# distribution archives. AUTH is still passed to the export step for TestFlight upload.
 xcodebuild -project CRCMZ.xcodeproj -scheme CRCMZ -configuration Release -destination generic/platform=iOS \
-  -archivePath build/CRCMZ.xcarchive archive OTHER_CODE_SIGN_FLAGS="--keychain $KC" \
-  -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_$KEY_ID.p8" \
-  -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER" -quiet
+  -archivePath build/CRCMZ.xcarchive archive OTHER_CODE_SIGN_FLAGS="--keychain $KC" -quiet
 
 OPTS=ExportOptions.plist
 if [ "${1:-}" = "--ipa" ]; then
