@@ -15,8 +15,9 @@ import { initials, tint } from '../../lib/watch'
 import {
   askAi, canPopOut, canShare, join, leave, popOut, showNativeCall, pin, previewMedia, retryAi, setAiOpen, setCamId, setLayout, setMicId, setRoomName,
   spotlightTile, startAudio, startPreview, stopPreview, tileTrack, toggleBlur, toggleCam, toggleMic, toggleShare, toggleTranscript,
-  react, setAutoTranscribe, toggleHand, REACTIONS, useHuddle, type HuddleState, type Tile,
+  react, setAutoTranscribe, setMusicVolume, setCallVolume, toggleHand, REACTIONS, useHuddle, type HuddleState, type Tile,
 } from './session'
+import { nativeAudio } from '../../lib/nativeAudio'
 import { HelpLink } from '../../components/HelpLink'
 
 export function HuddlePage() {
@@ -76,9 +77,45 @@ function NativeLive({ s }: { s: HuddleState }) {
         )}
         <Reactions s={s} />
       </section>
+      <section className="glass hu-vol-section" aria-label="Volume controls">
+        <VolumePanel s={s} inline />
+      </section>
       <section className="glass hu-ai-side hu-native-ai" aria-labelledby="hu-native-ai-h">
         <AiPanel s={s} titleId="hu-native-ai-h" inline />
       </section>
+    </div>
+  )
+}
+
+/** Music + call volume sliders shown when in a Huddle alongside the Slap player. */
+function VolumePanel({ s, inline = false }: { s: HuddleState; inline?: boolean }) {
+  const showMusic = nativeAudio() || s.musicVolume < 1
+  return (
+    <div className={`hu-vol-panel${inline ? ' hu-vol-panel--inline' : ''}`} aria-label="Volume controls">
+      {showMusic && (
+        <label className="hu-vol-row">
+          <Icon name="vol" className="nav-icon hu-vol-icon" aria-hidden="true" />
+          <span className="hu-vol-label">Music</span>
+          <input
+            type="range" className="hu-vol-slider" min={0} max={1} step={0.05}
+            value={s.musicVolume}
+            aria-label="Music volume"
+            onChange={(e) => setMusicVolume(parseFloat(e.target.value))}
+          />
+          <span className="hu-vol-pct" aria-live="polite">{Math.round(s.musicVolume * 100)}%</span>
+        </label>
+      )}
+      <label className="hu-vol-row">
+        <Icon name="huddle" className="nav-icon hu-vol-icon" aria-hidden="true" />
+        <span className="hu-vol-label">Huddle</span>
+        <input
+          type="range" className="hu-vol-slider" min={0} max={1} step={0.05}
+          value={s.callVolume}
+          aria-label="Huddle call volume"
+          onChange={(e) => setCallVolume(parseFloat(e.target.value))}
+        />
+        <span className="hu-vol-pct" aria-live="polite">{Math.round(s.callVolume * 100)}%</span>
+      </label>
     </div>
   )
 }
@@ -311,6 +348,7 @@ function CallView({ s }: { s: HuddleState }) {
           )}
         </div>
         <Controls s={s} disabled={stale} />
+        <VolumePanel s={s} />
         {s.note && <p className="meta hu-note" role="status">{s.note}</p>}
       </section>
       {desktop ? (s.aiOpen && <aside className="glass hu-ai-side" aria-labelledby="hu-ai-h"><AiPanel s={s} titleId="hu-ai-h" /></aside>) : <AiSheet s={s} />}

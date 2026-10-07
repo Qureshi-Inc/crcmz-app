@@ -15,6 +15,8 @@ export type ToNative =
   /** Huddle: the AI chat, for the call screen's own AI sheet. The page keeps the chat
    *  (and asks the AI); the app shows it. Sent whenever it changes. */
   | { type: 'ai'; kind: CallKind; log: { role: string; text: string }[]; busy: boolean; transcribing: boolean }
+  /** Set the call's remote audio volume (0–1). Applied to all remote participants. */
+  | { type: 'volume'; kind: CallKind; level: number }
 
 type Handler = { postMessage(m: unknown): void }
 const handler = (): Handler | undefined =>
@@ -24,6 +26,11 @@ const handler = (): Handler | undefined =>
 export const nativeCalls = () => !!handler()
 
 export function toNative(m: ToNative) { handler()?.postMessage(m) }
+
+/** Set the Huddle call's remote audio volume (0–1). No-op outside the iOS app. */
+export function setCallVolume(level: number) {
+  toNative({ type: 'volume', kind: 'huddle', level: Math.max(0, Math.min(1, level)) })
+}
 
 declare global {
   interface Window {
