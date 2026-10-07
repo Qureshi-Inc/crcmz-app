@@ -20,7 +20,7 @@ settings:
     CODE_SIGN_IDENTITY: Apple Distribution
     PROVISIONING_PROFILE_SPECIFIER: CRCMZ App Store
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "11"
+    CURRENT_PROJECT_VERSION: "12"
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
@@ -31,6 +31,7 @@ targets:
     dependencies:
       - package: LiveKit
       - target: CRCMZShare
+      - target: CRCMZBroadcast
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.crcmz.app
@@ -58,5 +59,28 @@ targets:
         PRODUCT_NAME: CRCMZShare
         INFOPLIST_FILE: CRCMZShare/Info.plist
         CODE_SIGN_ENTITLEMENTS: CRCMZShare/CRCMZShare.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+
+  # Full-device screen share for Huddle. Captures using ReplayKit's broadcast
+  # extension mechanism: runs in a separate process so it keeps working when the
+  # user switches to another app. Frames go to the main app via the App Group
+  # socket and are published to LiveKit (NativeCall.swift).
+  CRCMZBroadcast:
+    type: app-extension
+    platform: iOS
+    sources: [CRCMZBroadcast]
+    dependencies:
+      - package: LiveKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.crcmz.app.broadcast
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: Apple Distribution
+        "CODE_SIGN_IDENTITY[sdk=iphoneos*]": Apple Distribution
+        PROVISIONING_PROFILE_SPECIFIER: CRCMZ Broadcast App Store
+        PRODUCT_NAME: CRCMZBroadcast
+        INFOPLIST_FILE: CRCMZBroadcast/Info.plist
+        CODE_SIGN_ENTITLEMENTS: CRCMZBroadcast/CRCMZBroadcast.entitlements
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES

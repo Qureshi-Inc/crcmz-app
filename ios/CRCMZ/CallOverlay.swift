@@ -324,6 +324,10 @@ private struct Extras: View {
                 Button { call.toggleTranscript() } label: { Label(call.transcribing ? "Stop" : "Transcribe", systemImage: call.transcribing ? "stop.circle" : "waveform") }
                     .buttonStyle(Pill(on: call.transcribing))
                     .accessibilityLabel(call.transcribing ? "Stop the transcript" : "Transcribe this call, for meeting notes when it ends")
+                Button { call.toggleScreenShare() }
+                    label: { Label(call.screenShareOn ? "Sharing" : "Screen", systemImage: "rectangle.on.rectangle") }
+                    .buttonStyle(Pill(on: call.screenShareOn))
+                    .accessibilityLabel(call.screenShareOn ? "Stop sharing screen" : "Share your screen")
                 Button { call.openAI() } label: { Label("AI", systemImage: "sparkles") }
                     .buttonStyle(Pill()).accessibilityLabel("AI helper")
             }

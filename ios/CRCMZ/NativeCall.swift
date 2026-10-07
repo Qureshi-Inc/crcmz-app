@@ -1,4 +1,5 @@
 import AVKit
+import Combine
 import LiveKit
 import SwiftUI
 import UIKit
@@ -57,6 +58,7 @@ final class NativeCall: ObservableObject {
     @Published private(set) var aiLog: [AiMsg] = []
     @Published private(set) var aiBusy = false
     @Published var showingAI = false
+    @Published private(set) var screenShareOn = false
 
     var onMode: ((Mode) -> Void)?
     var onTiles: (() -> Void)?
@@ -74,6 +76,23 @@ final class NativeCall: ObservableObject {
     private var events: Events?
     private var startedAt = Date.distantPast
     let pip = CallPip()
+
+    private var screenShareTrack: LocalVideoTrack?
+    private var broadcastCancellable: AnyCancellable?
+
+    private init() {
+        // React to the broadcast extension starting/stopping.  The extension runs
+        // in its own process; Darwin notifications let us track its state.
+        broadcastCancellable = BroadcastManager.shared.isBroadcastingPublisher
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] broadcasting in
+                Task { @MainActor [weak self] in
+                    if broadcasting { await self?.startScreenShareTrack() }
+                    else            { await self?.stopScreenShareTrack() }
+                }
+            }
+    }
 
     // MARK: From the page
 
@@ -169,6 +188,30 @@ final class NativeCall: ObservableObject {
         guard let track = room?.localParticipant.firstCameraVideoTrack as? LocalVideoTrack,
               let capturer = track.capturer as? CameraCapturer else { return }
         Task { _ = try? await capturer.switchCameraPosition() }
+    }
+
+    func toggleScreenShare() {
+        if screenShareOn { BroadcastManager.shared.requestStop() }
+        else             { BroadcastManager.shared.requestActivation() }
+    }
+
+    private func startScreenShareTrack() async {
+        guard let room, kind == .huddle, screenShareTrack == nil else { return }
+        let track = await LocalVideoTrack.createBroadcastScreenCapturerTrack()
+        screenShareTrack = track
+        try? await room.localParticipant.publish(videoTrack: track)
+        screenShareOn = true
+        refresh()
+    }
+
+    private func stopScreenShareTrack() async {
+        guard let track = screenShareTrack, let room else { return }
+        screenShareTrack = nil
+        screenShareOn = false
+        if let pub = room.localParticipant.localVideoTracks.first(where: { $0.track === track }) {
+            try? await room.localParticipant.unpublish(publication: pub)
+        }
+        refresh()
     }
 
     func toggleHand() {
@@ -277,6 +320,8 @@ final class NativeCall: ObservableObject {
         showingAI = false
         reactions = []
         if transcribing { transcriber.stop(); transcribing = false }
+        if screenShareOn { BroadcastManager.shared.requestStop() }
+        screenShareTrack = nil; screenShareOn = false
         micOn = false
         camOn = false
         connecting = false
