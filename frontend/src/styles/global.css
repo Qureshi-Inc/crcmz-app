@@ -1265,7 +1265,7 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 html[data-player] .handle-row { bottom: calc(var(--c-tabbar-h) + var(--c-minibar-row-h) + env(safe-area-inset-bottom)); }
 .miniplayer-sidebar { border-top: 1px solid var(--border-decorative); }
 .miniplayer-progress { position: absolute; left: 0; right: 0; top: 0; height: 2px; background: rgba(141, 120, 196, .2); }
-.miniplayer-progress i { display: block; height: 100%; background: var(--neon-magenta); }
+.miniplayer-progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--neon-violet), var(--neon-magenta)); }
 .miniplayer-row { display: flex; align-items: center; gap: var(--space-1); min-height: var(--c-minibar-row-h); padding: 2px var(--space-2) 0; }
 .miniplayer-row .icon-btn { border-color: transparent; background: none; }
 .miniplayer-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-2); min-height: var(--tap-min); padding: 0 var(--space-1); background: none; border: 0; color: var(--text); text-align: left; border-radius: var(--radius-sm); }
@@ -1289,15 +1289,28 @@ html[data-player] .toasts { bottom: calc(var(--c-tabbar-h) + var(--c-minibar-row
 }
 
 /* Player sheet / dialog */
-.sheet-player { max-height: calc(100dvh - var(--tabbar-stack) - env(safe-area-inset-bottom) - env(safe-area-inset-top) - var(--space-4)); padding: 0 var(--gutter) var(--space-4); overflow-y: auto; }
+.sheet-player {
+  max-height: calc(100dvh - var(--tabbar-stack) - env(safe-area-inset-bottom) - env(safe-area-inset-top) - var(--space-4));
+  padding: 0; overflow: hidden; /* backdrop clips to sheet; player-scroll handles scrolling */
+  isolation: isolate; /* keep z-index: -1 backdrop within the sheet stacking context */
+}
+.player-backdrop {
+  position: absolute; inset: -60px; /* extend beyond edges so blur never shows a hard frame */
+  background-size: cover; background-position: center;
+  filter: blur(60px); opacity: 0.35;
+  z-index: -1; pointer-events: none;
+}
+.player-scroll { overflow-y: auto; padding: 0 var(--gutter) var(--space-4); height: 100%; }
 .player-dialog { padding-top: var(--space-3); }
-.player-body { display: flex; flex-direction: column; gap: var(--space-5); }
+.player-body { display: flex; flex-direction: column; gap: var(--space-4); }
 .player-main { display: flex; flex-direction: column; gap: var(--space-3); align-items: stretch; }
-.player-art { width: min(100%, 320px); height: auto; aspect-ratio: 1; align-self: center; border-radius: var(--radius-lg); box-shadow: var(--shadow-card); }
+/* Mobile: art fills nearly the full sheet width for the Apple Music feel */
+.player-art { width: min(calc(100% - var(--space-4)), 340px); height: auto; aspect-ratio: 1; align-self: center; border-radius: var(--radius-xl); box-shadow: var(--shadow-card), 0 0 48px rgba(255, 47, 214, .12); }
 .player-art svg { width: 48px; height: 48px; }
 .player-meta { text-align: center; min-width: 0; }
-.player-title { margin: 0; font: 800 var(--text-xl) / var(--leading-snug) var(--font-display); overflow-wrap: anywhere; }
-.player-artist { margin: var(--space-1) 0 0; color: var(--text-dim); font-weight: 600; }
+/* Title ~22px semibold, artist ~15px muted (spec: Apple Music style) */
+.player-title { margin: 0; font-size: 1.375rem; font-weight: 700; line-height: var(--leading-snug); overflow-wrap: anywhere; }
+.player-artist { margin: var(--space-1) 0 0; color: var(--text-dim); font-size: var(--text-sm); font-weight: 600; }
 .seek { display: flex; flex-direction: column; gap: var(--space-1); }
 .seek-range {
   width: 100%; height: var(--tap-min); margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer;
@@ -1357,10 +1370,31 @@ html[data-player] .toasts { bottom: calc(var(--c-tabbar-h) + var(--c-minibar-row
 .comment-react { color: var(--text-dim); font-weight: 400; }
 .comment-emoji { font-size: var(--text-base); }
 @media (min-width: 1024px) {
-  .player-dialog .player-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  /* Two-column Apple Music / Spotify desktop layout:
+     left  = square artwork (300px)
+     right = meta + transport + seek + queue, scrollable */
+  .player-dialog { width: min(calc(100vw - 2 * var(--gutter)), 680px); }
+  .player-dialog .player-body {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: var(--space-8);
+    align-items: start;
+  }
+  /* TogetherBanner spans both columns */
   .player-dialog .together-banner { grid-column: 1 / -1; }
-  .player-dialog { width: min(calc(100vw - 2 * var(--gutter)), 960px); }
-  .player-dialog .queue { max-height: 64dvh; overflow-y: auto; }
+  /* Art stays in column 1; player-main fills column 2 */
+  .player-dialog .player-art {
+    width: 300px; height: 300px;
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-card);
+    flex: none;
+    align-self: start;
+  }
+  .player-dialog .player-main { gap: var(--space-4); }
+  .player-dialog .player-meta { text-align: left; }
+  /* Queue scrollable within the right column */
+  .player-dialog .queue { max-height: 50dvh; overflow-y: auto; }
 }
 
 /* Together */

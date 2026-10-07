@@ -74,6 +74,25 @@ export function MiniPlayer({ variant }: { variant: 'bar' | 'sidebar' }) {
   )
 }
 
+/** Compact heart toggle used in the player header on both layouts. */
+function HeartButton({ item }: { item: QueueItem }) {
+  const qc = useQueryClient()
+  const lib = qc.getQueryData<Library>(['slap', 'library'])
+  const fav = lib?.tracks.find((t) => t.id === item.id)?.fav ?? false
+  function favourite() {
+    const on = !fav
+    qc.setQueryData<Library>(['slap', 'library'], (d) => d && { ...d, tracks: d.tracks.map((x) => (x.id === item.id ? { ...x, fav: on } : x)) })
+    setFavorite(item.id, on).catch(() => {
+      qc.setQueryData<Library>(['slap', 'library'], (d) => d && { ...d, tracks: d.tracks.map((x) => (x.id === item.id ? { ...x, fav: !on } : x)) })
+    })
+  }
+  return (
+    <button type="button" className="icon-btn" onClick={favourite} aria-pressed={fav} aria-label={fav ? 'Remove from favourites' : 'Add to favourites'} data-on={fav}>
+      <Icon name={fav ? 'heartFill' : 'heart'} />
+    </button>
+  )
+}
+
 export function PlayerSheet() {
   const s = usePlayer()
   const desktop = useDesktop()
@@ -84,29 +103,43 @@ export function PlayerSheet() {
     <Dialog.Root open={s.expanded} onOpenChange={setExpanded}>
       <Dialog.Portal>
         <Dialog.Overlay className="scrim" />
-        <Dialog.Content className={desktop ? 'dialog dialog-wide player-dialog' : 'sheet sheet-player'} aria-describedby={undefined}>
-          {!desktop && <div className="sheet-knob-row" {...swipe}><span className="sheet-knob" /></div>}
-          <div className="sheet-title-row">
-            <Dialog.Title className="sheet-title">{s.mode === 'together' ? 'Listen Together' : 'Now playing'}</Dialog.Title>
-            <div className="player-head-tools">
-              {item && (
-                <Menu.Root>
-                  <Menu.Trigger asChild>
-                    <button type="button" className="icon-btn" aria-label={`More for ${item.title}`}><Icon name="more" /></button>
-                  </Menu.Trigger>
-                  <Menu.Portal>
-                    <Menu.Content className="menu-content" sideOffset={4} align="end">
-                      <Menu.Item className="menu-item" onSelect={() => setReroll(item)}>Wrong song? Find the right one</Menu.Item>
-                    </Menu.Content>
-                  </Menu.Portal>
-                </Menu.Root>
-              )}
-              <Dialog.Close asChild>
-                <button type="button" className="icon-btn" aria-label="Close player"><Icon name="close" /></button>
-              </Dialog.Close>
+        <Dialog.Content className={desktop ? 'dialog player-dialog' : 'sheet sheet-player'} aria-describedby={undefined}>
+          {/* blurred art backdrop (mobile full-screen sheet only) */}
+          {!desktop && item?.art && (
+            <div
+              className="player-backdrop"
+              style={{ backgroundImage: `url(${artUrl(item.art, 300)})` }}
+              aria-hidden="true"
+            />
+          )}
+          {/* inner scroll wrapper on mobile; desktop dialog scrolls natively */}
+          <div className={desktop ? undefined : 'player-scroll'}>
+            {!desktop && <div className="sheet-knob-row" {...swipe}><span className="sheet-knob" /></div>}
+            <div className="sheet-title-row">
+              <Dialog.Title className={desktop ? 'sheet-title' : 'sr-only'}>
+                {s.mode === 'together' ? 'Listen Together' : 'Now playing'}
+              </Dialog.Title>
+              <div className="player-head-tools">
+                {item && <HeartButton item={item} />}
+                {item && (
+                  <Menu.Root>
+                    <Menu.Trigger asChild>
+                      <button type="button" className="icon-btn" aria-label={`More for ${item.title}`}><Icon name="more" /></button>
+                    </Menu.Trigger>
+                    <Menu.Portal>
+                      <Menu.Content className="menu-content" sideOffset={4} align="end">
+                        <Menu.Item className="menu-item" onSelect={() => setReroll(item)}>Wrong song? Find the right one</Menu.Item>
+                      </Menu.Content>
+                    </Menu.Portal>
+                  </Menu.Root>
+                )}
+                <Dialog.Close asChild>
+                  <button type="button" className="icon-btn" aria-label="Close player"><Icon name="close" /></button>
+                </Dialog.Close>
+              </div>
             </div>
+            <PlayerBody s={s} />
           </div>
-          <PlayerBody s={s} />
           {reroll && <RerollDialog item={reroll} onClose={() => setReroll(null)} />}
         </Dialog.Content>
       </Dialog.Portal>
@@ -272,14 +305,15 @@ function PlayerBody({ s }: { s: PlayerState }) {
   return (
     <div className="player-body">
       {s.mode === 'together' && <TogetherBanner s={s} />}
+      {/* Art lives outside player-main so desktop grid can put it in its own column */}
+      <Art id={item?.art} size={600} className="slap-art player-art" />
       <div className="player-main">
-        <Art id={item?.art} size={600} className="slap-art player-art" />
         <div className="player-meta">
           <p className="player-title">{item?.title ?? 'Nothing playing'}</p>
           <p className="player-artist">{item ? [item.artist, item.album].filter(Boolean).join(' · ') : s.mode === 'together' ? 'Add a track from Listen to start the room.' : 'Pick something from Listen.'}</p>
           <AddedBy item={item} together={s.mode === 'together'} />
         </div>
-        <Seek disabled={!item} />
+        {/* Transport controls come before the seek bar (Apple Music / Spotify order) */}
         <div className="player-controls">
           {s.mode === 'solo'
             ? <button type="button" className="icon-btn" onClick={toggleShuffle} aria-pressed={s.shuffle} aria-label="Shuffle"><Icon name="shuffle" /></button>
@@ -291,13 +325,15 @@ function PlayerBody({ s }: { s: PlayerState }) {
             ? <button type="button" className="icon-btn repeat-btn" onClick={cycleRepeat} aria-pressed={s.repeat !== 'off'} aria-label={`Repeat: ${s.repeat}`} data-mode={s.repeat}><Icon name="repeat" />{s.repeat === 'one' && <span className="repeat-one" aria-hidden="true">1</span>}</button>
             : <span className="player-ctl-gap" />}
         </div>
+        <Seek disabled={!item} />
         {s.blocked && <button type="button" className="btn btn-primary" onClick={toggle}>Tap to listen with everyone</button>}
         {item && <TrackActions item={item} />}
         <button type="button" className="btn btn-ghost player-close" onClick={closePlayer}>
           <Icon name="close" />{s.mode === 'together' ? 'Leave and close player' : 'Stop and close player'}
         </button>
+        {/* Queue is inside player-main so on desktop it scrolls in the right column */}
+        <QueueList queue={queue} index={index} together={s.mode === 'together'} />
       </div>
-      <QueueList queue={queue} index={index} together={s.mode === 'together'} />
     </div>
   )
 }
