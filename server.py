@@ -7621,7 +7621,10 @@ _app_events.init()
 _watchparty_events.init()
 _watch_history.init()
 _watch_diag.init()
-_mem.init()
+# Run in a daemon thread — the embedding probe can take minutes on a busy oMLX
+# server (it sends 200 OK headers immediately but delays the body).  Semantic
+# memory is optional; the server runs in degraded mode until init completes.
+_threading.Thread(target=_mem.init, name="memory-init", daemon=True).start()
 
 
 def _startup_backfill() -> None:
