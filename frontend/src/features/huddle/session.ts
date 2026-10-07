@@ -190,8 +190,10 @@ export function setRoomName(v: string) { set({ room: v }) }
 export function setMusicVolume(level: number) {
   const v = Math.max(0, Math.min(1, level))
   set({ musicVolume: v })
-  // Native iOS: NativeAudio.swift applies the volume to AVPlayer
-  import('../../lib/nativeAudio').then(({ setMusicVolume: fn }) => fn(v))
+  import('../../lib/nativeAudio').then(({ nativeAudio, setMusicVolume: fn }) => {
+    if (nativeAudio()) fn(v)
+    else import('../slap/player').then(({ setVolume }) => setVolume(v))
+  })
 }
 
 export function setCallVolume(level: number) {

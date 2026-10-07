@@ -330,6 +330,10 @@ export function prev() {
   goSolo(state.index - 1, true)
 }
 
+export function setVolume(v: number) {
+  if (audio) audio.volume = Math.max(0, Math.min(1, v))
+}
+
 export function seek(s: number) {
   if (state.mode === 'together') return cmd('seek', { position: s })
   const item = current()

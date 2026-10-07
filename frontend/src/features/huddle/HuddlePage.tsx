@@ -17,7 +17,6 @@ import {
   spotlightTile, startAudio, startPreview, stopPreview, tileTrack, toggleBlur, toggleCam, toggleMic, toggleShare, toggleTranscript,
   react, setAutoTranscribe, setMusicVolume, setCallVolume, toggleHand, REACTIONS, useHuddle, type HuddleState, type Tile,
 } from './session'
-import { nativeAudio } from '../../lib/nativeAudio'
 import { HelpLink } from '../../components/HelpLink'
 
 export function HuddlePage() {
@@ -89,22 +88,19 @@ function NativeLive({ s }: { s: HuddleState }) {
 
 /** Music + call volume sliders shown when in a Huddle alongside the Slap player. */
 function VolumePanel({ s, inline = false }: { s: HuddleState; inline?: boolean }) {
-  const showMusic = nativeAudio() || s.musicVolume < 1
   return (
     <div className={`hu-vol-panel${inline ? ' hu-vol-panel--inline' : ''}`} aria-label="Volume controls">
-      {showMusic && (
-        <label className="hu-vol-row">
-          <Icon name="vol" className="nav-icon hu-vol-icon" aria-hidden="true" />
-          <span className="hu-vol-label">Music</span>
-          <input
-            type="range" className="hu-vol-slider" min={0} max={1} step={0.05}
-            value={s.musicVolume}
-            aria-label="Music volume"
-            onChange={(e) => setMusicVolume(parseFloat(e.target.value))}
-          />
-          <span className="hu-vol-pct" aria-live="polite">{Math.round(s.musicVolume * 100)}%</span>
-        </label>
-      )}
+      <label className="hu-vol-row">
+        <Icon name="vol" className="nav-icon hu-vol-icon" aria-hidden="true" />
+        <span className="hu-vol-label">Music</span>
+        <input
+          type="range" className="hu-vol-slider" min={0} max={1} step={0.05}
+          value={s.musicVolume}
+          aria-label="Music volume"
+          onChange={(e) => setMusicVolume(parseFloat(e.target.value))}
+        />
+        <span className="hu-vol-pct" aria-live="polite">{Math.round(s.musicVolume * 100)}%</span>
+      </label>
       <label className="hu-vol-row">
         <Icon name="huddle" className="nav-icon hu-vol-icon" aria-hidden="true" />
         <span className="hu-vol-label">Huddle</span>
