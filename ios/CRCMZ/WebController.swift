@@ -1,3 +1,4 @@
+import AVFoundation
 import SafariServices
 import UIKit
 import WebKit
@@ -16,6 +17,11 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
     private var registering = false
     private var calls: CallHost?
     private let shell = Shell()
+    /// Whether /app/watch is the active page. When true we keep an AVAudioSession active so
+    /// iOS doesn't fully suspend the WKWebView's JS (and with it the WebRTC connection) when
+    /// the user switches apps. The native Huddle/Watch call manages its own session;
+    /// this only covers the pure-web party stream while no native call is running.
+    private var watchPartyAudioActive = false
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -159,6 +165,26 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         shell.pageChanged(webView.url)
+        updateWatchPartyAudio(webView.url)
+    }
+
+    /// Keep an active AVAudioSession while /app/watch is open so iOS doesn't fully suspend
+    /// the WKWebView's JS process in the background (which would drop the WebRTC connection).
+    /// The native call (NativeCall) manages its own session when it's active; .mixWithOthers
+    /// ensures we don't fight over the session with it.
+    private func updateWatchPartyAudio(_ url: URL?) {
+        let onWatch = url?.path.hasPrefix("/app/watch") == true
+        guard onWatch != watchPartyAudioActive else { return }
+        watchPartyAudioActive = onWatch
+        // If NativeCall owns the session, leave it alone.
+        guard NativeCall.shared.kind == nil else { return }
+        let s = AVAudioSession.sharedInstance()
+        if onWatch {
+            try? s.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            try? s.setActive(true)
+        }
+        // On navigate away the Slap player (NativeAudio) will re-configure as needed;
+        // we don't deactivate here to avoid cutting off any media that's still playing.
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

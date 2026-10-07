@@ -6592,6 +6592,27 @@ async def huddle_token(request: Request):
     return JSONResponse({"token": token, "url": ws_url, "room": room})
 
 
+@app.get("/api/huddle/join_token")
+async def huddle_join_token(request: Request, room: str = "crcmz"):
+    """Native iOS/Android auto-join: same as POST /api/huddle/token but via GET with a query
+    param. Called by the iOS app on CallKit answer so it can join the LiveKit room directly
+    without waiting for the web page to load and call back via crcmzCall."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        return JSONResponse({"error": "Huddle not configured on this server"}, status_code=503)
+    import re as _re
+    room = _re.sub(r"[^a-z0-9\-]", "", room.strip().lower())[:64] or "crcmz"
+    identity = session.get("sub", "anon")
+    name = session.get("name") or session.get("preferred_username") or identity
+    token = _mk_livekit_token(identity, name, room)
+    _huddle_rooms[identity] = (room, _time.time())
+    _meet.add_people(room, {identity: name})
+    return JSONResponse({"token": token, "url": LIVEKIT_URL, "room": room},
+                        headers={"Cache-Control": "no-store"})
+
+
 async def _livekit_people(room: str) -> dict[str, str]:
     """Who is in a LiveKit room right now, identity -> name (the server API, a short admin token)."""
     import jwt as _pyjwt

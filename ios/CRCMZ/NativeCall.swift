@@ -144,6 +144,10 @@ final class NativeCall: ObservableObject {
         connecting = true
         startedAt = Date()
         mode = kind == .huddle ? .full : .hidden
+        // Configure AVAudioSession for a voice/video call: .playAndRecord keeps the mic
+        // alive in the background (the `audio` background mode + this category is what
+        // lets the call survive a PiP transition or the screen turning off).
+        configureCallAudioSession()
         let events = Events(owner: self)
         let room = Room(delegate: events)
         self.events = events
@@ -328,7 +332,29 @@ final class NativeCall: ObservableObject {
         mode = .hidden
         pip.stop()
         Task { await r?.disconnect() }
+        // Restore default audio session (Slap player / Watch Party background video).
+        restoreDefaultAudioSession()
         if tellPage, let k { onEnded?(k) }
+    }
+
+    // MARK: Audio session
+
+    /// Switch to a call-grade audio session: .playAndRecord keeps the mic alive and lets
+    /// the call continue when the screen turns off or PiP is active. .allowBluetooth and
+    /// .allowBluetoothA2DP cover AirPods and every Bluetooth headset. .defaultToSpeaker
+    /// gives the right default for a video call (user can change it through the call UI).
+    func configureCallAudioSession() {
+        let s = AVAudioSession.sharedInstance()
+        try? s.setCategory(.playAndRecord, mode: .videoChat,
+                           options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker])
+        try? s.setActive(true)
+    }
+
+    /// Back to the playback-only session used by the Slap player and Watch Party video.
+    private func restoreDefaultAudioSession() {
+        let s = AVAudioSession.sharedInstance()
+        try? s.setCategory(.playback, mode: .moviePlayback)
+        try? s.setActive(true, options: .notifyOthersOnDeactivation)
     }
 
     // MARK: Who's on
@@ -413,6 +439,9 @@ final class NativeCall: ObservableObject {
 
 /// The call in picture in picture: the featured camera in Apple's video-call PiP window.
 /// It opens by itself when you leave the app with the call on screen, or from the button.
+///
+/// PiP audio: when PiP starts the app moves to the background. We re-activate the call
+/// audio session in the willStart callback so LiveKit's audio engine keeps running.
 @MainActor
 final class CallPip: NSObject, AVPictureInPictureControllerDelegate {
     private var controller: AVPictureInPictureController?
@@ -458,6 +487,14 @@ final class CallPip: NSObject, AVPictureInPictureControllerDelegate {
     func stop() {
         controller?.stopPictureInPicture()
         video.track = nil
+    }
+
+    // MARK: AVPictureInPictureControllerDelegate
+
+    /// When PiP starts the app transitions to the background. Re-activate the call audio
+    /// session so LiveKit's audio engine isn't suspended by iOS.
+    func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        NativeCall.shared.configureCallAudioSession()
     }
 
     private static func size(of track: VideoTrack) -> CGSize {
