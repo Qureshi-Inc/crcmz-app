@@ -121,6 +121,13 @@ object NativeCall {
                 aiBusy = m.optBoolean("busy")
                 onAi?.invoke()
             }
+            "volume" -> if (kind == k) {
+                val level = m.optDouble("level", 1.0).coerceIn(0.0, 1.0)
+                room?.remoteParticipants?.values?.forEach { p ->
+                    (p.getTrackPublication(Track.Source.MICROPHONE)?.track as? io.livekit.android.room.track.RemoteAudioTrack)
+                        ?.setVolume(level * 10.0)
+                }
+            }
         }
     }
 

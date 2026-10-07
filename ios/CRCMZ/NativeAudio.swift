@@ -56,6 +56,7 @@ final class NativeAudio: NSObject {
         case "pause": wantsPlay = false; player.pause()
         case "seek": if let t = m["time"] as? Double { seek(t, tellPage: false) }
         case "meta": meta(m)
+        case "volume": if let v = m["level"] as? Double { player.volume = Float(max(0, min(1, v))) }
         default: break
         }
     }

@@ -118,6 +118,7 @@ object NativeAudio {
             "pause" -> p.pause()
             "seek" -> { p.seekTo((m.optDouble("time", 0.0) * 1000).toLong()); send("seeked") }
             "meta" -> meta(m)
+            "volume" -> p.volume = m.optDouble("level", 1.0).toFloat().coerceIn(0f, 1f)
         }
     }
 

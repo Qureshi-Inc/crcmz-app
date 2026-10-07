@@ -108,6 +108,10 @@ final class NativeCall: ObservableObject {
             aiLog = log.enumerated().map { AiMsg(id: $0.offset, role: $0.element["role"] as? String ?? "note",
                                                  text: $0.element["text"] as? String ?? "") }
             aiBusy = m["busy"] as? Bool ?? false
+        case "volume":
+            guard self.kind == kind, let level = m["level"] as? Double, let room else { return }
+            let vol = Float(max(0, min(1, level)))
+            room.remoteParticipants.values.forEach { $0.audioTracks.values.forEach { $0.volume = Double(vol) } }
         default: break
         }
     }

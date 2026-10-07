@@ -130,6 +130,11 @@ export function nativeAudioElement(onRemote: (a: Remote, time?: number) => void)
   return new NativeAudioElement() as unknown as HTMLAudioElement
 }
 
+/** Set the music player's volume (0–1) on the native player. No-op outside the iOS app. */
+export function setMusicVolume(level: number) {
+  post({ type: 'volume', level: Math.max(0, Math.min(1, level)) })
+}
+
 /** What's playing and what comes next, so the app can show it and move on by itself. */
 let lastMeta = ''
 export function nativeNowPlaying(now: NowPlaying | null, next: { url: string } | null, together: boolean) {

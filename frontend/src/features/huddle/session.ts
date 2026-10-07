@@ -125,6 +125,10 @@ export type HuddleState = {
   reactions: Reaction[]
   /** Start the transcript (for everyone) as soon as you join; saved notes come of it. */
   autoTranscribe: boolean
+  /** 0–1 volume for the music player, adjusted from the Huddle screen. */
+  musicVolume: number
+  /** 0–1 volume for the call's remote audio, adjusted from the Huddle screen. */
+  callVolume: number
 }
 
 let state: HuddleState = {
@@ -132,6 +136,7 @@ let state: HuddleState = {
   mic: false, cam: false, share: false, blur: false, note: '', tiles: [], tracks: 0, layout: 'spotlight', pinned: '', speaker: '',
   audioBlocked: false, aiOpen: false, aiBusy: false, aiLog: [], aiSignedOut: false, transcribing: false, recorders: [], lines: [], nativeRoom: '',
   hand: false, hands: [], reactions: [], autoTranscribe: readAuto(),
+  musicVolume: 1, callVolume: 1,
 }
 function readAuto(): boolean { try { return localStorage.getItem('crcmz.huddle.transcribe') === '1' } catch { return false } }
 export function setAutoTranscribe(on: boolean) {
@@ -181,6 +186,28 @@ registerCall('huddle', { label: 'Huddle', live: () => inCall() && state.mic, mut
 
 // ── Pre-join ────────────────────────────────────────────────────────────────
 export function setRoomName(v: string) { set({ room: v }) }
+
+export function setMusicVolume(level: number) {
+  const v = Math.max(0, Math.min(1, level))
+  set({ musicVolume: v })
+  // Native iOS: NativeAudio.swift applies the volume to AVPlayer
+  import('../../lib/nativeAudio').then(({ setMusicVolume: fn }) => fn(v))
+}
+
+export function setCallVolume(level: number) {
+  const v = Math.max(0, Math.min(1, level))
+  set({ callVolume: v })
+  if (state.nativeRoom) {
+    // Native iOS: NativeCall.swift applies the volume to LiveKit remote participants
+    import('../../lib/nativeCall').then(({ setCallVolume: fn }) => fn(v))
+  } else if (room) {
+    // Web call: apply to every remote participant via LiveKit JS SDK
+    room.remoteParticipants.forEach((p) => {
+      const rp = p as unknown as { setVolume?: (v: number) => void }
+      rp.setVolume?.(v)
+    })
+  }
+}
 export function setMicId(id: string) { set({ micId: id }) }
 export function setCamId(id: string) {
   set({ camId: id })

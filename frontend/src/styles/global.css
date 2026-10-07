@@ -2799,6 +2799,14 @@ html[data-native-shell] .tabbar { display: none; }
 .hu-native-status { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
 .hu-native .hu-reactions { overflow: visible; }
 .hu-native-ai { min-height: 320px; }
+.hu-vol-section { padding: var(--space-3) var(--space-4); }
+.hu-vol-panel { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
+.hu-vol-panel--inline { background: none; box-shadow: none; padding: 0; }
+.hu-vol-row { display: flex; align-items: center; gap: var(--space-2); min-height: var(--tap-min); }
+.hu-vol-icon { flex-shrink: 0; color: var(--text-dim); }
+.hu-vol-label { flex-shrink: 0; min-width: 4.5rem; font-size: var(--text-sm); color: var(--text-dim); }
+.hu-vol-slider { flex: 1; accent-color: var(--accent); cursor: pointer; min-width: 0; }
+.hu-vol-pct { flex-shrink: 0; min-width: 2.8rem; text-align: right; font-size: var(--text-sm); font-variant-numeric: tabular-nums; color: var(--text-dim); }
 
 /* Movie sheet: Add 4K / Add 1080p when both copies exist. */
 .mv-pick { display: flex; flex-wrap: wrap; gap: var(--space-2); }
