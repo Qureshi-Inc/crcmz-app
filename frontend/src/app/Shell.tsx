@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Menu from '@radix-ui/react-dropdown-menu'
+import { useQuery } from '@tanstack/react-query'
 import { Icon } from '../components/Icon'
 import { Toaster } from '../components/toast'
 import { InstallStrip } from '../components/InstallStrip'
@@ -12,7 +13,7 @@ import { usePendingShare } from '../features/share/SharePage'
 import { onWorkerNavigate } from '../lib/pwa'
 import { useStale } from '../components/states'
 import { useAccount, useAdminCheck, useSquad, SQUAD_MS, type Member } from '../lib/api'
-import { ApiError } from '../lib/http'
+import { ApiError, getJSON } from '../lib/http'
 import { useDesktop, useReducedMotion } from '../lib/media'
 import { useUnread } from '../lib/notifications'
 import { loginUrl, redirectToLogin, useSignedOut } from '../lib/session'
@@ -111,6 +112,7 @@ export function Shell() {
         )}
         <UpdateStrip />
         {!desktop && <InstallStrip />}
+        {!signedOut && <SessionBanner />}
         <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
         {keepWatch && <WatchPage visible={onWatch} />}
       </main>
@@ -124,6 +126,44 @@ export function Shell() {
 }
 
 export type ShellContext = { isAdmin: boolean; adminKnown: boolean }
+
+// ── Active-session banner ────────────────────────────────────────────────────
+type ActiveSession = { type: 'huddle' | 'watch' | 'slap'; name: string; participant_count: number; join_url: string }
+
+function useActiveSessions() {
+  return useQuery({
+    queryKey: ['sessions', 'active'],
+    queryFn: ({ signal }) => getJSON<{ sessions: ActiveSession[] }>('/api/sessions/active', signal),
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+    retry: false,
+  })
+}
+
+function SessionBanner() {
+  const q = useActiveSessions()
+  const sessions = q.data?.sessions ?? []
+  if (!sessions.length) return null
+  return (
+    <div className="session-banner" role="status" aria-label="Live sessions" style={{ marginBottom: 'var(--space-5)' }}>
+      {sessions.map((s) => (
+        <Link
+          key={`${s.type}-${s.name}`}
+          to={s.join_url}
+          className="session-chip"
+          aria-label={`Join ${s.type === 'huddle' ? 'Huddle' : 'Watch Party'}: ${s.name}, ${s.participant_count} ${s.participant_count === 1 ? 'person' : 'people'}`}
+        >
+          <Icon name={s.type === 'huddle' ? 'huddle' : s.type === 'watch' ? 'watch' : 'slap'} />
+          <span className="session-chip-label">
+            <span className="session-chip-type">{s.type === 'huddle' ? 'Huddle' : s.type === 'watch' ? 'Watch Party' : 'Slap'}</span>
+            <span className="session-chip-name">{s.name}</span>
+          </span>
+          <span className="session-chip-count">{s.participant_count}</span>
+        </Link>
+      ))}
+    </div>
+  )
+}
 
 /** G-05: the live count on the Squad nav item. Hidden when 0, on error, or while stale. */
 function useLiveBadge(): number {

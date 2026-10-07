@@ -3,7 +3,7 @@
 // and the room keeps going; the call bar brings you back.
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
@@ -422,6 +422,7 @@ function TileView({ t, big = false }: { t: Tile; big?: boolean }) {
 }
 
 function Controls({ s, disabled }: { s: HuddleState; disabled: boolean }) {
+  const navigate = useNavigate()
   return (
     <div className="hu-controls" role="toolbar" aria-label="Call controls">
       <button type="button" className="hu-ctrl" data-off={!s.mic} aria-pressed={!s.mic} aria-label={s.mic ? 'Mute' : 'Unmute'} disabled={disabled} onClick={() => void toggleMic()}>
@@ -441,6 +442,9 @@ function Controls({ s, disabled }: { s: HuddleState; disabled: boolean }) {
       <TranscriptButton s={s} ctrl />
       <HandButton s={s} ctrl />
       <ReactButton ctrl />
+      <button type="button" className="hu-ctrl" aria-label="Open the Slap player" title="Open Slap" onClick={() => navigate('/slap')}>
+        <Icon name="slap" /><span className="hu-ctrl-label" aria-hidden="true">Slap</span>
+      </button>
       <button type="button" className="hu-ctrl hu-ctrl-leave" aria-label="Leave the call" onClick={() => void leave()}>
         <Icon name="leave" /><span className="hu-ctrl-label" aria-hidden="true">Leave</span>
       </button>

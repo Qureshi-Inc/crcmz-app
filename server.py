@@ -6630,6 +6630,50 @@ async def _livekit_people(room: str) -> dict[str, str]:
     return {str(p.get("identity") or ""): str(p.get("name") or "") for p in r.json().get("participants") or []}
 
 
+async def _livekit_list_rooms() -> list[dict]:
+    """List all active LiveKit rooms with participant counts (admin token, no room filter)."""
+    import jwt as _pyjwt
+    now = int(_time.time())
+    tok = _pyjwt.encode({"iss": LIVEKIT_API_KEY, "nbf": now, "exp": now + 60,
+                         "video": {"roomList": True}}, LIVEKIT_API_SECRET, algorithm="HS256")
+    import httpx as _hx
+    base = LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://").rstrip("/")
+    async with _hx.AsyncClient(timeout=8) as c:
+        r = await c.post(f"{base}/twirp/livekit.RoomService/ListRooms", json={},
+                         headers={"Authorization": f"Bearer {tok}"})
+    if r.status_code != 200:
+        return []
+    return list(r.json().get("rooms") or [])
+
+
+@app.get("/api/sessions/active")
+async def sessions_active(request: Request):
+    """Active sessions: live Huddle rooms and Watch Parties from LiveKit.
+    Returns [{type, name, participant_count, join_url}].
+    Open to signed-in users (401 if not); empty list when LiveKit is down."""
+    if not _get_session(request):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        return JSONResponse({"sessions": []}, headers={"Cache-Control": "no-store"})
+    try:
+        rooms = await _livekit_list_rooms()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"sessions": []}, headers={"Cache-Control": "no-store"})
+    sessions = []
+    for r in rooms:
+        name = str(r.get("name") or "")
+        count = int(r.get("numParticipants") or 0)
+        if not name or count == 0:
+            continue
+        if name.startswith("watch-"):
+            room_id = name[len("watch-"):]
+            sessions.append({"type": "watch", "name": room_id, "participant_count": count, "join_url": "/app/watch/party"})
+        else:
+            sessions.append({"type": "huddle", "name": name, "participant_count": count,
+                              "join_url": f"/app/huddle?room={name}"})
+    return JSONResponse({"sessions": sessions}, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/huddle/live")
 async def huddle_live(request: Request, room: str = "crcmz"):
     """Are you still in this Huddle? The phone apps run the call natively, so it outlives a

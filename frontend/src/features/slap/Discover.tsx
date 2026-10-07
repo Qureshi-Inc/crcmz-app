@@ -24,6 +24,15 @@ type Recent = { items: { title: string; artist: string; username: string }[] }
 
 const key = (title: string, artist: string) => `${title}|${artist}`.toLowerCase().replace(/\s+/g, ' ')
 
+// ── Category heuristics ──────────────────────────────────────────────────────
+const DESI_GENRES = ['bollywood', 'desi', 'indian', 'hindi', 'urdu', 'punjabi', 'ghazal', 'qawwali', 'bhangra', 'filmi', 'hindustani', 'carnatic', 'classical indian']
+type Category = 'all' | 'american' | 'desi'
+function trackCategory(t: Track): 'american' | 'desi' {
+  const g = t.genres.map((x) => x.toLowerCase())
+  if (g.some((x) => DESI_GENRES.some((k) => x.includes(k)))) return 'desi'
+  return 'american'
+}
+
 function play(list: Track[], i = 0) {
   if (!list.length) return
   // In a room, tapping shares the song rather than replacing everyone's music.
@@ -33,15 +42,42 @@ function play(list: Track[], i = 0) {
 
 export function Discover({ isAdmin }: { isAdmin: boolean }) {
   const lib = useLibrary()
-  const byId = useMemo(() => new Map((lib.data?.tracks ?? []).map((t) => [t.id, t])), [lib.data])
+  const [category, setCategory] = useState<Category>('all')
+  const libTracks = lib.data?.tracks
+  const filteredTracks = useMemo(
+    () => {
+      const all = libTracks ?? []
+      return category === 'all' ? all : all.filter((t) => trackCategory(t) === category)
+    },
+    [libTracks, category],
+  )
+  const byId = useMemo(() => new Map(filteredTracks.map((t) => [t.id, t])), [filteredTracks])
   const pick = useCallback((ids: string[]) => ids.map((i) => byId.get(i)).filter((t): t is Track => !!t), [byId])
 
   return (
     <div className="discover">
+      <CategoryPills value={category} onChange={setCategory} />
       <MixHero pick={pick} loading={lib.isPending} />
       <NewFinds isAdmin={isAdmin} byId={byId} />
-      <RecentShelf tracks={lib.data?.tracks ?? []} loading={lib.isPending} />
+      <RecentShelf tracks={filteredTracks} loading={lib.isPending} />
       <Charts pick={pick} />
+    </div>
+  )
+}
+
+function CategoryPills({ value, onChange }: { value: Category; onChange: (c: Category) => void }) {
+  return (
+    <div className="disc-categories" role="group" aria-label="Filter by category">
+      {(['all', 'american', 'desi'] as const).map((c) => (
+        <button
+          key={c} type="button"
+          className={`pill${value === c ? ' pill-active' : ''}`}
+          aria-pressed={value === c}
+          onClick={() => onChange(c)}
+        >
+          {c === 'all' ? 'All' : c === 'american' ? 'American' : 'Desi'}
+        </button>
+      ))}
     </div>
   )
 }

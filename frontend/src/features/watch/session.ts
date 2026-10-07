@@ -1048,6 +1048,17 @@ document.addEventListener('visibilitychange', () => {
   if (!state.active) return
   log('visibility', { v: document.visibilityState }, 'debug')
   if (document.visibilityState === 'hidden') { if (wasPlaying) postHistory(); flushLog() }
+  if (document.visibilityState === 'visible') {
+    // Auto-reconnect when the app returns to foreground and the socket died while backgrounded.
+    const s = state.status
+    if (s === 'failed' || s === 'reconnecting' ||
+        (s !== 'idle' && s !== 'signin' && s !== 'forbidden' && s !== 'kicked' && !sock?.connected)) {
+      log('visibility.reconnect', { status: s })
+      tries = 0
+      window.clearTimeout(retryT)
+      void connect()
+    }
+  }
 })
 window.addEventListener('online', () => { if (state.active) log('net.online') })
 window.addEventListener('offline', () => { if (state.active) log('net.offline', undefined, 'warn') })

@@ -2900,3 +2900,33 @@ html[data-native-shell] .tabbar { display: none; }
 .share-what { overflow-wrap: anywhere; }
 .share-choices { display: grid; gap: var(--space-2); width: 100%; }
 .notes-delete { color: #ff8a8a; }
+
+/* ── Active-session banner ──────────────────────────────────────────────────── */
+.session-banner {
+  display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center;
+}
+.session-chip {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-3); border-radius: 999px;
+  background: var(--sheet); border: 1px solid var(--border-control);
+  font-size: var(--text-sm); font-weight: 600; color: var(--text); text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+@media (hover: hover) { .session-chip:hover { background: rgba(34, 230, 255, .1); border-color: var(--cyan); } }
+.session-chip .nav-icon { width: 16px; height: 16px; flex: none; color: var(--cyan-text); }
+.session-chip-label { display: flex; flex-direction: column; line-height: 1.15; }
+.session-chip-type { font-size: var(--text-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--interactive-text); }
+.session-chip-name { font-size: var(--text-sm); color: var(--text); }
+.session-chip-count { font-size: var(--text-xs); font-weight: 700; padding: 0 var(--space-1); min-width: 20px; text-align: center;
+  background: rgba(34, 230, 255, .15); border-radius: 999px; color: var(--cyan-text); margin-left: var(--space-1); }
+
+/* ── Slap category pills ────────────────────────────────────────────────────── */
+.disc-categories { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+.pill {
+  padding: var(--space-1) var(--space-3); border-radius: 999px;
+  background: var(--sheet); border: 1px solid var(--border-control);
+  font-size: var(--text-sm); font-weight: 600; color: var(--text-dim); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+@media (hover: hover) { .pill:hover { background: rgba(34, 230, 255, .08); color: var(--text); } }
+.pill-active { background: rgba(34, 230, 255, .15); border-color: var(--cyan); color: var(--cyan-text); }
