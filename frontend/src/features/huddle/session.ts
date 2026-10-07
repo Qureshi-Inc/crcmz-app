@@ -138,7 +138,7 @@ let state: HuddleState = {
   hand: false, hands: [], reactions: [], autoTranscribe: readAuto(),
   musicVolume: 1, callVolume: 1,
 }
-function readAuto(): boolean { try { return localStorage.getItem('crcmz.huddle.transcribe') === '1' } catch { return false } }
+function readAuto(): boolean { try { return localStorage.getItem('crcmz.huddle.transcribe') !== '0' } catch { return true } }
 export function setAutoTranscribe(on: boolean) {
   try { localStorage.setItem('crcmz.huddle.transcribe', on ? '1' : '0') } catch { /* */ }
   set({ autoTranscribe: on })
