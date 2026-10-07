@@ -22,6 +22,7 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
     /// the user switches apps. The native Huddle/Watch call manages its own session;
     /// this only covers the pure-web party stream while no native call is running.
     private var watchPartyAudioActive = false
+    private var resignObserver: NSObjectProtocol?
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -92,6 +93,29 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
             self?.webView.evaluateJavaScript("window.__crcmzCallEnded && window.__crcmzCallEnded('\(kind.rawValue)')")
         }
         webView.load(URLRequest(url: URL(string: Self.origin + "/app?crcmz_app=ios")!))
+
+        // Auto-PiP: when the user presses Home / switches apps while a Watch Party
+        // video is playing, ask the <video> element to enter Picture-in-Picture.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.watchPartyAudioActive else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.webView.evaluateJavaScript("""
+                    (function(){
+                      var v = document.querySelector('video');
+                      if (v && !v.paused && document.pictureInPictureEnabled)
+                        v.requestPictureInPicture().catch(function(){});
+                    })();
+                """)
+            }
+        }
+    }
+
+    deinit {
+        if let obs = resignObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -182,6 +206,20 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
         if onWatch {
             try? s.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
             try? s.setActive(true)
+            // Inject a visibility-change listener so the <video> requests PiP whenever
+            // the document is hidden (covers tab-switching as well as backgrounding).
+            // The __crcmzPipHooked guard prevents re-injection on the same page load.
+            webView.evaluateJavaScript("""
+                if (!window.__crcmzPipHooked) {
+                  window.__crcmzPipHooked = true;
+                  document.addEventListener('visibilitychange', function() {
+                    if (!document.hidden) return;
+                    var v = document.querySelector('video');
+                    if (v && !v.paused && document.pictureInPictureEnabled)
+                      v.requestPictureInPicture().catch(function(){});
+                  });
+                }
+            """)
         }
         // On navigate away the Slap player (NativeAudio) will re-configure as needed;
         // we don't deactivate here to avoid cutting off any media that's still playing.
