@@ -110,8 +110,10 @@ final class NativeCall: ObservableObject {
             aiBusy = m["busy"] as? Bool ?? false
         case "volume":
             guard self.kind == kind, let level = m["level"] as? Double, let room else { return }
-            let vol = Float(max(0, min(1, level)))
-            room.remoteParticipants.values.forEach { $0.audioTracks.values.forEach { $0.volume = Double(vol) } }
+            let vol = max(0, min(1, level)) * 10.0
+            room.remoteParticipants.values.forEach { p in
+                p.audioTracks.forEach { pub in (pub.track as? RemoteAudioTrack)?.volume = vol }
+            }
         default: break
         }
     }
