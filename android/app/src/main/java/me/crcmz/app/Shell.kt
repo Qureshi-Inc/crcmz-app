@@ -84,6 +84,7 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
             } else bar.removeBadge(i)
         }
         val active = m.optString("active").takeIf { !m.isNull("active") }
+        app.onTabChanged(active ?: "")
         val sel = tabs.indexOfFirst { it.id == active }.takeIf { it >= 0 }
             ?: if (more.any { it.id == active }) MORE else null
         // A bottom bar always has one tab lit; a page outside the bar (Notifications…) lights More.

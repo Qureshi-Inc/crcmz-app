@@ -72,6 +72,7 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var calls: CallOverlay
     private var loaded = false
     private var pendingUrl: String? = null
+    private var watchPartyActive = false
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingPermission: PermissionRequest? = null
     private var fullscreen: View? = null
@@ -497,33 +498,55 @@ class LauncherActivity : AppCompatActivity() {
         web.loadUrl(start.build().toString())
     }
 
-    // MARK: Picture in picture (a call on screen when you leave the app)
+    // MARK: Picture in picture (a call or Watch Party on screen when you leave the app)
+
+    /** Called by Shell when the active tab changes: drives Watch Party PiP eligibility. */
+    fun onTabChanged(tabId: String) {
+        watchPartyActive = tabId == "watch"
+        updatePip()
+    }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT in 26..30 && NativeCall.wantsPip()) enterPip()
+        val inCall = NativeCall.wantsPip()
+        val inWatch = watchPartyActive
+        if (Build.VERSION.SDK_INT in 26..30 && (inCall || inWatch)) {
+            enterPip(landscape = inWatch && !inCall)
+        }
     }
 
-    fun pipParams(): PictureInPictureParams? {
+    fun pipParams(landscape: Boolean = false): PictureInPictureParams? {
         if (Build.VERSION.SDK_INT < 26) return null
-        val b = PictureInPictureParams.Builder().setAspectRatio(Rational(9, 16))
-        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(NativeCall.wantsPip()).setSeamlessResizeEnabled(true)
+        val ratio = if (landscape) Rational(16, 9) else Rational(9, 16)
+        val b = PictureInPictureParams.Builder().setAspectRatio(ratio)
+        if (Build.VERSION.SDK_INT >= 31) {
+            val wantsPip = NativeCall.wantsPip() || watchPartyActive
+            b.setAutoEnterEnabled(wantsPip).setSeamlessResizeEnabled(true)
+        }
         return b.build()
     }
 
     /** Called when the call starts, stops or changes size: Android 12+ floats it by itself. */
     fun updatePip() {
-        if (Build.VERSION.SDK_INT >= 26) pipParams()?.let { runCatching { setPictureInPictureParams(it) } }
+        if (Build.VERSION.SDK_INT >= 26)
+            pipParams(landscape = watchPartyActive && !NativeCall.wantsPip())
+                ?.let { runCatching { setPictureInPictureParams(it) } }
     }
 
-    fun enterPip() {
-        if (Build.VERSION.SDK_INT >= 26) pipParams()?.let { runCatching { enterPictureInPictureMode(it) } }
+    fun enterPip(landscape: Boolean = false) {
+        if (Build.VERSION.SDK_INT >= 26) pipParams(landscape)?.let { runCatching { enterPictureInPictureMode(it) } }
     }
 
     override fun onPictureInPictureModeChanged(inPip: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(inPip, newConfig)
-        content.visibility = if (inPip) View.INVISIBLE else View.VISIBLE
-        calls.pip(inPip)
+        if (watchPartyActive && !NativeCall.wantsPip()) {
+            // Watch Party PiP: keep the WebView visible so the video plays in the PiP window.
+            content.visibility = View.VISIBLE
+        } else {
+            // Huddle call PiP: hide content — the native call overlay fills the window.
+            content.visibility = if (inPip) View.INVISIBLE else View.VISIBLE
+            calls.pip(inPip)
+        }
     }
 
     override fun onDestroy() {
