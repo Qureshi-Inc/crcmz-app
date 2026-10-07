@@ -3,6 +3,7 @@ package me.crcmz.app
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.webkit.CookieManager
 import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
@@ -11,10 +12,14 @@ import io.livekit.android.room.participant.Participant
 import io.livekit.android.room.track.LocalVideoTrack
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * Huddle and the Watch Party's camera call, natively (LiveKit), so they keep going with
@@ -87,6 +92,51 @@ object NativeCall {
         if (svc != lastService) { lastService = svc; CallService.sync() }
     }
 
+    // MARK: Auto-join from ring-accept (before the page loads)
+
+    /**
+     * Called by [LauncherActivity] immediately after the user accepts a Huddle ring.
+     * Fetches a LiveKit token using the persisted session cookie and connects to the room
+     * before the web page has a chance to load, so the call screen appears instantly.
+     *
+     * Works even when the app was killed: Android's [CookieManager] persists cookies across
+     * process restarts, so the session cookie is available immediately.
+     */
+    fun autoJoin(app: LauncherActivity, room: String) {
+        if (kind != null) return  // already in a call — the page will see the live screen
+        val cookies = CookieManager.getInstance().getCookie("https://app.crcmz.me")
+        if (cookies.isNullOrEmpty()) return  // no session yet; fall back to the normal page flow
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val encoded = android.net.Uri.encode(room)
+                    val conn = URL("https://app.crcmz.me/api/huddle/join_token?room=$encoded")
+                        .openConnection() as HttpURLConnection
+                    conn.setRequestProperty("Cookie", cookies)
+                    conn.setRequestProperty("Accept", "application/json")
+                    conn.connectTimeout = 8_000
+                    conn.readTimeout = 8_000
+                    try {
+                        if (conn.responseCode != 200) return@withContext null
+                        val body = JSONObject(conn.inputStream.bufferedReader().readText())
+                        val t = body.optString("token").takeIf { it.isNotEmpty() } ?: return@withContext null
+                        val u = body.optString("url").takeIf { it.isNotEmpty() } ?: return@withContext null
+                        Pair(t, u)
+                    } finally {
+                        conn.disconnect()
+                    }
+                } ?: return@launch
+                // Check again: the page might have sent a start while we were fetching.
+                if (kind != null) return@launch
+                val (token, wsUrl) = result
+                start(app, Kind.HUDDLE, wsUrl, token, "Huddle",
+                    publish = true, camera = false, mic = true)
+            } catch (t: Throwable) {
+                android.util.Log.w("crcmz", "auto-join: token fetch failed", t)
+            }
+        }
+    }
+
     // MARK: From the page
 
     fun handle(app: LauncherActivity, m: JSONObject) {
@@ -95,6 +145,13 @@ object NativeCall {
             "start" -> {
                 val url = m.optString("url").takeIf { it.isNotEmpty() } ?: return
                 val token = m.optString("token").takeIf { it.isNotEmpty() } ?: return
+                // If we already auto-joined this call kind (from ring-accept), don't
+                // reconnect: just make sure the native overlay is visible.
+                if (kind == k) {
+                    mode = if (k == Kind.HUDDLE) Mode.FULL else Mode.PANEL
+                    changed()
+                    return
+                }
                 start(app, k, url, token, m.optString("title", "CRCMZ"), m.optBoolean("publish"),
                     m.optBoolean("camera"), m.optBoolean("mic"))
             }

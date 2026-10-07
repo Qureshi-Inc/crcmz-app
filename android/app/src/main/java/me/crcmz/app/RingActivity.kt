@@ -51,12 +51,17 @@ class RingActivity : Activity() {
     private fun join(url: String) {
         Ringer.cancel(this, tag)
         val open = {
-            startActivity(
-                Intent(this, LauncherActivity::class.java)
-                    .setAction(Intent.ACTION_VIEW)
-                    .setData(Uri.parse(url)) // already checked by Ringer.appUri
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
+            val parsed = Uri.parse(url)
+            // For Huddle rings the URL is /app/huddle?room=<name>. Pass the room name so
+            // LauncherActivity can tell NativeCall to connect before the page loads.
+            val autoJoinRoom = if (parsed.path.orEmpty().startsWith("/app/huddle"))
+                parsed.getQueryParameter("room") else null
+            val intent = Intent(this, LauncherActivity::class.java)
+                .setAction(Intent.ACTION_VIEW)
+                .setData(parsed) // already checked by Ringer.appUri
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (autoJoinRoom != null) intent.putExtra(LauncherActivity.EXTRA_AUTO_JOIN_ROOM, autoJoinRoom)
+            startActivity(intent)
             finish()
         }
         val km = getSystemService(KeyguardManager::class.java)

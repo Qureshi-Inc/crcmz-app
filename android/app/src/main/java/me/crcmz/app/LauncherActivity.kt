@@ -213,6 +213,8 @@ class LauncherActivity : AppCompatActivity() {
         })
 
         pendingUrl = target(intent)
+        // Ring-accept: join the LiveKit room immediately, before the page loads.
+        intent.getStringExtra(EXTRA_AUTO_JOIN_ROOM)?.let { room -> NativeCall.autoJoin(this, room) }
         startUp()
     }
 
@@ -374,6 +376,8 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // Ring-accept while app is already running: join the room before processing the URL.
+        intent.getStringExtra(EXTRA_AUTO_JOIN_ROOM)?.let { room -> NativeCall.autoJoin(this, room) }
         val url = target(intent) ?: return
         if (!loaded) { pendingUrl = url; return }
         val u = Uri.parse(url)
@@ -538,6 +542,13 @@ class LauncherActivity : AppCompatActivity() {
         /** The running app, for the call and music services to talk to the page. */
         var current: LauncherActivity? = null
             private set
+
+        /**
+         * Intent extra carrying a Huddle room name to auto-join on ring-accept.
+         * Set by [RingActivity] when the user taps Accept; consumed once by [onCreate] /
+         * [onNewIntent] to trigger [NativeCall.autoJoin] before the page loads.
+         */
+        const val EXTRA_AUTO_JOIN_ROOM = "auto_join_room"
 
         /** window.webkit.messageHandlers.* as on iOS, forwarded to crcmzBridge. */
         private val BRIDGE_JS = """
