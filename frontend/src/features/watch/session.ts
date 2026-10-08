@@ -12,6 +12,7 @@ import { useSyncExternalStore } from 'react'
 import { toast } from '../../components/toast'
 import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError, request } from '../../lib/http'
+import { startActivity, stopActivity } from '../../lib/activity'
 import { readLocal, writeLocal } from '../../lib/media'
 import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
@@ -659,6 +660,7 @@ function bind(s: Sock) {
     tries = 0
     awaitHost = true
     set({ status: 'live', error: '' })
+    startActivity('watch')
     void connectRoom()   // listen to the party's call (cameras of whoever's in it)
     s.emit('watch:presence:get')
     s.emit('CMD:askHost')
@@ -759,6 +761,7 @@ export function leave() {
   postHistory()
   endCall()
   set({ active: false })
+  stopActivity('watch')
   _stopIntervals()
   disconnectRoom()
   window.clearTimeout(retryT)

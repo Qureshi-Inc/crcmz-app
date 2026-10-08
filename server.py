@@ -6671,6 +6671,12 @@ async def sessions_active(request: Request):
         else:
             sessions.append({"type": "huddle", "name": name, "participant_count": count,
                               "join_url": f"/app/huddle?room={name}"})
+    # Add the Slap Listen Together room if active.
+    together = _slap.together_status()
+    if together.get("active") and together.get("listeners"):
+        listeners = together["listeners"]
+        sessions.append({"type": "slap", "name": ", ".join(listeners[:2]) + (" +more" if len(listeners) > 2 else ""),
+                          "participant_count": len(listeners), "join_url": "/app/slap?join=together"})
     return JSONResponse({"sessions": sessions}, headers={"Cache-Control": "no-store"})
 
 
@@ -7582,6 +7588,40 @@ import reels as _reels
 app.include_router(_reels.build_router(_get_session, _is_iam_admin))
 import slap as _slap
 app.include_router(_slap.build_router(_get_session, _is_iam_admin))
+import activity as _activity
+
+
+@app.get("/api/activity", include_in_schema=False)
+def activity_get(request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    return JSONResponse({"sessions": _activity.active()})
+
+
+@app.post("/api/activity/ping", include_in_schema=False)
+async def activity_ping(request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    body = await request.json()
+    kind = body.get("type", "")
+    if kind not in ("huddle", "watch", "together", "slap"):
+        raise HTTPException(400, "unknown type")
+    name = session.get("name") or session.get("sub", "")
+    _activity.ping(session["sub"], name, kind, body.get("room", ""))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/activity/clear", include_in_schema=False)
+async def activity_clear(request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    _activity.clear(session["sub"])
+    return JSONResponse({"ok": True})
+
+
 import movies as _movies
 app.include_router(_movies.build_router(_get_session, _is_iam_admin))
 
@@ -9214,6 +9254,44 @@ def app_pwa_icon(name: str):
         return Response(status_code=404)
     return Response(target.read_bytes(), media_type="image/png",
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/share/art/{iid}", include_in_schema=False)
+async def share_art(iid: str, request: Request, size: int = 300):
+    """Public album art proxy — OG scrapers use this for song share previews."""
+    import re as _re
+    if not _re.fullmatch(r"[0-9a-f]{32}", iid):
+        return Response(status_code=404)
+    return await _slap.art_stream(iid, request, size)
+
+
+@app.get("/share/song/{track_id}", include_in_schema=False)
+async def share_song(track_id: str):
+    """OG share preview page — serves rich meta tags then redirects to the SPA."""
+    import re as _re
+    import html as _html
+    if not _re.fullmatch(r"[0-9a-f]{32}", track_id):
+        return RedirectResponse("/app/slap", status_code=302)
+    meta = await _slap.track_meta(track_id) if _slap.configured() else None
+    t_title = _html.escape(f"{meta['title']} · {meta['artist']}") if meta and meta["title"] else "Slap"
+    t_desc = _html.escape(f"from {meta['album']}") if meta and meta["album"] else "Listen on Slap"
+    img = f"https://app.crcmz.me/share/art/{meta['art']}?size=600" if meta and meta["art"] else "https://app.crcmz.me/crcmz-logo.png"
+    dest = f"/app/slap?song={track_id}"
+    page = f"""<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<title>{t_title} — Slap</title>
+<meta property="og:type" content="music.song">
+<meta property="og:title" content="{t_title}">
+<meta property="og:description" content="{t_desc}">
+<meta property="og:image" content="{img}">
+<meta property="og:url" content="https://app.crcmz.me/share/song/{track_id}">
+<meta name="twitter:card" content="summary_large_image">
+<meta http-equiv="refresh" content="0;url={dest}">
+</head><body>
+<script>location.replace({repr(dest)})</script>
+</body></html>"""
+    return HTMLResponse(page)
 
 
 @app.get("/app", include_in_schema=False)

@@ -303,9 +303,9 @@ function CallView({ s }: { s: HuddleState }) {
             </span>
           )}
           <span className="hu-topbar-spacer" />
-          {canPopOut(s) && (
+          {canPopOut(s) && desktop && (
             <button type="button" className="icon-btn" disabled={stale} aria-label="Pop out: keep the call in a floating window"
-              title="Pop out" onClick={() => { void popOut().then((ok) => { if (!ok) toast("This phone won't pop the call out right now", 'warning') }) }}>
+              title="Pop out" onClick={() => { void popOut().then((ok) => { if (!ok) toast("Pop out is not available right now", 'warning') }) }}>
               <Icon name="expand" />
             </button>
           )}

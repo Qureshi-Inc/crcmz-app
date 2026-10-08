@@ -3,6 +3,7 @@
 // and Stats (the Slaptastic dashboard).
 import { useEffect, useRef } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
+import { request } from '../../lib/http'
 import * as Tabs from '@radix-ui/react-tabs'
 import type { ShellContext } from '../../app/Shell'
 import { useTitle } from '../../app/title'
@@ -13,7 +14,7 @@ import { Discover } from './Discover'
 import { Listen } from './Listen'
 import { Stats } from './Stats'
 import { Together } from './Together'
-import { playList, usePlayer } from './player'
+import { joinTogether, playList, usePlayer } from './player'
 import { HelpLink } from '../../components/HelpLink'
 
 type Tab = 'discover' | 'listen' | 'together' | 'stats'
@@ -36,6 +37,19 @@ export function SlapPage() {
   const first = thread.data?.comments[0]
   const focus = trackId ? (libTrack ?? (first ? { id: trackId, title: first.title, artist: first.artist, album: '' } : { id: trackId, title: '', artist: '', album: '' })) : null
   const closeFocus = () => setParams((p) => { const n = new URLSearchParams(p); n.delete('track'); return n }, { replace: true })
+
+  // ?join=together[&invite_name=<name>]: auto-join Together and optionally invite solo listener.
+  const joinOnce = useRef(false)
+  useEffect(() => {
+    if (!params.has('join') || joinOnce.current) return
+    joinOnce.current = true
+    if (params.get('join') === 'together') {
+      joinTogether()
+      const inviteName = params.get('invite_name')
+      if (inviteName) void request('/api/slap/invite', { body: { name: inviteName }, quiet401: true })
+    }
+    setParams((p) => { const n = new URLSearchParams(p); n.delete('join'); n.delete('invite_name'); return n }, { replace: true })
+  }, [params, setParams])
 
   // ?song=<id>: auto-play that track once when the library loads.
   const songId = /^[0-9a-z]{1,64}$/i.test(params.get('song') ?? '') ? params.get('song')! : null

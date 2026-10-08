@@ -128,7 +128,7 @@ export function Shell() {
 export type ShellContext = { isAdmin: boolean; adminKnown: boolean }
 
 // ── Active-session banner ────────────────────────────────────────────────────
-type ActiveSession = { type: 'huddle' | 'watch' | 'slap'; name: string; participant_count: number; join_url: string }
+type ActiveSession = { type: 'huddle' | 'watch' | 'slap'; name: string; participant_count: number; join_url: string; invite_name?: string }
 
 function useActiveSessions() {
   return useQuery({
@@ -140,27 +140,59 @@ function useActiveSessions() {
   })
 }
 
+function useActivitySessions() {
+  return useQuery({
+    queryKey: ['activity'],
+    queryFn: ({ signal }) => getJSON<{ sessions: { name: string; type: string; room: string }[] }>('/api/activity', signal),
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+    retry: false,
+  })
+}
+
 function SessionBanner() {
   const q = useActiveSessions()
-  const sessions = q.data?.sessions ?? []
+  const aq = useActivitySessions()
+  const navigate = useNavigate()
+
+  // Merge: server sessions (huddle/watch from LiveKit + together from slap)
+  const sessions: ActiveSession[] = q.data?.sessions ?? []
+
+  // Add solo slap listeners from activity (if no Together session already showing)
+  const hasTogether = sessions.some((s) => s.type === 'slap')
+  if (!hasTogether) {
+    const soloSlap = (aq.data?.sessions ?? []).filter((s) => s.type === 'slap')
+    for (const s of soloSlap) {
+      sessions.push({ type: 'slap', name: s.name, participant_count: 1, join_url: `/app/slap?join=together&invite_name=${encodeURIComponent(s.name)}`, invite_name: s.name })
+    }
+  }
+
   if (!sessions.length) return null
+
   return (
     <div className="session-banner" role="status" aria-label="Live sessions" style={{ marginBottom: 'var(--space-5)' }}>
-      {sessions.map((s) => (
-        <Link
-          key={`${s.type}-${s.name}`}
-          to={s.join_url}
-          className="session-chip"
-          aria-label={`Join ${s.type === 'huddle' ? 'Huddle' : 'Watch Party'}: ${s.name}, ${s.participant_count} ${s.participant_count === 1 ? 'person' : 'people'}`}
-        >
-          <Icon name={s.type === 'huddle' ? 'huddle' : s.type === 'watch' ? 'watch' : 'slap'} />
-          <span className="session-chip-label">
-            <span className="session-chip-type">{s.type === 'huddle' ? 'Huddle' : s.type === 'watch' ? 'Watch Party' : 'Slap'}</span>
-            <span className="session-chip-name">{s.name}</span>
-          </span>
-          <span className="session-chip-count">{s.participant_count}</span>
-        </Link>
-      ))}
+      {sessions.map((s) => {
+        const label = s.type === 'huddle' ? 'Huddle' : s.type === 'watch' ? 'Watch Party' : s.invite_name ? 'Listen together' : 'Slap'
+        const ariaLabel = s.type === 'slap' && s.invite_name
+          ? `Listen together with ${s.name}`
+          : `Join ${label}: ${s.name}, ${s.participant_count} ${s.participant_count === 1 ? 'person' : 'people'}`
+        return (
+          <Link
+            key={`${s.type}-${s.name}`}
+            to={s.join_url}
+            className="session-chip"
+            aria-label={ariaLabel}
+            onClick={s.invite_name ? () => { navigate(s.join_url) } : undefined}
+          >
+            <Icon name={s.type === 'huddle' ? 'huddle' : s.type === 'watch' ? 'watch' : 'slap'} />
+            <span className="session-chip-label">
+              <span className="session-chip-type">{label}</span>
+              <span className="session-chip-name">{s.name}</span>
+            </span>
+            <span className="session-chip-count">{s.participant_count}</span>
+          </Link>
+        )
+      })}
     </div>
   )
 }

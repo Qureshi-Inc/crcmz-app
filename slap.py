@@ -287,6 +287,47 @@ def _track(i: dict) -> dict:
     }
 
 
+async def track_meta(track_id: str) -> dict | None:
+    """Basic track info without a user context — for share previews."""
+    if not _ID.match(track_id):
+        return None
+    try:
+        i = _ok(await _jf("GET", f"/Items/{track_id}", params={"EnableImageTypes": "Primary"})) or {}
+        art = i["Id"] if (i.get("ImageTags") or {}).get("Primary") else (i.get("AlbumId") if i.get("AlbumPrimaryImageTag") else None)
+        return {"title": i.get("Name") or "", "artist": ", ".join(i.get("Artists") or []) or i.get("AlbumArtist") or "", "album": i.get("Album") or "", "art": art}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def art_stream(iid: str, request: "Request", size: int = 300) -> "StreamingResponse":
+    """Stream album art for a track/album id — used by the public share preview."""
+    size = 600 if size > 300 else 300 if size > 96 else 96
+    if not configured():
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(503, "library not configured")
+    headers = {**_jf_headers(), "Accept-Encoding": "identity"}
+    if rng := request.headers.get("range"):
+        headers["Range"] = rng
+    try:
+        up = await _client.send(_client.build_request("GET", f"/Items/{iid}/Images/Primary",
+                                                       params={"maxHeight": size, "maxWidth": size, "quality": 85},
+                                                       headers=headers), stream=True)
+    except httpx.HTTPError as e:
+        logger.warning("slap: art_stream %s failed: %s", iid, e)
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(502, "library unreachable")
+    if up.status_code >= 400:
+        await up.aclose()
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(404 if up.status_code == 404 else 502, "unavailable")
+    out = {k: v for k in _STREAM_HEADERS if (v := up.headers.get(k))}
+    out["Cache-Control"] = "public, max-age=86400"
+    from starlette.background import BackgroundTask
+    from starlette.responses import StreamingResponse
+    return StreamingResponse(up.aiter_raw(), status_code=up.status_code, headers=out,
+                             background=BackgroundTask(up.aclose))
+
+
 async def library_for(user_id: str, refresh: bool = False) -> list[dict]:
     key = f"lib:{user_id}"
     if not refresh and (hit := _cached(key, 45)) is not None:
@@ -1389,6 +1430,31 @@ def build_router(get_session, is_admin) -> APIRouter:
             tracks = [{k: t[k] for k in _QUEUE_FIELDS} for t in await track_rows(me, b.get("ids"))]
         ROOM.apply(op, b, tracks, me["name"])
         return ROOM.snapshot()
+
+    @router.post("/invite")
+    async def invite_together(request: Request):
+        """Invite someone to join the Listen Together room. Sends them a push notification."""
+        me = await caller(request)
+        b = await body_of(request)
+        target_name = _s(b.get("name"), 100)
+        if not target_name:
+            raise HTTPException(400, "name required")
+        all_people = crcmz_identity.people()
+        target = next(
+            (p for p in all_people if (p.get("display_name") or p.get("username") or "").casefold() == target_name.casefold()),
+            None,
+        )
+        if not target:
+            return {"ok": False, "reason": "not found"}
+        notifications.route(
+            "slap",
+            f"{me['name']} wants to listen together",
+            "Tap to join on Slap",
+            url="/app/slap?join=together",
+            only=[target["zitadel_id"]],
+            dms=False,
+        )
+        return {"ok": True}
 
     return router
 

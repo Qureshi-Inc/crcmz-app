@@ -18,6 +18,7 @@ import { nativeCalls, onNativeData, onNativeEnded, toNative } from '../../lib/na
 import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
 import { markSignedOut } from '../../lib/session'
+import { startActivity, stopActivity } from '../../lib/activity'
 import { loadScript } from '../../lib/watch'
 
 const LK_SRC = 'https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js'
@@ -295,6 +296,7 @@ export async function join({ camera = true }: { camera?: boolean } = {}) {
     await r.connect(t.url, t.token)
     set({ phase: 'live', room: t.room, layout: 'spotlight', pinned: '', speaker: r.localParticipant.identity, audioBlocked: r.canPlaybackAudio === false })
     _lastRoom = t.room
+    startActivity('huddle', t.room)
     void acquireWakeLock()
     try {
       await r.localParticipant.setMicrophoneEnabled(true, state.micId ? { deviceId: { exact: state.micId } } : undefined)
@@ -357,6 +359,7 @@ export async function leave() {
   stopTranscript(false)
   stopBlur()
   try { await r.disconnect() } catch { /* */ }
+  stopActivity('huddle')
   teardown()
   set({ phase: 'pre', error: '', errorText: '' })
   if (previewWanted) void startPreview()

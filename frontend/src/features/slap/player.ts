@@ -11,6 +11,7 @@ import { readLocal, writeLocal } from '../../lib/media'
 import * as lockScreen from '../../lib/mediaSession'
 import { nativeAudio, nativeAudioElement, nativeNowPlaying, onNativePlayingAtBoot, type Remote } from '../../lib/nativeAudio'
 import { artUrl, bumpStream, reportListen, streamUrl, together, type QueueItem, type Room, type TogetherOp, type Track } from '../../lib/slap'
+import { startActivity, stopActivity } from '../../lib/activity'
 
 export type Repeat = 'off' | 'all' | 'one'
 export type Link = 'off' | 'connecting' | 'live' | 'retrying'
@@ -459,6 +460,7 @@ export function joinTogether() {
   finishListen(false)
   loaded = null
   set({ mode: 'together', link: 'connecting', room: null, playing: false, blocked: false })
+  startActivity('together')
   open()
   window.clearInterval(driftTimer)
   driftTimer = window.setInterval(() => {
@@ -500,6 +502,7 @@ export function leaveTogether() {
   es = null
   backoff = 0
   if (state.mode !== 'together') return
+  stopActivity('together')
   unload()
   set({ mode: 'solo', room: null, link: 'off', playing: false, blocked: false })
   const item = current()

@@ -249,7 +249,7 @@ export const approveFind = (id: string) => request<Find>('/api/slap/discover/app
 
 /** Share a song link. Uses native share sheet on mobile, clipboard fallback on desktop. */
 export function shareSong(t: { id: string; title: string; artist: string }) {
-  const url = `${window.location.origin}/app/slap?song=${encodeURIComponent(t.id)}`
+  const url = `${window.location.origin}/share/song/${encodeURIComponent(t.id)}`
   if (navigator.share) {
     void navigator.share({ title: `${t.title} · ${t.artist}`, url })
   } else {
