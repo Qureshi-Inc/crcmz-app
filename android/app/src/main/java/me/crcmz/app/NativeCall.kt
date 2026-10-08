@@ -3,6 +3,7 @@ package me.crcmz.app
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.view.WindowManager
 import android.webkit.CookieManager
 import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
@@ -240,6 +241,9 @@ object NativeCall {
             }
         }
         changed()
+        LauncherActivity.current?.runOnUiThread {
+            LauncherActivity.current?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     // MARK: Controls
@@ -423,6 +427,9 @@ object NativeCall {
         r?.disconnect()
         r?.release()
         changed()
+        LauncherActivity.current?.runOnUiThread {
+            LauncherActivity.current?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
         if (tellPage && k != null) onEnded?.invoke(k.key)
     }
 
