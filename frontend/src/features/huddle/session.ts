@@ -265,9 +265,13 @@ async function loadLk(): Promise<LkNs> {
 }
 
 // ── Join and leave ──────────────────────────────────────────────────────────
+let _lastRoom = ''   // tracks which room's transcript is in state.lines
+
 export async function join({ camera = true }: { camera?: boolean } = {}) {
   if (state.phase !== 'pre') return
   const wanted = state.room.trim() || 'crcmz'
+  // Clear transcript and AI chat only when joining a different room; same room = keep context.
+  if (wanted !== _lastRoom) set({ lines: [], aiLog: [] })
   set({ phase: 'joining', error: '', errorText: '', note: '' })
   stopTracks(previewStream)
   previewStream = null
@@ -281,6 +285,7 @@ export async function join({ camera = true }: { camera?: boolean } = {}) {
     room = r
     await r.connect(t.url, t.token)
     set({ phase: 'live', room: t.room, layout: 'spotlight', pinned: '', speaker: r.localParticipant.identity, audioBlocked: r.canPlaybackAudio === false })
+    _lastRoom = t.room
     try {
       await r.localParticipant.setMicrophoneEnabled(true, state.micId ? { deviceId: { exact: state.micId } } : undefined)
     } catch { set({ note: "Couldn't start your mic. Check your browser settings." }) }
@@ -315,6 +320,7 @@ async function joinNative(wanted: string, camera: boolean) {
     const t = await request<{ token: string; url: string; room: string }>('/api/huddle/token', { body: { room: wanted }, quiet401: true })
     muteOtherCalls('huddle')
     toNative({ type: 'start', kind: 'huddle', url: t.url, token: t.token, room: t.room, title: `Huddle · ${t.room}`, publish: true, camera, mic: true })
+    _lastRoom = t.room
     set({ phase: 'pre', nativeRoom: t.room })
     void catchUpTranscript(t.room)
     if (state.autoTranscribe) nativeTranscriptOn()
@@ -353,7 +359,7 @@ function teardown() {
   stopBlur()
   set({
     tiles: [], mic: false, cam: false, share: false, blur: false, note: '', pinned: '', speaker: '', audioBlocked: false,
-    aiOpen: false, aiBusy: false, aiLog: [], aiSignedOut: false, transcribing: false, recorders: [], lines: [],
+    aiOpen: false, aiBusy: false, aiSignedOut: false, transcribing: false, recorders: [],
     hand: false, hands: [], reactions: [],
   })
   remoteHands.clear()
