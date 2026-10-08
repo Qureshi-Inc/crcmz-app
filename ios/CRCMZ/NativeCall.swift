@@ -125,7 +125,8 @@ final class NativeCall: ObservableObject {
                 self.configureCallAudioSession()
             }
         }
-        // Re-assert the call audio session when the app returns to foreground.
+        // Re-assert the call audio session when the app returns to foreground; also
+        // re-assert the idle timer so the screen stays on if a call is in progress.
         becomeActiveObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification,
             object: nil, queue: nil) { [weak self] _ in
@@ -133,6 +134,7 @@ final class NativeCall: ObservableObject {
                 guard let self, self.isCallActive else { return }
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 self.configureCallAudioSession()
+                UIApplication.shared.isIdleTimerDisabled = self.isCallActive
             }
         }
     }
@@ -197,6 +199,8 @@ final class NativeCall: ObservableObject {
         // alive in the background (the `audio` background mode + this category is what
         // lets the call survive a PiP transition or the screen turning off).
         configureCallAudioSession()
+        // Keep the screen on during the call.
+        DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = true }
         let events = Events(owner: self)
         let room = Room(delegate: events)
         self.events = events
@@ -383,6 +387,8 @@ final class NativeCall: ObservableObject {
         mode = .hidden
         pip.stop()
         Task { await r?.disconnect() }
+        // Re-enable idle timer now that the call is over.
+        DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = false }
         // Restore default audio session (Slap player / Watch Party background video).
         restoreDefaultAudioSession()
         if tellPage, let k { onEnded?(k) }
