@@ -100,7 +100,7 @@ function Songs({ tracks, isAdmin, recent = false, empty = 'No tracks here yet.' 
   if (!tracks.length) return <div className="glass empty"><p className="empty-title">{empty}</p></div>
   return (
     <>
-      {recent && newest.length > 0 && (
+      {recent && sort === 'added' && newest.length > 0 && (
         <section aria-labelledby="recent-h">
           <h2 className="section-h2" id="recent-h">Recently added</h2>
           <ul className="shelf">
@@ -117,15 +117,14 @@ function Songs({ tracks, isAdmin, recent = false, empty = 'No tracks here yet.' 
         </section>
       )}
       <TrackList tracks={list} isAdmin={isAdmin} head={
-        <label className="sort-field">
-          <span className="meta">Sort</span>
-          <select className="input" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
-            <option value="added">Recently added</option>
-            <option value="title">Title</option>
-            <option value="artist">Artist</option>
-            <option value="plays">Most played</option>
-          </select>
-        </label>
+        <div className="chips sort-chips" role="group" aria-label="Sort by">
+          {(['added', 'title', 'artist', 'plays'] as const).map((s) => (
+            <button key={s} type="button" className="chip" aria-pressed={sort === s}
+              onClick={() => setSort(s)}>
+              {s === 'added' ? 'Recent' : s === 'title' ? 'Title' : s === 'artist' ? 'Artist' : 'Plays'}
+            </button>
+          ))}
+        </div>
       } />
     </>
   )
@@ -275,20 +274,20 @@ function Groups({ kind, tracks, onOpen }: { kind: 'albums' | 'artists' | 'genres
   if (!groups.length) return <div className="glass empty"><p className="empty-title">Nothing here yet.</p></div>
   return (
     <>
-      <ul className={kind === 'albums' ? 'album-grid' : 'glass rows'}>
+      <ul className={kind === 'genres' ? 'glass rows' : 'album-grid'}>
         {groups.slice(0, shown).map((g) => (
           <li key={g.key}>
-            {kind === 'albums' ? (
-              <button type="button" className="album-card" onClick={() => onOpen(`${prefix}:${g.key}`)}>
-                <Art id={g.art} size={300} className="slap-art album-art" />
-                <span className="shelf-title">{g.name}</span>
-                <span className="shelf-sub">{g.sub}</span>
-              </button>
-            ) : (
+            {kind === 'genres' ? (
               <button type="button" className="group-row" onClick={() => onOpen(`${prefix}:${g.key}`)}>
                 <Art id={g.art} />
                 <span className="track-text"><span className="track-title">{g.name}</span><span className="track-sub">{g.sub}</span></span>
                 <Icon name="right" />
+              </button>
+            ) : (
+              <button type="button" className="album-card" onClick={() => onOpen(`${prefix}:${g.key}`)}>
+                <Art id={g.art} size={300} className="slap-art album-art" />
+                <span className="shelf-title">{g.name}</span>
+                <span className="shelf-sub">{g.sub}</span>
               </button>
             )}
           </li>
@@ -377,16 +376,21 @@ function Playlists({ data, onOpen }: { data: Library; onOpen: (id: string) => vo
         <button type="button" className="btn btn-secondary" onClick={() => setCreating(true)}><Icon name="plus" />New playlist</button>
       </div>
       {data.playlists.length ? (
-        <ul className="glass rows">
+        <ul className="playlist-grid">
           {data.playlists.map((p) => (
             <li key={p.id}>
-              <button type="button" className="group-row" onClick={() => onOpen(p.id)}>
-                <Art id={p.art} />
-                <span className="track-text">
-                  <span className="track-title">{p.name}</span>
-                  <span className="track-sub">{p.count} track{p.count === 1 ? '' : 's'}{p.editable ? '' : ' · view only'}</span>
-                </span>
-                <Icon name="right" />
+              <button type="button" className="playlist-card" onClick={() => onOpen(p.id)}>
+                <div className="playlist-cover">
+                  {p.art
+                    ? <Art id={p.art} size={300} className="slap-art album-art" />
+                    : <div className="playlist-cover-grid">
+                        <span className="playlist-cover-sq" /><span className="playlist-cover-sq" />
+                        <span className="playlist-cover-sq" /><span className="playlist-cover-sq" />
+                      </div>
+                  }
+                </div>
+                <span className="shelf-title">{p.name}</span>
+                <span className="shelf-sub">{p.count} track{p.count === 1 ? '' : 's'}{p.editable ? '' : ' · view only'}</span>
               </button>
             </li>
           ))}
