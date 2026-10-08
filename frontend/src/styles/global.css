@@ -2428,12 +2428,14 @@ html[data-watchbar] .hu-controls { bottom: calc(var(--tabbar-stack) + var(--call
 
 /* AI helper: a side sheet that pushes the stage on desktop, a bottom sheet on phones. */
 .hu-ai-side { position: sticky; top: var(--space-6); padding: var(--space-3) var(--space-4) var(--space-4); max-height: calc(100dvh - 2 * var(--space-6)); display: flex; }
-.hu-ai-sheet { max-height: 80dvh; padding: 0 var(--gutter) var(--space-4); }
-.hu-ai { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; flex: 1; width: 100%; }
+/* Full height when keyboard is open: sheet fills 90% of whatever viewport the keyboard leaves */
+.hu-ai-sheet { height: 90dvh; padding: 0 var(--gutter) var(--space-4); display: flex; flex-direction: column; overflow: hidden; }
+.hu-ai { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; flex: 1; width: 100%; overflow: hidden; }
 .hu-ai .section-h2 { margin: 0; }
 .hu-ai-tools { display: flex; gap: var(--space-2); }
 .hu-ai-tools .btn { flex: 1; }
-.hu-ai-log { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; min-height: 120px; max-height: 44dvh; flex: 1; padding-right: 2px; }
+/* No max-height — let flex: 1 + min-height: 0 control scroll area so keyboard shrink works */
+.hu-ai-log { display: flex; flex-direction: column; gap: var(--space-2); overflow-y: auto; min-height: 0; flex: 1; padding-right: 2px; }
 .hu-ai-side .hu-ai-log { max-height: none; }
 .hu-ai-log > p { margin: 0; }
 .hu-ai-msg { display: flex; flex-direction: column; gap: var(--space-1); align-items: flex-start; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--sheet); white-space: pre-wrap; overflow-wrap: anywhere; max-width: 92%; }

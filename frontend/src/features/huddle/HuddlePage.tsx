@@ -536,7 +536,7 @@ function AiPanel({ s, titleId, sheet = false, inline = false }: { s: HuddleState
       )}
       <form className="comment-form" onSubmit={submit}>
         <label className="sr-only" htmlFor={`${titleId}-in`}>Ask the AI</label>
-        <input id={`${titleId}-in`} className="input" value={q} maxLength={1000} placeholder="Ask the AI" autoComplete="off" enterKeyHint="send" onChange={(e) => setQ(e.target.value)} />
+        <input id={`${titleId}-in`} className="input" value={q} maxLength={1000} placeholder="Ask the AI" autoComplete="off" enterKeyHint="send" onChange={(e) => setQ(e.target.value)} onFocus={(e) => e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest' })} />
         <button type="submit" className="btn btn-primary" disabled={!q.trim() || s.aiBusy} aria-label="Ask"><Icon name="send" /></button>
       </form>
     </div>

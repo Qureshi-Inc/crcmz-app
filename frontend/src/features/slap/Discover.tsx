@@ -51,13 +51,14 @@ export function Discover({ isAdmin }: { isAdmin: boolean }) {
     },
     [libTracks, category],
   )
-  const byId = useMemo(() => new Map(filteredTracks.map((t) => [t.id, t])), [filteredTracks])
+  // byId uses all tracks so the server weekly playlist can always resolve IDs
+  const byId = useMemo(() => new Map((libTracks ?? []).map((t) => [t.id, t])), [libTracks])
   const pick = useCallback((ids: string[]) => ids.map((i) => byId.get(i)).filter((t): t is Track => !!t), [byId])
 
   return (
     <div className="discover">
       <CategoryPills value={category} onChange={setCategory} />
-      <MixHero pick={pick} loading={lib.isPending} />
+      <MixHero allTracks={libTracks ?? []} pick={pick} category={category} loading={lib.isPending} />
       <AiPlaylists tracks={libTracks ?? []} category={category} />
       <NewFinds isAdmin={isAdmin} byId={byId} />
       <RecentShelf tracks={filteredTracks} loading={lib.isPending} />
@@ -84,10 +85,38 @@ function CategoryPills({ value, onChange }: { value: Category; onChange: (c: Cat
 }
 
 // ── The AI mix (library songs) — hero card ──────────────────────────────────
-function MixHero({ pick, loading }: { pick: (ids: string[]) => Track[]; loading: boolean }) {
+// Stable week-seeded shuffle so the category mix stays consistent within a week
+const _wh = (s: string, seed: number) => [...s].reduce((a, c) => (Math.imul(a, 31) + c.charCodeAt(0) + seed) | 0, 0)
+function weekShuffle<T extends { id: string }>(arr: T[]): T[] {
+  const week = Math.floor(Date.now() / (7 * 24 * 3600 * 1000))
+  return [...arr].sort((a, b) => _wh(a.id, week) - _wh(b.id, week))
+}
+
+function MixHero({ allTracks, pick, category, loading }: { allTracks: Track[]; pick: (ids: string[]) => Track[]; category: Category; loading: boolean }) {
   const mix = useSocial<Mix>('dashboard/ai/weekly-playlist')
-  const tracks = useMemo(() => pick((mix.data?.tracks ?? []).map((t) => t.track_id)), [mix.data, pick])
-  if (mix.isError) return null
+
+  // For desi/american: generate a stable weekly shuffle from matching library tracks
+  const categoryTracks = useMemo(() => {
+    if (category === 'all') return null
+    const pool = allTracks.filter((t) => trackCategory(t) === category)
+    return weekShuffle(pool).slice(0, 25)
+  }, [allTracks, category])
+
+  const tracks = useMemo(
+    () => categoryTracks ?? pick((mix.data?.tracks ?? []).map((t) => t.track_id)),
+    [mix.data, pick, categoryTracks],
+  )
+  if (mix.isError && category === 'all') return null
+
+  const kicker = category === 'desi'
+    ? 'AI mix of the week · Desi picks'
+    : category === 'american'
+      ? 'AI mix of the week · American picks'
+      : 'AI mix of the week · from the library'
+  const title = category === 'desi' ? 'Desi Mix'
+    : category === 'american' ? 'American Mix'
+    : (mix.data?.name ?? "Making this week’s mix…")
+  const desc = category === 'all' ? mix.data?.description : undefined
 
   // 2×2 art grid: first 4 tracks, pad with null placeholders
   const artTracks = tracks.slice(0, 4)
@@ -109,9 +138,9 @@ function MixHero({ pick, loading }: { pick: (ids: string[]) => Track[]; loading:
           )}
         </div>
         <div className="disc-hero-info">
-          <p className="disc-kicker">AI mix of the week · from the library</p>
-          <h2 className="disc-hero-h" id="disc-mix-h">{mix.data?.name ?? "Making this week’s mix…"}</h2>
-          {mix.data?.description && <p className="disc-hero-sub">{mix.data.description}</p>}
+          <p className="disc-kicker">{kicker}</p>
+          <h2 className="disc-hero-h" id="disc-mix-h">{title}</h2>
+          {desc && <p className="disc-hero-sub">{desc}</p>}
           <div className="disc-hero-acts">
             <button type="button" className="btn btn-primary" onClick={() => play(tracks)} disabled={!tracks.length}>
               <Icon name="play" />Play the mix
