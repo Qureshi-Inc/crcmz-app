@@ -1140,38 +1140,29 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 .disc-chart .card-head { align-items: flex-start; gap: var(--space-3); }
 .disc-chart .card-head .meta { margin: var(--space-1) 0 0; }
 .disc-count { flex: none; white-space: nowrap; }
-/* New finds: a compact list in 3 rows that you swipe sideways, a column at a time:
-   2 columns in view (6 songs) and the next peeking in, through all 20. Sideways so it
-   never fights the page's own scrolling (a box scrolling up and down inside a page that
-   does too is what made the phone apps jumpy). */
+/* New finds: visual grid — 2 cols mobile, 3 at 600 px, 4 at 900 px. */
 .find-grid {
-  --find-row: 56px; --find-gap: var(--space-2); --find-col-gap: var(--space-2);
-  list-style: none; margin: var(--space-3) calc(-1 * var(--gutter)) 0; padding: 2px var(--gutter);
-  display: grid; grid-auto-flow: column; grid-template-rows: repeat(3, var(--find-row));
-  grid-auto-columns: calc((100% - var(--find-col-gap)) / 2 - 10px);
-  gap: var(--find-gap) var(--find-col-gap);
-  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
-  scroll-snap-type: x mandatory; scroll-padding-inline: var(--gutter); scrollbar-width: none; touch-action: pan-x pan-y;
+  list-style: none; margin: var(--space-3) 0 0; padding: 0;
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-3);
 }
-.find-grid::-webkit-scrollbar { display: none; }
-@media (min-width: 900px) { .find-grid { grid-auto-columns: calc((100% - 2 * var(--find-col-gap)) / 3 - 10px); } }
+@media (min-width: 600px) { .find-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 900px) { .find-grid { grid-template-columns: repeat(4, 1fr); } }
 .find-grid:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-md); }
-.find-tile { scroll-snap-align: start; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.find-tile { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .find-art {
-  position: relative; flex: none; display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
-  border: 1px solid var(--border-control); border-radius: var(--radius-sm, 8px); overflow: hidden;
+  position: relative; display: block; width: 100%; aspect-ratio: 1; padding: 0;
+  border: 1px solid var(--border-control); border-radius: var(--radius-md); overflow: hidden;
   background: rgba(255, 255, 255, .06); color: var(--text-dim); cursor: pointer;
 }
-.find-art::after { content: ''; position: absolute; inset: -2px; }   /* 52px to tap, with the row's gap */
 .find-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.find-art > .nav-icon { width: 22px; height: 22px; opacity: .5; }
+.find-art > .nav-icon { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 30%; height: 30%; opacity: .5; }
 .find-art > .nav-icon svg { width: 100%; height: 100%; }
 .find-art:disabled { cursor: default; }
 .find-play { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(5, 3, 15, .28); }
-.find-play .nav-icon { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: rgba(5, 3, 15, .72); color: #fff; }
-.find-play .nav-icon svg { width: 12px; height: 12px; }
+.find-play .nav-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; }
+.find-play .nav-icon svg { width: 20px; height: 20px; }
 .find-art[aria-pressed="true"] { border-color: var(--interactive-text); box-shadow: 0 0 0 2px var(--interactive-text); }
-.find-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.25; }
+.find-text { display: flex; flex-direction: column; gap: 2px; padding: var(--space-1) 0; min-width: 0; }
 .find-tile .find-title { font-weight: 700; font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .find-tile .find-sub { font-size: var(--text-xs); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .find-for { font-size: var(--text-xs); font-weight: 600; color: var(--accent-text, var(--text-dim)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1183,9 +1174,9 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 .find-mark[data-tone="ok"] { color: var(--live-text); }
 @keyframes find-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .find-mark[data-tone="live"] svg { animation: none; } }
-/* A 44px tap target, drawn as a small round icon. */
+/* Download/approve action icon. */
 .find-get {
-  flex: none; width: 44px; height: 44px; margin: 0 -8px 0 -6px; display: grid; place-items: center;
+  flex: none; width: 36px; height: 36px; margin: 0; display: grid; place-items: center;
   border: 0; padding: 0; background: transparent; cursor: pointer; color: var(--c-btn-primary-text);
 }
 .find-get .nav-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--c-btn-primary-bg); }
@@ -1199,6 +1190,52 @@ textarea.input { padding: var(--space-2) var(--space-3); min-height: 96px; resiz
 .find-chip[data-tone="ok"] { border-color: var(--live-text); color: var(--live-text); }
 .find-chip[data-tone="warn"] { border-color: var(--gold-text); color: var(--gold-text); }
 .find-chip[data-tone="bad"] { border-color: var(--error); color: var(--error); }
+.find-tile-foot { display: flex; align-items: center; gap: var(--space-1); min-height: 36px; }
+
+/* ── Discover redesign: hero grid, AI playlists, chart art ─────────────────── */
+.disc-hero-grid {
+  display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-3);
+}
+@media (min-width: 600px) { .disc-hero-grid { flex-direction: row; align-items: center; gap: var(--space-4); } }
+.disc-hero-art {
+  display: grid; grid-template-columns: repeat(2, 90px); grid-template-rows: repeat(2, 90px);
+  gap: 4px; border-radius: var(--radius-md); overflow: hidden; flex-shrink: 0;
+}
+.disc-hero-art .slap-art { width: 90px; height: 90px; display: block; border-radius: 0; }
+.disc-hero-art .slap-art img { width: 100%; height: 100%; object-fit: cover; }
+.disc-hero-art .slap-art .nav-icon { width: 40px; height: 40px; opacity: .4; }
+.disc-hero-placeholder { width: 90px; height: 90px; background: rgba(255, 47, 214, .2); display: block; }
+.disc-hero-info { display: flex; flex-direction: column; gap: var(--space-2); flex: 1; min-width: 0; }
+.disc-hero-info .disc-hero-h { font-size: 1.25rem; font-weight: 700; margin: 0; }
+.disc-hero-info .disc-hero-sub { margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.disc-hero-info .disc-hero-acts { margin: 0; }
+.disc-playlists { margin-top: var(--space-5); }
+.disc-playlist-row {
+  display: flex; gap: var(--space-3); overflow-x: auto; padding-bottom: var(--space-2);
+  scrollbar-width: none; margin-top: var(--space-3);
+}
+.disc-playlist-row::-webkit-scrollbar { display: none; }
+.disc-playlist-card {
+  flex-shrink: 0; width: 160px; cursor: pointer; display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2); border-radius: var(--radius-md); border: 1px solid transparent;
+  background: transparent; color: var(--text); text-align: left;
+  transition: background var(--dur-micro, .1s) ease, border-color var(--dur-micro, .1s) ease;
+}
+@media (hover: hover) { .disc-playlist-card:hover { background: var(--glass); border-color: var(--glass-border); } }
+.disc-playlist-card:disabled { opacity: .5; cursor: default; }
+.disc-playlist-cover {
+  display: grid; grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr);
+  width: 100%; aspect-ratio: 1; border-radius: var(--radius-md); overflow: hidden;
+}
+.disc-playlist-cover .slap-art { display: block; width: 100%; height: 100%; border-radius: 0; }
+.disc-playlist-cover .slap-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.disc-playlist-cover .slap-art .nav-icon { width: 40%; height: 40%; opacity: .4; }
+.disc-playlist-placeholder { background: rgba(255, 47, 214, .2); aspect-ratio: 1; }
+.disc-playlist-name { font-weight: 700; font-size: 0.875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.disc-playlist-sub { font-size: 0.75rem; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-art { width: 32px; height: 32px; border-radius: var(--radius-sm); flex-shrink: 0; display: block; }
+.stat-art img { width: 32px; height: 32px; object-fit: cover; border-radius: var(--radius-sm); display: block; }
+.stat-art .nav-icon { width: 20px; height: 20px; opacity: .4; }
 
 /* Listen */
 .listen { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }

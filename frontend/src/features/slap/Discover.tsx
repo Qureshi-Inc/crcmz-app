@@ -58,6 +58,7 @@ export function Discover({ isAdmin }: { isAdmin: boolean }) {
     <div className="discover">
       <CategoryPills value={category} onChange={setCategory} />
       <MixHero pick={pick} loading={lib.isPending} />
+      <AiPlaylists tracks={libTracks ?? []} category={category} />
       <NewFinds isAdmin={isAdmin} byId={byId} />
       <RecentShelf tracks={filteredTracks} loading={lib.isPending} />
       <Charts pick={pick} />
@@ -82,40 +83,131 @@ function CategoryPills({ value, onChange }: { value: Category; onChange: (c: Cat
   )
 }
 
-// ── The AI mix (library songs) ──────────────────────────────────────────────
+// ── The AI mix (library songs) — hero card ──────────────────────────────────
 function MixHero({ pick, loading }: { pick: (ids: string[]) => Track[]; loading: boolean }) {
   const mix = useSocial<Mix>('dashboard/ai/weekly-playlist')
   const tracks = useMemo(() => pick((mix.data?.tracks ?? []).map((t) => t.track_id)), [mix.data, pick])
   if (mix.isError) return null
+
+  // 2×2 art grid: first 4 tracks, pad with null placeholders
+  const artTracks = tracks.slice(0, 4)
+  const artSlots: (Track | null)[] = [
+    ...artTracks,
+    ...Array.from({ length: Math.max(0, 4 - artTracks.length) }, (): null => null),
+  ]
+
   return (
     <section className="glass disc-hero" aria-labelledby="disc-mix-h">
-      <p className="disc-kicker">AI mix of the week · from the library</p>
-      <h2 className="disc-hero-h" id="disc-mix-h">{mix.data?.name ?? 'Making this week’s mix…'}</h2>
-      {mix.data?.description && <p className="disc-hero-sub">{mix.data.description}</p>}
-      <div className="disc-hero-acts">
-        <button type="button" className="btn btn-primary" onClick={() => play(tracks)} disabled={!tracks.length}>
-          <Icon name="play" />Play the mix
-        </button>
-        <span className="meta num">{tracks.length ? `${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'}` : loading || mix.isPending ? ' ' : 'Not in the library yet'}</span>
+      <div className="disc-hero-grid">
+        <div className="disc-hero-art" aria-hidden="true">
+          {artSlots.map((t, i) =>
+            t ? (
+              <Art key={t.id} id={t.art} size={96} className="slap-art" />
+            ) : (
+              <span key={`ph-${i}`} className="disc-hero-placeholder" />
+            )
+          )}
+        </div>
+        <div className="disc-hero-info">
+          <p className="disc-kicker">AI mix of the week · from the library</p>
+          <h2 className="disc-hero-h" id="disc-mix-h">{mix.data?.name ?? "Making this week’s mix…"}</h2>
+          {mix.data?.description && <p className="disc-hero-sub">{mix.data.description}</p>}
+          <div className="disc-hero-acts">
+            <button type="button" className="btn btn-primary" onClick={() => play(tracks)} disabled={!tracks.length}>
+              <Icon name="play" />Play the mix
+            </button>
+            <span className="meta num">
+              {tracks.length
+                ? `${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'}`
+                : loading || mix.isPending ? ' ' : 'Not in the library yet'}
+            </span>
+          </div>
+        </div>
       </div>
-      {tracks.length > 0 && <Shelf label="Songs in the mix" tracks={tracks} />}
     </section>
   )
 }
 
-function Shelf({ label, tracks, sub }: { label: string; tracks: Track[]; sub?: (t: Track) => string }) {
+// ── AI Playlists — horizontal scroll row ─────────────────────────────────────
+type AiPlaylist = { id: string; name: string; tracks: Track[] }
+
+function AiPlaylists({ tracks, category }: { tracks: Track[]; category: Category }) {
+  const playlists = useMemo<AiPlaylist[]>(() => {
+    if (!tracks.length) return []
+    // Shuffle once for american/desi mixes
+    const shuffled = [...tracks].sort(() => Math.random() - 0.5)
+    const american: AiPlaylist = {
+      id: 'american', name: 'American Mix',
+      tracks: shuffled.filter((t) => trackCategory(t) === 'american').slice(0, 30),
+    }
+    const desi: AiPlaylist = {
+      id: 'desi', name: 'Desi Mix',
+      tracks: shuffled.filter((t) => trackCategory(t) === 'desi').slice(0, 30),
+    }
+    const throwbacks: AiPlaylist = {
+      id: 'throwbacks', name: 'Throwbacks',
+      tracks: [...tracks]
+        .filter((t) => t.year != null && t.year <= 2010)
+        .sort((a, b) => b.plays - a.plays)
+        .slice(0, 20),
+    }
+    const fresh: AiPlaylist = {
+      id: 'fresh', name: 'Fresh Drops',
+      tracks: [...tracks].sort((a, b) => b.added.localeCompare(a.added)).slice(0, 20),
+    }
+    const loved: AiPlaylist = {
+      id: 'loved', name: 'Most Loved',
+      tracks: [...tracks].sort((a, b) => b.plays - a.plays).slice(0, 20),
+    }
+    const essentials: AiPlaylist = {
+      id: 'essentials', name: 'Essentials',
+      tracks: [...tracks].sort((a, b) => b.plays - a.plays).slice(0, 20),
+    }
+    const base = [american, desi, throwbacks, fresh, loved, essentials].filter((p) => p.tracks.length > 0)
+    // Surface the matching category first
+    if (category === 'american') return [american, ...base.filter((p) => p.id !== 'american')]
+    if (category === 'desi') return [desi, ...base.filter((p) => p.id !== 'desi')]
+    return base
+  }, [tracks, category])
+
+  if (!playlists.length) return null
   return (
-    <ul className="shelf" aria-label={label}>
-      {tracks.map((t, i) => (
-        <li key={t.id}>
-          <button type="button" className="shelf-card" onClick={() => play(tracks, i)} aria-label={`Play ${t.title} by ${t.artist}`}>
-            <Art id={t.art} size={300} className="slap-art shelf-art" />
-            <span className="shelf-title">{t.title}</span>
-            <span className="shelf-sub">{sub?.(t) ?? t.artist}</span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <section className="disc-playlists" aria-labelledby="disc-ai-h">
+      <h2 className="section-h2" id="disc-ai-h">AI Playlists</h2>
+      <div className="disc-playlist-row" role="list">
+        {playlists.map((pl) => (
+          <PlaylistCard key={pl.id} playlist={pl} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function PlaylistCard({ playlist }: { playlist: AiPlaylist }) {
+  const artTracks = playlist.tracks.slice(0, 4)
+  const artSlots: (Track | null)[] = [
+    ...artTracks,
+    ...Array.from({ length: Math.max(0, 4 - artTracks.length) }, (): null => null),
+  ]
+  return (
+    <button
+      type="button" className="disc-playlist-card" role="listitem"
+      onClick={() => play(playlist.tracks)}
+      disabled={!playlist.tracks.length}
+      aria-label={`Play ${playlist.name}, ${playlist.tracks.length} songs`}
+    >
+      <div className="disc-playlist-cover" aria-hidden="true">
+        {artSlots.map((t, i) =>
+          t ? (
+            <Art key={t.id} id={t.art} size={96} className="slap-art" />
+          ) : (
+            <span key={`ph-${i}`} className="disc-playlist-placeholder" />
+          )
+        )}
+      </div>
+      <span className="disc-playlist-name">{playlist.name}</span>
+      <span className="disc-playlist-sub">{playlist.tracks.length} songs · AI curated</span>
+    </button>
   )
 }
 
@@ -178,7 +270,7 @@ function NewFinds({ isAdmin, byId }: { isAdmin: boolean; byId: Map<string, Track
     <section aria-labelledby="disc-new-h" className="disc-new">
       <div className="disc-sec-head">
         <h2 className="section-h2" id="disc-new-h">New finds</h2>
-        <p className="meta">Picked by AI for the squad, not in the library yet. Tap a cover to hear it; download one and it’s yours. New songs every day.</p>
+        <p className="meta">Picked by AI for the squad, not in the library yet. Tap a cover to hear it; download one and it&apos;s yours. New songs every day.</p>
       </div>
       {q.isError ? <ErrorStrip text="Couldn't load today's finds." onRetry={() => q.refetch()} />
         : q.isPending || (!finds.length && (q.data?.making || !q.data?.ready)) ? (
@@ -198,8 +290,7 @@ function NewFinds({ isAdmin, byId }: { isAdmin: boolean; byId: Map<string, Track
   )
 }
 
-/** One find: the cover plays the preview (or the song, once it's in the library); the
- *  download icon brings it in. Title, artist and who it was picked for underneath. */
+/** One find tile: full-width artwork on top, title/artist below, download action. */
 function FindTile({ f, hearing, busy, isAdmin, track, onListen, onDownload, onApprove }: {
   f: Find; hearing: boolean; busy: boolean; isAdmin: boolean; track?: Track
   onListen: () => void; onDownload: () => void; onApprove: () => void
@@ -221,19 +312,21 @@ function FindTile({ f, hearing, busy, isAdmin, track, onListen, onDownload, onAp
         <span className="find-sub" title={f.artist}>{f.artist}</span>
         {f.for && <span className="find-for">for {slapName(f.for) || f.for}</span>}
       </span>
-      <FindMark f={f} by={by} />
-      {canGet && (
-        <button type="button" className="find-get" onClick={onDownload} disabled={busy}
-          aria-label={busy ? `Starting the download of ${f.title}` : f.status === 'failed' ? `Try downloading ${f.title} again` : `Download ${f.title}`}
-          title={f.status === 'failed' ? (f.error ?? "Download didn't work") : 'Download'}>
-          <Icon name={f.status === 'failed' ? 'refresh' : 'download'} />
-        </button>
-      )}
-      {f.status === 'review' && isAdmin && (
-        <button type="button" className="find-get" onClick={onApprove} disabled={busy} aria-label={`Approve the match for ${f.title}`} title="Approve match">
-          <Icon name="edit" />
-        </button>
-      )}
+      <div className="find-tile-foot">
+        <FindMark f={f} by={by} />
+        {canGet && (
+          <button type="button" className="find-get" onClick={onDownload} disabled={busy}
+            aria-label={busy ? `Starting the download of ${f.title}` : f.status === 'failed' ? `Try downloading ${f.title} again` : `Download ${f.title}`}
+            title={f.status === 'failed' ? (f.error ?? "Download didn't work") : 'Download'}>
+            <Icon name={f.status === 'failed' ? 'refresh' : 'download'} />
+          </button>
+        )}
+        {f.status === 'review' && isAdmin && (
+          <button type="button" className="find-get" onClick={onApprove} disabled={busy} aria-label={`Approve the match for ${f.title}`} title="Approve match">
+            <Icon name="edit" />
+          </button>
+        )}
+      </div>
     </li>
   )
 }
@@ -271,6 +364,22 @@ function RecentShelf({ tracks, loading }: { tracks: Track[]; loading: boolean })
   )
 }
 
+function Shelf({ label, tracks, sub }: { label: string; tracks: Track[]; sub?: (t: Track) => string }) {
+  return (
+    <ul className="shelf" aria-label={label}>
+      {tracks.map((t, i) => (
+        <li key={t.id}>
+          <button type="button" className="shelf-card" onClick={() => play(tracks, i)} aria-label={`Play ${t.title} by ${t.artist}`}>
+            <Art id={t.art} size={300} className="slap-art shelf-art" />
+            <span className="shelf-title">{t.title}</span>
+            <span className="shelf-sub">{sub?.(t) ?? t.artist}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 // ── What the squad is playing ───────────────────────────────────────────────
 function Charts({ pick }: { pick: (ids: string[]) => Track[] }) {
   const ins = useSocial<Insights>('listening/insights')
@@ -292,7 +401,7 @@ function Chart({ id, title, note, rows, pending, failed, pick }: {
 }) {
   const list = rows.slice(0, 10)
   const tracks = pick(list.map((r) => r.track_id))
-  const inLib = new Set(tracks.map((t) => t.id))
+  const inLib = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks])
   if (failed || (!pending && !list.length)) return null
   return (
     <section className="glass disc-chart" aria-labelledby={`${id}-h`}>
@@ -307,21 +416,25 @@ function Chart({ id, title, note, rows, pending, failed, pick }: {
       </div>
       {pending ? <SkeletonRows n={4} /> : (
         <ol className="stat-rows">
-          {list.map((r, i) => (
-            <li key={`${r.track_id}-${i}`} className="stat-row">
-              {inLib.has(r.track_id)
-                ? <button type="button" className="icon-btn stat-play" onClick={() => play(pick([r.track_id]))} aria-label={`Play ${r.title}`}><Icon name="play" /></button>
-                : <span className="stat-rank num">{i + 1}</span>}
-              <span className="stat-text">
-                <span className="stat-title">{r.title}</span>
-                <span className="stat-sub">{r.artist}</span>
-              </span>
-              <span className="meta num disc-count">
-                {[typeof r.play_count === 'number' ? `${r.play_count} ${r.play_count === 1 ? 'play' : 'plays'}` : '',
-                  r.thumb_ups ? `${r.thumb_ups} thumbs up` : ''].filter(Boolean).join(' · ')}
-              </span>
-            </li>
-          ))}
+          {list.map((r, i) => {
+            const t = inLib.get(r.track_id)
+            return (
+              <li key={`${r.track_id}-${i}`} className="stat-row">
+                {t && <Art id={t.art} size={96} className="slap-art stat-art" />}
+                {t
+                  ? <button type="button" className="icon-btn stat-play" onClick={() => play(pick([r.track_id]))} aria-label={`Play ${r.title}`}><Icon name="play" /></button>
+                  : <span className="stat-rank num">{i + 1}</span>}
+                <span className="stat-text">
+                  <span className="stat-title">{r.title}</span>
+                  <span className="stat-sub">{r.artist}</span>
+                </span>
+                <span className="meta num disc-count">
+                  {[typeof r.play_count === 'number' ? `${r.play_count} ${r.play_count === 1 ? 'play' : 'plays'}` : '',
+                    r.thumb_ups ? `${r.thumb_ups} thumbs up` : ''].filter(Boolean).join(' · ')}
+                </span>
+              </li>
+            )
+          })}
         </ol>
       )}
     </section>
