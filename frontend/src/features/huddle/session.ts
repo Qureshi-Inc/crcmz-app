@@ -264,6 +264,15 @@ async function loadLk(): Promise<LkNs> {
   return lk
 }
 
+// ── Screen wake lock (prevent dimming during a call) ────────────────────────
+let _wakeLock: WakeLockSentinel | null = null
+async function acquireWakeLock() {
+  try {
+    if ('wakeLock' in navigator) _wakeLock = await (navigator as { wakeLock: { request(t: string): Promise<WakeLockSentinel> } }).wakeLock.request('screen')
+  } catch { /* unsupported or permission denied — native layer handles it */ }
+}
+function releaseWakeLock() { _wakeLock?.release().catch(() => {}); _wakeLock = null }
+
 // ── Join and leave ──────────────────────────────────────────────────────────
 let _lastRoom = ''   // tracks which room's transcript is in state.lines
 
@@ -286,6 +295,7 @@ export async function join({ camera = true }: { camera?: boolean } = {}) {
     await r.connect(t.url, t.token)
     set({ phase: 'live', room: t.room, layout: 'spotlight', pinned: '', speaker: r.localParticipant.identity, audioBlocked: r.canPlaybackAudio === false })
     _lastRoom = t.room
+    void acquireWakeLock()
     try {
       await r.localParticipant.setMicrophoneEnabled(true, state.micId ? { deviceId: { exact: state.micId } } : undefined)
     } catch { set({ note: "Couldn't start your mic. Check your browser settings." }) }
@@ -321,6 +331,7 @@ async function joinNative(wanted: string, camera: boolean) {
     muteOtherCalls('huddle')
     toNative({ type: 'start', kind: 'huddle', url: t.url, token: t.token, room: t.room, title: `Huddle · ${t.room}`, publish: true, camera, mic: true })
     _lastRoom = t.room
+    void acquireWakeLock()
     set({ phase: 'pre', nativeRoom: t.room })
     void catchUpTranscript(t.room)
     if (state.autoTranscribe) nativeTranscriptOn()
@@ -362,6 +373,7 @@ function teardown() {
     aiOpen: false, aiBusy: false, aiSignedOut: false, transcribing: false, recorders: [],
     hand: false, hands: [], reactions: [],
   })
+  releaseWakeLock()
   remoteHands.clear()
 }
 
