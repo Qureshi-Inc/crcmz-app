@@ -482,4 +482,11 @@ final class CallHost {
 
     /// Tiles come and go: the panel grows or shrinks to fit them.
     func tilesChanged() { if call.mode == .panel { layout(animated: true) } }
+
+    /// Re-raise the call overlay above any sheets or the WKWebView that may have appeared
+    /// on top while the app was in the background.
+    func bringOverlayToFront() {
+        guard let parent, !host.view.isHidden else { return }
+        parent.view.bringSubviewToFront(host.view)
+    }
 }

@@ -73,6 +73,10 @@ final class NativeCall: ObservableObject {
     private lazy var transcriber = Transcriber { [weak self] text in self?.ownLine(text) }
 
     private var room: Room?
+    var isCallActive: Bool { room != nil }
+    private var audioInterruptionObserver: NSObjectProtocol?
+    private var routeChangeObserver: NSObjectProtocol?
+    private var becomeActiveObserver: NSObjectProtocol?
     private var events: Events?
     private var startedAt = Date.distantPast
     let pip = CallPip()
@@ -92,6 +96,51 @@ final class NativeCall: ObservableObject {
                     else            { await self?.stopScreenShareTrack() }
                 }
             }
+        // Audio session interruption recovery (e.g. broadcast extension interrupting the session).
+        audioInterruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(), queue: nil) { [weak self] n in
+            guard let info = n.userInfo,
+                  let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw),
+                  type == .ended else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.isCallActive else { return }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                self.configureCallAudioSession()
+            }
+        }
+        // Re-configure if the route changed for a surprising reason (e.g. broadcast ext taking over).
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(), queue: nil) { [weak self] n in
+            guard let info = n.userInfo,
+                  let raw = info[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
+                  reason == .override || reason == .unknown || reason == .noSuitableRouteForCategory
+            else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.isCallActive else { return }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                self.configureCallAudioSession()
+            }
+        }
+        // Re-assert the call audio session when the app returns to foreground.
+        becomeActiveObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: nil) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isCallActive else { return }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                self.configureCallAudioSession()
+            }
+        }
+    }
+
+    deinit {
+        [audioInterruptionObserver, routeChangeObserver, becomeActiveObserver]
+            .compactMap { $0 }
+            .forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     // MARK: From the page
@@ -201,6 +250,8 @@ final class NativeCall: ObservableObject {
 
     private func startScreenShareTrack() async {
         guard let room, kind == .huddle, screenShareTrack == nil else { return }
+        // Re-assert the call audio session before the broadcast extension can interrupt it.
+        configureCallAudioSession()
         let track = await LocalVideoTrack.createBroadcastScreenCapturerTrack()
         screenShareTrack = track
         try? await room.localParticipant.publish(videoTrack: track)

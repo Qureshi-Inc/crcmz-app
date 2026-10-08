@@ -23,6 +23,7 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
     /// this only covers the pure-web party stream while no native call is running.
     private var watchPartyAudioActive = false
     private var resignObserver: NSObjectProtocol?
+    private var activeObserver: NSObjectProtocol?
 
     override func loadView() {
         let config = WKWebViewConfiguration()
@@ -110,12 +111,26 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
                 """)
             }
         }
+        // On return from background: re-raise the call overlay and nudge the JS call state.
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main) { [weak self] _ in
+            self?.handleAppBecomeActive()
+        }
+    }
+
+    private func handleAppBecomeActive() {
+        // Re-assert the call overlay above any sheets or views that appeared while backgrounded.
+        calls?.bringOverlayToFront()
+        // Nudge the WKWebView JS to re-render the call state if a call is active.
+        if NativeCall.shared.isCallActive {
+            webView.evaluateJavaScript("window.__crcmzCallSync && window.__crcmzCallSync()") { _, _ in }
+        }
     }
 
     deinit {
-        if let obs = resignObserver {
-            NotificationCenter.default.removeObserver(obs)
-        }
+        if let obs = resignObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = activeObserver { NotificationCenter.default.removeObserver(obs) }
     }
 
     override func viewDidLayoutSubviews() {
