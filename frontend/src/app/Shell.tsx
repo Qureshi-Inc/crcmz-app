@@ -112,7 +112,7 @@ export function Shell() {
         )}
         <UpdateStrip />
         {!desktop && <InstallStrip />}
-        {!signedOut && <SessionBanner />}
+        {!signedOut && <SessionBanner inHuddle={huddleBar} inWatch={watchBar} />}
         <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
         {keepWatch && <WatchPage visible={onWatch} />}
       </main>
@@ -150,13 +150,19 @@ function useActivitySessions() {
   })
 }
 
-function SessionBanner() {
+function SessionBanner({ inHuddle, inWatch }: { inHuddle: boolean; inWatch: boolean }) {
   const q = useActiveSessions()
   const aq = useActivitySessions()
   const navigate = useNavigate()
 
-  // Merge: server sessions (huddle/watch from LiveKit + together from slap)
-  const sessions: ActiveSession[] = q.data?.sessions ?? []
+  // Merge: server sessions (huddle/watch from LiveKit + together from slap).
+  // Skip sessions the current user is already in — CallBar handles those.
+  const raw: ActiveSession[] = q.data?.sessions ?? []
+  const sessions: ActiveSession[] = raw.filter((s) => {
+    if (s.type === 'huddle' && inHuddle) return false
+    if (s.type === 'watch' && inWatch) return false
+    return true
+  })
 
   // Add solo slap listeners from activity (if no Together session already showing)
   const hasTogether = sessions.some((s) => s.type === 'slap')
@@ -170,26 +176,27 @@ function SessionBanner() {
   if (!sessions.length) return null
 
   return (
-    <div className="session-banner" role="status" aria-label="Live sessions" style={{ marginBottom: 'var(--space-5)' }}>
+    <div className="session-banner" role="status" aria-label="Live sessions">
+      <span className="session-banner-label">Live now</span>
       {sessions.map((s) => {
         const label = s.type === 'huddle' ? 'Huddle' : s.type === 'watch' ? 'Watch Party' : s.invite_name ? 'Listen together' : 'Slap'
-        const ariaLabel = s.type === 'slap' && s.invite_name
-          ? `Listen together with ${s.name}`
-          : `Join ${label}: ${s.name}, ${s.participant_count} ${s.participant_count === 1 ? 'person' : 'people'}`
+        const who = s.type === 'huddle' || s.type === 'watch'
+          ? `${s.participant_count} ${s.participant_count === 1 ? 'person' : 'people'}`
+          : s.name
         return (
           <Link
             key={`${s.type}-${s.name}`}
             to={s.join_url}
             className="session-chip"
-            aria-label={ariaLabel}
+            aria-label={s.invite_name ? `Listen together with ${s.name}` : `Join ${label}`}
             onClick={s.invite_name ? () => { navigate(s.join_url) } : undefined}
           >
             <Icon name={s.type === 'huddle' ? 'huddle' : s.type === 'watch' ? 'watch' : 'slap'} />
             <span className="session-chip-label">
               <span className="session-chip-type">{label}</span>
-              <span className="session-chip-name">{s.name}</span>
+              <span className="session-chip-name">{who}</span>
             </span>
-            <span className="session-chip-count">{s.participant_count}</span>
+            <span className="session-chip-join">{s.invite_name ? 'Invite' : 'Join'}</span>
           </Link>
         )
       })}
