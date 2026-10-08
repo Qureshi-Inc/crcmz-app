@@ -1,6 +1,7 @@
 // PS-3 · Slap: the squad's music. Discover (the week's mix, charts and new finds),
 // Listen (the Jellyfin library), Together (one shared room anyone online can drive)
 // and Stats (the Slaptastic dashboard).
+import { useEffect, useRef } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
 import * as Tabs from '@radix-ui/react-tabs'
 import type { ShellContext } from '../../app/Shell'
@@ -35,6 +36,18 @@ export function SlapPage() {
   const first = thread.data?.comments[0]
   const focus = trackId ? (libTrack ?? (first ? { id: trackId, title: first.title, artist: first.artist, album: '' } : { id: trackId, title: '', artist: '', album: '' })) : null
   const closeFocus = () => setParams((p) => { const n = new URLSearchParams(p); n.delete('track'); return n }, { replace: true })
+
+  // ?song=<id>: auto-play that track once when the library loads.
+  const songId = /^[0-9a-z]{1,64}$/i.test(params.get('song') ?? '') ? params.get('song')! : null
+  const songPlayed = useRef(false)
+  useEffect(() => {
+    if (!songId || songPlayed.current || !lib.data) return
+    const t = lib.data.tracks.find((tr) => tr.id === songId)
+    if (!t) return
+    songPlayed.current = true
+    playList([t])
+    setParams((p) => { const n = new URLSearchParams(p); n.delete('song'); return n }, { replace: true })
+  }, [songId, lib.data, setParams])
 
   function setTab(t: string) {
     setParams((p) => {

@@ -9,7 +9,7 @@ import { toast } from '../../components/toast'
 import { ErrorStrip, SkeletonRows, SlowLoad } from '../../components/states'
 import { ApiError } from '../../lib/http'
 import {
-  addToPlaylist, createPlaylist, deletePlaylist, editTrackInfo, fmtTime, removeFromPlaylist, setFavorite,
+  addToPlaylist, createPlaylist, deletePlaylist, editTrackInfo, fmtTime, removeFromPlaylist, setFavorite, shareSong,
   useLibrary, usePlaylist, type Library, type Track,
 } from '../../lib/slap'
 import { ClipSheet, ConfirmDialog } from '../clips/ClipSheet'
@@ -214,6 +214,7 @@ function TrackMenu({ t, isAdmin, together, onRemove }: { t: Track; isAdmin: bool
             <Menu.Item className="menu-item" onSelect={() => enqueue([t], false)}>{together ? 'Add to shared queue' : 'Add to queue'}</Menu.Item>
             <Menu.Item className="menu-item" onSelect={() => setAddOpen(true)}>Add to playlist…</Menu.Item>
             <Menu.Item className="menu-item" onSelect={fav}>{t.fav ? 'Remove from favourites' : 'Add to favourites'}</Menu.Item>
+            <Menu.Item className="menu-item" onSelect={() => shareSong(t)}>Share song</Menu.Item>
             {onRemove && <Menu.Item className="menu-item" onSelect={onRemove}>Remove from this playlist</Menu.Item>}
             {isAdmin && <Menu.Item className="menu-item" onSelect={() => setEditOpen(true)}>Edit track info</Menu.Item>}
           </Menu.Content>

@@ -11,7 +11,7 @@ import { useDesktop } from '../../lib/media'
 import { useSwipeDown } from '../../lib/gestures'
 import { CommentBox, CommentThread } from './Comments'
 import {
-  artUrl, findSources, fmtTime, names, replaceTrack, rerollStatus, sendComment, sourceLink, slapName, slapNames, sendThumb, setFavorite, useSlapMe, useTrackComments, useTrackSocial,
+  artUrl, findSources, fmtTime, names, replaceTrack, rerollStatus, sendComment, shareSong, sourceLink, slapName, slapNames, sendThumb, setFavorite, useSlapMe, useTrackComments, useTrackSocial,
   type Library, type QueueItem, type Source, type TrackSocial,
 } from '../../lib/slap'
 import {
@@ -128,6 +128,7 @@ export function PlayerSheet() {
                     </Menu.Trigger>
                     <Menu.Portal>
                       <Menu.Content className="menu-content" sideOffset={4} align="end">
+                        <Menu.Item className="menu-item" onSelect={() => shareSong(item)}>Share song</Menu.Item>
                         <Menu.Item className="menu-item" onSelect={() => setReroll(item)}>Wrong song? Find the right one</Menu.Item>
                       </Menu.Content>
                     </Menu.Portal>

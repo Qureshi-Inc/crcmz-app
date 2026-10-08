@@ -267,7 +267,7 @@ export function attachVideo(el: HTMLVideoElement | null) {
   el.volume = state.playerVol
   el.muted = state.playerMuted
   el.addEventListener('play', () => { syncPlaying(); if (echo()) sock?.emit('CMD:play') })
-  el.addEventListener('pause', () => { syncPlaying(); if (echo()) sock?.emit('CMD:pause') })
+  el.addEventListener('pause', () => { syncPlaying(); if (echo() && !document.hidden) sock?.emit('CMD:pause') })
   el.addEventListener('ended', syncPlaying)
   el.addEventListener('playing', () => { syncPlaying(); if (state.unblock) set({ unblock: '' }) })
   // Seeks reach the room from userSeek only: a 'seeked' echo also fired for the room's own
