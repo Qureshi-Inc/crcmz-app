@@ -560,6 +560,7 @@ export function start() {
   if (state.active) return
   kicked = false
   set({ active: true })
+  _startIntervals()
   void boot()
 }
 export async function boot() {
@@ -758,6 +759,7 @@ export function leave() {
   postHistory()
   endCall()
   set({ active: false })
+  _stopIntervals()
   disconnectRoom()
   window.clearTimeout(retryT)
   window.clearTimeout(recoverT)
@@ -1040,15 +1042,35 @@ function tick() {
   applyResume()
   if (++histN % 12 === 0) histCheck()
 }
-window.setInterval(tick, 250)
-window.setInterval(() => { if (state.active) flushLog() }, 10_000)
-window.setInterval(() => { if (state.active) log('heartbeat', snap(), 'debug') }, 30_000)
+// Intervals only run while a Watch Party is active; idling the whole time burned CPU.
+let _tickIv = 0, _flushIv = 0, _heartIv = 0
+function _startIntervals() {
+  if (_tickIv) return
+  _tickIv  = window.setInterval(tick, 250)
+  _flushIv = window.setInterval(() => { flushLog() }, 10_000)
+  _heartIv = window.setInterval(() => { log('heartbeat', snap(), 'debug') }, 30_000)
+}
+function _stopIntervals() {
+  window.clearInterval(_tickIv);  _tickIv  = 0
+  window.clearInterval(_flushIv); _flushIv = 0
+  window.clearInterval(_heartIv); _heartIv = 0
+}
 window.addEventListener('pagehide', () => { if (!state.active) return; if (wasPlaying) postHistory(); log('pagehide', snap()); flushLog(); if (state.call.on) camStop() })
 document.addEventListener('visibilitychange', () => {
   if (!state.active) return
   log('visibility', { v: document.visibilityState }, 'debug')
-  if (document.visibilityState === 'hidden') { if (wasPlaying) postHistory(); flushLog() }
+  if (document.visibilityState === 'hidden') {
+    if (wasPlaying) postHistory()
+    flushLog()
+    // Pause the 1s sync timer; it will restart on visible
+    window.clearInterval(tsTimer); tsTimer = 0
+  }
   if (document.visibilityState === 'visible') {
+    // Restart the ts sync timer if we're in an active socket session
+    if (!tsTimer && state.active) {
+      const s = sock
+      if (s) tsTimer = window.setInterval(() => { if (!s.connected) return; const t = time(); if (t !== null) s.emit('CMD:ts', t) }, 1000)
+    }
     // Auto-reconnect when the app returns to foreground and the socket died while backgrounded.
     const s = state.status
     if (s === 'failed' || s === 'reconnecting' ||

@@ -559,12 +559,17 @@ async function setBlur(on: boolean, restore = true) {
     if (!ctx || !blurred) { src.stop(); toast("This browser can't blur the background", 'warning'); return }
     let raf = 0
     const frame = () => {
-      ctx.filter = 'blur(10px)'
-      ctx.drawImage(v, -12, -12, width + 24, height + 24)
+      if (!document.hidden) {
+        ctx.filter = 'blur(10px)'
+        ctx.drawImage(v, -12, -12, width + 24, height + 24)
+      }
       raf = requestAnimationFrame(frame)
     }
+    // Pause rAF entirely when hidden; restart on visible — saves GPU + CPU
+    const onVis = () => { if (!document.hidden && !raf) { raf = requestAnimationFrame(frame) } else if (document.hidden) { cancelAnimationFrame(raf); raf = 0 } }
+    document.addEventListener('visibilitychange', onVis)
     frame()
-    const stop = () => { cancelAnimationFrame(raf); v.srcObject = null; src.stop(); blurred.stop() }
+    const stop = () => { cancelAnimationFrame(raf); document.removeEventListener('visibilitychange', onVis); v.srcObject = null; src.stop(); blurred.stop() }
     try {
       await track.replaceTrack(blurred, true)
       orig.stop() // the clone feeds the canvas now
