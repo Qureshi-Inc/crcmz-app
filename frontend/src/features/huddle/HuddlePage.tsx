@@ -477,6 +477,25 @@ function AiPanel({ s, titleId, sheet = false, inline = false }: { s: HuddleState
     const el = log.current
     if (el) el.scrollTop = el.scrollHeight
   }, [s.aiLog.length, s.aiBusy])
+  // On iOS WKWebView, dvh doesn't shrink when the software keyboard opens, so the
+  // sheet gets covered by the keyboard. Track the gap via VisualViewport and expose
+  // it as --keyboard-height; the CSS rule lifts the sheet above the keyboard.
+  useEffect(() => {
+    if (!sheet) return
+    const vp = window.visualViewport
+    if (!vp) return
+    const update = () => {
+      const kbH = Math.max(0, window.innerHeight - vp.height - vp.offsetTop)
+      document.documentElement.style.setProperty('--keyboard-height', `${kbH}px`)
+    }
+    vp.addEventListener('resize', update)
+    vp.addEventListener('scroll', update)
+    return () => {
+      vp.removeEventListener('resize', update)
+      vp.removeEventListener('scroll', update)
+      document.documentElement.style.removeProperty('--keyboard-height')
+    }
+  }, [sheet])
   function submit(e: FormEvent) {
     e.preventDefault()
     if (!q.trim() || s.aiBusy) return
@@ -536,7 +555,14 @@ function AiPanel({ s, titleId, sheet = false, inline = false }: { s: HuddleState
       )}
       <form className="comment-form" onSubmit={submit}>
         <label className="sr-only" htmlFor={`${titleId}-in`}>Ask the AI</label>
-        <input id={`${titleId}-in`} className="input" value={q} maxLength={1000} placeholder="Ask the AI" autoComplete="off" enterKeyHint="send" onChange={(e) => setQ(e.target.value)} onFocus={(e) => e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest' })} />
+        <input id={`${titleId}-in`} className="input" value={q} maxLength={1000} placeholder="Ask the AI" autoComplete="off" enterKeyHint="send" onChange={(e) => setQ(e.target.value)} onFocus={() => {
+          // Scroll log to bottom after keyboard finishes animating so the input stays in view
+          const vp = window.visualViewport
+          if (vp) {
+            const onResize = () => { if (log.current) log.current.scrollTop = log.current.scrollHeight }
+            vp.addEventListener('resize', onResize, { once: true })
+          }
+        }} />
         <button type="submit" className="btn btn-primary" disabled={!q.trim() || s.aiBusy} aria-label="Ask"><Icon name="send" /></button>
       </form>
     </div>

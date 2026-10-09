@@ -2433,9 +2433,20 @@ html[data-watchbar] .hu-controls { bottom: calc(var(--tabbar-stack) + var(--call
 
 /* AI helper: a side sheet that pushes the stage on desktop, a bottom sheet on phones. */
 .hu-ai-side { position: sticky; top: var(--space-6); padding: var(--space-3) var(--space-4) var(--space-4); max-height: calc(100dvh - 2 * var(--space-6)); display: flex; }
-/* Full height when keyboard is open: sheet fills 90% of whatever viewport the keyboard leaves */
-.hu-ai-sheet { height: 90dvh; padding: 0 var(--gutter) var(--space-4); display: flex; flex-direction: column; overflow: hidden; }
+/* --keyboard-height is set by JS (VisualViewport) when the software keyboard is open.
+   On iOS WKWebView dvh does not shrink with the keyboard, so we subtract manually and
+   shift the sheet's bottom up so the input stays above the keyboard. */
+.hu-ai-sheet {
+  height: calc(90dvh - var(--keyboard-height, 0px));
+  bottom: calc(var(--tabbar-stack) + env(safe-area-inset-bottom) + var(--keyboard-height, 0px));
+  padding: 0 var(--gutter) var(--space-4);
+  display: flex; flex-direction: column; overflow: hidden;
+}
 .hu-ai { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; flex: 1; width: 100%; overflow: hidden; }
+/* all non-log children must not shrink so only the log gives up space */
+.hu-ai-sheet .sheet-title-row { flex-shrink: 0; }
+.hu-ai-sheet .hu-ai-tx { flex-shrink: 0; }
+.hu-ai-sheet .banner { flex-shrink: 0; }
 /* transcript details inside the sheet must not expand and push the input off screen */
 .hu-ai-sheet .hu-lines { flex-shrink: 0; max-height: 120px; overflow-y: auto; }
 /* the input row always stays visible, never gets squeezed */
