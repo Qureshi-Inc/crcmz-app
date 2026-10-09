@@ -134,9 +134,9 @@ function useActiveSessions() {
   return useQuery({
     queryKey: ['sessions', 'active'],
     queryFn: ({ signal }) => getJSON<{ sessions: ActiveSession[] }>('/api/sessions/active', signal),
-    refetchInterval: 30_000,
-    staleTime: 25_000,
-    retry: false,
+    refetchInterval: 10_000,
+    staleTime: 8_000,
+    retry: 1,
   })
 }
 
@@ -144,9 +144,9 @@ function useActivitySessions() {
   return useQuery({
     queryKey: ['activity'],
     queryFn: ({ signal }) => getJSON<{ sessions: { name: string; type: string; room: string }[] }>('/api/activity', signal),
-    refetchInterval: 30_000,
-    staleTime: 25_000,
-    retry: false,
+    refetchInterval: 10_000,
+    staleTime: 8_000,
+    retry: 1,
   })
 }
 
