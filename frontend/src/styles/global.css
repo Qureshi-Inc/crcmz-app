@@ -2436,6 +2436,10 @@ html[data-watchbar] .hu-controls { bottom: calc(var(--tabbar-stack) + var(--call
 /* Full height when keyboard is open: sheet fills 90% of whatever viewport the keyboard leaves */
 .hu-ai-sheet { height: 90dvh; padding: 0 var(--gutter) var(--space-4); display: flex; flex-direction: column; overflow: hidden; }
 .hu-ai { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; flex: 1; width: 100%; overflow: hidden; }
+/* transcript details inside the sheet must not expand and push the input off screen */
+.hu-ai-sheet .hu-lines { flex-shrink: 0; max-height: 120px; overflow-y: auto; }
+/* the input row always stays visible, never gets squeezed */
+.hu-ai-sheet .comment-form { flex-shrink: 0; }
 .hu-ai .section-h2 { margin: 0; }
 .hu-ai-tools { display: flex; gap: var(--space-2); }
 .hu-ai-tools .btn { flex: 1; }

@@ -6970,12 +6970,52 @@ async def huddle_ai(request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    messages = list(body.get("messages", []))
+    # Enrich the system prompt with live squad context so the AI can answer
+    # "who's online?", "what's the squad playing?", "who's listening to what?" etc.
+    squad_ctx = await _huddle_squad_context()
+    if squad_ctx and messages and messages[0].get("role") == "system":
+        messages[0] = {**messages[0], "content": messages[0]["content"] + "\n\n" + squad_ctx}
     try:
-        content = await _huddle_chat(body.get("messages", []), body.get("model") or OLLAMA_MODEL)
+        content = await _huddle_chat(messages, body.get("model") or OLLAMA_MODEL)
         return JSONResponse({'message': {'role': 'assistant', 'content': content}})
     except Exception as exc:
         logger.warning("huddle ai proxy error: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+async def _huddle_squad_context() -> str:
+    """Live squad snapshot injected into every Huddle AI turn."""
+    parts: list[str] = []
+    # PSN presence
+    try:
+        if _v2_available:
+            import psn_data as _pd
+            squad = await asyncio.to_thread(_pd.squad_status, psn_auth)
+            online = [m for m in squad if m.get("online")]
+            offline = [m for m in squad if not m.get("online")]
+            lines = []
+            for m in online:
+                game = m.get("game") or m.get("playing") or ""
+                lines.append(f"  {m['online_id']}: online" + (f", playing {game}" if game else ""))
+            for m in offline[:5]:  # cap offline to avoid huge prompts
+                last = m.get("last_online", "")
+                lines.append(f"  {m['online_id']}: offline" + (f", last seen {last}" if last else ""))
+            if lines:
+                parts.append("PSN squad status:\n" + "\n".join(lines))
+    except Exception:
+        pass
+    # Slap Listen Together
+    try:
+        t = _slap.together_status()
+        if t.get("active") and t.get("listeners"):
+            who = ", ".join(t["listeners"])
+            now = t.get("now") or {}
+            song = f"{now['title']} by {now['artist']}" if now else "something"
+            parts.append(f"Slap Listen Together: {who} are listening to {song}")
+    except Exception:
+        pass
+    return "\n\n".join(parts)
 
 
 async def _huddle_chat(messages: list, model: str = "", timeout: float = 60) -> str:
