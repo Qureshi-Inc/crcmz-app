@@ -9,7 +9,7 @@ import { Icon, type IconName } from '../../components/Icon'
 import { useReducedMotion } from '../../lib/media'
 import { CAN_VOL, fmtTime, REACTIONS } from '../../lib/watch'
 import {
-  attachVideo, attachYt, clearVideo, forceSync, fsRoot, setSubtitle, getWatch, joinCall, leaveCall, nameOf as nameMap, onChat, onReaction, react, sendChat, setCamVol, setPlayerVol,
+  attachVideo, attachYt, clearVideo, retryMedia, forceSync, fsRoot, setSubtitle, getWatch, joinCall, leaveCall, nameOf as nameMap, onChat, onReaction, react, sendChat, setCamVol, setPlayerVol,
   skip, toggleCamsMute, toggleFs, toggleMute, togglePlay, togglePlayerMute, toggleVideo, unblock, userSeek, useWatch, useWatchClock,
   videoLabel, type ChatMsg, type RxEvent, type WatchState,
 } from './session'
@@ -106,8 +106,17 @@ export function Stage({ over, rxOpen, setRxOpen, slot }: { over?: ReactNode; rxO
       {!s.video && <EmptyStage s={s} />}
       {s.mediaError && (
         <div className="wp-stage-msg" role="alert">
-          <p>{s.mediaError === 'unsupported' ? "This link isn't a video we can play." : "This video won't play here"}</p>
-          <button type="button" className="btn btn-secondary" onClick={clearVideo}>Clear</button>
+          {s.mediaError === 'unsupported' ? (
+            <>
+              <p>This link isn&apos;t a video we can play.</p>
+              <button type="button" className="btn btn-secondary" onClick={clearVideo}>Clear</button>
+            </>
+          ) : (
+            <>
+              <p>The stream dropped — tap Retry to reconnect.</p>
+              <button type="button" className="btn btn-primary" onClick={retryMedia}>Retry</button>
+            </>
+          )}
         </div>
       )}
       {/* While a fresh YouTube embed waits for its first tap, let taps through to it. */}

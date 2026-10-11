@@ -844,6 +844,15 @@ export function watchTogether(url: string, title: string, resumeAt = 0) {
   pendingHost = url
 }
 export function clearVideo() { set({ error: '' }); sock?.emit('CMD:host', '') }
+/** Reload this viewer's stream without touching the room. Fixes transient Jellyfin errors. */
+export function retryMedia() {
+  const url = state.video
+  if (!url) return
+  const ts = time()
+  if (ts !== null && ts > 5) pendingTS = ts
+  log('video.retry', { video: short(url), ts })
+  mount(url)
+}
 
 export function sendChat(msg: string): boolean {
   const m = msg.trim()
