@@ -153,6 +153,24 @@ def resolve_caller(header: str) -> dict | None:
         return None
 
 
+def resolve_personal(header: str) -> dict | None:
+    """Return a caller dict for a personal bearer token (crcmz_...), or None."""
+    value = (header or "").strip()
+    if value.lower().startswith("bearer "):
+        value = value[7:].strip()
+    if not value or not value.startswith("crcmz_"):
+        return None
+    try:
+        import mcp_tokens
+        zid = mcp_tokens.verify(value)
+        if not zid:
+            return None
+        return {"zitadel_id": zid}
+    except Exception as e:  # noqa: BLE001
+        logger.debug("mcp: resolve_personal failed: %s", e)
+        return None
+
+
 def _founder_sub(caller: dict | None) -> str | None:
     """Zitadel id whose founder tag may open the Professional Goopers view.
 

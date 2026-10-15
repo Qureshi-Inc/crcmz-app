@@ -1,6 +1,6 @@
 // Account routes for Settings (PS-10), Link PSN (PS-12) and Admin (PS-11). The
 // server side is untouched: these only consume the routes the classic app uses.
-import { request } from './http'
+import { getJSON, request } from './http'
 
 export type Passkey = { id: string; name: string }
 
@@ -109,6 +109,10 @@ export const setSquadName = (name: string) =>
 export const setPrimaryPlatform = (platform: 'psn' | 'steam') =>
   request<{ ok: boolean; primary: string }>('/auth/settings/primary-platform', { body: { platform } })
 export const revokeMcp = () => request<{ ok: boolean }>('/auth/settings/mcp/revoke', { method: 'POST' })
+export type McpTokenStatus = { token: string | null; exists: boolean }
+export const getMcpToken = (signal?: AbortSignal) => getJSON<McpTokenStatus>('/auth/settings/mcp/token', signal)
+export const generateMcpToken = () => request<McpTokenStatus>('/auth/settings/mcp/token', { method: 'POST' })
+export const revokeMcpToken = () => request<{ ok: boolean }>('/auth/settings/mcp/token', { method: 'DELETE' })
 export const resetUserPassword = (id: string, newPassword: string) =>
   request<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/reset-password`, { body: { newPassword } })
 

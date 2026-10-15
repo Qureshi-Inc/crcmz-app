@@ -111,6 +111,7 @@ img { max-width: 100%; }
 .btn-danger { border-color: var(--error); color: var(--error); background: rgba(6, 4, 18, .35); }
 .btn[aria-disabled="true"], .btn:disabled { opacity: var(--c-btn-disabled-opacity); cursor: not-allowed; }
 .btn[aria-pressed="true"] { border-color: var(--interactive-text); color: var(--text); background: rgba(34, 230, 255, .12); }
+.btn-icon { min-width: var(--c-btn-h); padding: 0; }
 @media (hover: hover) {
   .btn-secondary:hover, .btn-ghost:hover { background: rgba(34, 230, 255, .08); }
 }
@@ -1644,6 +1645,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .settings-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
 .settings-note { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--warning-surface); color: var(--warning); font-weight: 600; font-size: var(--text-sm); }
 .settings-form { max-width: 420px; }
+.settings-token-row { display: flex; align-items: center; gap: var(--space-2); }
+.settings-token-input { flex: 1; min-width: 0; font-family: var(--font-mono, monospace); font-size: var(--text-sm); background: var(--surface-2); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); color: var(--text-1); }
+.settings-token-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 
 .acct-rows { margin: 0 calc(-1 * var(--space-4)); }
 .acct-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border-decorative); min-height: 56px; }

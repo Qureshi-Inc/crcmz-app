@@ -3530,8 +3530,11 @@ async def mcp_endpoint(request: Request):
         caller = None
     else:
         # Path 2: per-user OAuth access token (mcpa-...).
-        # Path 3: a scoped service token, which gets only its listed write tools.
-        caller = _mcp.resolve_caller(auth_header) or _mcp.resolve_service(auth_header)
+        # Path 3: personal bearer token (crcmz_...) from Settings → MCP.
+        # Path 4: a scoped service token, which gets only its listed write tools.
+        caller = (_mcp.resolve_caller(auth_header)
+                  or _mcp.resolve_personal(auth_header)
+                  or _mcp.resolve_service(auth_header))
         if caller is None:
             # Tell clients exactly where to authenticate.
             return JSONResponse(
@@ -3983,6 +3986,7 @@ def api_clip_media(uid: str, request: Request):
         caller = {"zitadel_id": session["sub"]}
     elif not _mcp.authorised(auth_header):
         caller = (_mcp.resolve_caller(auth_header)
+                  or _mcp.resolve_personal(auth_header)
                   or _mcp.resolve_service(auth_header))
         if caller is None:
             return JSONResponse(
@@ -4193,6 +4197,7 @@ def api_video_upload_media(id: str, request: Request):  # noqa: A002
     # withdrawn, not yet posted anywhere) to Muse; no page plays it.
     if not _mcp.authorised(auth_header):
         caller = (_mcp.resolve_caller(auth_header)
+                  or _mcp.resolve_personal(auth_header)
                   or _mcp.resolve_service(auth_header))
         if caller is None:
             return JSONResponse(
@@ -4241,6 +4246,7 @@ def mcp_probe():
 # prior session.
 
 import mcp_oauth as _mcp_oauth
+import mcp_tokens as _mcp_tokens
 
 
 def _oauth_redirect_ok(uri: str) -> bool:
@@ -4718,6 +4724,39 @@ async def settings_mcp_revoke(request: Request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     zid = session.get("sub", "")
     _mcp_oauth.revoke_by_zitadel_id(zid)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/auth/settings/mcp/token")
+async def settings_mcp_token_get(request: Request):
+    """Return the user's personal bearer token (session-authenticated, only they can read it)."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    zid = session.get("sub", "")
+    token = _mcp_tokens.get_token(zid)
+    return JSONResponse({"token": token, "exists": token is not None})
+
+
+@app.post("/auth/settings/mcp/token")
+async def settings_mcp_token_generate(request: Request):
+    """Generate (or regenerate) a personal bearer token. Returns the raw token."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    zid = session.get("sub", "")
+    token = _mcp_tokens.generate(zid)
+    return JSONResponse({"token": token, "exists": True})
+
+
+@app.delete("/auth/settings/mcp/token")
+async def settings_mcp_token_revoke(request: Request):
+    """Revoke the user's personal bearer token."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    zid = session.get("sub", "")
+    _mcp_tokens.revoke(zid)
     return JSONResponse({"ok": True})
 
 
@@ -7753,6 +7792,7 @@ _meet.init()
 _chat.init()
 _games.init()
 _mcp_oauth.init()
+_mcp_tokens.init()
 _mm_tokens.init()
 _coach.init()
 _ig.init()

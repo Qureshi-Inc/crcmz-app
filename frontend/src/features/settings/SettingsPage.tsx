@@ -14,8 +14,10 @@ import { OrbPosControl } from '../watch/WatchPage'
 import { ApiError, getJSON, request } from '../../lib/http'
 import { nativeShell } from '../../lib/nativeShell'
 import {
-  addPasskey, changePassword, fmtDate, fmtDateTime, MCP_CONFIG, passkeysSupported, removePasskey, revokeMcp, tokenState,
-  setPrimaryPlatform, setSquadName, unlinkMattermost, unlinkSteam, type McpStatus, type MmStatus, type Passkey, type PsnStatus, type SteamStatus, type ProfileStatus,
+  addPasskey, changePassword, fmtDate, fmtDateTime, getMcpToken, generateMcpToken, revokeMcpToken, MCP_CONFIG,
+  passkeysSupported, removePasskey, revokeMcp, tokenState,
+  setPrimaryPlatform, setSquadName, unlinkMattermost, unlinkSteam,
+  type McpStatus, type MmStatus, type Passkey, type PsnStatus, type SteamStatus, type ProfileStatus,
 } from '../../lib/account'
 import {
   currentSubscription, disablePush, enablePush, fetchPushConfig, isIOS, isStandalone, promptInstall, pushSupported,
@@ -609,9 +611,13 @@ function WhatsappTab() {
 function McpTab() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['account', 'mcp'], queryFn: ({ signal }) => getJSON<McpStatus>('/auth/settings/mcp', signal) })
+  const tq = useQuery({ queryKey: ['account', 'mcp-token'], queryFn: ({ signal }) => getMcpToken(signal) })
   const [confirm, setConfirm] = useState(false)
+  const [confirmRevToken, setConfirmRevToken] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [tokenBusy, setTokenBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [tokenVisible, setTokenVisible] = useState(false)
 
   async function copy() {
     try { await navigator.clipboard.writeText(MCP_CONFIG); setCopied(true); window.setTimeout(() => setCopied(false), 2000) }
@@ -623,50 +629,115 @@ function McpTab() {
     catch { toast("Couldn't revoke. Try again.", 'error') }
     finally { setBusy(false); void qc.invalidateQueries({ queryKey: ['account', 'mcp'] }) }
   }
+  async function generateToken() {
+    setTokenBusy(true)
+    try {
+      await generateMcpToken()
+      void qc.invalidateQueries({ queryKey: ['account', 'mcp-token'] })
+      setTokenVisible(true)
+      toast('Bearer token generated', 'success')
+    } catch { toast("Couldn't generate token. Try again.", 'error') }
+    finally { setTokenBusy(false) }
+  }
+  async function revokeToken() {
+    setTokenBusy(true)
+    try {
+      await revokeMcpToken()
+      void qc.invalidateQueries({ queryKey: ['account', 'mcp-token'] })
+      setTokenVisible(false)
+      toast('Bearer token revoked', 'success')
+    } catch { toast("Couldn't revoke token. Try again.", 'error') }
+    finally { setTokenBusy(false) }
+  }
+  async function copyToken() {
+    const t = tq.data?.token
+    if (!t) return
+    try { await navigator.clipboard.writeText(t); toast('Token copied', 'success') }
+    catch { toast('Copy was blocked. Select the text manually.', 'warning') }
+  }
 
   return (
-    <section className="glass settings-card" aria-labelledby="mcp-h">
-      <div className="settings-card-head">
-        <h2 className="section-h2" id="mcp-h">MCP</h2>
-        <button type="button" className="btn btn-ghost" onClick={() => q.refetch()} disabled={q.isFetching}><Icon name="refresh" />{q.isFetching ? 'Checking…' : 'Refresh'}</button>
-      </div>
-      {q.isPending ? <SkeletonRows n={1} />
-        : q.isError ? <ErrorStrip text="Couldn't load MCP status" onRetry={() => q.refetch()} />
-        : q.data.active ? (
-          <>
-            <div className="acct-status">
-              <span className="acct-status-emoji" aria-hidden="true">🤖</span>
-              <span className="acct-row-text">
-                <span className="acct-row-title">Connected</span>
-                <span className="meta">An MCP client can act for you. Last used {fmtDateTime(q.data.last_used_at)}.</span>
-              </span>
-              <span className="badge" data-tone="live">Active</span>
-            </div>
-            <div><button type="button" className="btn btn-danger" onClick={() => setConfirm(true)} disabled={busy}>{busy ? 'Revoking…' : 'Revoke access'}</button></div>
-          </>
-        ) : (
-          <>
-            <p className="dim">Not connected. Hook Claude (or any MCP client) up to the squad.</p>
-            <ol className="steps-plain">
-              <li>Add the config below to your MCP client (Claude Desktop: <code>claude_desktop_config.json</code>).</li>
-              <li>Restart the client. It opens a browser window by itself.</li>
-              <li>Sign in with your CRCMZ account and tap <b>Allow</b>.</li>
-              <li>Come back here and tap Refresh.</li>
-            </ol>
-            <div className="code-block">
-              <pre aria-label="Claude Desktop config" tabIndex={0}>{MCP_CONFIG}</pre>
-              <button type="button" className="btn btn-secondary" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
-            </div>
-          </>
-        )}
-      <ConfirmDialog
-        open={confirm} onOpenChange={setConfirm}
-        title="Revoke MCP access?"
-        body={<p>Every connected client stops working right away. You can connect again later.</p>}
-        action="Revoke access"
-        onConfirm={() => void revoke()}
-      />
-    </section>
+    <>
+      <section className="glass settings-card" aria-labelledby="mcp-h">
+        <div className="settings-card-head">
+          <h2 className="section-h2" id="mcp-h">MCP</h2>
+          <button type="button" className="btn btn-ghost" onClick={() => q.refetch()} disabled={q.isFetching}><Icon name="refresh" />{q.isFetching ? 'Checking…' : 'Refresh'}</button>
+        </div>
+        {q.isPending ? <SkeletonRows n={1} />
+          : q.isError ? <ErrorStrip text="Couldn't load MCP status" onRetry={() => q.refetch()} />
+          : q.data.active ? (
+            <>
+              <div className="acct-status">
+                <span className="acct-status-emoji" aria-hidden="true">🤖</span>
+                <span className="acct-row-text">
+                  <span className="acct-row-title">Connected</span>
+                  <span className="meta">An MCP client can act for you. Last used {fmtDateTime(q.data.last_used_at)}.</span>
+                </span>
+                <span className="badge" data-tone="live">Active</span>
+              </div>
+              <div><button type="button" className="btn btn-danger" onClick={() => setConfirm(true)} disabled={busy}>{busy ? 'Revoking…' : 'Revoke access'}</button></div>
+            </>
+          ) : (
+            <>
+              <p className="dim">Not connected. Hook Claude (or any MCP client) up to the squad.</p>
+              <ol className="steps-plain">
+                <li>Add the config below to your MCP client (Claude Desktop: <code>claude_desktop_config.json</code>).</li>
+                <li>Restart the client. It opens a browser window by itself.</li>
+                <li>Sign in with your CRCMZ account and tap <b>Allow</b>.</li>
+                <li>Come back here and tap Refresh.</li>
+              </ol>
+              <div className="code-block">
+                <pre aria-label="Claude Desktop config" tabIndex={0}>{MCP_CONFIG}</pre>
+                <button type="button" className="btn btn-secondary" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+              </div>
+            </>
+          )}
+        <ConfirmDialog
+          open={confirm} onOpenChange={setConfirm}
+          title="Revoke MCP access?"
+          body={<p>Every connected client stops working right away. You can connect again later.</p>}
+          action="Revoke access"
+          onConfirm={() => void revoke()}
+        />
+      </section>
+
+      <section className="glass settings-card" aria-labelledby="mcp-token-h">
+        <h2 className="section-h2" id="mcp-token-h">Bearer token</h2>
+        <p className="dim">Use this token to authenticate with the MCP API directly — paste it as <code>Authorization: Bearer &lt;token&gt;</code>. No OAuth flow needed.</p>
+        {tq.isPending ? <SkeletonRows n={1} />
+          : tq.isError ? <ErrorStrip text="Couldn't load token status" onRetry={() => tq.refetch()} />
+          : tq.data?.exists && tq.data.token ? (
+            <>
+              <div className="settings-token-row">
+                <input
+                  type={tokenVisible ? 'text' : 'password'}
+                  readOnly
+                  value={tq.data.token}
+                  className="settings-token-input"
+                  aria-label="MCP bearer token"
+                />
+                <button type="button" className="btn btn-ghost btn-icon" onClick={() => setTokenVisible(v => !v)} aria-label={tokenVisible ? 'Hide token' : 'Reveal token'}>
+                  <Icon name={tokenVisible ? 'eye-off' : 'eye'} />
+                </button>
+                <button type="button" className="btn btn-ghost" onClick={copyToken}>Copy</button>
+              </div>
+              <div className="settings-token-actions">
+                <button type="button" className="btn btn-secondary" onClick={generateToken} disabled={tokenBusy}>{tokenBusy ? 'Generating…' : 'Regenerate'}</button>
+                <button type="button" className="btn btn-danger" onClick={() => setConfirmRevToken(true)} disabled={tokenBusy}>Revoke</button>
+              </div>
+            </>
+          ) : (
+            <button type="button" className="btn btn-primary" onClick={generateToken} disabled={tokenBusy}>{tokenBusy ? 'Generating…' : 'Generate bearer token'}</button>
+          )}
+        <ConfirmDialog
+          open={confirmRevToken} onOpenChange={setConfirmRevToken}
+          title="Revoke bearer token?"
+          body={<p>Any client using this token will immediately lose access.</p>}
+          action="Revoke"
+          onConfirm={() => void revokeToken()}
+        />
+      </section>
+    </>
   )
 }
 
