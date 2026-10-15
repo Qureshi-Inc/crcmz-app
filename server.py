@@ -4039,27 +4039,36 @@ def api_clip_media(uid: str, request: Request):
 # auth gate, because the gate lets LAN and machine-token callers through with no
 # session — and those have no member to upload as.
 
-def _upload_member(request: Request) -> tuple[str, str]:
-    """(zitadel_id, roster psn_id) for the signed-in member, or an HTTPException."""
+def _upload_member(request: Request) -> tuple[str, str, str]:
+    """(zitadel_id, credit_id, platform) for the signed-in member, or an HTTPException.
+
+    credit_id is the PSN online ID for PSN users, or the Steam display name for
+    Steam-only users.  platform is "psn" or "steam".
+    """
     sub = ((_get_session(request) or {}).get("sub") or "").strip()
     if not sub:
         raise HTTPException(status_code=401, detail="sign in to upload videos")
     psn_id = ""
+    steam_name = ""
     try:
         import crcmz_identity
         person = crcmz_identity.by_zitadel_id().get(sub) or {}
         psn_id = person.get("psn_id") or ""
+        if not psn_id and person.get("steam_id"):
+            steam_name = (person.get("display_name") or person.get("steam_id") or "").strip()
     except Exception as e:  # noqa: BLE001 - fall back to the portal link below
         logger.warning("video upload: identity lookup failed: %s", e)
     if not psn_id:
         # The identity graph already falls back to this link; repeat it here so a
         # Zitadel blip does not lock a linked member out.
         psn_id = ((portal_mod.find_by_zitadel_id(sub) or {}).get("online_id") or "")
-    if not psn_id:
-        raise HTTPException(status_code=403,
-                            detail="link your PSN account first — uploads are credited "
-                                   "to your PSN ID")
-    return sub, psn_id
+    if psn_id:
+        return sub, psn_id, "psn"
+    if steam_name:
+        return sub, steam_name, "steam"
+    raise HTTPException(status_code=403,
+                        detail="link your PlayStation or Steam account — uploads are "
+                               "credited to your platform ID")
 
 
 def _upload_rejected(e: "_vu.Rejected") -> JSONResponse:
@@ -4091,9 +4100,10 @@ def _member_upload_view(row: dict) -> dict:
 
 @app.get("/api/video-uploads/mine")
 def api_video_uploads_mine(request: Request):
-    sub, psn_id = _upload_member(request)
+    sub, psn_id, platform = _upload_member(request)
     rows = _vu.for_member(sub, limit=30)
     return {"psn_id": psn_id,
+            "credit_platform": platform,
             "uploads": [_member_upload_view(r) for r in rows],
             "can_upload": not any(r["status"] == "queued" for r in rows),
             # An unfinished upload the page can offer to resume.
@@ -4107,7 +4117,7 @@ def api_video_uploads_mine(request: Request):
 async def api_video_uploads_start(request: Request):
     if not _watch_same_origin(request):
         return JSONResponse({"detail": "cross-origin request rejected"}, status_code=403)
-    sub, psn_id = await asyncio.to_thread(_upload_member, request)
+    sub, psn_id, _ = await asyncio.to_thread(_upload_member, request)
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001

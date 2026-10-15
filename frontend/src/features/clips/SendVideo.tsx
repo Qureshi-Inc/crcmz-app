@@ -51,8 +51,8 @@ function SendVideo() {
   if (q.error instanceof ApiError && q.error.status === 403) {
     return (
       <div className="send-body">
-        <p style={{ margin: 0 }}>Link your PlayStation account — uploads are credited to your PSN ID.</p>
-        <a className="btn btn-secondary" href={PORTAL_HREF}>Link PSN</a>
+        <p style={{ margin: 0 }}>Link your PlayStation or Steam account — uploads are credited to your platform ID.</p>
+        <a className="btn btn-secondary" href={PORTAL_HREF}>Link account</a>
       </div>
     )
   }
@@ -133,7 +133,7 @@ function SendForm({ d, up }: { d: UploadsResponse; up: UploadState }) {
   return (
     <div className="send-body">
       <p className="meta" style={{ margin: 0 }}>
-        Muse posts it to Instagram, TikTok and YouTube, credited to <b>{d.psn_id}</b>. MP4 or MOV, up to {minutes} minutes
+        Muse posts it to Instagram, TikTok and YouTube, credited to <b>{d.psn_id}</b>{d.credit_platform === 'steam' ? ' (Steam)' : ''}. MP4 or MOV, up to {minutes} minutes
         and {fmtBytes(L.max_bytes)}. One video in the queue at a time.
       </p>
 

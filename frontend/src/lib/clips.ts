@@ -78,7 +78,7 @@ export type Upload = {
   duration_seconds: number | null
   platforms: Record<string, { url: string } | null>
 }
-export type UploadsResponse = { psn_id: string; uploads: Upload[]; can_upload: boolean; open_session: OpenSession | null; limits: UploadLimits }
+export type UploadsResponse = { psn_id: string; credit_platform?: string; uploads: Upload[]; can_upload: boolean; open_session: OpenSession | null; limits: UploadLimits }
 
 export function useUploads() {
   return useQuery({
