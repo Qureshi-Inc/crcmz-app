@@ -1305,6 +1305,7 @@ def read_image(image: bytes, mime: str = "image/jpeg", hints: list[str] | None =
 
 def _norm(s: str) -> str:
     s = re.sub(r"#\d+\s*$", "", (s or "").strip())  # Activision ids: Name#1234567
+    s = re.sub(r"^\s*[\[(][^\])]{1,8}[\])]\s*", "", s)  # clan tags: [CRCMZ]Name
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
