@@ -3251,6 +3251,47 @@ def _tournament_bracket(id: str = "") -> dict:  # noqa: A002
         return {"error": "Tournament not found"}
 
 
+@tool(
+    "tourney_leaderboard",
+    "Squad tournament leaderboards by PLAYER (never teams), across every tournament or one. Boards: "
+    "most kills, most deaths, best K/D and kills per game (min 3 games), most kills in one game, most "
+    "score, best single-game score, assists, game wins, win rate, tournaments won, lobby wins, games "
+    "played, plus goals/clean sheets/biggest win for EA FC and any extra screenshot stats (damage, "
+    "headshots...). Kills/deaths/score come from scored result screenshots; wins and goals from every "
+    "result. Filter by game (cod, fc, rl, nba2k, madden, fight, custom) or tournament_id.",
+    {
+        "type": "object",
+        "properties": {
+            "game": {"type": "string", "description": "cod, fc, rl, nba2k, madden, fight or custom. Omit for all games."},
+            "tournament_id": {"type": "string", "description": "Limit to one tournament (id from tournament_list)."},
+            "limit": {"type": "integer", "description": "Players per board, 1-25, default 10."},
+        },
+    })
+def _tourney_leaderboard(game: str = "", tournament_id: str = "", limit: int = 10) -> dict:
+    import tourney as _tn
+    return _tn.leaderboard(game if game in _tn.GAMES else None, tournament_id or None,
+                           limit=max(1, min(int(limit or 10), 25)))
+
+
+@tool(
+    "tourney_player_stats",
+    "One player's tournament record: games, wins/losses/draws, win rate, titles, kills, deaths, K/D, "
+    "assists, score, best game, lobby placings, extra stats, games per title and their last 20 "
+    "screenshot stat lines. Find them by any name (squad name, PSN or Call of Duty name).",
+    {
+        "type": "object",
+        "properties": {
+            "player": {"type": "string", "description": "Name, PSN id or COD name, e.g. Mutasif or ASamad89."},
+            "game": {"type": "string", "description": "Optional game filter: cod, fc, rl, nba2k, madden, fight, custom."},
+        },
+        "required": ["player"],
+    })
+def _tourney_player_stats(player: str = "", game: str = "") -> dict:
+    import tourney as _tn
+    found = _tn.player_stats(str(player)[:60], game if game in _tn.GAMES else None)
+    return found or {"error": f"No tournament stats for {player!r}"}
+
+
 COACH_TAGS = ("positioning", "rotation", "crosshair-placement", "timing",
               "decision-making", "movement", "gunskill", "map-awareness",
               "utility-usage", "communication", "clutch", "highlight", "fail")

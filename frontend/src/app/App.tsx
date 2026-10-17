@@ -19,6 +19,7 @@ import { CoachPage } from '../features/coach/CoachPage'
 import { GiveawayPage } from '../features/giveaway/GiveawayPage'
 import { TourneyPage, TournamentPage } from '../features/tourney/TourneyPage'
 import { CreatePage as TourneyCreatePage } from '../features/tourney/Create'
+import { LeadersPage as TourneyLeadersPage } from '../features/tourney/Leaders'
 import { HelpPage } from '../features/help/HelpPage'
 import { GetAppPage } from '../features/getapp/GetAppPage'
 import { MoviesHome } from '../features/watch/MoviesHome'
@@ -65,6 +66,7 @@ export function App() {
               <Route path="coach" element={<CoachPage />} />
               <Route path="tourney" element={<TourneyPage />} />
               <Route path="tourney/new" element={<TourneyCreatePage />} />
+              <Route path="tourney/leaders" element={<TourneyLeadersPage />} />
               <Route path="tourney/:id" element={<TournamentPage />} />
               <Route path="ask" element={<Suspense fallback={null}><AskPage /></Suspense>} />
               <Route path="settings" element={<SettingsPage />} />

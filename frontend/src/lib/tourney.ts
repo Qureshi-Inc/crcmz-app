@@ -16,7 +16,7 @@ export interface Catalog { games: Record<string, Game>; formats: Record<Format, 
 export interface Settings {
   best_of: number; legs: number; third_place: boolean; final_reset: boolean; league_legs: number
   group_size: number; advance: number; pts_win: number; pts_draw: number; lobbies: number
-  placement_points: number[]; kill_points: number; game_name: string; unit: string
+  placement_points: number[]; kill_points: number; game_name: string; unit: string; whatsapp: boolean
 }
 
 export interface Member { id: string; display_name: string; psn_id: string; is_guest: boolean }
@@ -85,6 +85,26 @@ export const useTournament = (id: string) => useQuery<Tournament>({
 export const useShots = (id: string, on: boolean) => useQuery({
   queryKey: ['tourney', 'shots', id], enabled: on, refetchInterval: 15_000,
   queryFn: ({ signal }) => getJSON<Shot[]>(`${T}/shots?tournament_id=${encodeURIComponent(id)}`, signal),
+})
+
+export interface BoardRow2 { player_id: string; name: string; value: number; games: number }
+export interface Board { key: string; title: string; unit: string; rows: BoardRow2[] }
+export interface Leaders { game: string | null; tournament_id: string | null; games: string[]; players: number; boards: Board[]; min_games: number }
+export interface PlayerStats {
+  player_id: string; name: string; games: number; wins: number; losses: number; draws: number; win_rate: number
+  titles: number; tournaments: number; kills: number; deaths: number; kd: number; assists: number; score: number
+  best_kills: number; best_score: number; kills_per_game: number; lobby_games: number; lobby_wins: number
+  avg_place: number | null; for: number; against: number; extra: Record<string, number>; by_game: Record<string, number>
+  recent_games: { game: string; mode: string; game_no: number; kills: number | null; deaths: number | null; assists: number | null
+    score: number | null; placement: number | null; won: number | null; tournament: string; created_at: string }[]
+}
+export const useLeaders = (game: string, tid = '') => useQuery({
+  queryKey: ['tourney', 'leaders', game, tid], refetchInterval: 30_000,
+  queryFn: ({ signal }) => getJSON<Leaders>(`${T}/leaderboard?${new URLSearchParams({ ...(game ? { game } : {}), ...(tid ? { tournament_id: tid } : {}) })}`, signal),
+})
+export const usePlayerStats = (pid: string) => useQuery({
+  queryKey: ['tourney', 'player', pid], enabled: Boolean(pid),
+  queryFn: ({ signal }) => getJSON<PlayerStats>(`${T}/players/${encodeURIComponent(pid)}`, signal),
 })
 
 export const api = {

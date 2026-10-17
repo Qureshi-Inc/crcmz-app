@@ -151,6 +151,7 @@ export function CreatePage() {
                 <input className="input" maxLength={16} placeholder="Points" value={rules.unit ?? ''} onChange={(e) => r('unit', e.target.value)} /></label>
             </div>
           )}
+          <Toggle label="Announce in the WhatsApp group when it starts and when it ends" on={rules.whatsapp ?? true} set={(v) => r('whatsapp', v)} />
           <label className="tn-field"><span className="field-label">Name</span>
             <input className="input" maxLength={60} placeholder={suggested} value={name} onChange={(e) => setName(e.target.value)} /></label>
           {err && <p className="form-err" role="alert">{err}</p>}

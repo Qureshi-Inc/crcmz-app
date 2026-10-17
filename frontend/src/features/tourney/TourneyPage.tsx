@@ -11,6 +11,7 @@ import { Bracket, MatchCard } from './Bracket'
 import { Fixtures, Leaderboard, Standings } from './Tables'
 import { ReportLobby, ReportMatch, Sheet, errText } from './Report'
 import { Setup } from './Setup'
+import { Leaders } from './Leaders'
 import '../../styles/tourney.css'
 
 export function TourneyPage() {
@@ -27,7 +28,10 @@ export function TourneyPage() {
           <h1 className="page-h1" tabIndex={-1}>Tourney</h1>
           <p className="dim tn-sub">Brackets, leagues and lobby series for every game the squad plays.</p>
         </div>
-        <Link to="/tourney/new" className="btn btn-primary"><Icon name="plus" className="btn-ico" />New tournament</Link>
+        <div className="tn-owner">
+          <Link to="/tourney/leaders" className="btn btn-secondary"><Icon name="giveaway" className="btn-ico" />Leaderboards</Link>
+          <Link to="/tourney/new" className="btn btn-primary"><Icon name="plus" className="btn-ico" />New tournament</Link>
+        </div>
       </div>
       {q.isError && <ErrorStrip text="Couldn't load tournaments" onRetry={() => q.refetch()} />}
       {q.isLoading && <SkeletonRows n={3} height={88} />}
@@ -76,7 +80,7 @@ function Group({ title, items }: { title: string; items: Summary[] }) {
   )
 }
 
-type Tab = 'chart' | 'matches' | 'lineup' | 'shots'
+type Tab = 'chart' | 'matches' | 'stats' | 'lineup' | 'shots'
 
 export function TournamentPage() {
   const { id = '' } = useParams()
@@ -119,10 +123,10 @@ export function TournamentPage() {
 
       {t.status === 'draft' ? <Setup t={t} /> : (
         <>
-          <div className="seg tn-tabs" role="tablist" style={{ gridTemplateColumns: `repeat(${t.status === 'active' ? 4 : 3}, 1fr)` }}>
-            {(['chart', 'matches', 'lineup', ...(t.status === 'active' ? ['shots'] : [])] as Tab[]).map((k) => (
+          <div className="seg tn-tabs" role="tablist" style={{ gridTemplateColumns: `repeat(${t.status === 'active' ? 5 : 4}, 1fr)` }}>
+            {(['chart', 'matches', 'stats', 'lineup', ...(t.status === 'active' ? ['shots'] : [])] as Tab[]).map((k) => (
               <button key={k} type="button" role="tab" className="seg-tab" data-state={tab === k ? 'active' : 'inactive'} aria-selected={tab === k} onClick={() => setTab(k)}>
-                {{ chart: 'Chart', matches: t.kind === 'ffa' ? 'Games' : 'Matches', lineup: 'Line-up', shots: `Inbox${pending.length ? ` (${pending.length})` : ''}` }[k]}
+                {{ chart: 'Chart', matches: t.kind === 'ffa' ? 'Games' : 'Matches', stats: 'Stats', lineup: 'Line-up', shots: `Inbox${pending.length ? ` (${pending.length})` : ''}` }[k]}
               </button>
             ))}
           </div>
@@ -133,6 +137,7 @@ export function TournamentPage() {
             </>
           )}
           {tab === 'matches' && <MatchList t={t} onPick={onPick} onLobby={setLobby} />}
+          {tab === 'stats' && <Leaders tournamentId={t.id} fixedGame={t.game} />}
           {tab === 'lineup' && <Lineup t={t} />}
           {tab === 'shots' && <Shots t={t} shots={shots.data ?? []} onOpen={(s) => {
             const sug = s.suggestion

@@ -7674,6 +7674,8 @@ def _notify_wa_send(jid: str, text: str) -> bool:
 
 
 _notify.wa_send = _notify_wa_send
+# Tourney start/finish announcements go to the main squad group (per-tournament toggle).
+_tourney.wa_send = lambda text: bool(WA_MAIN_JID) and _notify_wa_send(WA_MAIN_JID, text)
 _notify.mm_dm = mm_client.dm_user
 import reels as _reels
 app.include_router(_reels.build_router(_get_session, _is_iam_admin))
@@ -9320,6 +9322,22 @@ def tourney_dismiss_shot(request: Request, sid: str):
     _tourney_sub(request)
     _tourney.dismiss_shot(sid)
     return {"ok": True}
+
+
+@app.get("/api/tourney/leaderboard")
+def tourney_leaderboard(request: Request, game: str | None = None, tournament_id: str | None = None):
+    _tourney_sub(request)
+    g = game if game in _tourney.GAMES else None
+    return _tourney.leaderboard(g, tournament_id or None, limit=10)
+
+
+@app.get("/api/tourney/players/{who}")
+def tourney_player(request: Request, who: str, game: str | None = None):
+    _tourney_sub(request)
+    found = _tourney.player_stats(who, game if game in _tourney.GAMES else None)
+    if not found:
+        raise HTTPException(404, "No tournament stats for that player")
+    return found
 
 
 @app.get("/api/tourney/feed")

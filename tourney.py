@@ -163,6 +163,10 @@ def _clean_settings(game: str, mode: str, fmt: str, raw: dict | None) -> dict:
     s["kill_points"] = _int(raw.get("kill_points"), 0, 10, md["kill_points"])
     s["game_name"] = str(raw.get("game_name") or "").strip()[:40]
     s["unit"] = (str(raw.get("unit") or "").strip()[:16] or md["unit"]) if game == "custom" else md["unit"]
+    s["whatsapp"] = bool(raw.get("whatsapp", True))
+    for k, v in raw.items():  # announcement bookkeeping survives rule edits
+        if k.startswith("_wa"):
+            s[k] = v
     return s
 
 
@@ -226,6 +230,13 @@ def init() -> None:
             placement INTEGER, kills INTEGER NOT NULL DEFAULT 0, deaths INTEGER,
             PRIMARY KEY (lobby_id, entrant_id)
         );
+        CREATE TABLE IF NOT EXISTS player_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id TEXT, tournament_id TEXT, target_id TEXT,
+            game_no INTEGER, game TEXT, mode TEXT, player_id TEXT, gamertag TEXT, entrant_id TEXT, team TEXT,
+            placement INTEGER, kills INTEGER, deaths INTEGER, assists INTEGER, score INTEGER, won INTEGER,
+            extra TEXT, created_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS player_stats_p ON player_stats(player_id);
         CREATE TABLE IF NOT EXISTS shots (
             id TEXT PRIMARY KEY, created_at TEXT NOT NULL, sender TEXT NOT NULL DEFAULT '',
             source TEXT NOT NULL, mime TEXT NOT NULL DEFAULT 'image/jpeg', reading TEXT,
@@ -424,6 +435,7 @@ def update_tournament(tid: str, *, name: str | None = None, settings: dict | Non
 
 def delete_tournament(tid: str) -> None:
     with _lock, _conn() as db:
+        db.execute("DELETE FROM player_stats WHERE tournament_id=?", (tid,))
         db.execute("DELETE FROM tournaments WHERE id=?", (tid,))
         db.execute("UPDATE shots SET status='dismissed', tournament_id=NULL WHERE tournament_id=?", (tid,))
 
@@ -507,7 +519,8 @@ def update_entrant(eid: str, *, name: str | None, color: str | None, members: li
             if t["team_size"] == 1 and players and name is None:
                 nm = db.execute("SELECT display_name FROM players WHERE id=?", (players[0],)).fetchone()[0]
                 db.execute("UPDATE entrants SET name=? WHERE id=?", (nm, eid))
-        return get_tournament(t["id"])
+        _ret = t["id"]
+    return get_tournament(_ret)
 
 
 def remove_entrant(eid: str) -> dict:
@@ -518,7 +531,8 @@ def remove_entrant(eid: str) -> dict:
         _draft(db, e["tournament_id"])
         db.execute("DELETE FROM entrants WHERE id=?", (eid,))
         _renumber(db, e["tournament_id"])
-        return get_tournament(e["tournament_id"])
+        _ret = e["tournament_id"]
+    return get_tournament(_ret)
 
 
 def _renumber(db, tid: str, order: list[str] | None = None) -> None:
@@ -720,12 +734,18 @@ def start(tid: str) -> dict:
                 db.execute("INSERT INTO lobbies(id,tournament_id,num) VALUES(?,?,?)", (_id(), tid, i + 1))
         db.execute("UPDATE tournaments SET status='active', started_at=? WHERE id=?", (_now(), tid))
         _rebuild(db, tid)
+        if t["settings"].get("whatsapp", True) and not t["settings"].get("_wa_start"):
+            t2 = _t_row(db, tid)
+            t2["settings"]["_wa_start"] = True
+            db.execute("UPDATE tournaments SET settings=? WHERE id=?", (json.dumps(t2["settings"]), tid))
+            _announce("start", tid)
     return get_tournament(tid)
 
 
 def reset(tid: str) -> dict:
     with _lock, _conn() as db:
         _t_row(db, tid)
+        db.execute("DELETE FROM player_stats WHERE tournament_id=?", (tid,))
         db.execute("DELETE FROM matches WHERE tournament_id=?", (tid,))
         db.execute("DELETE FROM lobbies WHERE tournament_id=?", (tid,))
         db.execute("UPDATE entrants SET group_label=NULL WHERE tournament_id=?", (tid,))
@@ -934,6 +954,10 @@ def _rebuild(db, tid: str) -> None:
     if champ:
         db.execute("UPDATE tournaments SET status='complete', champion_id=?, finished_at=COALESCE(finished_at, ?)"
                    " WHERE id=?", (champ, _now(), tid))
+        if t["settings"].get("whatsapp", True) and t["settings"].get("_wa_end") != champ:
+            t["settings"]["_wa_end"] = champ
+            db.execute("UPDATE tournaments SET settings=? WHERE id=?", (json.dumps(t["settings"]), tid))
+            _announce("end", tid)
     else:
         db.execute("UPDATE tournaments SET status='active', champion_id=NULL, finished_at=NULL WHERE id=?", (tid,))
 
@@ -998,11 +1022,13 @@ def report_match(mid: str, games: list[dict], pens: list | None, *, reporter: st
                    (json.dumps(clean), s1, s2, p[0] if p else None, p[1] if p else None, side, m["e1"], m["e2"],
                     source, shot_id, reporter, _now(), mid))
         _rebuild(db, t["id"])
-        return get_tournament(t["id"])
+        _ret = t["id"]
+    return get_tournament(_ret)
 
 
 def undo_match(mid: str) -> dict:
     with _lock, _conn() as db:
+        db.execute("DELETE FROM player_stats WHERE target_id=?", (mid,))
         m = db.execute("SELECT * FROM matches WHERE id=?", (mid,)).fetchone()
         if not m:
             raise LookupError("Match not found")
@@ -1013,7 +1039,8 @@ def undo_match(mid: str) -> dict:
                    " result_side=NULL, res_e1=NULL, res_e2=NULL, source=NULL, shot_id=NULL, played_at=NULL"
                    " WHERE id=?", (mid,))
         _rebuild(db, m["tournament_id"])
-        return get_tournament(m["tournament_id"])
+        _ret = m["tournament_id"]
+    return get_tournament(_ret)
 
 
 # ── FFA lobbies ───────────────────────────────────────────────────────────────
@@ -1075,18 +1102,21 @@ def report_lobby(lid: str, rows: list[dict], *, reporter: str, source: str = "ma
         db.execute("UPDATE lobbies SET status='played', source=?, shot_id=?, reported_by=?, played_at=? WHERE id=?",
                    (source, shot_id, reporter, _now(), lid))
         _rebuild(db, tid)
-        return get_tournament(tid)
+        _ret = tid
+    return get_tournament(_ret)
 
 
 def undo_lobby(lid: str) -> dict:
     with _lock, _conn() as db:
+        db.execute("DELETE FROM player_stats WHERE target_id=?", (lid,))
         lob = db.execute("SELECT * FROM lobbies WHERE id=?", (lid,)).fetchone()
         if not lob:
             raise LookupError("Lobby not found")
         db.execute("DELETE FROM lobby_results WHERE lobby_id=?", (lid,))
         db.execute("UPDATE lobbies SET status='pending', source=NULL, shot_id=NULL, played_at=NULL WHERE id=?", (lid,))
         _rebuild(db, lob["tournament_id"])
-        return get_tournament(lob["tournament_id"])
+        _ret = lob["tournament_id"]
+    return get_tournament(_ret)
 
 
 def add_lobby(tid: str) -> dict:
@@ -1097,7 +1127,106 @@ def add_lobby(tid: str) -> dict:
         n = db.execute("SELECT COALESCE(MAX(num),0) FROM lobbies WHERE tournament_id=?", (tid,)).fetchone()[0]
         db.execute("INSERT INTO lobbies(id,tournament_id,num) VALUES(?,?,?)", (_id(), tid, n + 1))
         _rebuild(db, tid)
-        return get_tournament(tid)
+        _ret = tid
+    return get_tournament(_ret)
+
+
+# ── WhatsApp announcements ────────────────────────────────────────────────────
+# server.py sets `wa_send(text) -> bool`. Unset (tests, scripts) means nothing is sent.
+wa_send = None
+APP_URL = "https://app.crcmz.me/app/tourney"
+
+
+def _announce(kind: str, tid: str) -> None:
+    """Send after the current write commits: the thread waits on the same lock."""
+    if not wa_send:
+        return
+
+    def run():
+        try:
+            import time as _t
+            _t.sleep(4)  # let the screenshot's player stats land before the results are written up
+            text = start_message(tid) if kind == "start" else end_message(tid)
+            if text:
+                wa_send(text)
+        except Exception as e:  # noqa: BLE001 - an announcement must never break scoring
+            logger.warning("tourney: WhatsApp %s announcement failed: %s", kind, e)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _fmt_line(t: dict) -> str:
+    bits = [t["game_label"], t["mode_label"], t["format_label"]]
+    bo = 2 if t["settings"].get("legs") == 2 else t["settings"].get("best_of", 1)
+    if t["settings"].get("legs") == 2:
+        bits.append("home & away")
+    elif bo > 1:
+        bits.append(f"best of {bo}")
+    return " · ".join(bits)
+
+
+def start_message(tid: str) -> str:
+    t = get_tournament(tid)
+    ents = {e["id"]: e for e in t["entrants"]}
+    who = ", ".join(e["name"] + (f" ({' & '.join(p['display_name'] for p in e['members'])})" if len(e["members"]) > 1 else "")
+                    for e in t["entrants"])
+    lines = [f"🏆 *{t['name']}* has started!", _fmt_line(t), "", f"*{len(t['entrants'])} in:* {who}"]
+    first = [m for m in t["matches"] if m["playable"]][:4]
+    if first:
+        lines += ["", "*First up:*"] + [f"⚔️ {ents[m['e1']]['name']} vs {ents[m['e2']]['name']}" for m in first]
+    elif t["format"] == "ffa":
+        lines += ["", f"{t['settings'].get('lobbies', 1)} lobby games. Placement points"
+                  + (f" + {t['settings']['kill_points']} per kill" if t["settings"].get("kill_points") else "")]
+    lines += ["", "📸 Post your result screenshots in the PSN group and the bracket updates itself.",
+              f"Live chart: {APP_URL}/{tid}"]
+    return "\n".join(lines)
+
+
+def end_message(tid: str) -> str:
+    t = get_tournament(tid)
+    ents = {e["id"]: e for e in t["entrants"]}
+    champ = ents.get(t["champion_id"] or "")
+    if not champ:
+        return ""
+    crew = " & ".join(p["display_name"] for p in champ["members"]) if len(champ["members"]) > 1 else ""
+    lines = [f"👑 *{champ['name']}* won *{t['name']}*!" + (f" ({crew})" if crew else ""), _fmt_line(t), ""]
+    if t["format"] == "ffa":
+        lines.append("*Final standings:*")
+        for r in t["leaderboard"][:5]:
+            lines.append(f"{['🥇', '🥈', '🥉'][r['pos'] - 1] if r['pos'] <= 3 else str(r['pos']) + '.'} "
+                         f"{ents[r['entrant_id']]['name']}: {r['points']} pts, {r['kills']} kills")
+    elif t["format"] == "league":
+        lines.append("*Final table:*")
+        for r in (t["tables"].get("") or [])[:5]:
+            lines.append(f"{r['pos']}. {ents[r['entrant_id']]['name']}: {r['pts']} pts ({r['w']}W {r['d']}D {r['l']}L)")
+    else:
+        stage = "GF" if t["format"] == "double_elim" else ("K" if t["format"] == "groups" else "W")
+        finals = [m for m in t["matches"] if m["stage"] == stage and m["status"] == "played"]
+        if finals:
+            f = max(finals, key=lambda m: m["round"])
+            w, l = (f["e1"], f["e2"]) if f["winner_id"] == f["e1"] else (f["e2"], f["e1"])
+            ws, ls = (f["score1"], f["score2"]) if w == f["e1"] else (f["score2"], f["score1"])
+            pens = f" ({f['pens1']}–{f['pens2']} pens)" if f["pens1"] is not None else ""
+            maps = ""
+            if len(f["games"]) > 1:
+                maps = " [" + ", ".join(f"{g['s1']}–{g['s2']}" if f["winner_id"] == f["e1"] else f"{g['s2']}–{g['s1']}"
+                                         for g in f["games"]) + "]"
+            lines.append(f"*Final:* {ents[w]['name']} {ws}–{ls} {ents[l]['name']}{pens}{maps}")
+            third = next((m for m in t["matches"] if m["stage"] == "P" and m["winner_id"]), None)
+            if third:
+                lines.append(f"🥉 3rd: {ents[third['winner_id']]['name']}")
+    stars = []
+    try:
+        lb = {b["key"]: b for b in leaderboard(tournament_id=tid, limit=1)["boards"]}
+        for key, label in (("kills", "Most kills"), ("kd", "Best K/D"), ("score", "Top score"), ("for", "Top scorer")):
+            if key in lb and lb[key]["rows"]:
+                r = lb[key]["rows"][0]
+                stars.append(f"{label}: {r['name']} ({r['value']})")
+    except Exception:  # noqa: BLE001
+        pass
+    if stars:
+        lines += ["", "⭐ " + " · ".join(stars)]
+    lines += ["", f"Full results: {APP_URL}/{tid}"]
+    return "\n".join(lines)
 
 
 # ── reads ─────────────────────────────────────────────────────────────────────
@@ -1253,9 +1382,11 @@ _READ_PROMPT = """You read video game result screenshots for a squad tournament 
 Reply with ONLY one JSON object, no prose:
 {"kind": "h2h" | "scoreboard" | "unknown",
  "game": "fc" | "cod" | "rl" | "nba2k" | "madden" | "fight" | "other",
- "sides": [{"label": "club, team or player name shown", "gamertags": ["..."], "score": 0}],
+ "sides": [{"label": "club, team or player name shown", "gamertags": ["..."], "score": 0,
+            "stats": {"possession": 0, "shots": 0, "shots_on_target": 0, "...": 0}}],
  "penalties": [0, 0] or null,
- "rows": [{"gamertag": "...", "team": "side label or null", "placement": 1, "kills": 0, "deaths": 0}],
+ "rows": [{"gamertag": "...", "team": "side label or null", "placement": 1, "kills": 0, "deaths": 0,
+           "assists": 0, "score": 0, "stats": {"damage": 0, "headshots": 0, "objective": 0, "...": 0}}],
  "confidence": 0.0}
 Rules:
 - "h2h": a final score between exactly two sides (EA FC full time "2 - 1", Search & Destroy rounds "6 - 4",
@@ -1266,6 +1397,9 @@ Rules:
   row order (1 = top) unless shown. Warzone squad placement: give each player of the squad the same placement.
 - ALWAYS fill "gamertags" for each side with every PSN name printed near that side (under the club or team
   name, in its scoreboard rows, or next to its score). Leave the list empty only if no names are shown.
+- Fill "rows" with EVERY player on any scoreboard shown (both teams), with every number in their row:
+  kills, deaths, assists, score, and any other column under "stats" (damage, headshots, captures, plants,
+  defuses, time, streak...). For EA FC put team stats (possession %, shots, passes...) in each side's "stats".
 - Copy names exactly as printed. Use null for anything you can't read. confidence: how sure you are overall.
 - If it isn't a match result at all, kind "unknown"."""
 
@@ -1558,6 +1692,7 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
         is_lobby = bool(db.execute("SELECT 1 FROM lobbies WHERE id=?", (target,)).fetchone())
     source = "screenshot-auto" if auto else "screenshot"
     note = "Scored automatically" if auto else None
+    game_no = 1
     if is_lobby:
         t = report_lobby(target, rows if rows is not None else sug.get("rows") or [], reporter=reporter,
                          source=source, shot_id=sid)
@@ -1572,6 +1707,7 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
             # One screenshot is one map / leg: add it to the series until somebody wins it.
             done = json.loads(m.get("partial") or "[]")
             all_games = (done + new)[:7]
+            game_no = len(all_games)
             try:
                 t = report_match(target, all_games, p, reporter=reporter, source=source, shot_id=sid)
             except ValueError as e:
@@ -1587,10 +1723,272 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
             t = report_match(target, new, p, reporter=reporter, source=source, shot_id=sid)
     if games is None and rows is None:
         _learn(sid, sug)
+    if is_lobby:
+        game_no = next((x["num"] for x in t["lobbies"] if x["id"] == target), 1)
+    try:
+        _record_stats(sid, t["id"], target, game_no)
+    except Exception as e:  # noqa: BLE001 - stats are a bonus; the result is already saved
+        logger.warning("tourney: stats not recorded for %s: %s", sid, e)
     with _lock, _conn() as db:
         db.execute("UPDATE shots SET status='applied', tournament_id=?, target_id=?, note=? WHERE id=?",
                    (t["id"], target, note, sid))
     return t
+
+
+def _num(v) -> int | None:
+    try:
+        return int(round(float(str(v).replace(",", "").replace("%", "").strip())))
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_stats(sid: str, tid: str, target: str, game_no: int) -> int:
+    """Store every player's line from a scored screenshot, linked to the person, not the team."""
+    sh = shot(sid)
+    reading = (sh or {}).get("reading") or {}
+    t = get_tournament(tid)
+    extra = _alias_map()
+    members = [(p["id"], e["id"], _aliases({"name": p["display_name"], "members": [p]}, extra))
+               for e in t["entrants"] for p in e["members"]]
+    m = next((x for x in t["matches"] if x["id"] == target), None)
+    lob = next((x for x in t["lobbies"] if x["id"] == target), None)
+    side_e: dict[int, str] = {}
+    game_winner = None
+    if m:
+        g = (m["games"] or m["partial"] or [])
+        g = g[game_no - 1] if 0 < game_no <= len(g) else None
+        if g and g.get("s1") != g.get("s2"):
+            game_winner = m["e1"] if (g.get("s1") or 0) > (g.get("s2") or 0) else m["e2"]
+
+    def who(name: str):
+        hit = [(pid, eid) for pid, eid, al in members if _alias_hit(name, al)]
+        return hit[0] if len(hit) == 1 else (None, None)
+
+    lines = []
+    for r in (reading.get("rows") or []):
+        if not isinstance(r, dict) or not isinstance(r.get("gamertag"), str):
+            continue
+        pid, eid = who(r["gamertag"])
+        stats = {k: _num(v) for k, v in (r.get("stats") or {}).items() if _num(v) is not None} if isinstance(r.get("stats"), dict) else {}
+        lines.append({"player_id": pid, "entrant_id": eid, "gamertag": r["gamertag"][:40], "team": str(r.get("team") or "")[:40],
+                      "placement": _num(r.get("placement")), "kills": _num(r.get("kills")), "deaths": _num(r.get("deaths")),
+                      "assists": _num(r.get("assists")), "score": _num(r.get("score")), "extra": stats})
+    if not lines and m:
+        # No per-player table (EA FC): each side's team stats go to the players on that side.
+        for sd in _sides_from(reading):
+            stats = {k: _num(v) for k, v in (sd.get("stats") or {}).items() if _num(v) is not None} if isinstance(sd.get("stats"), dict) else {}
+            for n in _side_names(sd):
+                pid, eid = who(n)
+                if pid and eid in (m["e1"], m["e2"]) and not any(x["player_id"] == pid for x in lines):
+                    lines.append({"player_id": pid, "entrant_id": eid, "gamertag": n[:40], "team": str(sd.get("label") or "")[:40],
+                                  "placement": None, "kills": None, "deaths": None, "assists": None, "score": None, "extra": stats})
+    with _lock, _conn() as db:
+        db.execute("DELETE FROM player_stats WHERE shot_id=?", (sid,))
+        for x in lines:
+            won = None
+            if lob and x["placement"]:
+                won = 1 if x["placement"] == 1 else 0
+            elif game_winner and x["entrant_id"]:
+                won = 1 if x["entrant_id"] == game_winner else 0
+            db.execute("INSERT INTO player_stats(shot_id,tournament_id,target_id,game_no,game,mode,player_id,gamertag,"
+                       "entrant_id,team,placement,kills,deaths,assists,score,won,extra,created_at)"
+                       " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (sid, tid, target, game_no, t["game"], t["mode"], x["player_id"], x["gamertag"], x["entrant_id"],
+                        x["team"], x["placement"], x["kills"], x["deaths"], x["assists"], x["score"], won,
+                        json.dumps(x["extra"]), _now()))
+    return len(lines)
+
+
+# ── player leaderboards ───────────────────────────────────────────────────────
+
+_FOR_UNIT = {"fc": "goals", "rl": "goals", "nba2k": "points", "madden": "points", "fight": "rounds"}
+
+
+def _blank(pid: str, name: str) -> dict:
+    return {"player_id": pid, "name": name, "games": 0, "wins": 0, "losses": 0, "draws": 0, "for": 0, "against": 0,
+            "clean_sheets": 0, "biggest_win": 0, "titles": 0, "tournaments": set(), "stat_games": 0, "kills": 0,
+            "deaths": 0, "assists": 0, "score": 0, "best_kills": 0, "best_score": 0, "lobby_games": 0, "lobby_wins": 0,
+            "place_sum": 0, "kill_games": 0, "death_games": 0, "extra": defaultdict(int), "by_game": defaultdict(int)}
+
+
+def player_totals(game: str | None = None, tournament_id: str | None = None) -> dict[str, dict]:
+    """Every player's totals across tournament play: results from every match and lobby, plus the
+    per-player lines read off scored screenshots."""
+    with _lock, _conn() as db:
+        q, args = "SELECT * FROM tournaments WHERE status != 'draft'", []
+        if game:
+            q += " AND game=?"; args.append(game)
+        if tournament_id:
+            q += " AND id=?"; args.append(tournament_id)
+        ts = [dict(r) for r in db.execute(q, args)]
+        names = {r["id"]: r["display_name"] for r in db.execute("SELECT id, display_name FROM players")}
+        roster: dict[str, list[str]] = defaultdict(list)
+        for r in db.execute("SELECT entrant_id, player_id FROM entrant_members"):
+            roster[r["entrant_id"]].append(r["player_id"])
+        out: dict[str, dict] = {}
+
+        def row(pid: str) -> dict:
+            if pid not in out:
+                out[pid] = _blank(pid, names.get(pid, "?"))
+            return out[pid]
+
+        for t in ts:
+            for pid in roster.get(t["champion_id"] or "", []):
+                row(pid)["titles"] += 1
+            for m in db.execute("SELECT * FROM matches WHERE tournament_id=? AND status IN ('played','pending')", (t["id"],)):
+                games = json.loads((m["games"] if m["status"] == "played" else m["partial"]) or "[]")
+                for g in games:
+                    for eid, mine, theirs in ((m["e1"], g.get("s1", 0), g.get("s2", 0)), (m["e2"], g.get("s2", 0), g.get("s1", 0))):
+                        for pid in roster.get(eid or "", []):
+                            r = row(pid)
+                            r["games"] += 1
+                            r["tournaments"].add(t["id"])
+                            r["by_game"][t["game"]] += 1
+                            r["for"] += mine or 0
+                            r["against"] += theirs or 0
+                            if (theirs or 0) == 0:
+                                r["clean_sheets"] += 1
+                            if mine > theirs:
+                                r["wins"] += 1
+                                r["biggest_win"] = max(r["biggest_win"], mine - theirs)
+                            elif mine < theirs:
+                                r["losses"] += 1
+                            else:
+                                r["draws"] += 1
+            shot_lobbies = {x["target_id"] for x in db.execute(
+                "SELECT DISTINCT target_id FROM player_stats WHERE tournament_id=? AND kills IS NOT NULL", (t["id"],))}
+            for lr in db.execute("SELECT l.id, r.* FROM lobby_results r JOIN lobbies l ON l.id=r.lobby_id"
+                                 " WHERE l.tournament_id=? AND l.status='played'", (t["id"],)):
+                for pid in roster.get(lr["entrant_id"], []):
+                    r = row(pid)
+                    r["tournaments"].add(t["id"])
+                    r["by_game"][t["game"]] += 1
+                    if lr["placement"]:
+                        r["lobby_games"] += 1
+                        r["place_sum"] += lr["placement"]
+                        r["lobby_wins"] += 1 if lr["placement"] == 1 else 0
+                    # Hand-entered lobby kills count when no screenshot covered that game (solo only).
+                    if lr["id"] not in shot_lobbies and len(roster.get(lr["entrant_id"], [])) == 1 and lr["kills"] is not None:
+                        r["kills"] += lr["kills"] or 0
+                        r["kill_games"] += 1
+                        r["best_kills"] = max(r["best_kills"], lr["kills"] or 0)
+                        if lr["deaths"] is not None:
+                            r["deaths"] += lr["deaths"]
+                            r["death_games"] += 1
+            for st in db.execute("SELECT * FROM player_stats WHERE tournament_id=? AND player_id IS NOT NULL", (t["id"],)):
+                r = row(st["player_id"])
+                r["stat_games"] += 1
+                r["tournaments"].add(t["id"])
+                for k in ("kills", "deaths", "assists", "score"):
+                    if st[k] is not None:
+                        r[k] += st[k]
+                if st["kills"] is not None:
+                    r["kill_games"] += 1
+                    r["best_kills"] = max(r["best_kills"], st["kills"])
+                if st["deaths"] is not None:
+                    r["death_games"] += 1
+                if st["score"] is not None:
+                    r["best_score"] = max(r["best_score"], st["score"])
+                for k, v in json.loads(st["extra"] or "{}").items():
+                    if isinstance(v, (int, float)):
+                        r["extra"][k] += v
+        for r in out.values():
+            r["tournaments"] = len(r["tournaments"])
+            r["extra"] = dict(r["extra"])
+            r["by_game"] = dict(r["by_game"])
+            r["kd"] = round(r["kills"] / r["deaths"], 2) if r["deaths"] else (float(r["kills"]) if r["kills"] else 0.0)
+            r["kills_per_game"] = round(r["kills"] / r["kill_games"], 1) if r["kill_games"] else 0.0
+            r["win_rate"] = round(100 * r["wins"] / r["games"]) if r["games"] else 0
+            r["avg_place"] = round(r["place_sum"] / r["lobby_games"], 1) if r["lobby_games"] else None
+        return out
+
+
+def leaderboard(game: str | None = None, tournament_id: str | None = None, limit: int = 10) -> dict:
+    """Player leaderboards (never teams). `game` narrows to one game, e.g. "cod" or "fc"."""
+    tot = player_totals(game, tournament_id)
+    rows = list(tot.values())
+    min_g = 3
+
+    def board(key, title, value, *, unit="", keep=lambda r: True, low=False, fmt=None):
+        cand = [r for r in rows if keep(r) and value(r) not in (None, 0, 0.0)]
+        cand.sort(key=lambda r: (value(r) if not low else -value(r)), reverse=True)
+        return {"key": key, "title": title, "unit": unit, "rows": [
+            {"player_id": r["player_id"], "name": r["name"], "value": value(r), "games": r["games"] or r["stat_games"] or r["lobby_games"]}
+            for r in cand[:limit]]}
+
+    for_unit = _FOR_UNIT.get(game or "", "")
+    boards = [
+        board("kills", "Most kills", lambda r: r["kills"], unit="kills"),
+        board("deaths", "Most deaths", lambda r: r["deaths"], unit="deaths"),
+        board("kd", "Best K/D", lambda r: r["kd"], keep=lambda r: r["kill_games"] >= min_g and r["death_games"] >= min_g, unit="K/D"),
+        board("kills_per_game", "Kills per game", lambda r: r["kills_per_game"], keep=lambda r: r["kill_games"] >= min_g, unit="per game"),
+        board("best_kills", "Most kills in one game", lambda r: r["best_kills"], unit="kills"),
+        board("score", "Most score", lambda r: r["score"], unit="score"),
+        board("best_score", "Best single-game score", lambda r: r["best_score"], unit="score"),
+        board("assists", "Most assists", lambda r: r["assists"], unit="assists"),
+        board("wins", "Most game wins", lambda r: r["wins"], unit="wins"),
+        board("win_rate", "Win rate", lambda r: r["win_rate"], keep=lambda r: r["games"] >= min_g, unit="%"),
+        board("titles", "Tournaments won", lambda r: r["titles"], unit="titles"),
+        board("lobby_wins", "Lobby wins (1st place)", lambda r: r["lobby_wins"], unit="wins"),
+        board("games", "Most games played", lambda r: r["games"] + r["lobby_games"], unit="games"),
+    ]
+    if for_unit:
+        boards += [
+            board("for", f"Most {for_unit}", lambda r: r["for"], unit=for_unit),
+            board("for_per_game", f"{for_unit.capitalize()} per game", lambda r: round(r["for"] / r["games"], 2) if r["games"] else 0,
+                  keep=lambda r: r["games"] >= min_g, unit="per game"),
+            board("against_per_game", f"Fewest {for_unit} conceded per game", lambda r: round(r["against"] / r["games"], 2) if r["games"] else 0,
+                  keep=lambda r: r["games"] >= min_g, low=True, unit="per game"),
+            board("biggest_win", "Biggest win", lambda r: r["biggest_win"], unit=f"{for_unit} margin"),
+        ]
+        if game == "fc":
+            boards.append(board("clean_sheets", "Clean sheets", lambda r: r["clean_sheets"], unit="games"))
+    # Extra screenshot columns (damage, headshots, possession...) get boards when anyone has them.
+    extras = defaultdict(int)
+    for r in rows:
+        for k in r["extra"]:
+            extras[k] += 1
+    for k in sorted(extras):
+        if k in ("possession",):
+            continue
+        boards.append(board(f"extra:{k}", f"Most {k.replace('_', ' ')}", lambda r, k=k: r["extra"].get(k, 0), unit=k.replace("_", " ")))
+    boards = [b for b in boards if b["rows"]]
+    for b in boards:
+        if b["key"] == "against_per_game":
+            b["rows"].sort(key=lambda x: x["value"])
+    games = sorted({g for r in rows for g in r["by_game"]})
+    return {"game": game, "tournament_id": tournament_id, "games": games, "players": len(rows), "boards": boards,
+            "min_games": min_g}
+
+
+def player_stats(who: str, game: str | None = None) -> dict | None:
+    """One player's tournament record, found by player id or any of their names."""
+    tot = player_totals(game)
+    with _lock, _conn() as db:
+        ps = [dict(r) for r in db.execute("SELECT * FROM players")]
+    extra = _alias_map()
+    pid = next((p["id"] for p in ps if p["id"] == who), None)
+    if not pid:
+        hits = [p["id"] for p in ps if _alias_hit(who, _aliases({"name": p["display_name"], "members": [
+            {"id": p["id"], "display_name": p["display_name"], "psn_id": p["psn_id"]}]}, extra))]
+        pid = hits[0] if hits else None
+    if not pid:
+        return None
+    r = tot.get(pid) or _blank(pid, next(p["display_name"] for p in ps if p["id"] == pid))
+    if isinstance(r.get("tournaments"), set):
+        r["tournaments"] = len(r["tournaments"])
+    with _lock, _conn() as db:
+        recent = [dict(x) for x in db.execute(
+            "SELECT s.game, s.mode, s.game_no, s.kills, s.deaths, s.assists, s.score, s.placement, s.won, s.extra,"
+            " s.created_at, t.name AS tournament FROM player_stats s JOIN tournaments t ON t.id=s.tournament_id"
+            " WHERE s.player_id=? ORDER BY s.created_at DESC LIMIT 20", (pid,))]
+    for x in recent:
+        x["extra"] = json.loads(x["extra"] or "{}")
+    r = {k: v for k, v in r.items() if k not in ("place_sum",)}
+    r["extra"] = dict(r.get("extra") or {})
+    r["by_game"] = dict(r.get("by_game") or {})
+    r["recent_games"] = recent
+    return r
 
 
 def dismiss_shot(sid: str) -> None:
