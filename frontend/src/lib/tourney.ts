@@ -45,7 +45,7 @@ export interface Labels {
 export interface Summary extends Labels {
   id: string; name: string; status: Status; team_size: number; created_at: string; started_at: string | null
   finished_at: string | null; entrant_count: number; champion: { name: string; color: string } | null
-  progress: { played: number; total: number; games?: number }
+  progress: { played: number; total: number; games?: number }; best_of?: number
 }
 export interface Tournament extends Labels {
   id: string; name: string; status: Status; team_size: number; settings: Settings; champion_id: string | null
@@ -126,6 +126,15 @@ export async function fileToJpeg(file: File, max = 1600): Promise<string> {
   } finally {
     URL.revokeObjectURL(url)
   }
+}
+
+/** "3 of 7 matches played", or for best-of play "1 of 1 series played · 2 games (best of 3)". */
+export function progressText(kind: string, p: { played: number; total: number; games?: number }, bestOf = 1, short = false): string {
+  if (kind === 'ffa') return short ? `${p.played}/${p.total} games` : `${p.played} of ${p.total} games played`
+  const unit = bestOf > 1 ? 'series' : p.total === 1 ? 'match' : 'matches'
+  const head = short ? `${p.played}/${p.total} ${unit}` : `${p.played} of ${p.total} ${unit} played`
+  const g = p.games ?? 0
+  return bestOf > 1 && g > 0 ? `${head} · ${g} ${g === 1 ? 'game' : 'games'} (best of ${bestOf})` : head
 }
 
 export function roundName(stage: Match['stage'], round: number, rounds: number): string {

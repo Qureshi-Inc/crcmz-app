@@ -1212,6 +1212,7 @@ def list_tournaments(status: str | None = None) -> list[dict]:
                 c = db.execute("SELECT SUM(status='played'), SUM(status NOT IN ('bye','void')) FROM matches"
                                " WHERE tournament_id=?", (t["id"],)).fetchone()
             t["progress"] = {"played": c[0] or 0, "total": c[1] or 0}
+            t["best_of"] = 2 if t["settings"].get("legs") == 2 else t["settings"].get("best_of", 1)
             if t["format"] != "ffa":
                 g = 0
                 for r in db.execute("SELECT status, games, partial FROM matches WHERE tournament_id=?", (t["id"],)):
