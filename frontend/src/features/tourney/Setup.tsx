@@ -68,7 +68,7 @@ export function Setup({ t }: { t: Tournament }) {
                 <span className="su-acts">
                   <button type="button" className="icon-btn" aria-label={`Move ${e.name} up`} disabled={busy || i === 0} onClick={() => move(i, -1)}><Icon name="up" /></button>
                   <button type="button" className="icon-btn" aria-label={`Move ${e.name} down`} disabled={busy || i === t.entrants.length - 1} onClick={() => move(i, 1)}><Icon name="down" /></button>
-                  {!solo && <button type="button" className="icon-btn" aria-label={`Edit ${e.name}`} onClick={() => { setEditing(e); setTeamName(e.name); setPicked(e.members.map((m) => (people.data ?? []).find((x) => x.player_id === m.id)?.key ?? `p:${m.id}`)) }}><Icon name="edit" /></button>}
+                  <button type="button" className="icon-btn" aria-label={`Edit ${e.name}`} onClick={() => { setEditing(e); setTeamName(e.name); setPicked(e.members.map((m) => (people.data ?? []).find((x) => x.player_id === m.id)?.key ?? `p:${m.id}`)) }}><Icon name="edit" /></button>
                   <button type="button" className="icon-btn" aria-label={`Remove ${e.name}`} disabled={busy} onClick={() => void run(() => api.removeEntrant(e.id))}><Icon name="trash" /></button>
                 </span>
               </li>
@@ -84,9 +84,9 @@ export function Setup({ t }: { t: Tournament }) {
           {!solo && !editing && <span className="meta">{picked.length}/{t.team_size} picked</span>}
         </div>
         <div className="su-pick">
-          {!solo && (
+          {(!solo || editing) && (
             <div className="su-team-row">
-              <input className="input" maxLength={32} placeholder={`Team ${t.entrants.length + 1}`} value={teamName} onChange={(e) => setTeamName(e.target.value)} aria-label="Team name" />
+              <input className="input" maxLength={32} placeholder={solo ? 'Name' : `Team ${t.entrants.length + 1}`} value={teamName} onChange={(e) => setTeamName(e.target.value)} aria-label={solo ? 'Player name' : 'Team name'} />
               {editing && (
                 <div className="su-colors" role="radiogroup" aria-label="Team colour">
                   {(cat.data?.colors ?? []).map((c) => (
@@ -97,14 +97,14 @@ export function Setup({ t }: { t: Tournament }) {
               )}
             </div>
           )}
-          <PeoplePicker people={editing ? (people.data ?? []).filter((p) => !(p.player_id && taken.has(p.player_id)) || editing.members.some((m) => m.id === p.player_id)) : pool}
-            picked={picked} toggle={toggle} loading={people.isLoading} />
-          <Guest onAdd={(p) => { qc.invalidateQueries({ queryKey: ['tourney', 'people'] }); toggle(p.key) }} />
+          {!(solo && editing) && <PeoplePicker people={editing ? (people.data ?? []).filter((p) => !(p.player_id && taken.has(p.player_id)) || editing.members.some((m) => m.id === p.player_id)) : pool}
+            picked={picked} toggle={toggle} loading={people.isLoading} />}
+          {!editing && <Guest onAdd={(p) => { qc.invalidateQueries({ queryKey: ['tourney', 'people'] }); toggle(p.key) }} />}
           {err && <p className="form-err" role="alert">{err}</p>}
           <div className="su-btns">
             {editing ? (
               <>
-                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => api.editEntrant(editing.id, { name: teamName, members: picked }), 'Team saved').then((ok) => { if (ok) { setEditing(null); setPicked([]); setTeamName('') } })}>Save team</button>
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => api.editEntrant(editing.id, solo ? { name: teamName } : { name: teamName, members: picked }), solo ? 'Saved' : 'Team saved').then((ok) => { if (ok) { setEditing(null); setPicked([]); setTeamName('') } })}>Save team</button>
                 <button type="button" className="btn btn-ghost" onClick={() => { setEditing(null); setPicked([]); setTeamName('') }}>Cancel</button>
               </>
             ) : (

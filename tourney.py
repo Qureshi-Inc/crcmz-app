@@ -266,6 +266,28 @@ def _upsert_person(db, zitadel_id: str, display_name: str, psn_id: str) -> str:
     return pid
 
 
+def friendly_name(p: dict) -> str:
+    """What the squad calls someone: a name tag, else their WhatsApp name, else the account name."""
+    tags = p.get("tags") or {}
+    for v in (p.get("squad_name"), tags.get("picks_name")):
+        if v and str(v).strip():
+            return str(v).strip()[:32]
+    wa = [w for w in (p.get("wa_names") or []) if w and w.strip()]
+    if wa:
+        return re.sub(r"\s*CRCMZ\s*$", "", wa[0].strip(), flags=re.I)[:32] or wa[0].strip()[:32]
+    name = (p.get("display_name") or p.get("username") or "").strip()
+    parts = name.split()
+    if len(parts) == 2 and parts[0].lower() == parts[1].lower():  # "asamad89 asamad89"
+        name = parts[0]
+    return name[:32]
+
+
+def is_player(p: dict) -> bool:
+    """Real people only: not the App Review login or Zitadel's own admin."""
+    who = f"{p.get('username') or ''} {p.get('email') or ''}".lower()
+    return not ("zitadel" in who or "appreview" in who or (p.get("display_name") or "").strip().lower() == "app review")
+
+
 def people(squad: list[dict]) -> list[dict]:
     """Squad members (from the identity graph) plus guests. Allowlisted fields only."""
     with _lock, _conn() as db:
@@ -273,8 +295,8 @@ def people(squad: list[dict]) -> list[dict]:
         out = []
         for p in squad:
             zid = str(p.get("zitadel_id") or "")
-            name = (p.get("display_name") or p.get("username") or "").strip()
-            if not zid or not name:
+            name = friendly_name(p)
+            if not zid or not name or not is_player(p):
                 continue
             out.append({"key": f"z:{zid}", "display_name": name, "psn_id": p.get("psn_id") or "",
                         "is_guest": False, "player_id": (known.get(zid) or {}).get("id")})
@@ -312,8 +334,7 @@ def _resolve_keys(db, keys: list[str], squad_by_id: dict[str, dict]) -> list[str
             p = squad_by_id.get(k[2:])
             if not p:
                 raise ValueError("Unknown squad member")
-            out.append(_upsert_person(db, k[2:], (p.get("display_name") or p.get("username") or "").strip(),
-                                      p.get("psn_id") or ""))
+            out.append(_upsert_person(db, k[2:], friendly_name(p), p.get("psn_id") or ""))
         elif k.startswith("p:"):
             if not db.execute("SELECT 1 FROM players WHERE id=?", (k[2:],)).fetchone():
                 raise ValueError("Unknown player")
@@ -427,7 +448,7 @@ def update_entrant(eid: str, *, name: str | None, color: str | None, members: li
         if not e:
             raise LookupError("Not found")
         t = _t_row(db, e["tournament_id"])
-        if name is not None and t["team_size"] > 1:
+        if name is not None:
             nm = name.strip()[:32]
             if nm:
                 db.execute("UPDATE entrants SET name=? WHERE id=?", (nm, eid))
@@ -443,7 +464,7 @@ def update_entrant(eid: str, *, name: str | None, color: str | None, members: li
             db.execute("DELETE FROM entrant_members WHERE entrant_id=?", (eid,))
             for pid in players:
                 db.execute("INSERT INTO entrant_members(entrant_id,player_id) VALUES(?,?)", (eid, pid))
-            if t["team_size"] == 1 and players:
+            if t["team_size"] == 1 and players and name is None:
                 nm = db.execute("SELECT display_name FROM players WHERE id=?", (players[0],)).fetchone()[0]
                 db.execute("UPDATE entrants SET name=? WHERE id=?", (nm, eid))
         return get_tournament(t["id"])
@@ -1195,6 +1216,8 @@ Rules:
 - FC penalties appear as small numbers in brackets or "Penalties 4-3": put them in "penalties".
 - "scoreboard": a free-for-all or battle royale result listing players with placement/kills. Placement is the
   row order (1 = top) unless shown. Warzone squad placement: give each player of the squad the same placement.
+- ALWAYS fill "gamertags" for each side with every PSN name printed near that side (under the club or team
+  name, in its scoreboard rows, or next to its score). Leave the list empty only if no names are shown.
 - Copy names exactly as printed. Use null for anything you can't read. confidence: how sure you are overall.
 - If it isn't a match result at all, kind "unknown"."""
 
@@ -1207,9 +1230,14 @@ def _vision_config() -> tuple[str, str, str]:
     return base, model, os.environ.get("OLLAMA_API_KEY", "").strip()
 
 
-def read_image(image: bytes, mime: str = "image/jpeg") -> dict:
+def read_image(image: bytes, mime: str = "image/jpeg", hints: list[str] | None = None) -> dict:
     import httpx
     base, model, key = _vision_config()
+    prompt = _READ_PROMPT
+    if hints:
+        prompt += ("\nPlayers in the matches being played right now (PSN names and nicknames): "
+                   + ", ".join(dict.fromkeys(h for h in hints if h))[:600]
+                   + ". If any of these appear on screen, put them in the right side's gamertags.")
     if not base or not model:
         raise RuntimeError("No vision model configured")
     payload = {
@@ -1217,7 +1245,7 @@ def read_image(image: bytes, mime: str = "image/jpeg") -> dict:
         "chat_template_kwargs": {"enable_thinking": False},
         "messages": [{"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(image).decode()}"}},
-            {"type": "text", "text": _READ_PROMPT}]}],
+            {"type": "text", "text": prompt}]}],
     }
     r = httpx.post(f"{base}/chat/completions", json=payload, timeout=180,
                    headers={"Authorization": f"Bearer {key}"} if key else {})
@@ -1278,10 +1306,15 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
             continue
         ents = {e["id"]: e for e in t["entrants"]}
         game_ok = reading.get("game") in (None, "other", t["game"]) or t["game"] == "custom"
-        if t["kind"] == "h2h" and kind == "h2h":
-            sides = [s for s in (reading.get("sides") or []) if isinstance(s, dict)][:2]
-            if len(sides) != 2:
-                continue
+        sides = [dict(x) for x in (reading.get("sides") or []) if isinstance(x, dict)][:2]
+        if t["kind"] == "h2h" and len(sides) == 2 and kind != "unknown":
+            rows_in = [r for r in (reading.get("rows") or []) if isinstance(r, dict)]
+            for sd in sides:
+                tags = [x for x in (sd.get("gamertags") or []) if isinstance(x, str)]
+                tags += [r.get("gamertag") for r in rows_in
+                         if isinstance(r.get("gamertag"), str) and r.get("team") and sd.get("label")
+                         and _norm(r["team"]) == _norm(sd["label"])]
+                sd["gamertags"] = tags
             for m in t["matches"]:
                 if not (m["playable"] or (only_target and m["id"] == only_target and m["status"] == "played")):
                     continue
@@ -1309,7 +1342,7 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
                     best, best_tie = cand, False
                 elif cand["score"] == best["score"]:
                     best_tie = True
-        elif t["kind"] == "ffa" and kind == "scoreboard":
+        elif t["kind"] == "ffa" and (reading.get("rows") or kind == "scoreboard"):
             lob = next((x for x in t["lobbies"] if (x["id"] == only_target if only_target else x["status"] == "pending")), None)
             if not lob:
                 continue
@@ -1350,6 +1383,29 @@ def _active_ids():
         return [dict(r) for r in db.execute("SELECT id FROM tournaments WHERE status='active'")]
 
 
+def live_names(sender: str = "") -> list[str]:
+    """Names of everyone in a match or lobby that's waiting for a result; the sender's matches first."""
+    first, rest = [], []
+    for row in _active_ids():
+        t = get_tournament(row["id"])
+        ents = {e["id"]: e for e in t["entrants"]}
+        groups = [[m["e1"], m["e2"]] for m in t["matches"] if m["playable"]]
+        if t["kind"] == "ffa":
+            groups = [list(ents)]
+        for g in groups:
+            names = []
+            for eid in g:
+                e = ents.get(eid)
+                if not e:
+                    continue
+                names.append(e["name"])
+                for p in e["members"]:
+                    names += [p["psn_id"], p["display_name"]]
+            mine = bool(sender) and any(_norm(sender) == _norm(n) for n in names if n)
+            (first if mine else rest).extend(names)
+    return [n for n in dict.fromkeys(first + rest) if n][:40]
+
+
 def ingest_shot(image: bytes, *, sender: str, source: str, mime: str = "image/jpeg") -> dict | None:
     """A screenshot arrived from PSN. Store it, read it, and score it when the match is unambiguous."""
     if not has_active():
@@ -1360,7 +1416,7 @@ def ingest_shot(image: bytes, *, sender: str, source: str, mime: str = "image/jp
         db.execute("INSERT INTO shots(id,created_at,sender,source,mime,status) VALUES(?,?,?,?,?, 'reading')",
                    (sid, _now(), sender[:64], source, mime))
     try:
-        reading = read_image(image, mime)
+        reading = read_image(image, mime, live_names(sender))
     except Exception as e:  # noqa: BLE001 - a model blip leaves it in the inbox
         logger.warning("tourney: screenshot read failed: %s", e)
         reading = {"kind": "unknown", "confidence": 0, "error": "read_failed"}

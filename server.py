@@ -9279,7 +9279,7 @@ async def tourney_read(request: Request):
     if mime not in ("image/jpeg", "image/png", "image/webp"):
         raise HTTPException(400, "Use a JPEG, PNG or WebP")
     try:
-        reading = await asyncio.to_thread(_tourney.read_image, image, mime)
+        reading = await asyncio.to_thread(_tourney.read_image, image, mime, await asyncio.to_thread(_tourney.live_names))
     except Exception as e:  # noqa: BLE001
         logger.warning("tourney read failed: %s", e)
         raise HTTPException(503, "The AI couldn't read that right now. Enter the score by hand.")
