@@ -17,7 +17,8 @@ import { SharePage } from '../features/share/SharePage'
 import { WhatsAppPage } from '../features/whatsapp/WhatsAppPage'
 import { CoachPage } from '../features/coach/CoachPage'
 import { GiveawayPage } from '../features/giveaway/GiveawayPage'
-import { TourneyPage } from '../features/tourney/TourneyPage'
+import { TourneyPage, TournamentPage } from '../features/tourney/TourneyPage'
+import { CreatePage as TourneyCreatePage } from '../features/tourney/Create'
 import { HelpPage } from '../features/help/HelpPage'
 import { GetAppPage } from '../features/getapp/GetAppPage'
 import { MoviesHome } from '../features/watch/MoviesHome'
@@ -63,6 +64,8 @@ export function App() {
               <Route path="share" element={<SharePage />} />
               <Route path="coach" element={<CoachPage />} />
               <Route path="tourney" element={<TourneyPage />} />
+              <Route path="tourney/new" element={<TourneyCreatePage />} />
+              <Route path="tourney/:id" element={<TournamentPage />} />
               <Route path="ask" element={<Suspense fallback={null}><AskPage /></Suspense>} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="settings/:tab" element={<SettingsPage />} />

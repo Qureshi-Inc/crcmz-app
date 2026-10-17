@@ -78,6 +78,9 @@ STORES: dict[str, list[str] | None] = {
     "/data/slap_thumbs.db": ["slap_thumbs"],
     "/data/slap_discover.db": ["slap_discover"],
     "/data/movies.db": ["movie_library"],
+    "/data/tournaments.db": ["tournament_list", "tournament_bracket"],
+    "/data/mcp_tokens.db": None,  # personal MCP bearer tokens: credentials, never exposed
+    "/data/tourney_shots": None,  # raw score screenshots; their readings surface via the tourney tools
     "/data/slap_playlists.json": None,  # which Zitadel id made a Slap playlist, only
                                         # used to allow edits; the playlists themselves
                                         # are served by slap_library_search.

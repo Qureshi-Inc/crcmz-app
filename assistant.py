@@ -3214,36 +3214,41 @@ def _whatsapp_clip_reactions(clip_id: str = "") -> dict:
 
 @tool(
     "tournament_list",
-    "List CRCMZ tournaments. Returns id, name, game, format, status, team_count. "
-    "Use status='active' to see only running tournaments.",
+    "List CRCMZ squad tournaments (EA FC, Call of Duty, Rocket League and more). Each has game_label, "
+    "mode_label (e.g. Search & Destroy, Free-for-All, 1v1), format_label (Knockout, Double elimination, "
+    "League, Groups + knockout, Lobby series), status (draft/active/complete), progress played/total "
+    "and the champion once complete. Use status='active' for what's running now.",
     {
         "type": "object",
         "properties": {
-            "status": {"type": "string", "description": "Filter: draft, active, or complete. Omit for all."},
+            "status": {"type": "string", "description": "draft, active or complete. Omit for all."},
         },
     })
 def _tournament_list(status: str = "") -> list:
     import tourney as _tn
-    return _tn.list_tournaments(status or None)
+    return _tn.list_tournaments(status if status in ("draft", "active", "complete") else None)
 
 
 @tool(
     "tournament_bracket",
-    "Get a tournament's full bracket — teams, rounds, matches with scores, winners. "
-    "Use tournament_list first to get the id.",
+    "One tournament in full: entrants with their players, every match (code, stage W=winners, "
+    "L=losers, GF=grand final, K=knockout, G=group, R=league, P=3rd place; e1/e2 entrant ids, "
+    "per-game scores, winner_id), group/league tables (pts, w/d/l, for/against), and for lobby "
+    "series the leaderboard (points, kills, wins). Match entrant ids against `entrants`. "
+    "Get the id from tournament_list.",
     {
         "type": "object",
         "properties": {
-            "id": {"type": "string", "description": "Tournament UUID."},
+            "id": {"type": "string", "description": "Tournament id from tournament_list."},
         },
         "required": ["id"],
     })
-def _tournament_bracket(id: str = "") -> dict:
+def _tournament_bracket(id: str = "") -> dict:  # noqa: A002
     import tourney as _tn
-    t = _tn.get_tournament(id)
-    if t is None:
+    try:
+        return _tn.get_tournament(str(id))
+    except LookupError:
         return {"error": "Tournament not found"}
-    return t
 
 
 COACH_TAGS = ("positioning", "rotation", "crosshair-placement", "timing",

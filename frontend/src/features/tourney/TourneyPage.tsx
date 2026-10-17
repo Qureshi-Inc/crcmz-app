@@ -1,435 +1,386 @@
+// Tourney: per-game tournaments with live brackets, tables and lobby leaderboards.
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useTitle } from '../../app/title'
-import { ErrorStrip } from '../../components/states'
 import { Icon } from '../../components/Icon'
-import {
-  listTournaments, getTournament, createTournament, generateBracket,
-  recordResult, addTeam, removeTeam,
-  listPlayers, addPlayer, addRosterPlayer, removeRosterPlayer,
-  FORMAT_LABELS, GAMES,
-  type Tournament, type Match, type Team, type Player,
-} from '../../lib/tourney'
+import { ErrorStrip, SkeletonRows } from '../../components/states'
+import { toast } from '../../components/toast'
+import { api, useShots, useTournament, useTournaments, type Lobby, type Match, type Shot, type Summary, type Tournament } from '../../lib/tourney'
+import { Bracket, MatchCard } from './Bracket'
+import { Fixtures, Leaderboard, Standings } from './Tables'
+import { ReportLobby, ReportMatch, Sheet, errText } from './Report'
+import { Setup } from './Setup'
+import '../../styles/tourney.css'
 
-const TEAM_COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#8b5cf6', '#14b8a6']
-
-// ── Main Page ──────────────────────────────────────────────────────────────────
 export function TourneyPage() {
   useTitle('Tourney')
-  const [view, setView] = useState<'list' | 'create' | { id: string }>('list')
-
-  if (view === 'create') return <CreateTournament onDone={(id) => setView({ id })} onBack={() => setView('list')} />
-  if (typeof view === 'object') return <TournamentDetail id={view.id} onBack={() => setView('list')} />
-  return <TournamentList onSelect={(id) => setView({ id })} onCreate={() => setView('create')} />
-}
-
-// ── Tournament List ────────────────────────────────────────────────────────────
-function TournamentList({ onSelect, onCreate }: { onSelect: (id: string) => void; onCreate: () => void }) {
-  const q = useQuery({
-    queryKey: ['tourney', 'list'],
-    queryFn: ({ signal }) => listTournaments(undefined, signal),
-    refetchInterval: 30_000,
-  })
-  const tournaments = q.data ?? []
-
+  const q = useTournaments()
+  const list = q.data ?? []
+  const live = list.filter((t) => t.status === 'active')
+  const draft = list.filter((t) => t.status === 'draft')
+  const done = list.filter((t) => t.status === 'complete')
   return (
-    <div className="page">
-      <div className="page-head-row">
-        <h1 className="page-h1" tabIndex={-1}>Tourney</h1>
-        <button className="btn-pill" onClick={onCreate}>+ New</button>
+    <div className="page tn">
+      <div className="tn-top">
+        <div>
+          <h1 className="page-h1" tabIndex={-1}>Tourney</h1>
+          <p className="dim tn-sub">Brackets, leagues and lobby series for every game the squad plays.</p>
+        </div>
+        <Link to="/tourney/new" className="btn btn-primary"><Icon name="plus" className="btn-ico" />New tournament</Link>
       </div>
       {q.isError && <ErrorStrip text="Couldn't load tournaments" onRetry={() => q.refetch()} />}
-      {q.isLoading && <div className="skeleton" style={{ height: 80, borderRadius: 12 }} />}
-      {!q.isLoading && tournaments.length === 0 && (
-        <div className="empty-state">
-          <Icon name="tourney" className="empty-icon" />
-          <p>No tournaments yet.<br />Create one to get started.</p>
+      {q.isLoading && <SkeletonRows n={3} height={88} />}
+      {!q.isLoading && !list.length && (
+        <div className="empty glass">
+          <p className="empty-title">No tournaments yet</p>
+          <p className="dim">Pick a game and a mode (FC 1v1, COD Search & Destroy, a Free-for-All lobby series…), add the squad and the chart builds itself.</p>
+          <Link to="/tourney/new" className="btn btn-primary">Start one</Link>
         </div>
       )}
-      <div className="tourney-list">
-        {tournaments.map((t) => (
-          <button key={t.id} className="tourney-card glass" onClick={() => onSelect(t.id)}>
-            <div className="tourney-card-head">
-              <span className="tourney-game-chip">{t.game}</span>
-              <span className={`tourney-status ${t.status}`}>{t.status}</span>
-            </div>
-            <div className="tourney-card-name">{t.name}</div>
-            <div className="tourney-card-meta">{FORMAT_LABELS[t.format]} · {t.team_count} teams</div>
-          </button>
+      <Group title="Live" items={live} />
+      <Group title="Setting up" items={draft} />
+      <Group title="Finished" items={done} />
+    </div>
+  )
+}
+
+function Group({ title, items }: { title: string; items: Summary[] }) {
+  if (!items.length) return null
+  return (
+    <section className="tn-group" aria-label={title}>
+      <h2 className="eyebrow">{title}</h2>
+      <ul className="tn-cards">
+        {items.map((t) => (
+          <li key={t.id}>
+            <Link to={`/tourney/${t.id}`} className="tn-card glass" style={{ ['--gc' as string]: t.game_color }}>
+              <span className="tn-card-top">
+                <span className="tn-card-game">{t.game_short}</span>
+                <span className="meta">{t.mode_label} · {t.format_label}</span>
+                {t.status === 'active' && <span className="pill pill-live">Live</span>}
+              </span>
+              <span className="tn-card-name">{t.name}</span>
+              {t.champion ? (
+                <span className="tn-card-champ"><Icon name="giveaway" className="btn-ico" /><b>{t.champion.name}</b> won</span>
+              ) : (
+                <span className="tn-card-prog">
+                  <span className="tn-bar" aria-hidden="true"><span style={{ width: `${t.progress.total ? (t.progress.played / t.progress.total) * 100 : 0}%` }} /></span>
+                  <span className="meta num">{t.status === 'draft' ? `${t.entrant_count} entered` : `${t.progress.played}/${t.progress.total} ${t.kind === 'ffa' ? 'games' : 'matches'}`}</span>
+                </span>
+              )}
+            </Link>
+          </li>
         ))}
-      </div>
-    </div>
+      </ul>
+    </section>
   )
 }
 
-// ── Create Tournament ──────────────────────────────────────────────────────────
-function CreateTournament({ onDone, onBack }: { onDone: (id: string) => void; onBack: () => void }) {
-  const [name, setName] = useState('')
-  const [game, setGame] = useState(GAMES[0]!)
-  const [customGame, setCustomGame] = useState('')
-  const [format, setFormat] = useState<string>('single_elim')
-  const [err, setErr] = useState('')
-  const qc = useQueryClient()
-  const mut = useMutation({
-    mutationFn: () =>
-      createTournament({ name: name.trim(), game: game === 'Other' ? customGame.trim() : game, format }),
-    onSuccess: (t) => {
-      qc.invalidateQueries({ queryKey: ['tourney', 'list'] })
-      onDone(t.id)
-    },
-    onError: (e: Error) => setErr(e.message),
-  })
+type Tab = 'chart' | 'matches' | 'lineup' | 'shots'
 
-  return (
-    <div className="page">
-      <button className="back-btn" onClick={onBack}><Icon name="left" /> Tournaments</button>
-      <h1 className="page-h1" tabIndex={-1}>New Tournament</h1>
-      <div className="form-stack glass" style={{ maxWidth: 480, padding: 24, borderRadius: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <label className="form-label">
-          Name
-          <input className="form-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. CRCMZ FIFA Cup" />
-        </label>
-        <label className="form-label">
-          Game
-          <select className="form-input" value={game} onChange={(e) => setGame(e.target.value)}>
-            {GAMES.map((g) => <option key={g}>{g}</option>)}
-          </select>
-        </label>
-        {game === 'Other' && (
-          <label className="form-label">
-            Game name
-            <input className="form-input" value={customGame} onChange={(e) => setCustomGame(e.target.value)} placeholder="e.g. Tekken 8" />
-          </label>
-        )}
-        <label className="form-label">
-          Format
-          <div className="seg-row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
-            {(Object.entries(FORMAT_LABELS) as [string, string][]).map(([k, v]) => (
-              <button key={k} type="button" className={`seg-btn${format === k ? ' on' : ''}`} onClick={() => setFormat(k)}>{v}</button>
-            ))}
-          </div>
-        </label>
-        {err && <p className="form-err">{err}</p>}
-        <button className="btn-primary" disabled={!name.trim() || mut.isPending} onClick={() => mut.mutate()}>
-          {mut.isPending ? 'Creating…' : 'Create Tournament'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ── Tournament Detail ──────────────────────────────────────────────────────────
-function TournamentDetail({ id, onBack }: { id: string; onBack: () => void }) {
-  const [tab, setTab] = useState<'bracket' | 'teams' | 'players'>('bracket')
-  const q = useQuery({
-    queryKey: ['tourney', id],
-    queryFn: ({ signal }) => getTournament(id, signal),
-    refetchInterval: 15_000,
-  })
+export function TournamentPage() {
+  const { id = '' } = useParams()
+  const q = useTournament(id)
   const t = q.data
+  useTitle(t?.name ?? 'Tourney')
+  const [tab, setTab] = useState<Tab>('chart')
+  const [pick, setPick] = useState<Match | null>(null)
+  const [lobby, setLobby] = useState<Lobby | null>(null)
+  const [shotOpen, setShotOpen] = useState<{ shot: Shot; m?: Match; l?: Lobby } | null>(null)
+  const shots = useShots(id, Boolean(t && t.status === 'active'))
+
+  if (q.isError) return <div className="page tn"><BackLink /><ErrorStrip text="Couldn't load this tournament" onRetry={() => q.refetch()} /></div>
+  if (!t) return <div className="page tn"><BackLink /><SkeletonRows n={4} height={84} /></div>
+
+  const champ = t.entrants.find((e) => e.id === t.champion_id)
+  const pending = (shots.data ?? []).filter((s) => s.status === 'pending')
+  const onPick = (m: Match) => setPick(m)
 
   return (
-    <div className="page">
-      <button className="back-btn" onClick={onBack}><Icon name="left" /> Tournaments</button>
-      {!t && q.isLoading && <div className="skeleton" style={{ height: 200, borderRadius: 12, marginTop: 16 }} />}
-      {q.isError && <ErrorStrip text="Couldn't load tournament" onRetry={() => q.refetch()} />}
-      {t && (
+    <div className="page tn">
+      <BackLink />
+      <header className="tn-head" style={{ ['--gc' as string]: t.game_color }}>
+        <span className="tn-head-game">{t.game_label} · {t.mode_label} · {t.format_label}{t.team_size > 1 ? ` · ${t.team_size}v${t.team_size}` : ''}</span>
+        <h1 className="page-h1" tabIndex={-1}>{t.name}</h1>
+        <div className="tn-head-row">
+          {t.status === 'active' && <span className="pill pill-live">Live</span>}
+          {t.status === 'complete' && <span className="pill pill-gold">Finished</span>}
+          {t.status === 'draft' && <span className="pill">Setting up</span>}
+          {t.status !== 'draft' && (
+            <span className="tn-head-prog">
+              <span className="tn-bar" aria-hidden="true"><span style={{ width: `${t.progress.total ? (t.progress.played / t.progress.total) * 100 : 0}%` }} /></span>
+              <span className="meta num">{t.progress.played} of {t.progress.total} {t.kind === 'ffa' ? 'games' : 'matches'} played</span>
+            </span>
+          )}
+          <RulesLine t={t} />
+        </div>
+        <Owner t={t} />
+      </header>
+
+      {t.status === 'draft' ? <Setup t={t} /> : (
         <>
-          <div className="tourney-detail-head">
-            <h1 className="page-h1" tabIndex={-1}>{t.name}</h1>
-            <div className="tourney-detail-meta" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
-              <span className="tourney-game-chip">{t.game}</span>
-              <span className={`tourney-status ${t.status}`}>{t.status}</span>
-              <span style={{ opacity: 0.6, fontSize: 14 }}>{FORMAT_LABELS[t.format]}</span>
-            </div>
-          </div>
-          <div className="tab-row" style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
-            {(['bracket', 'teams', 'players'] as const).map((tb) => (
-              <button key={tb} className={`tab-btn${tab === tb ? ' on' : ''}`} onClick={() => setTab(tb)}>
-                {tb.charAt(0).toUpperCase() + tb.slice(1)}
+          <div className="seg tn-tabs" role="tablist" style={{ gridTemplateColumns: `repeat(${t.status === 'active' ? 4 : 3}, 1fr)` }}>
+            {(['chart', 'matches', 'lineup', ...(t.status === 'active' ? ['shots'] : [])] as Tab[]).map((k) => (
+              <button key={k} type="button" role="tab" className="seg-tab" data-state={tab === k ? 'active' : 'inactive'} aria-selected={tab === k} onClick={() => setTab(k)}>
+                {{ chart: 'Chart', matches: t.kind === 'ffa' ? 'Games' : 'Matches', lineup: 'Line-up', shots: `Inbox${pending.length ? ` (${pending.length})` : ''}` }[k]}
               </button>
             ))}
           </div>
-          {tab === 'bracket' && <BracketTab t={t} />}
-          {tab === 'teams' && <TeamsTab t={t} />}
-          {tab === 'players' && <PlayersTab />}
+          {tab === 'chart' && (
+            <>
+              {champ && <Champion t={t} />}
+              <Chart t={t} onPick={onPick} onLobby={setLobby} />
+            </>
+          )}
+          {tab === 'matches' && <MatchList t={t} onPick={onPick} onLobby={setLobby} />}
+          {tab === 'lineup' && <Lineup t={t} />}
+          {tab === 'shots' && <Shots t={t} shots={shots.data ?? []} onOpen={(s) => {
+            const sug = s.suggestion
+            const m = t.matches.find((x) => x.id === sug?.target_id)
+            const l = t.lobbies.find((x) => x.id === sug?.target_id)
+            setShotOpen({ shot: s, m, l })
+          }} />}
+        </>
+      )}
+
+      <Sheet open={Boolean(pick)} onOpenChange={(v) => !v && setPick(null)} title={pick ? `${pick.code} · Report` : ''}>
+        {pick && <ReportMatch key={pick.id} t={t} m={pick} onClose={() => setPick(null)} />}
+      </Sheet>
+      <Sheet open={Boolean(lobby)} onOpenChange={(v) => !v && setLobby(null)} title={lobby ? `Game ${lobby.num}` : ''}>
+        {lobby && <ReportLobby key={lobby.id} t={t} lobby={lobby} onClose={() => setLobby(null)} />}
+      </Sheet>
+      <Sheet open={Boolean(shotOpen)} onOpenChange={(v) => !v && setShotOpen(null)} title="Screenshot from PSN">
+        {shotOpen && <ShotApply t={t} {...shotOpen} onClose={() => { setShotOpen(null); void shots.refetch() }} />}
+      </Sheet>
+    </div>
+  )
+}
+
+function BackLink() {
+  return <Link to="/tourney" className="btn btn-ghost tn-back"><Icon name="left" className="btn-ico" />Tourney</Link>
+}
+
+function RulesLine({ t }: { t: Tournament }) {
+  const s = t.settings
+  const bits: string[] = []
+  if (t.kind === 'h2h') {
+    if (s.legs === 2) bits.push('home and away knockouts')
+    else if (s.best_of > 1) bits.push(`best of ${s.best_of}`)
+    if (t.format === 'groups') bits.push(`groups of ${s.group_size}, top ${s.advance} through`)
+    if (t.format === 'league' && s.league_legs === 2) bits.push('double round robin')
+    if ((t.format === 'league' || t.format === 'groups')) bits.push(`${s.pts_win} pts a win${t.draws ? `, ${s.pts_draw} a draw` : ''}`)
+  } else {
+    bits.push(`${s.lobbies} games`, s.kill_points ? `${s.kill_points} pt per kill` : 'placement points')
+  }
+  return <span className="meta">{bits.join(' · ')}</span>
+}
+
+function Owner({ t }: { t: Tournament }) {
+  const qc = useQueryClient()
+  const nav = useNavigate()
+  const [confirm, setConfirm] = useState<'' | 'reset' | 'delete'>('')
+  const [busy, setBusy] = useState(false)
+  if (!t.can_manage) return null
+  const go = async () => {
+    setBusy(true)
+    try {
+      if (confirm === 'delete') { await api.remove(t.id); qc.invalidateQueries({ queryKey: ['tourney', 'list'] }); nav('/tourney'); toast('Tournament deleted'); return }
+      const next = await api.reset(t.id); qc.setQueryData(['tourney', 't', t.id], next); qc.invalidateQueries({ queryKey: ['tourney', 'list'] }); toast('Back to setup, results cleared')
+    } catch (e) { toast(errText(e), 'error') } finally { setBusy(false); setConfirm('') }
+  }
+  return (
+    <div className="tn-owner">
+      {confirm ? (
+        <>
+          <span className="meta">{confirm === 'delete' ? 'Delete this tournament for everyone?' : 'Clear every result and go back to the line-up?'}</span>
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void go()}>{confirm === 'delete' ? 'Delete' : 'Reset'}</button>
+          <button type="button" className="btn btn-ghost" onClick={() => setConfirm('')}>Cancel</button>
+        </>
+      ) : (
+        <>
+          {t.status !== 'draft' && <button type="button" className="btn btn-ghost" onClick={() => setConfirm('reset')}><Icon name="refresh" className="btn-ico" />Reset</button>}
+          <button type="button" className="btn btn-ghost" onClick={() => setConfirm('delete')}><Icon name="trash" className="btn-ico" />Delete</button>
         </>
       )}
     </div>
   )
 }
 
-// ── Bracket Tab ────────────────────────────────────────────────────────────────
-function BracketTab({ t }: { t: Tournament }) {
-  const qc = useQueryClient()
-  const genMut = useMutation({
-    mutationFn: () => generateBracket(t.id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tourney', t.id] }),
-  })
-  const [scoring, setScoring] = useState<string | null>(null)
+function Champion({ t }: { t: Tournament }) {
+  const e = t.entrants.find((x) => x.id === t.champion_id)!
+  const fin = [...t.matches].reverse().find((m) => m.status === 'played' && m.winner_id === e.id && m.stage !== 'P')
+  const other = fin ? t.entrants.find((x) => x.id === (fin.e1 === e.id ? fin.e2 : fin.e1)) : undefined
+  const board = t.leaderboard.find((r) => r.entrant_id === e.id)
+  return (
+    <section className="champ glass" aria-label="Champion">
+      <Icon name="giveaway" className="champ-ico" />
+      <span className="eyebrow">Champion{t.team_size > 1 ? 's' : ''}</span>
+      <span className="champ-name">{e.name}</span>
+      {t.team_size > 1 && <span className="dim">{e.members.map((m) => m.display_name).join(' · ')}</span>}
+      {fin && other && <span className="meta">Beat {other.name} {fin.e1 === e.id ? `${fin.score1}–${fin.score2}` : `${fin.score2}–${fin.score1}`} in the {fin.stage === 'GF' ? 'grand final' : fin.stage === 'R' ? 'league' : 'final'}</span>}
+      {board && <span className="meta">{board.points} pts · {board.kills} kills · {board.wins} game wins</span>}
+    </section>
+  )
+}
 
-  const rounds = t.rounds ?? []
-  const hasTeams = (t.teams?.length ?? 0) >= 2
-
-  if (rounds.length === 0) {
+function Chart({ t, onPick, onLobby }: { t: Tournament; onPick: (m: Match) => void; onLobby: (l: Lobby) => void }) {
+  const ents = new Map(t.entrants.map((e) => [e.id, e]))
+  const one = (stage: Match['stage']) => t.matches.filter((m) => m.stage === stage && m.status !== 'void')
+  if (t.format === 'ffa') return <Leaderboard t={t} onLobby={onLobby} />
+  if (t.format === 'league') return (
+    <>
+      <Standings t={t} rows={t.tables[''] ?? []} />
+      <Fixtures t={t} matches={t.matches.filter((m) => m.stage === 'R')} onPick={onPick} />
+    </>
+  )
+  const extra = (
+    <div className="tn-finals">
+      {one('GF').map((m) => (
+        <div key={m.id} className="tn-final"><h3 className="eyebrow">{m.round === 1 ? 'Grand final' : 'Final reset'}</h3>
+          <MatchCard m={m} ents={ents} t={t} onPick={onPick} gold={m.winner_id === t.champion_id && Boolean(t.champion_id)} /></div>
+      ))}
+      {one('P').map((m) => (
+        <div key={m.id} className="tn-final"><h3 className="eyebrow">3rd place</h3><MatchCard m={m} ents={ents} t={t} onPick={onPick} /></div>
+      ))}
+    </div>
+  )
+  if (t.format === 'groups') {
+    const groups = Object.keys(t.tables)
     return (
-      <div className="bracket-empty glass" style={{ padding: 24, borderRadius: 12, textAlign: 'center' }}>
-        {!hasTeams ? (
-          <p>Add at least 2 teams in the <strong>Teams</strong> tab, then generate the bracket.</p>
-        ) : (
-          <button className="btn-primary" disabled={genMut.isPending} onClick={() => genMut.mutate()}>
-            {genMut.isPending ? 'Generating…' : `Generate Bracket (${t.teams?.length} teams)`}
+      <>
+        <div className="tn-groups">
+          {groups.map((g) => <Standings key={g} t={t} rows={t.tables[g]!} group={g} qualify={t.settings.advance} />)}
+        </div>
+        <Bracket t={t} stage="K" onPick={onPick} title="Knockout" />
+        {extra}
+        <details className="tn-more glass"><summary className="section-h2">Group fixtures</summary>
+          {groups.map((g) => <div key={g}><h3 className="eyebrow tn-gh">Group {g}</h3><Fixtures t={t} matches={t.matches.filter((m) => m.stage === 'G' && m.group === g)} onPick={onPick} /></div>)}
+        </details>
+      </>
+    )
+  }
+  return (
+    <>
+      <Bracket t={t} stage="W" onPick={onPick} title={t.format === 'double_elim' ? 'Winners bracket' : undefined} />
+      {t.format === 'double_elim' && <Bracket t={t} stage="L" onPick={onPick} title="Losers bracket" />}
+      {extra}
+    </>
+  )
+}
+
+function MatchList({ t, onPick, onLobby }: { t: Tournament; onPick: (m: Match) => void; onLobby: (l: Lobby) => void }) {
+  const ents = new Map(t.entrants.map((e) => [e.id, e]))
+  const qc = useQueryClient()
+  if (t.kind === 'ffa') {
+    return (
+      <div className="tn-list">
+        {t.lobbies.map((l) => (
+          <button key={l.id} type="button" className="tn-lobby glass" onClick={() => onLobby(l)}>
+            <span className="section-h2">Game {l.num}</span>
+            <span className="meta">{l.status === 'played'
+              ? l.results.slice(0, 3).map((r) => `#${r.placement} ${ents.get(r.entrant_id)?.name}`).join(' · ')
+              : 'Not played yet. Tap to enter placements'}</span>
+            {l.source?.startsWith('screenshot') && <span className="pill">AI</span>}
           </button>
+        ))}
+        {t.status === 'active' && (
+          <button type="button" className="btn btn-ghost" onClick={() => void api.addLobby(t.id).then((n) => qc.setQueryData(['tourney', 't', t.id], n)).catch((e) => toast(errText(e), 'error'))}>
+            <Icon name="plus" className="btn-ico" />Add another game</button>
         )}
       </div>
     )
   }
-
-  const allMatches = rounds.flatMap((r) => r.matches)
-
+  const real = t.matches.filter((m) => m.status !== 'void' && m.status !== 'bye')
+  const next = real.filter((m) => m.playable)
+  const later = real.filter((m) => m.status === 'pending' && !m.playable)
+  const played = real.filter((m) => m.status === 'played').sort((a, b) => (b.played_at ?? '').localeCompare(a.played_at ?? ''))
   return (
-    <div className="bracket-wrap">
-      <div className="bracket-scroll" style={{ display: 'flex', gap: 24, overflowX: 'auto', paddingBottom: 16 }}>
-        {rounds.map((r) => (
-          <div key={r.round} className="bracket-round" style={{ minWidth: 200 }}>
-            <div className="bracket-round-label" style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', opacity: 0.5, marginBottom: 8 }}>
-              {r.round === rounds.length ? 'Final' : r.round === rounds.length - 1 ? 'Semi-Final' : `Round ${r.round}`}
-            </div>
-            <div className="bracket-matches" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {r.matches.map((m) => (
-                <MatchCard key={m.id} match={m} onScore={() => setScoring(m.id)} />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-      {scoring && (
-        <ScoreModal
-          match={allMatches.find((m) => m.id === scoring)!}
-          onClose={() => setScoring(null)}
-          onSaved={() => { setScoring(null); qc.invalidateQueries({ queryKey: ['tourney', t.id] }) }}
-        />
-      )}
+    <div className="tn-list">
+      {next.length > 0 && <Rows title="Up next" ms={next} t={t} ents={ents} onPick={onPick} />}
+      {played.length > 0 && <Rows title="Results" ms={played} t={t} ents={ents} onPick={onPick} />}
+      {later.length > 0 && <Rows title="Waiting on earlier matches" ms={later} t={t} ents={ents} onPick={onPick} />}
     </div>
   )
 }
 
-function MatchCard({ match: m, onScore }: { match: Match; onScore: () => void }) {
-  const isDone = m.status === 'played' || m.status === 'bye'
-  const isClickable = m.status === 'pending' && m.team1_id && m.team2_id
-
+function Rows({ title, ms, t, ents, onPick }: { title: string; ms: Match[]; t: Tournament; ents: Map<string, Tournament['entrants'][number]>; onPick: (m: Match) => void }) {
   return (
-    <div
-      className={`match-card glass${isDone ? ' done' : ''}${isClickable ? ' clickable' : ''}`}
-      onClick={isClickable ? onScore : undefined}
-      style={{ padding: '10px 12px', borderRadius: 10, cursor: isClickable ? 'pointer' : 'default', display: 'flex', flexDirection: 'column', gap: 4 }}
-    >
-      <TeamSlot team={m.team1} score={m.score1} isWinner={m.winner_id === m.team1_id && isDone} />
-      <div style={{ fontSize: 11, textAlign: 'center', opacity: 0.4 }}>vs</div>
-      <TeamSlot team={m.team2} score={m.score2} isWinner={m.winner_id === m.team2_id && isDone} />
-      {isClickable && (
-        <div style={{ fontSize: 11, textAlign: 'center', opacity: 0.5, marginTop: 4 }}>Tap to enter score</div>
-      )}
-    </div>
+    <section>
+      <h2 className="eyebrow">{title}</h2>
+      <div className="fx-grid">{ms.map((m) => <MatchCard key={m.id} m={m} ents={ents} t={t} onPick={onPick} />)}</div>
+    </section>
   )
 }
 
-function TeamSlot({ team, score, isWinner }: { team?: Team | null; score: number | null; isWinner: boolean }) {
-  if (!team) return <div style={{ fontSize: 13, opacity: 0.35, padding: '2px 0' }}>TBD</div>
+function Lineup({ t }: { t: Tournament }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: isWinner ? 700 : 400 }}>
-      <span style={{ width: 8, height: 8, borderRadius: '50%', background: team.color, flexShrink: 0 }} />
-      <span style={{ flex: 1, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.name}</span>
-      {score !== null && <span style={{ fontSize: 14, fontWeight: 700, color: isWinner ? 'var(--amber2, #f0a500)' : undefined }}>{score}</span>}
-    </div>
-  )
-}
-
-function ScoreModal({ match: m, onClose, onSaved }: { match: Match; onClose: () => void; onSaved: () => void }) {
-  const [s1, setS1] = useState('')
-  const [s2, setS2] = useState('')
-  const [err, setErr] = useState('')
-  const mut = useMutation({
-    mutationFn: () => recordResult(m.id, parseInt(s1), parseInt(s2)),
-    onSuccess: onSaved,
-    onError: (e: Error) => setErr(e.message),
-  })
-
-  return (
-    <div className="modal-backdrop" onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div className="modal-box glass" onClick={(e) => e.stopPropagation()} style={{ padding: 24, borderRadius: 16, minWidth: 280, maxWidth: '90vw' }}>
-        <h2 style={{ margin: '0 0 16px', fontSize: 18 }}>Enter Score</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.team1?.color }} />
-              {m.team1?.name}
-            </div>
-            <input className="form-input" type="number" min="0" value={s1} onChange={(e) => setS1(e.target.value)} placeholder="0" style={{ textAlign: 'center', width: 60 }} />
-          </div>
-          <span style={{ opacity: 0.4 }}>—</span>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: m.team2?.color }} />
-              {m.team2?.name}
-            </div>
-            <input className="form-input" type="number" min="0" value={s2} onChange={(e) => setS2(e.target.value)} placeholder="0" style={{ textAlign: 'center', width: 60 }} />
-          </div>
-        </div>
-        {err && <p className="form-err" style={{ marginTop: 12 }}>{err}</p>}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
-          <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={!s1 || !s2 || mut.isPending} onClick={() => mut.mutate()}>
-            {mut.isPending ? 'Saving…' : 'Save Result'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Teams Tab ──────────────────────────────────────────────────────────────────
-function TeamsTab({ t }: { t: Tournament }) {
-  const [adding, setAdding] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [colorIdx, setColorIdx] = useState(0)
-  const qc = useQueryClient()
-  const addMut = useMutation({
-    mutationFn: () => addTeam(t.id, { name: newName, color: TEAM_COLORS[colorIdx] }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['tourney', t.id] }); setNewName(''); setAdding(false) },
-  })
-  const removeMut = useMutation({
-    mutationFn: (teamId: string) => removeTeam(t.id, teamId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tourney', t.id] }),
-  })
-
-  return (
-    <div className="teams-tab" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {(t.teams ?? []).map((team) => (
-        <TeamCard key={team.id} team={team} tournamentId={t.id} onRemove={() => removeMut.mutate(team.id)} />
+    <ul className="tn-lineup">
+      {t.entrants.map((e) => (
+        <li key={e.id} className="glass tn-entrant">
+          <span className="tn-entrant-name"><span className="dot dot-lg" style={{ background: e.color }} />{e.name}
+            {e.group_label && <span className="pill">Group {e.group_label}</span>}<span className="meta">Seed {e.seed}</span></span>
+          <ul className="tn-members">{e.members.map((m) => (
+            <li key={m.id}><Icon name="user" className="btn-ico" />{m.display_name}{m.psn_id && <span className="meta"> · {m.psn_id}</span>}{m.is_guest && <span className="meta"> · guest</span>}</li>
+          ))}</ul>
+        </li>
       ))}
-      {adding ? (
-        <div className="glass add-team-form" style={{ padding: 16, borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <input className="form-input" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Team name" autoFocus />
-          <div className="color-row" style={{ display: 'flex', gap: 8 }}>
-            {TEAM_COLORS.map((c, i) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => setColorIdx(i)}
-                aria-label={`Color ${c}`}
-                style={{
-                  width: 22, height: 22, borderRadius: '50%', background: c, border: colorIdx === i ? '2px solid white' : '2px solid transparent', cursor: 'pointer',
-                }}
-              />
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button className="btn-ghost" onClick={() => setAdding(false)}>Cancel</button>
-            <button className="btn-primary" disabled={!newName.trim() || addMut.isPending} onClick={() => addMut.mutate()}>
-              {addMut.isPending ? '…' : 'Add Team'}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button className="btn-ghost" onClick={() => setAdding(true)} style={{ alignSelf: 'flex-start' }}>+ Add Team</button>
-      )}
-    </div>
+    </ul>
   )
 }
 
-function TeamCard({ team, tournamentId, onRemove }: { team: Team; tournamentId: string; onRemove: () => void }) {
-  const [expanded, setExpanded] = useState(false)
+function Shots({ t, shots, onOpen }: { t: Tournament; shots: Shot[]; onOpen: (s: Shot) => void }) {
   const qc = useQueryClient()
-  const playersQ = useQuery({ queryKey: ['tourney', 'players'], queryFn: ({ signal }) => listPlayers(signal) })
-  const addMut = useMutation({
-    mutationFn: (playerId: string) => addRosterPlayer(team.id, playerId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tourney', tournamentId] }),
-  })
-  const removeMut = useMutation({
-    mutationFn: (playerId: string) => removeRosterPlayer(team.id, playerId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tourney', tournamentId] }),
-  })
-  const roster = team.players ?? []
-  const rosterIds = new Set(roster.map((p) => p.id))
-  const available = (playersQ.data ?? []).filter((p) => !rosterIds.has(p.id))
-
+  const pending = shots.filter((s) => s.status === 'pending' || s.status === 'reading')
   return (
-    <div className="team-card glass" style={{ borderRadius: 12, overflow: 'hidden' }}>
-      <div
-        className="team-card-head"
-        onClick={() => setExpanded(!expanded)}
-        style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', cursor: 'pointer' }}
-      >
-        <span style={{ width: 10, height: 10, borderRadius: '50%', background: team.color, flexShrink: 0 }} />
-        <span style={{ flex: 1, fontWeight: 600 }}>{team.name}</span>
-        <span style={{ opacity: 0.5, fontSize: 13 }}>{roster.length} players</span>
-        <Icon name={expanded ? 'up' : 'down'} />
-      </div>
-      {expanded && (
-        <div className="team-card-body" style={{ padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {roster.map((p) => (
-            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Icon name="user" />
-              <span style={{ flex: 1, fontSize: 14 }}>{p.display_name}</span>
-              <button className="icon-btn" onClick={() => removeMut.mutate(p.id)}><Icon name="close" /></button>
+    <div className="tn-list">
+      <p className="dim">Share a result screenshot in the squad's PSN group while this is live. The AI reads it and scores the match on its own when it's sure who played; anything it isn't sure about waits here for a tap.</p>
+      {!pending.length && <p className="meta">Nothing waiting.</p>}
+      <ul className="sh-list">
+        {pending.map((s) => (
+          <li key={s.id} className="sh glass">
+            <img className="sh-img" src={`/api/tourney/shots/${s.id}/image`} alt="Score screenshot" loading="lazy" />
+            <div className="sh-body">
+              <span className="meta">From {s.sender || 'PSN'} · {new Date(s.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+              {s.status === 'reading' ? <span>Reading…</span> : (
+                <span>{s.reading?.kind === 'h2h' ? (s.reading.sides ?? []).map((x) => `${x.label ?? '?'} ${x.score ?? '?'}`).join(' – ')
+                  : s.reading?.kind === 'scoreboard' ? `${s.reading.rows?.length ?? 0} players on the scoreboard` : 'No score found'}</span>
+              )}
+              {s.suggestion?.found && <span className="meta">Looks like {s.suggestion.label}{s.suggestion.tournament_id !== t.id ? ' (another tournament)' : ''}</span>}
+              {s.note && <span className="meta">{s.note}</span>}
+              <div className="sh-acts">
+                <button type="button" className="btn btn-secondary" disabled={s.status === 'reading'} onClick={() => onOpen(s)}>Check and save</button>
+                <button type="button" className="btn btn-ghost" onClick={() => void api.dismissShot(s.id).then(() => qc.invalidateQueries({ queryKey: ['tourney', 'shots'] }))}>Dismiss</button>
+              </div>
             </div>
-          ))}
-          {available.length > 0 && (
-            <select className="form-input" onChange={(e) => { if (e.target.value) addMut.mutate(e.target.value) }} value="">
-              <option value="">Add player…</option>
-              {available.map((p) => <option key={p.id} value={p.id}>{p.display_name}</option>)}
-            </select>
-          )}
-          <button
-            style={{ fontSize: 13, color: 'var(--danger, #f87171)', background: 'none', border: 'none', cursor: 'pointer', alignSelf: 'flex-start', padding: 0, marginTop: 4 }}
-            onClick={onRemove}
-          >
-            Remove team
-          </button>
-        </div>
-      )}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
 
-// ── Players Tab ────────────────────────────────────────────────────────────────
-function PlayersTab() {
-  const [newName, setNewName] = useState('')
-  const qc = useQueryClient()
-  const q = useQuery({ queryKey: ['tourney', 'players'], queryFn: ({ signal }) => listPlayers(signal) })
-  const addMut = useMutation({
-    mutationFn: () => addPlayer({ display_name: newName.trim(), is_custom: true }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['tourney', 'players'] }); setNewName('') },
-  })
-
+function ShotApply({ t, shot, m, l, onClose }: { t: Tournament; shot: Shot; m?: Match; l?: Lobby; onClose: () => void }) {
+  const [target, setTarget] = useState<string>(m?.id ?? l?.id ?? '')
+  const match = t.matches.find((x) => x.id === target)
+  const lobby = t.lobbies.find((x) => x.id === target)
+  const ents = new Map(t.entrants.map((e) => [e.id, e]))
+  const options = t.kind === 'ffa'
+    ? t.lobbies.map((x) => ({ id: x.id, label: `Game ${x.num}${x.status === 'played' ? ' (played)' : ''}` }))
+    : t.matches.filter((x) => x.playable || x.status === 'played').map((x) => ({ id: x.id, label: `${x.code}: ${ents.get(x.e1 ?? '')?.name} vs ${ents.get(x.e2 ?? '')?.name}${x.status === 'played' ? ' (played)' : ''}` }))
+  const sug = shot.suggestion
   return (
-    <div className="players-tab" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <p style={{ fontSize: 13, opacity: 0.6, margin: 0 }}>
-        CRCMZ members appear here when added to teams. Add custom players (guests) below.
-      </p>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <input
-          className="form-input"
-          style={{ flex: 1 }}
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="Guest player name"
-          onKeyDown={(e) => { if (e.key === 'Enter' && newName.trim()) addMut.mutate() }}
-        />
-        <button className="btn-primary" disabled={!newName.trim() || addMut.isPending} onClick={() => addMut.mutate()}>Add</button>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {(q.data ?? []).map((p: Player) => (
-          <div key={p.id} className="glass" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 10 }}>
-            <Icon name="user" />
-            <span style={{ flex: 1, fontSize: 14 }}>{p.display_name}</span>
-            {p.is_custom === 1 && (
-              <span style={{ fontSize: 11, opacity: 0.5, padding: '2px 6px', border: '1px solid currentColor', borderRadius: 4 }}>guest</span>
-            )}
-          </div>
-        ))}
-      </div>
+    <div className="rp">
+      <img className="sh-big" src={`/api/tourney/shots/${shot.id}/image`} alt="Score screenshot" />
+      <label className="tn-field"><span className="field-label">Which {t.kind === 'ffa' ? 'game' : 'match'} is this?</span>
+        <select className="input" value={target} onChange={(e) => setTarget(e.target.value)}>
+          <option value="">Choose…</option>
+          {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      </label>
+      {match && <ReportMatch key={match.id} t={t} m={match} shotId={shot.id}
+        prefill={sug?.target_id === match.id && sug.games ? { games: sug.games, pens: sug.pens } : undefined} onClose={onClose} />}
+      {lobby && <ReportLobby key={lobby.id} t={t} lobby={lobby} shotId={shot.id}
+        prefill={sug?.target_id === lobby.id ? sug.rows : undefined} onClose={onClose} />}
     </div>
   )
 }

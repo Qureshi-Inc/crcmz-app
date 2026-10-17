@@ -72,6 +72,7 @@ _rl_hits: dict[str, list[float]] = {}
 _RL_LIMITS = {
     "psn_send": (8, 60.0),      # group messages (soundboard, squad, /v2/send)
     "roast": (5, 60.0),         # roast triggers
+    "tourney_read": (12, 600.0),  # screenshot reads on the AI server
     "custom_add": (6, 60.0),    # AI-flavored custom button creation
     "watch_join": (30, 60.0),   # Watch Ticket issuance (one per tab + reconnects)
     "watch_extract": (5, 60.0),  # yt-dlp URL extraction (subprocess, keep tight)
@@ -7947,6 +7948,7 @@ async def _forward_screenshot(uid: str, ugc_id: str, sender: str, body: str, wm)
     try:
         logger.info("screenshot_forward_started uid=%s ugcId=%s sender=%s", uid, ugc_id, sender)
         image_bytes = await asyncio.to_thread(wm.resolve_and_download_screenshot, ugc_id)
+        asyncio.create_task(_tourney_capture(image_bytes, sender))
         caption = f"{sender}: {body}" if body else sender
         payload = {
             "imageBase64": base64.b64encode(image_bytes).decode(),
@@ -7971,6 +7973,7 @@ async def _forward_image(uid: str, image_url: str, sender: str, body: str, wm) -
     try:
         logger.info("image_forward_started uid=%s sender=%s", uid, sender)
         image_bytes = await asyncio.to_thread(wm.download_image, image_url)
+        asyncio.create_task(_tourney_capture(image_bytes, sender))
         caption = f"{sender}: {body}" if body else sender
         payload = {
             "imageBase64": base64.b64encode(image_bytes).decode(),
@@ -9053,151 +9056,292 @@ def _squad_payload() -> dict:
 
 
 # ── Tournaments ────────────────────────────────────────────────────────────────
+# Any signed-in member can build, run and score a tournament; deleting or resetting
+# one is for its creator or a founder. The trip site reads /api/tourney/feed with
+# TOURNEY_FEED_TOKEN (it has no app session), which fails closed when unset.
+
+TOURNEY_FEED_TOKEN = os.environ.get("TOURNEY_FEED_TOKEN", "")
+_OPEN_PATHS.add("/api/tourney/feed")
+
+
+def _tourney_sub(request: Request) -> str:
+    session = _get_session(request)
+    if not session or not session.get("sub"):
+        raise HTTPException(401, "sign in required")
+    return str(session["sub"])
+
+
+def _tourney_owner(request: Request, tid: str) -> str:
+    sub = _tourney_sub(request)
+    try:
+        creator = _tourney.creator_of(tid)
+    except LookupError:
+        raise HTTPException(404, "Tournament not found")
+    if sub != creator and not crcmz_identity.is_founder(sub):
+        raise HTTPException(403, "Only whoever made this tournament can do that")
+    return sub
+
+
+def _tourney_call(request: Request, fn, *args, **kwargs):
+    try:
+        out = fn(*args, **kwargs)
+        if isinstance(out, dict) and "entrants" in out and "created_by" in out:
+            sub = str((_get_session(request) or {}).get("sub") or "")
+            out["can_manage"] = bool(sub) and (sub == out["created_by"] or crcmz_identity.is_founder(sub))
+        return out
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+def _tourney_squad() -> dict[str, dict]:
+    return {zid: p for zid, p in crcmz_identity.by_zitadel_id().items()
+            if "INACTIVE" not in str(p.get("state") or "") and "DELETED" not in str(p.get("state") or "")}
+
+
+async def _tourney_body(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "JSON body required")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "JSON object required")
+    return body
+
+
+@app.get("/api/tourney/catalog")
+def tourney_catalog(request: Request):
+    _tourney_sub(request)
+    return _tourney.catalog()
+
+
+@app.get("/api/tourney/people")
+def tourney_people(request: Request):
+    _tourney_sub(request)
+    return _tourney.people(list(_tourney_squad().values()))
+
+
+@app.post("/api/tourney/guests")
+async def tourney_guest(request: Request):
+    _tourney_sub(request)
+    body = await _tourney_body(request)
+    return _tourney_call(request, _tourney.add_guest, str(body.get("name") or ""), str(body.get("psn_id") or ""))
+
 
 @app.get("/api/tourney/tournaments")
-async def tourney_list(request: Request, status: str | None = None):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    return _tourney.list_tournaments(status)
+def tourney_list(request: Request, status: str | None = None):
+    _tourney_sub(request)
+    return _tourney.list_tournaments(status if status in ("draft", "active", "complete") else None)
 
 
 @app.post("/api/tourney/tournaments")
 async def tourney_create(request: Request):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    body = await request.json()
-    name = (body.get("name") or "").strip()
-    game = (body.get("game") or "").strip()
-    fmt  = (body.get("format") or "single_elim").strip()
-    if not name or not game:
-        raise HTTPException(400, "name and game required")
-    try:
-        return _tourney.create_tournament(name, game, fmt, created_by=session.get("sub", ""))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    sub = _tourney_sub(request)
+    b = await _tourney_body(request)
+    return _tourney_call(request, _tourney.create_tournament, name=str(b.get("name") or ""), game=str(b.get("game") or ""),
+                         mode=str(b.get("mode") or ""), fmt=str(b.get("format") or ""),
+                         team_size=b.get("team_size"), settings=b.get("settings") if isinstance(b.get("settings"), dict) else {},
+                         created_by=sub)
 
 
 @app.get("/api/tourney/tournaments/{tid}")
-async def tourney_get(request: Request, tid: str):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    t = _tourney.get_tournament(tid)
-    if not t:
-        raise HTTPException(404, "Tournament not found")
-    return t
+def tourney_get(request: Request, tid: str):
+    _tourney_sub(request)
+    return _tourney_call(request, _tourney.get_tournament, tid)
 
 
-@app.patch("/api/tourney/tournaments/{tid}/status")
-async def tourney_set_status(request: Request, tid: str):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    body = await request.json()
+@app.patch("/api/tourney/tournaments/{tid}")
+async def tourney_update(request: Request, tid: str):
+    _tourney_sub(request)
+    b = await _tourney_body(request)
+    return _tourney_call(request, _tourney.update_tournament, tid, name=b.get("name"),
+                         settings=b.get("settings") if isinstance(b.get("settings"), dict) else None)
+
+
+@app.delete("/api/tourney/tournaments/{tid}")
+def tourney_delete(request: Request, tid: str):
+    _tourney_owner(request, tid)
+    _tourney.delete_tournament(tid)
+    return {"ok": True}
+
+
+@app.post("/api/tourney/tournaments/{tid}/entrants")
+async def tourney_add_entrants(request: Request, tid: str):
+    _tourney_sub(request)
+    b = await _tourney_body(request)
+    entries = b.get("entries")
+    if not isinstance(entries, list):
+        raise HTTPException(400, "entries required")
+    return _tourney_call(request, _tourney.add_entrants, tid, [e for e in entries if isinstance(e, dict)], _tourney_squad())
+
+
+@app.patch("/api/tourney/entrants/{eid}")
+async def tourney_update_entrant(request: Request, eid: str):
+    _tourney_sub(request)
+    b = await _tourney_body(request)
+    members = b.get("members")
+    return _tourney_call(request, _tourney.update_entrant, eid, name=b.get("name"), color=b.get("color"),
+                         members=members if isinstance(members, list) else None, squad_by_id=_tourney_squad())
+
+
+@app.delete("/api/tourney/entrants/{eid}")
+def tourney_remove_entrant(request: Request, eid: str):
+    _tourney_sub(request)
+    return _tourney_call(request, _tourney.remove_entrant, eid)
+
+
+@app.post("/api/tourney/tournaments/{tid}/seeding")
+async def tourney_seeding(request: Request, tid: str):
+    _tourney_sub(request)
+    b = await _tourney_body(request)
+    order = b.get("order")
+    return _tourney_call(request, _tourney.set_seeding, tid, order=order if isinstance(order, list) else None,
+                         shuffle=bool(b.get("shuffle")))
+
+
+@app.post("/api/tourney/tournaments/{tid}/auto-teams")
+async def tourney_auto_teams(request: Request, tid: str):
+    _tourney_sub(request)
+    b = await _tourney_body(request)
+    keys = b.get("members")
+    if not isinstance(keys, list):
+        raise HTTPException(400, "members required")
+    return _tourney_call(request, _tourney.auto_teams, tid, keys, _tourney_squad())
+
+
+@app.post("/api/tourney/tournaments/{tid}/start")
+def tourney_start(request: Request, tid: str):
+    _tourney_sub(request)
+    return _tourney_call(request, _tourney.start, tid)
+
+
+@app.post("/api/tourney/tournaments/{tid}/reset")
+def tourney_reset(request: Request, tid: str):
+    _tourney_owner(request, tid)
+    return _tourney_call(request, _tourney.reset, tid)
+
+
+@app.post("/api/tourney/tournaments/{tid}/lobbies")
+def tourney_add_lobby(request: Request, tid: str):
+    _tourney_sub(request)
+    return _tourney_call(request, _tourney.add_lobby, tid)
+
+
+@app.post("/api/tourney/matches/{mid}/result")
+async def tourney_report(request: Request, mid: str):
+    sub = _tourney_sub(request)
+    b = await _tourney_body(request)
+    games = b.get("games")
+    if not isinstance(games, list):
+        raise HTTPException(400, "games required")
+    return _tourney_call(request, _tourney.report_match, mid, [g for g in games if isinstance(g, dict)],
+                         b.get("pens") if isinstance(b.get("pens"), list) else None, reporter=sub)
+
+
+@app.delete("/api/tourney/matches/{mid}/result")
+def tourney_undo(request: Request, mid: str):
+    _tourney_sub(request)
+    return _tourney_call(request, _tourney.undo_match, mid)
+
+
+@app.post("/api/tourney/lobbies/{lid}/result")
+async def tourney_report_lobby(request: Request, lid: str):
+    sub = _tourney_sub(request)
+    b = await _tourney_body(request)
+    rows = b.get("rows")
+    if not isinstance(rows, list):
+        raise HTTPException(400, "rows required")
+    return _tourney_call(request, _tourney.report_lobby, lid, [r for r in rows if isinstance(r, dict)], reporter=sub)
+
+
+@app.delete("/api/tourney/lobbies/{lid}/result")
+def tourney_undo_lobby(request: Request, lid: str):
+    _tourney_sub(request)
+    return _tourney_call(request, _tourney.undo_lobby, lid)
+
+
+@app.post("/api/tourney/read")
+async def tourney_read(request: Request):
+    """Read an uploaded screenshot for one match or lobby. Suggests, never saves."""
+    import base64 as _b64
+    _tourney_sub(request)
+    _rate_limit("tourney_read", _tourney_sub(request))
+    b = await _tourney_body(request)
+    raw = str(b.get("image_b64") or "")
+    if not raw or len(raw) > 8_000_000:
+        raise HTTPException(400, "Image missing or over 6 MB")
     try:
-        _tourney.update_tournament_status(tid, body.get("status", ""))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return {"ok": True}
-
-
-@app.get("/api/tourney/players")
-async def tourney_players(request: Request):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    return _tourney.list_players()
-
-
-@app.post("/api/tourney/players")
-async def tourney_add_player(request: Request):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    body = await request.json()
-    name = (body.get("display_name") or "").strip()
-    if not name:
-        raise HTTPException(400, "display_name required")
-    return _tourney.upsert_player(
-        name, zitadel_id=body.get("zitadel_id"), is_custom=bool(body.get("is_custom"))
-    )
-
-
-@app.post("/api/tourney/tournaments/{tid}/teams")
-async def tourney_add_team(request: Request, tid: str):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    body = await request.json()
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise HTTPException(400, "name required")
-    return _tourney.add_team(tid, name, color=body.get("color", "#6366f1"))
-
-
-@app.delete("/api/tourney/tournaments/{tid}/teams/{team_id}")
-async def tourney_remove_team(request: Request, tid: str, team_id: str):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    _tourney.remove_team(team_id)
-    return {"ok": True}
-
-
-@app.post("/api/tourney/teams/{team_id}/players/{player_id}")
-async def tourney_add_roster(request: Request, team_id: str, player_id: str):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    _tourney.add_player_to_team(team_id, player_id)
-    return {"ok": True}
-
-
-@app.delete("/api/tourney/teams/{team_id}/players/{player_id}")
-async def tourney_remove_roster(request: Request, team_id: str, player_id: str):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    _tourney.remove_player_from_team(team_id, player_id)
-    return {"ok": True}
-
-
-@app.post("/api/tourney/tournaments/{tid}/bracket")
-async def tourney_gen_bracket(request: Request, tid: str):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
+        image = _b64.b64decode(raw, validate=True)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "Not a valid image")
+    mime = str(b.get("mime") or "image/jpeg")
+    if mime not in ("image/jpeg", "image/png", "image/webp"):
+        raise HTTPException(400, "Use a JPEG, PNG or WebP")
     try:
-        _tourney.generate_bracket(tid)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return _tourney.get_tournament(tid)
+        reading = await asyncio.to_thread(_tourney.read_image, image, mime)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("tourney read failed: %s", e)
+        raise HTTPException(503, "The AI couldn't read that right now. Enter the score by hand.")
+    tid = str(b.get("tournament_id") or "") or None
+    target = str(b.get("target_id") or "") or None
+    sug = await asyncio.to_thread(_tourney.suggest, reading, "", tid, target)
+    return {"reading": reading, "suggestion": sug}
 
 
-@app.patch("/api/tourney/matches/{match_id}")
-async def tourney_result(request: Request, match_id: str):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    body = await request.json()
-    s1 = body.get("score1")
-    s2 = body.get("score2")
-    if s1 is None or s2 is None:
-        raise HTTPException(400, "score1 and score2 required")
+@app.get("/api/tourney/shots")
+def tourney_shots(request: Request, tournament_id: str | None = None):
+    _tourney_sub(request)
+    return _tourney.shots(tournament_id)
+
+
+@app.get("/api/tourney/shots/{sid}/image")
+def tourney_shot_image(request: Request, sid: str):
+    _tourney_sub(request)
+    found = _tourney.shot_image(sid)
+    if not found:
+        raise HTTPException(404, "Not found")
+    return Response(found[0], media_type=found[1], headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.post("/api/tourney/shots/{sid}/apply")
+async def tourney_apply_shot(request: Request, sid: str):
+    sub = _tourney_sub(request)
+    b = await _tourney_body(request)
+    return _tourney_call(request, _tourney.apply_shot, sid, reporter=sub, target_id=b.get("target_id") or None,
+                         games=b.get("games") if isinstance(b.get("games"), list) else None,
+                         pens=b.get("pens") if isinstance(b.get("pens"), list) else None,
+                         rows=b.get("rows") if isinstance(b.get("rows"), list) else None)
+
+
+@app.post("/api/tourney/shots/{sid}/dismiss")
+def tourney_dismiss_shot(request: Request, sid: str):
+    _tourney_sub(request)
+    _tourney.dismiss_shot(sid)
+    return {"ok": True}
+
+
+@app.get("/api/tourney/feed")
+def tourney_feed(request: Request):
+    """Live tournaments for trip.crcmz.me. Bearer TOURNEY_FEED_TOKEN; names and scores only."""
+    if not TOURNEY_FEED_TOKEN:
+        raise HTTPException(503, "feed not configured")
+    value = (request.headers.get("authorization") or "").strip()
+    value = value[7:].strip() if value.lower().startswith("bearer ") else ""
+    if not value or not _hmac.compare_digest(value, TOURNEY_FEED_TOKEN):
+        raise HTTPException(401, "bad token")
+    return _tourney.feed()
+
+
+async def _tourney_capture(image_bytes: bytes, sender: str) -> None:
+    """A PSN screenshot during a running tournament: read it and score it if it's clear."""
     try:
-        return _tourney.record_result(match_id, int(s1), int(s2), body.get("screenshot_url"))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-
-@app.get("/api/tourney/tournaments/{tid}/standings")
-async def tourney_standings(request: Request, tid: str):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(401, "sign in required")
-    return _tourney.standings(tid)
+        if await asyncio.to_thread(_tourney.has_active):
+            shot = await asyncio.to_thread(_tourney.ingest_shot, image_bytes, sender=sender, source="psn")
+            if shot:
+                logger.info("tourney_shot id=%s status=%s", shot["id"], shot["status"])
+    except Exception as exc:  # noqa: BLE001 - never break the forwarder
+        logger.warning("tourney_capture_failed: %s", exc)
 
 
 @app.get("/api/squad")
