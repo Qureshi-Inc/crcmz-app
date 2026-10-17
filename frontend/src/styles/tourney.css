@@ -134,6 +134,7 @@ button.mc:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .mc-meta { display: flex; gap: var(--space-2); align-items: center; font-size: var(--text-xs); font-weight: 600; color: var(--text-dim); }
 .mc-cta { margin-left: auto; color: var(--interactive-text); }
 .mc-series { color: var(--live-text); }
+.mc-score.mc-live { color: var(--live-text); }
 .mc-src { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; color: var(--violet-text); }
 .mc-ico { width: 13px; height: 13px; }
 

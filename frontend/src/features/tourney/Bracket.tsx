@@ -116,6 +116,9 @@ function Side({ m, side, ents }: { m: Match; side: 1 | 2; ents: Map<string, Entr
       {m.status === 'played' && (
         <span className="mc-score num">{score}{pens != null && <small> ({pens})</small>}</span>
       )}
+      {m.status === 'pending' && e && m.partial?.length > 0 && (
+        <span className="mc-score mc-live num" title="Games won so far">{m.partial.filter((g) => (side === 1 ? g.s1 > g.s2 : g.s2 > g.s1)).length}</span>
+      )}
     </span>
   )
 }

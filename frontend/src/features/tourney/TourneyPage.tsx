@@ -65,7 +65,7 @@ function Group({ title, items }: { title: string; items: Summary[] }) {
               ) : (
                 <span className="tn-card-prog">
                   <span className="tn-bar" aria-hidden="true"><span style={{ width: `${t.progress.total ? (t.progress.played / t.progress.total) * 100 : 0}%` }} /></span>
-                  <span className="meta num">{t.status === 'draft' ? `${t.entrant_count} entered` : `${t.progress.played}/${t.progress.total} ${t.kind === 'ffa' ? 'games' : 'matches'}`}</span>
+                  <span className="meta num">{t.status === 'draft' ? `${t.entrant_count} entered` : `${t.progress.played}/${t.progress.total} ${t.kind === 'ffa' ? 'games' : 'matches'}${t.kind !== 'ffa' && (t.progress.games ?? 0) > t.progress.played ? ` · ${t.progress.games} games in` : ''}`}</span>
                 </span>
               )}
             </Link>
@@ -109,7 +109,7 @@ export function TournamentPage() {
           {t.status !== 'draft' && (
             <span className="tn-head-prog">
               <span className="tn-bar" aria-hidden="true"><span style={{ width: `${t.progress.total ? (t.progress.played / t.progress.total) * 100 : 0}%` }} /></span>
-              <span className="meta num">{t.progress.played} of {t.progress.total} {t.kind === 'ffa' ? 'games' : 'matches'} played</span>
+              <span className="meta num">{t.progress.played} of {t.progress.total} {t.kind === 'ffa' ? 'games' : 'matches'} played{t.kind !== 'ffa' && (t.progress.games ?? 0) > t.progress.played ? ` · ${t.progress.games} ${t.progress.games === 1 ? 'game' : 'games'} in` : ''}</span>
             </span>
           )}
           <RulesLine t={t} />

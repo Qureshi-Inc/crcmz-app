@@ -45,13 +45,13 @@ export interface Labels {
 export interface Summary extends Labels {
   id: string; name: string; status: Status; team_size: number; created_at: string; started_at: string | null
   finished_at: string | null; entrant_count: number; champion: { name: string; color: string } | null
-  progress: { played: number; total: number }
+  progress: { played: number; total: number; games?: number }
 }
 export interface Tournament extends Labels {
   id: string; name: string; status: Status; team_size: number; settings: Settings; champion_id: string | null
   created_by: string; created_at: string; started_at: string | null; finished_at: string | null
   entrants: Entrant[]; matches: Match[]; tables: Record<string, TableRow[]>; lobbies: Lobby[]
-  leaderboard: BoardRow[]; progress: { played: number; total: number }; inbox: number; can_manage?: boolean
+  leaderboard: BoardRow[]; progress: { played: number; total: number; games?: number }; inbox: number; can_manage?: boolean
 }
 export interface Person { key: string; display_name: string; psn_id: string; is_guest: boolean; player_id: string | null }
 

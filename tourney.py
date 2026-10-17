@@ -1185,7 +1185,8 @@ def get_tournament(tid: str) -> dict:
         if t["format"] == "ffa":
             t["progress"] = {"played": sum(1 for x in lobbies if x["status"] == "played"), "total": len(lobbies)}
         else:
-            t["progress"] = {"played": sum(1 for m in real if m["status"] == "played"),
+            t["progress"] = {"games": sum(len(m["games"]) if m["status"] == "played" else len(m["partial"]) for m in real),
+                             "played": sum(1 for m in real if m["status"] == "played"),
                              "total": len([m for m in real if not (m["stage"] == "GF" and m["round"] == 2
                                                                    and m["status"] == "pending" and not m["e1"])])}
         t["inbox"] = db.execute("SELECT COUNT(*) FROM shots WHERE status='pending' AND"
@@ -1211,6 +1212,11 @@ def list_tournaments(status: str | None = None) -> list[dict]:
                 c = db.execute("SELECT SUM(status='played'), SUM(status NOT IN ('bye','void')) FROM matches"
                                " WHERE tournament_id=?", (t["id"],)).fetchone()
             t["progress"] = {"played": c[0] or 0, "total": c[1] or 0}
+            if t["format"] != "ffa":
+                g = 0
+                for r in db.execute("SELECT status, games, partial FROM matches WHERE tournament_id=?", (t["id"],)):
+                    g += len(json.loads((r["games"] if r["status"] == "played" else r["partial"]) or "[]"))
+                t["progress"]["games"] = g
             t.pop("settings")
             out.append(t)
         return out
