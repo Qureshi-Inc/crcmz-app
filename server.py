@@ -57,6 +57,7 @@ app = FastAPI(title="PSN Messenger")
 import threading as _threading
 import time as _time
 
+import tourney as _tourney
 import webpush as _push  # init() runs with the other stores, below
 import fcm as _fcm  # Android app rings (Huddle / Watch Party); init() below too
 import crcmz_identity
@@ -7816,6 +7817,7 @@ _app_events.init()
 _watchparty_events.init()
 _watch_history.init()
 _watch_diag.init()
+_tourney.init()
 # Run in a daemon thread — the embedding probe can take minutes on a busy oMLX
 # server (it sends 200 OK headers immediately but delays the body).  Semantic
 # memory is optional; the server runs in degraded mode until init completes.
@@ -9048,6 +9050,154 @@ def _squad_payload() -> dict:
     if psn_error:
         payload["psn_error"] = psn_error
     return payload
+
+
+# ── Tournaments ────────────────────────────────────────────────────────────────
+
+@app.get("/api/tourney/tournaments")
+async def tourney_list(request: Request, status: str | None = None):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    return _tourney.list_tournaments(status)
+
+
+@app.post("/api/tourney/tournaments")
+async def tourney_create(request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    game = (body.get("game") or "").strip()
+    fmt  = (body.get("format") or "single_elim").strip()
+    if not name or not game:
+        raise HTTPException(400, "name and game required")
+    try:
+        return _tourney.create_tournament(name, game, fmt, created_by=session.get("sub", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/tourney/tournaments/{tid}")
+async def tourney_get(request: Request, tid: str):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    t = _tourney.get_tournament(tid)
+    if not t:
+        raise HTTPException(404, "Tournament not found")
+    return t
+
+
+@app.patch("/api/tourney/tournaments/{tid}/status")
+async def tourney_set_status(request: Request, tid: str):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    body = await request.json()
+    try:
+        _tourney.update_tournament_status(tid, body.get("status", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/tourney/players")
+async def tourney_players(request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    return _tourney.list_players()
+
+
+@app.post("/api/tourney/players")
+async def tourney_add_player(request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    body = await request.json()
+    name = (body.get("display_name") or "").strip()
+    if not name:
+        raise HTTPException(400, "display_name required")
+    return _tourney.upsert_player(
+        name, zitadel_id=body.get("zitadel_id"), is_custom=bool(body.get("is_custom"))
+    )
+
+
+@app.post("/api/tourney/tournaments/{tid}/teams")
+async def tourney_add_team(request: Request, tid: str):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    return _tourney.add_team(tid, name, color=body.get("color", "#6366f1"))
+
+
+@app.delete("/api/tourney/tournaments/{tid}/teams/{team_id}")
+async def tourney_remove_team(request: Request, tid: str, team_id: str):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    _tourney.remove_team(team_id)
+    return {"ok": True}
+
+
+@app.post("/api/tourney/teams/{team_id}/players/{player_id}")
+async def tourney_add_roster(request: Request, team_id: str, player_id: str):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    _tourney.add_player_to_team(team_id, player_id)
+    return {"ok": True}
+
+
+@app.delete("/api/tourney/teams/{team_id}/players/{player_id}")
+async def tourney_remove_roster(request: Request, team_id: str, player_id: str):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    _tourney.remove_player_from_team(team_id, player_id)
+    return {"ok": True}
+
+
+@app.post("/api/tourney/tournaments/{tid}/bracket")
+async def tourney_gen_bracket(request: Request, tid: str):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    try:
+        _tourney.generate_bracket(tid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _tourney.get_tournament(tid)
+
+
+@app.patch("/api/tourney/matches/{match_id}")
+async def tourney_result(request: Request, match_id: str):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    body = await request.json()
+    s1 = body.get("score1")
+    s2 = body.get("score2")
+    if s1 is None or s2 is None:
+        raise HTTPException(400, "score1 and score2 required")
+    try:
+        return _tourney.record_result(match_id, int(s1), int(s2), body.get("screenshot_url"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/tourney/tournaments/{tid}/standings")
+async def tourney_standings(request: Request, tid: str):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(401, "sign in required")
+    return _tourney.standings(tid)
 
 
 @app.get("/api/squad")

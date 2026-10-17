@@ -3212,6 +3212,40 @@ def _whatsapp_clip_reactions(clip_id: str = "") -> dict:
     return wr.reactions_for_clip(clip_id)
 
 
+@tool(
+    "tournament_list",
+    "List CRCMZ tournaments. Returns id, name, game, format, status, team_count. "
+    "Use status='active' to see only running tournaments.",
+    {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "description": "Filter: draft, active, or complete. Omit for all."},
+        },
+    })
+def _tournament_list(status: str = "") -> list:
+    import tourney as _tn
+    return _tn.list_tournaments(status or None)
+
+
+@tool(
+    "tournament_bracket",
+    "Get a tournament's full bracket — teams, rounds, matches with scores, winners. "
+    "Use tournament_list first to get the id.",
+    {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "description": "Tournament UUID."},
+        },
+        "required": ["id"],
+    })
+def _tournament_bracket(id: str = "") -> dict:
+    import tourney as _tn
+    t = _tn.get_tournament(id)
+    if t is None:
+        return {"error": "Tournament not found"}
+    return t
+
+
 COACH_TAGS = ("positioning", "rotation", "crosshair-placement", "timing",
               "decision-making", "movement", "gunskill", "map-awareness",
               "utility-usage", "communication", "clutch", "highlight", "fail")

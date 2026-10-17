@@ -4,7 +4,7 @@ import type { IconName } from '../components/Icon'
 
 export type DestId =
   | 'squad' | 'clips' | 'slap' | 'whatsapp' | 'giveaway' | 'watch' | 'huddle'
-  | 'coach' | 'ask' | 'notifications' | 'portal' | 'settings' | 'help' | 'getapp' | 'admin'
+  | 'coach' | 'ask' | 'notifications' | 'portal' | 'settings' | 'help' | 'getapp' | 'admin' | 'tourney'
 
 export type Dest = {
   id: DestId
@@ -30,6 +30,7 @@ export const DESTS: Record<DestId, Dest> = {
   watch: { id: 'watch', label: 'Watch', path: '/watch', icon: 'watch', classicHref: '/dashboard?p=watch', blurb: 'Watch Party: one screen, the whole squad.' },
   huddle: { id: 'huddle', label: 'Huddle', path: '/huddle', icon: 'huddle', classicHref: '/dashboard?p=huddle', blurb: 'Drop into a voice and video call.' },
   coach: { id: 'coach', label: 'AI Coach', path: '/coach', icon: 'coach', classicHref: '/dashboard?p=coach', blurb: 'Your match notes and the squad digest.' },
+  tourney: { id: 'tourney', label: 'Tourney', path: '/tourney', icon: 'tourney', classicHref: '/dashboard?p=tourney', blurb: 'Tournaments: brackets, rosters and live scores for FIFA, COD and more.' },
   ask: { id: 'ask', label: 'Ask AI', path: '/ask', icon: 'ask', classicHref: '/dashboard?p=ai', blurb: 'Ask anything about the squad.' },
   notifications: {
     id: 'notifications', label: 'Notifications', path: '/notifications', icon: 'bell', classicHref: '/dashboard',
@@ -54,13 +55,13 @@ export const DESTS: Record<DestId, Dest> = {
  * Mobile tab bar (< 1024 px): three slots the user picks (app/tabs.ts), Ask AI
  * in the middle, then More. These are the pages a slot can hold, in sidebar order.
  */
-export const TAB_CHOICES: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach']
+export const TAB_CHOICES: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'tourney']
 export const DEFAULT_TABS: DestId[] = ['squad', 'slap', 'watch']
 /** More sheet, Squad group: every slot choice that isn't in the bar right now. */
 export const moreSquad = (tabs: DestId[]): DestId[] => TAB_CHOICES.filter((id) => !tabs.includes(id))
 export const MORE_ACCOUNT: DestId[] = ['notifications', 'settings', 'help', 'getapp', 'admin']
 /** Desktop sidebar (≥ 1024 px). */
-export const SIDEBAR_MAIN: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'ask']
+export const SIDEBAR_MAIN: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'tourney', 'ask']
 export const SIDEBAR_FOOT: DestId[] = ['notifications', 'settings', 'help', 'getapp', 'admin']
 
 /** The ⓘ beside a page title: that page's section on the Help page. */
@@ -92,6 +93,7 @@ const LEGACY_P: Record<string, string> = {
   watch: '/app/watch/party',
   huddle: '/app/huddle',
   coach: '/app/coach',
+  tourney: '/app/tourney',
   ai: '/app/ask',
 }
 
