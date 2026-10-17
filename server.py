@@ -9285,6 +9285,7 @@ async def tourney_read(request: Request):
         raise HTTPException(503, "The AI couldn't read that right now. Enter the score by hand.")
     tid = str(b.get("tournament_id") or "") or None
     target = str(b.get("target_id") or "") or None
+    await asyncio.to_thread(_tourney.refresh_identities, list(_tourney_squad().values()))
     sug = await asyncio.to_thread(_tourney.suggest, reading, "", tid, target)
     return {"reading": reading, "suggestion": sug}
 
@@ -9337,7 +9338,8 @@ async def _tourney_capture(image_bytes: bytes, sender: str) -> None:
     """A PSN screenshot during a running tournament: read it and score it if it's clear."""
     try:
         if await asyncio.to_thread(_tourney.has_active):
-            shot = await asyncio.to_thread(_tourney.ingest_shot, image_bytes, sender=sender, source="psn")
+            shot = await asyncio.to_thread(_tourney.ingest_shot, image_bytes, sender=sender, source="psn",
+                                           squad=list(_tourney_squad().values()))
             if shot:
                 logger.info("tourney_shot id=%s status=%s", shot["id"], shot["status"])
     except Exception as exc:  # noqa: BLE001 - never break the forwarder

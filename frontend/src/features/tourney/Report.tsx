@@ -69,7 +69,7 @@ export function ReportMatch({ t, m, shotId, prefill, onClose }: {
   const knockout = m.stage !== 'R' && m.stage !== 'G'
   const legs = t.settings.legs === 2 && knockout
   const startRows = (): Row[] => {
-    const src = prefill?.games?.length ? prefill.games : m.games
+    const src = prefill?.games?.length ? prefill.games : m.games.length ? m.games : (m.partial ?? [])
     if (src.length) return src.map((g) => ({ s1: g.s1 == null ? '' : String(g.s1), s2: g.s2 == null ? '' : String(g.s2), map: (g as GameScore).map ?? '' }))
     return Array.from({ length: legs ? 2 : t.settings.best_of > 1 ? Math.floor(t.settings.best_of / 2) + 1 : 1 }, () => ({ s1: '', s2: '', map: '' }))
   }

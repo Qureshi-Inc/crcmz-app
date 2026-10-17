@@ -233,6 +233,12 @@ def init() -> None:
             target_id TEXT, note TEXT
         );
         """)
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(players)")}
+        if "aliases" not in cols:
+            db.execute("ALTER TABLE players ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'")
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(matches)")}
+        if "partial" not in cols:
+            db.execute("ALTER TABLE matches ADD COLUMN partial TEXT")
         db.execute(f"PRAGMA user_version={_SCHEMA}")
 
 
@@ -255,15 +261,49 @@ def _t_row(db, tid: str) -> dict:
 
 # ── players ────────────────────────────────────────────────────────────────────
 
-def _upsert_person(db, zitadel_id: str, display_name: str, psn_id: str) -> str:
+def identity_aliases(p: dict) -> list[str]:
+    """Other names someone goes by (account, chat and WhatsApp names). Never an email address."""
+    raw = [p.get("username"), p.get("display_name"), p.get("mm_username"), p.get("steam_id"),
+           *(p.get("wa_names") or [])]
+    out = []
+    for v in raw:
+        v = str(v or "").strip()
+        if not v:
+            continue
+        out.append(v.split("@")[0] if "@" in v else v)
+    return list(dict.fromkeys(out))
+
+
+def _merge_aliases(db, pid: str, names: list[str]) -> None:
+    r = db.execute("SELECT aliases FROM players WHERE id=?", (pid,)).fetchone()
+    have = json.loads(r["aliases"] or "[]") if r else []
+    new = list(dict.fromkeys([*have, *[n for n in names if n]]))[:30]
+    if new != have:
+        db.execute("UPDATE players SET aliases=? WHERE id=?", (json.dumps(new), pid))
+
+
+def _upsert_person(db, zitadel_id: str, display_name: str, psn_id: str, aliases: list[str] | None = None) -> str:
     r = db.execute("SELECT id FROM players WHERE zitadel_id=?", (zitadel_id,)).fetchone()
     if r:
-        db.execute("UPDATE players SET display_name=?, psn_id=? WHERE id=?", (display_name, psn_id, r["id"]))
-        return r["id"]
-    pid = _id()
-    db.execute("INSERT INTO players(id,display_name,zitadel_id,psn_id,is_guest,created_at) VALUES(?,?,?,?,0,?)",
-               (pid, display_name, zitadel_id, psn_id, _now()))
+        db.execute("UPDATE players SET psn_id=? WHERE id=?", (psn_id, r["id"]))
+        pid = r["id"]
+    else:
+        pid = _id()
+        db.execute("INSERT INTO players(id,display_name,zitadel_id,psn_id,is_guest,created_at) VALUES(?,?,?,?,0,?)",
+                   (pid, display_name, zitadel_id, psn_id, _now()))
+    _merge_aliases(db, pid, aliases or [])
     return pid
+
+
+def refresh_identities(squad: list[dict]) -> None:
+    """Keep squad players' PSN ids and aliases current so screenshots match their in-game names."""
+    with _lock, _conn() as db:
+        known = {r["zitadel_id"]: r["id"] for r in db.execute("SELECT id, zitadel_id FROM players WHERE zitadel_id IS NOT NULL")}
+        for p in squad:
+            pid = known.get(str(p.get("zitadel_id") or ""))
+            if pid:
+                db.execute("UPDATE players SET psn_id=? WHERE id=?", (p.get("psn_id") or "", pid))
+                _merge_aliases(db, pid, identity_aliases(p))
 
 
 def friendly_name(p: dict) -> str:
@@ -334,7 +374,7 @@ def _resolve_keys(db, keys: list[str], squad_by_id: dict[str, dict]) -> list[str
             p = squad_by_id.get(k[2:])
             if not p:
                 raise ValueError("Unknown squad member")
-            out.append(_upsert_person(db, k[2:], friendly_name(p), p.get("psn_id") or ""))
+            out.append(_upsert_person(db, k[2:], friendly_name(p), p.get("psn_id") or "", identity_aliases(p)))
         elif k.startswith("p:"):
             if not db.execute("SELECT 1 FROM players WHERE id=?", (k[2:],)).fetchone():
                 raise ValueError("Unknown player")
@@ -953,7 +993,7 @@ def report_match(mid: str, games: list[dict], pens: list | None, *, reporter: st
             if played_after and side != m["result_side"]:
                 raise ValueError(f"That changes the winner, but {_code(played_after[0])} is already played."
                                  " Undo the later match first.")
-        db.execute("UPDATE matches SET games=?, score1=?, score2=?, pens1=?, pens2=?, result_side=?, res_e1=?,"
+        db.execute("UPDATE matches SET partial=NULL, games=?, score1=?, score2=?, pens1=?, pens2=?, result_side=?, res_e1=?,"
                    " res_e2=?, source=?, shot_id=?, reported_by=?, played_at=? WHERE id=?",
                    (json.dumps(clean), s1, s2, p[0] if p else None, p[1] if p else None, side, m["e1"], m["e2"],
                     source, shot_id, reporter, _now(), mid))
@@ -1120,6 +1160,7 @@ def get_tournament(tid: str) -> dict:
                 "winner_id": m["winner_id"], "status": m["status"],
                 "playable": m["status"] == "pending" and bool(m["e1"] and m["e2"]),
                 "next_id": m["next_id"], "source": m["source"], "played_at": m["played_at"],
+                "partial": json.loads(m["partial"]) if m.get("partial") and m["status"] == "pending" else [],
             })
         t["matches"] = out
         if t["format"] == "league" and t["status"] != "draft":
@@ -1263,7 +1304,8 @@ def read_image(image: bytes, mime: str = "image/jpeg", hints: list[str] | None =
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+    s = re.sub(r"#\d+\s*$", "", (s or "").strip())  # Activision ids: Name#1234567
+    return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
 def _alias_hit(name: str, aliases: set[str]) -> bool:
@@ -1273,18 +1315,29 @@ def _alias_hit(name: str, aliases: set[str]) -> bool:
     return any(n == a or (len(n) >= 4 and len(a) >= 4 and (n in a or a in n)) for a in aliases)
 
 
-def _aliases(e: dict) -> set[str]:
+def _alias_map() -> dict[str, list[str]]:
+    with _lock, _conn() as db:
+        return {r["id"]: json.loads(r["aliases"] or "[]") for r in db.execute("SELECT id, aliases FROM players")}
+
+
+def _aliases(e: dict, extra: dict[str, list[str]] | None = None) -> set[str]:
     out = {_norm(e["name"])}
     for p in e["members"]:
         out.add(_norm(p["display_name"]))
         if p["psn_id"]:
             out.add(_norm(p["psn_id"]))
-    return {a for a in out if a}
+        for a in (extra or {}).get(p["id"], []):
+            out.add(_norm(a))
+    return {a for a in out if len(a) >= 2}
+
+
+def _side_names(side: dict) -> list[str]:
+    tags = side.get("gamertags") or side.get("gametags") or []
+    return [n for n in [side.get("label") or "", *tags] if isinstance(n, str) and n.strip()]
 
 
 def _side_hits(side: dict, aliases: set[str]) -> int:
-    names = [side.get("label") or ""] + list(side.get("gamertags") or [])
-    return sum(1 for n in names if isinstance(n, str) and _alias_hit(n, aliases))
+    return sum(1 for n in _side_names(side) if _alias_hit(n, aliases))
 
 
 def _int_or_none(v):
@@ -1294,39 +1347,69 @@ def _int_or_none(v):
         return None
 
 
+def _sides_from(reading: dict) -> list[dict]:
+    """Two sides from a reading: its "sides", else two teams or two players from its rows."""
+    rows = [r for r in (reading.get("rows") or []) if isinstance(r, dict)]
+    sides = [dict(x) for x in (reading.get("sides") or []) if isinstance(x, dict)][:2]
+    if len(sides) == 2:
+        for sd in sides:
+            tags = [x for x in (sd.get("gamertags") or sd.get("gametags") or []) if isinstance(x, str)]
+            tags += [r.get("gamertag") for r in rows if isinstance(r.get("gamertag"), str) and r.get("team")
+                     and sd.get("label") and _norm(r["team"]) == _norm(sd["label"])]
+            sd["gamertags"] = list(dict.fromkeys(tags))
+        return sides
+    teams = list(dict.fromkeys(_norm(r.get("team") or "") for r in rows if r.get("team")))
+    if len(teams) == 2:
+        out = []
+        for tm in teams:
+            mine = [r for r in rows if _norm(r.get("team") or "") == tm]
+            out.append({"label": mine[0].get("team"), "gamertags": [r.get("gamertag") for r in mine if r.get("gamertag")],
+                        "score": None})
+        return out
+    if len(rows) == 2:
+        return [{"label": "", "gamertags": [r.get("gamertag")] if r.get("gamertag") else [],
+                 "score": r.get("score") if r.get("score") is not None else r.get("kills")} for r in rows]
+    return []
+
+
 def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_target: str | None = None) -> dict:
     """Best guess at which match or lobby a reading belongs to, plus a prefilled result."""
     kind = reading.get("kind")
     tids = [only_tid] if only_tid else [r["id"] for r in _active_ids()]
+    extra = _alias_map()
     best: dict | None = None
     best_tie = False
-    for tid in tids:
-        t = get_tournament(tid)
-        if t["status"] != "active":
-            continue
+    loaded = [t for t in (get_tournament(tid) for tid in tids) if t["status"] == "active"]
+    every = {e["id"]: _aliases(e, extra) for t in loaded for e in t["entrants"]}
+    sides = _sides_from(reading)
+    for t in loaded:
+        tid = t["id"]
         ents = {e["id"]: e for e in t["entrants"]}
         game_ok = reading.get("game") in (None, "other", t["game"]) or t["game"] == "custom"
-        sides = [dict(x) for x in (reading.get("sides") or []) if isinstance(x, dict)][:2]
         if t["kind"] == "h2h" and len(sides) == 2 and kind != "unknown":
-            rows_in = [r for r in (reading.get("rows") or []) if isinstance(r, dict)]
-            for sd in sides:
-                tags = [x for x in (sd.get("gamertags") or []) if isinstance(x, str)]
-                tags += [r.get("gamertag") for r in rows_in
-                         if isinstance(r.get("gamertag"), str) and r.get("team") and sd.get("label")
-                         and _norm(r["team"]) == _norm(sd["label"])]
-                sd["gamertags"] = tags
             for m in t["matches"]:
-                if not (m["playable"] or (only_target and m["id"] == only_target and m["status"] == "played")):
-                    continue
                 if only_target and m["id"] != only_target:
                     continue
-                a1, a2 = _aliases(ents[m["e1"]]), _aliases(ents[m["e2"]])
+                if not (m["playable"] or (only_target and m["status"] == "played")):
+                    continue
+                a1, a2 = every[m["e1"]], every[m["e2"]]
                 straight = _side_hits(sides[0], a1) + _side_hits(sides[1], a2)
                 crossed = _side_hits(sides[0], a2) + _side_hits(sides[1], a1)
-                sender_in = bool(sender) and (_alias_hit(sender, a1) or _alias_hit(sender, a2))
-                score = max(straight, crossed) * 2 + (1 if sender_in else 0) + (1 if game_ok else -3)
                 swap = crossed > straight
-                oriented = straight != crossed
+                order = [m["e2"], m["e1"]] if swap else [m["e1"], m["e2"]]
+                sender_e = next((x for x in (m["e1"], m["e2"]) if sender and _alias_hit(sender, every[x])), None)
+                # A side's names must fit the entrant it lands on; a name that belongs to someone
+                # outside this match rules the match out.
+                fits, clash = True, False
+                for sd, eid in zip(sides, order):
+                    names = _side_names(sd)
+                    if not names or _side_hits(sd, every[eid]):
+                        continue
+                    if any(_alias_hit(n, al) for n in names for oid, al in every.items() if oid not in (m["e1"], m["e2"])):
+                        clash = True
+                    if eid != sender_e:
+                        fits = False
+                score = max(straight, crossed) * 2 + (1 if sender_e else 0) + (1 if game_ok else -3) - (4 if clash else 0)
                 if score <= 0 and not only_target:
                     continue
                 s1, s2 = _int_or_none(sides[0].get("score")), _int_or_none(sides[1].get("score"))
@@ -1335,7 +1418,8 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
                     s1, s2 = s2, s1
                     pens = list(reversed(pens)) if pens else None
                 cand = {"tournament_id": tid, "target_id": m["id"], "type": "match", "score": score,
-                        "oriented": oriented, "games": [{"s1": s1, "s2": s2}] if s1 is not None and s2 is not None else [],
+                        "oriented": straight != crossed and fits and not clash, "side_entrants": order,
+                        "games": [{"s1": s1, "s2": s2}] if s1 is not None and s2 is not None else [],
                         "pens": pens, "label": f"{ents[m['e1']]['name']} vs {ents[m['e2']]['name']}",
                         "best_of": t["settings"].get("best_of", 1), "legs": t["settings"].get("legs", 1)}
                 if best is None or cand["score"] > best["score"]:
@@ -1353,7 +1437,7 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
                 for eid, e in ents.items():
                     if eid in mapped:
                         continue
-                    if _alias_hit(r.get("gamertag") or "", _aliases(e)) or (
+                    if _alias_hit(r.get("gamertag") or "", every[eid]) or (
                             t["team_size"] > 1 and _alias_hit(r.get("team") or "", {_norm(e["name"])})):
                         mapped.add(eid)
                         rows.append({"entrant_id": eid, "placement": _int_or_none(r.get("placement")) or i,
@@ -1406,10 +1490,13 @@ def live_names(sender: str = "") -> list[str]:
     return [n for n in dict.fromkeys(first + rest) if n][:40]
 
 
-def ingest_shot(image: bytes, *, sender: str, source: str, mime: str = "image/jpeg") -> dict | None:
+def ingest_shot(image: bytes, *, sender: str, source: str, mime: str = "image/jpeg",
+                squad: list[dict] | None = None) -> dict | None:
     """A screenshot arrived from PSN. Store it, read it, and score it when the match is unambiguous."""
     if not has_active():
         return None
+    if squad:
+        refresh_identities(squad)
     sid = _id()
     (SHOTS_DIR / sid).write_bytes(image)
     with _lock, _conn() as db:
@@ -1436,6 +1523,20 @@ def ingest_shot(image: bytes, *, sender: str, source: str, mime: str = "image/jp
     return shot(sid)
 
 
+def _learn(sid: str, sug: dict) -> None:
+    """A confirmed screenshot teaches the tourney each solo player's in-game name."""
+    s = shot(sid)
+    if not s or not s["reading"] or len(sug.get("side_entrants") or []) != 2:
+        return
+    sides = _sides_from(s["reading"])
+    with _lock, _conn() as db:
+        for sd, eid in zip(sides, sug["side_entrants"]):
+            members = [r["player_id"] for r in db.execute("SELECT player_id FROM entrant_members WHERE entrant_id=?", (eid,))]
+            if len(members) == 1:
+                tags = [n for n in (sd.get("gamertags") or []) if isinstance(n, str) and len(_norm(n)) >= 3]
+                _merge_aliases(db, members[0], [re.sub(r"#\d+\s*$", "", n).strip() for n in tags])
+
+
 def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: list | None = None,
                pens: list | None = None, rows: list | None = None, auto: bool = False) -> dict:
     with _lock, _conn() as db:
@@ -1448,15 +1549,39 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
             raise ValueError("Pick the match this screenshot belongs to")
         is_lobby = bool(db.execute("SELECT 1 FROM lobbies WHERE id=?", (target,)).fetchone())
     source = "screenshot-auto" if auto else "screenshot"
+    note = "Scored automatically" if auto else None
     if is_lobby:
         t = report_lobby(target, rows if rows is not None else sug.get("rows") or [], reporter=reporter,
                          source=source, shot_id=sid)
     else:
-        t = report_match(target, games if games is not None else sug.get("games") or [],
-                         pens if pens is not None else sug.get("pens"), reporter=reporter, source=source, shot_id=sid)
+        new = games if games is not None else sug.get("games") or []
+        p = pens if pens is not None else sug.get("pens")
+        with _lock, _conn() as db:
+            m = dict(db.execute("SELECT * FROM matches WHERE id=?", (target,)).fetchone())
+            tt = _t_row(db, m["tournament_id"])
+        series = tt["settings"].get("best_of", 1) > 1 or (tt["settings"].get("legs") == 2 and m["stage"] not in ("R", "G"))
+        if series and games is None and m["status"] == "pending":
+            # One screenshot is one map / leg: add it to the series until somebody wins it.
+            done = json.loads(m.get("partial") or "[]")
+            all_games = (done + new)[:7]
+            try:
+                t = report_match(target, all_games, p, reporter=reporter, source=source, shot_id=sid)
+            except ValueError as e:
+                if "needs" not in str(e) and "both legs" not in str(e):
+                    raise
+                with _lock, _conn() as db:
+                    db.execute("UPDATE matches SET partial=? WHERE id=?", (json.dumps(all_games), target))
+                w1 = sum(1 for g in all_games if (g.get("s1") or 0) > (g.get("s2") or 0))
+                w2 = sum(1 for g in all_games if (g.get("s2") or 0) > (g.get("s1") or 0))
+                t = get_tournament(tt["id"])
+                note = f"Game {len(all_games)} saved: series {w1}–{w2}, best of {tt['settings'].get('best_of', 2)}"
+        else:
+            t = report_match(target, new, p, reporter=reporter, source=source, shot_id=sid)
+    if games is None and rows is None:
+        _learn(sid, sug)
     with _lock, _conn() as db:
         db.execute("UPDATE shots SET status='applied', tournament_id=?, target_id=?, note=? WHERE id=?",
-                   (t["id"], target, "Scored automatically" if auto else None, sid))
+                   (t["id"], target, note, sid))
     return t
 
 

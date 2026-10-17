@@ -28,6 +28,7 @@ export interface Match {
   games: GameScore[]; score1: number | null; score2: number | null; pens1: number | null; pens2: number | null
   result_side: number | null; winner_id: string | null; status: 'pending' | 'played' | 'bye' | 'void'
   playable: boolean; next_id: string | null; source: string | null; played_at: string | null
+  partial: GameScore[]
 }
 export interface TableRow { entrant_id: string; pos: number; p: number; w: number; d: number; l: number; f: number; a: number; pts: number; form: string[] }
 export interface LobbyResult { entrant_id: string; placement: number | null; kills: number; deaths: number | null }

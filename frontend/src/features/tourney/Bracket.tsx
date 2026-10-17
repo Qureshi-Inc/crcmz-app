@@ -84,7 +84,8 @@ export function MatchCard({ m, ents, t, onPick, gold = false }: {
       <span className="mc-meta">
         <span>{m.code}</span>
         {m.status === 'bye' && <span>bye</span>}
-        {m.playable && <span className="mc-cta">Report</span>}
+        {m.playable && m.partial?.length > 0 && <span className="mc-series num">Series {m.partial.filter((g) => g.s1 > g.s2).length}–{m.partial.filter((g) => g.s2 > g.s1).length}</span>}
+        {m.playable && <span className="mc-cta">{m.partial?.length ? 'Next game' : 'Report'}</span>}
         {m.status === 'played' && m.games.length > 1 && <span>{m.games.length} games</span>}
         {m.source?.startsWith('screenshot') && <span className="mc-src" title="Scored from a screenshot"><Icon name="cam" className="mc-ico" />AI</span>}
       </span>
