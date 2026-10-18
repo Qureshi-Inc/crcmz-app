@@ -1430,8 +1430,9 @@ def get_tournament(tid: str) -> dict:
                     return len(m["games"])
                 p = m["partial"]
                 cnt = len(p) if isinstance(p, list) else 0
-                if m.get("series_round") is not None:
-                    cnt += 1  # current in-progress round
+                sm = m.get("series_maps") or {}
+                if m.get("series_round") is not None and (sm.get("s1", 0) + sm.get("s2", 0)) > 0:
+                    cnt += 1  # current round has maps played
                 return cnt
             t["progress"] = {"games": sum(_gc(m) for m in real),
                              "played": sum(1 for m in real if m["status"] == "played"),

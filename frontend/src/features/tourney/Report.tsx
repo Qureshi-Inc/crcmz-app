@@ -1,6 +1,6 @@
 // Reporting a result: per-game scores (series, two legs), penalties, a live
 // verdict, and "read the screenshot" which asks the AI and prefills everything.
-import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useQueryClient } from '@tanstack/react-query'
 import { Icon } from '../../components/Icon'
@@ -84,6 +84,14 @@ export function ReportMatch({ t, m, shotId, prefill, onClose }: {
   const [err, setErr] = useState('')
   const v = useMemo(() => verdict(t, m, rows, pens), [t, m, rows, pens])
   const file = useRef<HTMLInputElement>(null)
+  const nestedSeries = t.settings.round_bo > 1 && t.settings.best_of > 1 && !legs
+  // Auto-append a row when the series is tied and a decisive game is needed
+  useEffect(() => {
+    if (v.more && rows.length < t.settings.best_of) {
+      setRows((rs) => rs.length < t.settings.best_of ? [...rs, { s1: '', s2: '', map: '' }] : rs)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [v.more])
 
   const save = async () => {
     setBusy(true); setErr('')
@@ -125,7 +133,7 @@ export function ReportMatch({ t, m, shotId, prefill, onClose }: {
   }
   const set = (i: number, k: keyof Row, val: string) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: k === 'map' ? val.slice(0, 32) : val.replace(/\D/g, '').slice(0, 4) } : r)))
   const series = !legs && t.settings.best_of > 1
-  const gameName = (i: number) => (legs ? (i === 0 ? '1st leg' : '2nd leg') : series ? (t.maps ? `Map ${i + 1}` : `Game ${i + 1}`) : 'Final score')
+  const gameName = (i: number) => (legs ? (i === 0 ? '1st leg' : '2nd leg') : nestedSeries ? `Series ${i + 1}` : series ? (t.maps ? `Map ${i + 1}` : `Game ${i + 1}`) : 'Final score')
 
   return (
     <div className="rp">
