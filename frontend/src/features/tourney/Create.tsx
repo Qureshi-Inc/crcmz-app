@@ -116,6 +116,10 @@ export function CreatePage() {
             <Choice label="Series length" value={rules.best_of ?? md.default_bo} options={md.best_of} onPick={(n) => r('best_of', n)}
               show={(n) => (n === 1 ? 'Single game' : `Best of ${n}`)} />
           )}
+          {md.round_bo && md.round_bo.length > 1 && format !== 'ffa' && (rules.best_of ?? md.default_bo) > 1 && (
+            <Choice label="Maps per round" value={rules.round_bo ?? 1} options={md.round_bo} onPick={(n) => r('round_bo', n)}
+              show={(n) => (n === 1 ? 'Single map' : `Best of ${n} maps`)} />
+          )}
           {md.legs && knockoutish && (
             <Choice label="Knockout ties" value={rules.legs ?? 1} options={[1, 2]} onPick={(n) => r('legs', n)}
               show={(n) => (n === 1 ? 'One game' : 'Home and away')} />

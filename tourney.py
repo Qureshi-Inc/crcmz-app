@@ -47,7 +47,7 @@ _BR_PTS = [15, 12, 10, 8, 6, 5, 4, 3, 2, 1]
 
 def _m(label, blurb, *, team_size=1, sizes=None, kind="h2h", unit="Score", draws=False, pens=False,
        formats=None, best_of=(1,), default_bo=1, legs=False, maps=False, default_format=None,
-       placement_points=None, kill_points=0, lobbies=5, target=None):
+       placement_points=None, kill_points=0, lobbies=5, target=None, round_bo=(1,)):
     return {
         "label": label, "blurb": blurb, "team_size": team_size, "team_sizes": list(sizes or [team_size]),
         "kind": kind, "unit": unit, "draws": draws, "pens": pens,
@@ -55,7 +55,7 @@ def _m(label, blurb, *, team_size=1, sizes=None, kind="h2h", unit="Score", draws
         "best_of": list(best_of), "default_bo": default_bo, "legs": legs, "maps": maps,
         "default_format": default_format or (formats or (["ffa"] if kind == "ffa" else _H2H))[0],
         "placement_points": placement_points or [], "kill_points": kill_points,
-        "lobbies": lobbies, "target": target,
+        "lobbies": lobbies, "target": target, "round_bo": list(round_bo),
     }
 
 
@@ -73,12 +73,14 @@ GAMES: dict[str, dict] = {
         "ffa": _m("Free-for-All", "Everyone for themselves in one lobby. First to 30 kills wins the game.",
                   kind="ffa", unit="Kills", placement_points=_COD_FFA_PTS, kill_points=0, lobbies=5),
         "1v1": _m("1v1", "Head-to-head duels. Rounds decide each map.",
-                  unit="Rounds", best_of=(1, 3, 5), default_bo=3, maps=True, default_format="double_elim"),
+                  unit="Rounds", best_of=(1, 3, 5), default_bo=3, maps=True, default_format="double_elim",
+                  round_bo=(1, 3, 5)),
         "gunfight": _m("Gunfight 2v2", "Same loadout, no respawns, first to 6 rounds.", team_size=2,
-                       sizes=[2], unit="Rounds", best_of=(1, 3, 5), default_bo=3, maps=True, target=6),
+                       sizes=[2], unit="Rounds", best_of=(1, 3, 5), default_bo=3, maps=True, target=6,
+                       round_bo=(1, 3, 5)),
         "snd": _m("Search & Destroy", "One life a round, plant or defuse. First to 6 rounds.",
                   team_size=4, sizes=[2, 3, 4, 5, 6], unit="Rounds", best_of=(1, 3, 5), default_bo=3,
-                  maps=True, target=6),
+                  maps=True, target=6, round_bo=(1, 3, 5)),
         "hardpoint": _m("Hardpoint", "Hold the rotating hill. First to 250.", team_size=4,
                         sizes=[2, 3, 4, 5, 6], unit="Points", best_of=(1, 3, 5), default_bo=1, maps=True,
                         target=250),
@@ -105,7 +107,8 @@ GAMES: dict[str, dict] = {
     "fight": {"name": "Fighting games", "short": "FGC", "blurb": "Tekken, Street Fighter, Mortal Kombat",
               "color": "#ff958d", "modes": {
         "1v1": _m("1v1 Sets", "Best-of sets, double elimination like a real bracket.",
-                  unit="Rounds", best_of=(1, 3, 5), default_bo=3, default_format="double_elim"),
+                  unit="Rounds", best_of=(1, 3, 5), default_bo=3, default_format="double_elim",
+                  round_bo=(1, 3, 5)),
     }},
     "custom": {"name": "Other game", "short": "GAME", "blurb": "Any game, your rules", "color": "#c1a5ff",
                "modes": {
@@ -144,6 +147,9 @@ def _clean_settings(game: str, mode: str, fmt: str, raw: dict | None) -> dict:
     s: dict = {}
     bo = _int(raw.get("best_of"), 1, 7, md["default_bo"])
     s["best_of"] = bo if bo in md["best_of"] else md["default_bo"]
+    rbo_opts = md.get("round_bo", [1])
+    rbo = _int(raw.get("round_bo"), 1, 7, 1)
+    s["round_bo"] = rbo if rbo in rbo_opts else 1
     s["legs"] = 2 if (md["legs"] and fmt in ("knockout", "groups") and _int(raw.get("legs"), 1, 2, 1) == 2) else 1
     if s["legs"] == 2:
         s["best_of"] = 1
@@ -1195,6 +1201,43 @@ def _series_notify(tid: str, match_id: str, w1: int, w2: int, bo: int) -> None:
     threading.Thread(target=run, daemon=True).start()
 
 
+def _round_notify(tid: str, match_id: str, round_n: int, won_side: int,
+                  ow1: int, ow2: int, bo: int, round_bo: int, maps: list) -> None:
+    """Fire a WhatsApp message after a round completes in a nested series."""
+    if not wa_send:
+        return
+
+    def run():
+        try:
+            with _lock, _conn() as db:
+                row = db.execute("SELECT e1, e2 FROM matches WHERE id=?", (match_id,)).fetchone()
+                if not row:
+                    return
+                names = {}
+                for eid in (row["e1"], row["e2"]):
+                    if eid:
+                        en = db.execute("SELECT name FROM entrants WHERE id=?", (eid,)).fetchone()
+                        names[eid] = en["name"] if en else "?"
+                t_row = db.execute("SELECT name FROM tournaments WHERE id=?", (tid,)).fetchone()
+            t_name = t_row["name"] if t_row else "Tournament"
+            a = names.get(row["e1"], "?")
+            b = names.get(row["e2"], "?")
+            winner = a if won_side == 1 else b
+            mw = sum(1 for g in maps if (won_side == 1 and (g.get("s1") or 0) > (g.get("s2") or 0))
+                     or (won_side == 2 and (g.get("s2") or 0) > (g.get("s1") or 0)))
+            ml = len(maps) - mw
+            if ow1 == 1 and ow2 == 1:
+                text = (f"🔥 All square! Series tied 1–1 after round {round_n}.\n"
+                        f"Final round decides it! {a} vs {b} in {t_name}.")
+            else:
+                text = (f"🏁 Round {round_n} done! {winner} takes it {mw}–{ml} in maps.\n"
+                        f"Leads the series {ow1}–{ow2} in {t_name}.")
+            wa_send(text)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("tourney: round notify failed: %s", e)
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _fmt_line(t: dict) -> str:
     bits = [t["game_label"], t["mode_label"], t["format_label"]]
     bo = 2 if t["settings"].get("legs") == 2 else t["settings"].get("best_of", 1)
@@ -1251,7 +1294,10 @@ def end_message(tid: str) -> str:
             if len(f["games"]) > 1:
                 maps = " [" + ", ".join(f"{g['s1']}–{g['s2']}" if f["winner_id"] == f["e1"] else f"{g['s2']}–{g['s1']}"
                                          for g in f["games"]) + "]"
-            lines.append(f"*Final:* {ents[w]['name']} {ws}–{ls} {ents[l]['name']}{pens}{maps}")
+            sweep = (len(f["games"]) > 1 and ls == 0 and
+                     all((g["s1"] > g["s2"]) == (ws > ls) for g in f["games"]))
+            sweep_prefix = "🧹 SWEEP! " if sweep else ""
+            lines.append(f"*Final:* {sweep_prefix}{ents[w]['name']} {ws}–{ls} {ents[l]['name']}{pens}{maps}")
             third = next((m for m in t["matches"] if m["stage"] == "P" and m["winner_id"]), None)
             if third:
                 lines.append(f"🥉 3rd: {ents[third['winner_id']]['name']}")
@@ -1289,6 +1335,30 @@ def _labels(t: dict) -> dict:
             "game_color": g["color"], "mode_label": md["label"], "format_label": FORMATS[t["format"]]["label"],
             "kind": md["kind"], "unit": t["settings"].get("unit") or md["unit"], "draws": md["draws"],
             "pens": md["pens"], "maps": md["maps"], "target": md["target"]}
+
+
+def _parse_partial(m: dict) -> dict:
+    """Deserialise the partial column for a pending match, handling both flat and nested formats."""
+    raw = m.get("partial")
+    if not raw or m.get("status") != "pending":
+        return {"partial": [], "series_round": None, "series_maps": None}
+    try:
+        parsed = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return {"partial": [], "series_round": None, "series_maps": None}
+    if isinstance(parsed, dict) and "rounds" in parsed:
+        completed = [r for r in parsed.get("rounds", []) if r.get("won")]
+        cur = parsed.get("current", [])
+        synthetic = [{"s1": 1, "s2": 0} if r["won"] == 1 else {"s1": 0, "s2": 1} for r in completed]
+        return {
+            "partial": synthetic,
+            "series_round": len(completed) + 1,
+            "series_maps": {
+                "s1": sum(1 for g in cur if (g.get("s1") or 0) > (g.get("s2") or 0)),
+                "s2": sum(1 for g in cur if (g.get("s2") or 0) > (g.get("s1") or 0)),
+            },
+        }
+    return {"partial": parsed if isinstance(parsed, list) else [], "series_round": None, "series_maps": None}
 
 
 def get_tournament(tid: str) -> dict:
@@ -1330,7 +1400,7 @@ def get_tournament(tid: str) -> dict:
                 "winner_id": m["winner_id"], "status": m["status"],
                 "playable": m["status"] == "pending" and bool(m["e1"] and m["e2"]),
                 "next_id": m["next_id"], "source": m["source"], "played_at": m["played_at"],
-                "partial": json.loads(m["partial"]) if m.get("partial") and m["status"] == "pending" else [],
+                **_parse_partial(m),
             })
         t["matches"] = out
         if t["format"] == "league" and t["status"] != "draft":
@@ -1386,7 +1456,12 @@ def list_tournaments(status: str | None = None) -> list[dict]:
             if t["format"] != "ffa":
                 g = 0
                 for r in db.execute("SELECT status, games, partial FROM matches WHERE tournament_id=?", (t["id"],)):
-                    g += len(json.loads((r["games"] if r["status"] == "played" else r["partial"]) or "[]"))
+                    raw = (r["games"] if r["status"] == "played" else r["partial"]) or "[]"
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict):  # nested series partial
+                        g += sum(len(rd.get("maps", [])) for rd in parsed.get("rounds", [])) + len(parsed.get("current", []))
+                    else:
+                        g += len(parsed)
                 t["progress"]["games"] = g
             t.pop("settings")
             out.append(t)
@@ -1744,8 +1819,62 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
             m = dict(db.execute("SELECT * FROM matches WHERE id=?", (target,)).fetchone())
             tt = _t_row(db, m["tournament_id"])
         series = tt["settings"].get("best_of", 1) > 1 or (tt["settings"].get("legs") == 2 and m["stage"] not in ("R", "G"))
-        if series and games is None and m["status"] == "pending":
-            # One screenshot is one map / leg: add it to the series until somebody wins it.
+        bo = tt["settings"].get("best_of", 1)
+        round_bo = tt["settings"].get("round_bo", 1)
+        if round_bo > 1 and series and games is None and m["status"] == "pending":
+            # Nested series: each "game" in the outer series is itself a best-of-round_bo.
+            raw_p = m.get("partial") or "{}"
+            try:
+                np = json.loads(raw_p) if isinstance(raw_p, str) else raw_p
+                if not isinstance(np, dict) or "rounds" not in np:
+                    np = {"rounds": [], "current": []}
+            except (json.JSONDecodeError, TypeError):
+                np = {"rounds": [], "current": []}
+            rounds_done = np.get("rounds", [])
+            current = np.get("current", [])
+            current = (current + new)[:7]
+            round_need = (round_bo + 1) // 2
+            cm1 = sum(1 for g in current if (g.get("s1") or 0) > (g.get("s2") or 0))
+            cm2 = sum(1 for g in current if (g.get("s2") or 0) > (g.get("s1") or 0))
+            round_just_won = None
+            if cm1 >= round_need:
+                rounds_done.append({"maps": current, "won": 1})
+                current = []
+                round_just_won = 1
+            elif cm2 >= round_need:
+                rounds_done.append({"maps": current, "won": 2})
+                current = []
+                round_just_won = 2
+            ow1 = sum(1 for r in rounds_done if r.get("won") == 1)
+            ow2 = sum(1 for r in rounds_done if r.get("won") == 2)
+            outer_need = (bo + 1) // 2
+            np_new = {"rounds": rounds_done, "current": current}
+            if ow1 >= outer_need or ow2 >= outer_need:
+                # Build synthetic games from round wins and close the match.
+                syn_games = [{"s1": 1, "s2": 0} if r.get("won") == 1 else {"s1": 0, "s2": 1}
+                             for r in rounds_done if r.get("won")]
+                try:
+                    t = report_match(target, syn_games, p, reporter=reporter, source=source, shot_id=sid)
+                except ValueError:
+                    with _lock, _conn() as db:
+                        db.execute("UPDATE matches SET partial=? WHERE id=?", (json.dumps(np_new), target))
+                    t = get_tournament(tt["id"])
+                else:
+                    if t["status"] != "complete":
+                        _series_notify(tt["id"], target, ow1, ow2, bo)
+                game_no = len(rounds_done)
+                note = f"Series done: {ow1}–{ow2} rounds (round_bo={round_bo})"
+            else:
+                with _lock, _conn() as db:
+                    db.execute("UPDATE matches SET partial=? WHERE id=?", (json.dumps(np_new), target))
+                t = get_tournament(tt["id"])
+                game_no = len(rounds_done) + 1
+                note = f"Round {game_no} map {len(current)}: {cm1}–{cm2} maps, series {ow1}–{ow2}"
+                if round_just_won is not None:
+                    _round_notify(tt["id"], target, len(rounds_done), round_just_won, ow1, ow2, bo, round_bo,
+                                  maps=rounds_done[-1]["maps"])
+        elif series and games is None and m["status"] == "pending":
+            # Flat series: one screenshot = one map/leg, accumulate until somebody wins.
             done = json.loads(m.get("partial") or "[]")
             all_games = (done + new)[:7]
             game_no = len(all_games)
@@ -1760,12 +1889,13 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
                 w2 = sum(1 for g in all_games if (g.get("s2") or 0) > (g.get("s1") or 0))
                 t = get_tournament(tt["id"])
                 note = f"Game {len(all_games)} saved: series {w1}–{w2}, best of {tt['settings'].get('best_of', 2)}"
-                _series_notify(tt["id"], target, w1, w2, tt["settings"].get("best_of", 2))
+                _series_notify(tt["id"], target, w1, w2, bo)
             else:
-                # Series just completed — check for a sweep.
+                # Series just completed — only notify sweep if tournament didn't just finish (end_message handles it).
                 w1 = sum(1 for g in all_games if (g.get("s1") or 0) > (g.get("s2") or 0))
                 w2 = sum(1 for g in all_games if (g.get("s2") or 0) > (g.get("s1") or 0))
-                _series_notify(tt["id"], target, w1, w2, tt["settings"].get("best_of", 2))
+                if t["status"] != "complete":
+                    _series_notify(tt["id"], target, w1, w2, bo)
         else:
             t = report_match(target, new, p, reporter=reporter, source=source, shot_id=sid)
     if games is None and rows is None:

@@ -8,7 +8,7 @@ export interface Mode {
   label: string; blurb: string; team_size: number; team_sizes: number[]; kind: 'h2h' | 'ffa'
   unit: string; draws: boolean; pens: boolean; formats: Format[]; best_of: number[]; default_bo: number
   legs: boolean; maps: boolean; default_format: Format; placement_points: number[]; kill_points: number
-  lobbies: number; target: number | null
+  lobbies: number; target: number | null; round_bo?: number[]
 }
 export interface Game { name: string; short: string; blurb: string; color: string; modes: Record<string, Mode> }
 export interface Catalog { games: Record<string, Game>; formats: Record<Format, { label: string; blurb: string }>; colors: string[] }
@@ -17,6 +17,7 @@ export interface Settings {
   best_of: number; legs: number; third_place: boolean; final_reset: boolean; league_legs: number
   group_size: number; advance: number; pts_win: number; pts_draw: number; lobbies: number
   placement_points: number[]; kill_points: number; game_name: string; unit: string; whatsapp: boolean
+  round_bo: number
 }
 
 export interface Member { id: string; display_name: string; psn_id: string; is_guest: boolean }
@@ -29,6 +30,8 @@ export interface Match {
   result_side: number | null; winner_id: string | null; status: 'pending' | 'played' | 'bye' | 'void'
   playable: boolean; next_id: string | null; source: string | null; played_at: string | null
   partial: GameScore[]
+  series_round: number | null
+  series_maps: { s1: number; s2: number } | null
 }
 export interface TableRow { entrant_id: string; pos: number; p: number; w: number; d: number; l: number; f: number; a: number; pts: number; form: string[] }
 export interface LobbyResult { entrant_id: string; placement: number | null; kills: number; deaths: number | null }
