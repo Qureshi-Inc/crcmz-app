@@ -35,11 +35,15 @@ const num = (v: string) => (v.trim() === '' ? null : Number.parseInt(v, 10))
 
 function verdict(t: Tournament, m: Match, rows: Row[], pens: [string, string]) {
   const knockout = m.stage !== 'R' && m.stage !== 'G'
+  const legs = t.settings.legs === 2 && knockout
+  const bo = legs ? 1 : t.settings.best_of
+  const playAll = !legs && t.settings.round_bo > 1 && bo > 1
+  // For play-all nested series: require all bo entries before counting
+  if (playAll && rows.length < bo)
+    return { ok: false, text: `Fill in series ${rows.length + 1} of ${bo}`, needPens: false, more: true }
   const g = rows.map((r) => ({ s1: num(r.s1), s2: num(r.s2) }))
   if (g.some((x) => x.s1 == null || x.s2 == null || Number.isNaN(x.s1) || Number.isNaN(x.s2))) return { ok: false, text: 'Fill in every score', needPens: false }
   const games = g as { s1: number; s2: number }[]
-  const legs = t.settings.legs === 2 && knockout
-  const bo = legs ? 1 : t.settings.best_of
   let a: number, b: number
   if (legs || bo === 1) {
     a = games.reduce((s, x) => s + x.s1, 0); b = games.reduce((s, x) => s + x.s2, 0)
@@ -50,12 +54,16 @@ function verdict(t: Tournament, m: Match, rows: Row[], pens: [string, string]) {
     if (p1 == null || p2 == null || p1 === p2) return { ok: false, text: 'Level. Enter the penalty shoot-out', needPens: true }
     return { ok: true, text: `${a}–${b}, ${p1}–${p2} on penalties`, side: p1 > p2 ? 1 : 2, needPens: true }
   }
-  const need = Math.floor(bo / 2) + 1
   let w1 = 0, w2 = 0
   for (const x of games) {
-    if (x.s1 === x.s2) return { ok: false, text: 'A game can’t be level', needPens: false }
+    if (x.s1 === x.s2) return { ok: false, text: 'A series can\'t be level', needPens: false }
     if (x.s1 > x.s2) w1++; else w2++
   }
+  if (playAll) {
+    if (w1 === w2) return { ok: false, text: 'Series tied — check the results', needPens: false }
+    return { ok: true, text: `${w1}–${w2} in series`, side: w1 > w2 ? 1 : 2, needPens: false }
+  }
+  const need = Math.floor(bo / 2) + 1
   if (w1 < need && w2 < need) return { ok: false, text: `Best of ${bo}: first to ${need}. Add the next game`, needPens: false, more: true }
   return { ok: true, text: `${w1}–${w2} in games`, side: w1 > w2 ? 1 : 2, needPens: false }
 }
@@ -68,9 +76,17 @@ export function ReportMatch({ t, m, shotId, prefill, onClose }: {
   const e1 = ents.get(m.e1 ?? '')!, e2 = ents.get(m.e2 ?? '')!
   const knockout = m.stage !== 'R' && m.stage !== 'G'
   const legs = t.settings.legs === 2 && knockout
+  const nestedSeries = t.settings.round_bo > 1 && t.settings.best_of > 1 && !legs
   const startRows = (): Row[] => {
     const src = prefill?.games?.length ? prefill.games : m.games.length ? m.games : (m.partial ?? [])
-    if (src.length) return src.map((g) => ({ s1: g.s1 == null ? '' : String(g.s1), s2: g.s2 == null ? '' : String(g.s2), map: (g as GameScore).map ?? '' }))
+    const toRow = (g: { s1: number | null; s2: number | null }) => ({ s1: g.s1 == null ? '' : String(g.s1), s2: g.s2 == null ? '' : String(g.s2), map: (g as GameScore).map ?? '' })
+    if (nestedSeries) {
+      // Always show all bo slots; pre-fill completed series from partial
+      const filled = src.map(toRow)
+      const extra = Math.max(0, t.settings.best_of - filled.length)
+      return [...filled, ...Array.from({ length: extra }, () => ({ s1: '', s2: '', map: '' }))]
+    }
+    if (src.length) return src.map(toRow)
     return Array.from({ length: legs ? 2 : t.settings.best_of > 1 ? Math.floor(t.settings.best_of / 2) + 1 : 1 }, () => ({ s1: '', s2: '', map: '' }))
   }
   const [rows, setRows] = useState<Row[]>(startRows)
@@ -84,10 +100,9 @@ export function ReportMatch({ t, m, shotId, prefill, onClose }: {
   const [err, setErr] = useState('')
   const v = useMemo(() => verdict(t, m, rows, pens), [t, m, rows, pens])
   const file = useRef<HTMLInputElement>(null)
-  const nestedSeries = t.settings.round_bo > 1 && t.settings.best_of > 1 && !legs
-  // Auto-append a row when the series is tied and a decisive game is needed
+  // For non-nested series: auto-append when tied and more games needed
   useEffect(() => {
-    if (v.more && rows.length < t.settings.best_of) {
+    if (!nestedSeries && v.more && rows.length < t.settings.best_of) {
       setRows((rs) => rs.length < t.settings.best_of ? [...rs, { s1: '', s2: '', map: '' }] : rs)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -120,7 +135,7 @@ export function ReportMatch({ t, m, shotId, prefill, onClose }: {
       const b64 = await fileToJpeg(f)
       const r = await api.read({ image_b64: b64, mime: 'image/jpeg', tournament_id: t.id, target_id: m.id })
       const s = r.suggestion
-      if (r.reading.kind !== 'h2h' || !s.found || !s.games?.length) { setErr('The AI couldn’t find a final score in that picture. Enter it by hand.'); return }
+      if (r.reading.kind !== 'h2h' || !s.found || !s.games?.length) { setErr("The AI couldn't find a final score in that picture. Enter it by hand."); return }
       setRows(s.games.map((g) => ({ s1: g.s1 == null ? '' : String(g.s1), s2: g.s2 == null ? '' : String(g.s2), map: '' })))
       if (s.pens && s.pens.length === 2) setPens([String(s.pens[0]), String(s.pens[1])])
       setRead({ reading: r.reading, oriented: Boolean(s.oriented) })
@@ -178,7 +193,7 @@ export function ReportMatch({ t, m, shotId, prefill, onClose }: {
         <div className="rp-ai">
           <Icon name="cam" className="btn-ico" />
           <span>AI read: {(read.reading.sides ?? []).map((s) => `${s.label ?? '?'} ${s.score ?? '?'}`).join(' – ')}.
-            {read.oriented ? ' Sides matched to the players.' : ' Couldn’t tell who was which side: check the order.'}</span>
+            {read.oriented ? ' Sides matched to the players.' : " Couldn't tell who was which side: check the order."}</span>
           <button type="button" className="btn btn-secondary" onClick={swap}>Swap sides</button>
         </div>
       )}
@@ -254,7 +269,7 @@ export function ReportLobby({ t, lobby, shotId, prefill, onClose }: {
     try {
       const r = await api.read({ image_b64: await fileToJpeg(f), mime: 'image/jpeg', tournament_id: t.id, target_id: lobby.id })
       const found = r.suggestion.rows ?? []
-      if (!found.length) { setErr('The AI couldn’t match anyone on that scoreboard. Enter it by hand.'); return }
+      if (!found.length) { setErr("The AI couldn't match anyone on that scoreboard. Enter it by hand."); return }
       setRows((rs) => rs.map((row) => {
         const x = found.find((y) => y.entrant_id === row.entrant_id)
         return x ? { ...row, placement: String(x.placement ?? ''), kills: String(x.kills ?? 0), deaths: x.deaths != null ? String(x.deaths) : '' } : row

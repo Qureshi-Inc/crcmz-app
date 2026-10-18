@@ -798,8 +798,10 @@ def _table(t: dict, entrant_ids: list[str], matches: list[dict]) -> list[dict]:
     return out
 
 
-def _decide(t: dict, stage: str, games: list[dict], pens: tuple[int, int] | None) -> tuple[int, int, int]:
-    """Validate a result. Returns (score1, score2, result_side) with side 0 = draw."""
+def _decide(t: dict, stage: str, games: list[dict], pens: tuple[int, int] | None, *,
+            force: bool = False) -> tuple[int, int, int]:
+    """Validate a result. Returns (score1, score2, result_side) with side 0 = draw.
+    force=True skips early-win checks (used by nested series which always play all rounds)."""
     md = _mode(t["game"], t["mode"])
     s = t["settings"]
     knockout = stage not in ("R", "G")
@@ -834,7 +836,7 @@ def _decide(t: dict, stage: str, games: list[dict], pens: tuple[int, int] | None
     need = bo // 2 + 1
     w1 = w2 = 0
     for i, g in enumerate(games):
-        if w1 == need or w2 == need:
+        if not force and (w1 == need or w2 == need):
             raise ValueError(f"The series was already won after game {i}")
         if g["s1"] == g["s2"]:
             raise ValueError(f"Game {i + 1} can't be level")
@@ -842,8 +844,10 @@ def _decide(t: dict, stage: str, games: list[dict], pens: tuple[int, int] | None
             w1 += 1
         else:
             w2 += 1
-    if w1 < need and w2 < need:
+    if not force and w1 < need and w2 < need:
         raise ValueError(f"Best of {bo}: someone needs {need} game wins")
+    if w1 == w2:
+        raise ValueError("Series tied — cannot determine a winner")
     return w1, w2, 1 if w1 > w2 else 2
 
 
@@ -999,7 +1003,7 @@ def _code(m: dict) -> str:
 
 
 def report_match(mid: str, games: list[dict], pens: list | None, *, reporter: str, source: str = "manual",
-                 shot_id: str | None = None) -> dict:
+                 shot_id: str | None = None, force: bool = False) -> dict:
     clean = []
     for g in (games or [])[:7]:
         clean.append({"s1": _int(g.get("s1"), 0, 9999, 0), "s2": _int(g.get("s2"), 0, 9999, 0),
@@ -1017,7 +1021,7 @@ def report_match(mid: str, games: list[dict], pens: list | None, *, reporter: st
             raise ValueError("The tournament hasn't started")
         if not (m["e1"] and m["e2"]) or m["status"] in ("bye", "void"):
             raise ValueError("This match isn't ready yet")
-        s1, s2, side = _decide(t, m["stage"], clean, p)
+        s1, s2, side = _decide(t, m["stage"], clean, p, force=force)
         if m["status"] == "played":
             played_after = [d for d in _dependents(db, t["id"], mid) if d["games"] is not None]
             if played_after and side != m["result_side"]:
@@ -1870,14 +1874,13 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
                 round_just_won = 2
             ow1 = sum(1 for r in rounds_done if r.get("won") == 1)
             ow2 = sum(1 for r in rounds_done if r.get("won") == 2)
-            outer_need = (bo + 1) // 2
             np_new = {"rounds": rounds_done, "current": current}
-            if ow1 >= outer_need or ow2 >= outer_need:
-                # Build synthetic games from round wins and close the match.
+            if len(rounds_done) >= bo:
+                # All bo rounds played — close the match using total round wins.
                 syn_games = [{"s1": 1, "s2": 0} if r.get("won") == 1 else {"s1": 0, "s2": 1}
                              for r in rounds_done if r.get("won")]
                 try:
-                    t = report_match(target, syn_games, p, reporter=reporter, source=source, shot_id=sid)
+                    t = report_match(target, syn_games, p, reporter=reporter, source=source, shot_id=sid, force=True)
                 except ValueError:
                     with _lock, _conn() as db:
                         db.execute("UPDATE matches SET partial=? WHERE id=?", (json.dumps(np_new), target))
