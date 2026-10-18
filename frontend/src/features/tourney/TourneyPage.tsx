@@ -69,7 +69,7 @@ function Group({ title, items }: { title: string; items: Summary[] }) {
               ) : (
                 <span className="tn-card-prog">
                   <span className="tn-bar" aria-hidden="true"><span style={{ width: `${t.progress.total ? (t.progress.played / t.progress.total) * 100 : 0}%` }} /></span>
-                  <span className="meta num">{t.status === 'draft' ? `${t.entrant_count} entered` : progressText(t.kind, t.progress, t.best_of ?? 1, true)}</span>
+                  <span className="meta num">{t.status === 'draft' ? `${t.entrant_count} entered` : progressText(t.kind, t.progress, t.best_of ?? 1, true, t.round_bo ?? 1)}</span>
                 </span>
               )}
             </Link>
@@ -113,7 +113,7 @@ export function TournamentPage() {
           {t.status !== 'draft' && (
             <span className="tn-head-prog">
               <span className="tn-bar" aria-hidden="true"><span style={{ width: `${t.progress.total ? (t.progress.played / t.progress.total) * 100 : 0}%` }} /></span>
-              <span className="meta num">{progressText(t.kind, t.progress, t.settings.legs === 2 ? 2 : t.settings.best_of)}</span>
+              <span className="meta num">{progressText(t.kind, t.progress, t.settings.legs === 2 ? 2 : t.settings.best_of, false, t.settings.round_bo ?? 1)}</span>
             </span>
           )}
           <RulesLine t={t} />

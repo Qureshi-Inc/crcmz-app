@@ -1425,7 +1425,15 @@ def get_tournament(tid: str) -> dict:
         if t["format"] == "ffa":
             t["progress"] = {"played": sum(1 for x in lobbies if x["status"] == "played"), "total": len(lobbies)}
         else:
-            t["progress"] = {"games": sum(len(m["games"]) if m["status"] == "played" else len(m["partial"]) for m in real),
+            def _gc(m):
+                if m["status"] == "played":
+                    return len(m["games"])
+                p = m["partial"]
+                cnt = len(p) if isinstance(p, list) else 0
+                if m.get("series_round") is not None:
+                    cnt += 1  # current in-progress round
+                return cnt
+            t["progress"] = {"games": sum(_gc(m) for m in real),
                              "played": sum(1 for m in real if m["status"] == "played"),
                              "total": len([m for m in real if not (m["stage"] == "GF" and m["round"] == 2
                                                                    and m["status"] == "pending" and not m["e1"])])}
@@ -1453,13 +1461,14 @@ def list_tournaments(status: str | None = None) -> list[dict]:
                                " WHERE tournament_id=?", (t["id"],)).fetchone()
             t["progress"] = {"played": c[0] or 0, "total": c[1] or 0}
             t["best_of"] = 2 if t["settings"].get("legs") == 2 else t["settings"].get("best_of", 1)
+            t["round_bo"] = t["settings"].get("round_bo", 1)
             if t["format"] != "ffa":
                 g = 0
                 for r in db.execute("SELECT status, games, partial FROM matches WHERE tournament_id=?", (t["id"],)):
                     raw = (r["games"] if r["status"] == "played" else r["partial"]) or "[]"
                     parsed = json.loads(raw)
-                    if isinstance(parsed, dict):  # nested series partial
-                        g += sum(len(rd.get("maps", [])) for rd in parsed.get("rounds", [])) + len(parsed.get("current", []))
+                    if isinstance(parsed, dict):  # nested series: count rounds, not maps
+                        g += len(parsed.get("rounds", [])) + (1 if parsed.get("current") else 0)
                     else:
                         g += len(parsed)
                 t["progress"]["games"] = g
