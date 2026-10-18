@@ -1537,6 +1537,7 @@ _READ_PROMPT = """You read video game result screenshots for a squad tournament 
 Reply with ONLY one JSON object, no prose:
 {"kind": "h2h" | "scoreboard" | "unknown",
  "game": "fc" | "cod" | "rl" | "nba2k" | "madden" | "fight" | "other",
+ "map": "map or arena name shown on screen (top corner or banner), or null",
  "sides": [{"label": "club, team or player name shown", "gamertags": ["..."], "score": 0,
             "stats": {"possession": 0, "shots": 0, "shots_on_target": 0, "...": 0}}],
  "penalties": [0, 0] or null,
@@ -1714,9 +1715,10 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
                 if swap:
                     s1, s2 = s2, s1
                     pens = list(reversed(pens)) if pens else None
+                map_name = str(reading.get("map") or "").strip()[:32] or None
                 cand = {"tournament_id": tid, "target_id": m["id"], "type": "match", "score": score,
                         "oriented": straight != crossed and fits and not clash, "side_entrants": order,
-                        "games": [{"s1": s1, "s2": s2}] if s1 is not None and s2 is not None else [],
+                        "games": [{"s1": s1, "s2": s2, "map": map_name}] if s1 is not None and s2 is not None else [],
                         "pens": pens, "label": f"{ents[m['e1']]['name']} vs {ents[m['e2']]['name']}",
                         "best_of": t["settings"].get("best_of", 1), "legs": t["settings"].get("legs", 1)}
                 if best is None or cand["score"] > best["score"]:

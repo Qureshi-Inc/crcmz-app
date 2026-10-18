@@ -61,14 +61,14 @@ export interface Tournament extends Labels {
 export interface Person { key: string; display_name: string; psn_id: string; is_guest: boolean; player_id: string | null }
 
 export interface Reading {
-  kind: 'h2h' | 'scoreboard' | 'unknown'; game?: string; confidence?: number
+  kind: 'h2h' | 'scoreboard' | 'unknown'; game?: string; confidence?: number; map?: string | null
   sides?: { label?: string; gamertags?: string[]; score?: number | null }[]
   penalties?: [number, number] | null
   rows?: { gamertag?: string; team?: string | null; placement?: number | null; kills?: number | null; deaths?: number | null }[]
 }
 export interface Suggestion {
   found: boolean; confident?: boolean; oriented?: boolean; type?: 'match' | 'lobby'; tournament_id?: string
-  target_id?: string; label?: string; games?: { s1: number | null; s2: number | null }[]; pens?: number[] | null
+  target_id?: string; label?: string; games?: { s1: number | null; s2: number | null; map?: string | null }[]; pens?: number[] | null
   rows?: LobbyResult[]
 }
 export interface Shot {
