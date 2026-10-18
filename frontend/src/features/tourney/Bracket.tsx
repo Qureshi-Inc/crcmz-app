@@ -85,7 +85,10 @@ export function MatchCard({ m, ents, t, onPick, gold = false }: {
         <span>{m.code}</span>
         {m.status === 'bye' && <span>bye</span>}
         {m.playable && m.series_round != null && (
-          <span className="mc-series num">Rnd {m.series_round} · Maps {m.series_maps?.s1 ?? 0}–{m.series_maps?.s2 ?? 0}</span>
+          <span className="mc-series num">
+            Series {m.series_round}/{t.settings.best_of}
+            {' · '}{m.series_maps?.s1 ?? 0}–{m.series_maps?.s2 ?? 0} rds
+          </span>
         )}
         {m.playable && m.series_round == null && t.settings.best_of > 1 && (
           <span className="mc-series num">
@@ -93,7 +96,7 @@ export function MatchCard({ m, ents, t, onPick, gold = false }: {
             {(m.partial?.length ?? 0) > 0 && ` · ${m.partial.filter((g) => g.s1 > g.s2).length}–${m.partial.filter((g) => g.s2 > g.s1).length}`}
           </span>
         )}
-        {m.playable && <span className="mc-cta">{m.partial?.length || m.series_round != null ? 'Next game' : 'Report'}</span>}
+        {m.playable && <span className="mc-cta">{m.partial?.length || m.series_round != null ? 'Next round' : 'Report'}</span>}
         {m.status === 'played' && m.games.length > 1 && <span>{m.games.length}/{t.settings.best_of > 1 ? t.settings.best_of : m.games.length} {t.settings.round_bo > 1 ? 'series' : 'games'}</span>}
         {m.source?.startsWith('screenshot') && <span className="mc-src" title="Scored from a screenshot"><Icon name="cam" className="mc-ico" />AI</span>}
       </span>
@@ -124,8 +127,10 @@ function Side({ m, side, ents }: { m: Match; side: 1 | 2; ents: Map<string, Entr
       {m.status === 'played' && (
         <span className="mc-score num">{score}{pens != null && <small> ({pens})</small>}</span>
       )}
-      {m.status === 'pending' && e && m.partial?.length > 0 && (
-        <span className="mc-score mc-live num" title="Games won so far">{m.partial.filter((g) => (side === 1 ? g.s1 > g.s2 : g.s2 > g.s1)).length}</span>
+      {m.status === 'pending' && e && (m.partial?.length > 0 || m.series_round != null) && (
+        <span className="mc-score mc-live num" title="Series won">
+          {m.partial?.filter((g) => (side === 1 ? g.s1 > g.s2 : g.s2 > g.s1)).length ?? 0}
+        </span>
       )}
     </span>
   )
