@@ -1871,6 +1871,13 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
                 np = {"rounds": [], "current": []}
             rounds_done = np.get("rounds", [])
             current = np.get("current", [])
+            # Reject exact-duplicate rounds: same score already at the end of current
+            # (same screenshot submitted twice in quick succession).
+            if new and current and current[-1] == new[0] and len(new) == 1:
+                logger.info("tourney: duplicate nested round rejected (score %s already at current[-1])", new[0])
+                with _lock, _conn() as db:
+                    db.execute("UPDATE shots SET status='dismissed', note='duplicate' WHERE id=?", (sid,))
+                return get_tournament(tt["id"])
             current = (current + new)[:7]
             round_need = (round_bo + 1) // 2
             cm1 = sum(1 for g in current if (g.get("s1") or 0) > (g.get("s2") or 0))
