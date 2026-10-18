@@ -86,7 +86,8 @@ function SendForm({ d, up }: { d: UploadsResponse; up: UploadState }) {
     if (!f) return
     if (up.kind === 'failed' || up.kind === 'paused' || up.kind === 'queued') resetUpload()
     if (!formatOk(f, L)) { setProblem('Pick an MP4 or MOV video.'); return }
-    if (f.size > L.max_bytes) { setProblem(`That video is ${fmtBytes(f.size)}. The limit is ${fmtBytes(L.max_bytes)}.`); return }
+    // max_bytes 0 means no cap: the chunked upload handles any size.
+    if (L.max_bytes > 0 && f.size > L.max_bytes) { setProblem(`That video is ${fmtBytes(f.size)}. The limit is ${fmtBytes(L.max_bytes)}.`); return }
     setChecking(true)
     const secs = await readDuration(f)
     setChecking(false)
@@ -133,8 +134,7 @@ function SendForm({ d, up }: { d: UploadsResponse; up: UploadState }) {
   return (
     <div className="send-body">
       <p className="meta" style={{ margin: 0 }}>
-        Muse posts it to Instagram, TikTok and YouTube, credited to <b>{d.psn_id}</b>{d.credit_platform === 'steam' ? ' (Steam)' : ''}. MP4 or MOV, up to {minutes} minutes
-        and {fmtBytes(L.max_bytes)}. One video in the queue at a time.
+        Muse posts it to Instagram, TikTok and YouTube, credited to <b>{d.psn_id}</b>{d.credit_platform === 'steam' ? ' (Steam)' : ''}. MP4 or MOV, up to {minutes} minutes{L.max_bytes > 0 ? <> and {fmtBytes(L.max_bytes)}</> : null}. One video in the queue at a time.
       </p>
 
       {blocked ? (
