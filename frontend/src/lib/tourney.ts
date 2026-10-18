@@ -22,7 +22,8 @@ export interface Settings {
 
 export interface Member { id: string; display_name: string; psn_id: string; is_guest: boolean }
 export interface Entrant { id: string; name: string; color: string; seed: number; group_label: string | null; members: Member[] }
-export interface GameScore { s1: number; s2: number; map?: string }
+export interface PlayerRow { tag: string; k: number | null; d: number | null }
+export interface GameScore { s1: number; s2: number; map?: string; rows?: PlayerRow[] }
 export interface Match {
   id: string; stage: 'W' | 'L' | 'GF' | 'K' | 'G' | 'R' | 'P'; round: number; slot: number; group: string | null
   code: string; e1: string | null; e2: string | null; wait1: string | null; wait2: string | null
@@ -32,8 +33,8 @@ export interface Match {
   partial: GameScore[]
   series_round: number | null
   series_maps: { s1: number; s2: number } | null
-  series_rounds: { s1: number; s2: number; map?: string | null }[] | null
-  series_history: { won: 1 | 2; rounds: { s1: number; s2: number; map?: string | null }[] }[] | null
+  series_rounds: { s1: number; s2: number; map?: string | null; rows?: PlayerRow[] }[] | null
+  series_history: { won: 1 | 2; rounds: { s1: number; s2: number; map?: string | null; rows?: PlayerRow[] }[] }[] | null
 }
 export interface TableRow { entrant_id: string; pos: number; p: number; w: number; d: number; l: number; f: number; a: number; pts: number; form: string[] }
 export interface LobbyResult { entrant_id: string; placement: number | null; kills: number; deaths: number | null }
@@ -68,7 +69,7 @@ export interface Reading {
 }
 export interface Suggestion {
   found: boolean; confident?: boolean; oriented?: boolean; type?: 'match' | 'lobby'; tournament_id?: string
-  target_id?: string; label?: string; games?: { s1: number | null; s2: number | null; map?: string | null }[]; pens?: number[] | null
+  target_id?: string; label?: string; games?: { s1: number | null; s2: number | null; map?: string | null; rows?: PlayerRow[] }[]; pens?: number[] | null
   rows?: LobbyResult[]
 }
 export interface Shot {

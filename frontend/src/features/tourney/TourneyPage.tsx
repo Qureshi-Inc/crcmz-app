@@ -6,7 +6,7 @@ import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { ErrorStrip, SkeletonRows } from '../../components/states'
 import { toast } from '../../components/toast'
-import { api, progressText, useShots, useTournament, useTournaments, type Entrant, type Lobby, type Match, type Shot, type Summary, type Tournament } from '../../lib/tourney'
+import { api, progressText, useShots, useTournament, useTournaments, type Entrant, type Lobby, type Match, type PlayerRow, type Shot, type Summary, type Tournament } from '../../lib/tourney'
 import { Bracket, MatchCard } from './Bracket'
 import { Fixtures, Leaderboard, Standings } from './Tables'
 import { ReportLobby, ReportMatch, Sheet, errText } from './Report'
@@ -320,6 +320,27 @@ function Rows({ title, ms, t, ents, onPick }: { title: string; ms: Match[]; t: T
   )
 }
 
+function SeriesStats({ rounds }: { rounds: { rows?: PlayerRow[] }[] }) {
+  const totals = new Map<string, number>()
+  for (const rd of rounds) {
+    for (const p of rd.rows ?? []) {
+      if (p.tag) totals.set(p.tag, (totals.get(p.tag) ?? 0) + (p.k ?? 0))
+    }
+  }
+  if (!totals.size) return null
+  const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1])
+  return (
+    <div className="ml-nested-stats">
+      {sorted.map(([tag, kills]) => (
+        <span key={tag} className="ml-nested-stat">
+          <span className="ml-nested-tag">{tag.replace(/#\d+$/, '')}</span>
+          <span className="num">{kills}k</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function NestedMatchRow({ m, t, ents, onPick }: { m: Match; t: Tournament; ents: Map<string, Entrant>; onPick: (m: Match) => void }) {
   const e1 = ents.get(m.e1 ?? '')
   const e2 = ents.get(m.e2 ?? '')
@@ -353,26 +374,32 @@ function NestedMatchRow({ m, t, ents, onPick }: { m: Match; t: Tournament; ents:
           {sh.map((s, i) => {
             const winner = s.won === 1 ? e1 : e2
             return (
-              <div key={i} className="rp-sb-row">
-                <span className="rp-sb-label">S{i + 1}</span>
-                <span className="rp-sb-winner" style={{ color: winner?.color }}>{winner?.name ?? `Side ${s.won}`}</span>
-                <span className="rp-sb-rounds">
-                  {s.rounds.map((r, j) => (
-                    <span key={j} className={`rp-sb-rd ${r.s1 > r.s2 ? 'w1' : 'w2'}`}>{r.s1}–{r.s2}</span>
-                  ))}
-                </span>
+              <div key={i} className="ml-nested-series-item">
+                <div className="rp-sb-row">
+                  <span className="rp-sb-label">S{i + 1}</span>
+                  <span className="rp-sb-winner" style={{ color: winner?.color }}>{winner?.name ?? `Side ${s.won}`}</span>
+                  <span className="rp-sb-rounds">
+                    {s.rounds.map((r, j) => (
+                      <span key={j} title={r.map ?? undefined} className={`rp-sb-rd ${r.s1 > r.s2 ? 'w1' : 'w2'}`}>{r.s1}–{r.s2}</span>
+                    ))}
+                  </span>
+                </div>
+                <SeriesStats rounds={s.rounds} />
               </div>
             )
           })}
           {sr.length > 0 && (
-            <div className="rp-sb-row current">
-              <span className="rp-sb-label">S{sh.length + 1}</span>
-              <span className="rp-sb-live">Live</span>
-              <span className="rp-sb-rounds">
-                {sr.map((r, j) => (
-                  <span key={j} className={`rp-sb-rd ${r.s1 > r.s2 ? 'w1' : 'w2'}`}>{r.s1}–{r.s2}</span>
-                ))}
-              </span>
+            <div className="ml-nested-series-item">
+              <div className="rp-sb-row current">
+                <span className="rp-sb-label">S{sh.length + 1}</span>
+                <span className="rp-sb-live">Live</span>
+                <span className="rp-sb-rounds">
+                  {sr.map((r, j) => (
+                    <span key={j} title={r.map ?? undefined} className={`rp-sb-rd ${r.s1 > r.s2 ? 'w1' : 'w2'}`}>{r.s1}–{r.s2}</span>
+                  ))}
+                </span>
+              </div>
+              <SeriesStats rounds={sr} />
             </div>
           )}
         </div>

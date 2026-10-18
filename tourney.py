@@ -1716,9 +1716,16 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
                     s1, s2 = s2, s1
                     pens = list(reversed(pens)) if pens else None
                 map_name = str(reading.get("map") or "").strip()[:32] or None
+                r_rows = [{"tag": str(r.get("gamertag") or "").strip()[:32],
+                            "k": _int_or_none(r.get("kills")), "d": _int_or_none(r.get("deaths"))}
+                          for r in (reading.get("rows") or [])
+                          if isinstance(r, dict) and r.get("gamertag")]
+                game_entry = {"s1": s1, "s2": s2, "map": map_name}
+                if r_rows:
+                    game_entry["rows"] = r_rows
                 cand = {"tournament_id": tid, "target_id": m["id"], "type": "match", "score": score,
                         "oriented": straight != crossed and fits and not clash, "side_entrants": order,
-                        "games": [{"s1": s1, "s2": s2, "map": map_name}] if s1 is not None and s2 is not None else [],
+                        "games": [game_entry] if s1 is not None and s2 is not None else [],
                         "pens": pens, "label": f"{ents[m['e1']]['name']} vs {ents[m['e2']]['name']}",
                         "best_of": t["settings"].get("best_of", 1), "legs": t["settings"].get("legs", 1)}
                 if best is None or cand["score"] > best["score"]:
@@ -1873,9 +1880,10 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
                 np = {"rounds": [], "current": []}
             rounds_done = np.get("rounds", [])
             current = np.get("current", [])
-            # Reject exact-duplicate rounds: same score already at the end of current
+            # Reject exact-duplicate rounds: same s1/s2 score already at the end of current
             # (same screenshot submitted twice in quick succession).
-            if new and current and current[-1] == new[0] and len(new) == 1:
+            if new and current and len(new) == 1 and \
+                    new[0].get("s1") == current[-1].get("s1") and new[0].get("s2") == current[-1].get("s2"):
                 logger.info("tourney: duplicate nested round rejected (score %s already at current[-1])", new[0])
                 with _lock, _conn() as db:
                     db.execute("UPDATE shots SET status='dismissed', note='duplicate' WHERE id=?", (sid,))
