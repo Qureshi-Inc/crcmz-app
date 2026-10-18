@@ -487,6 +487,16 @@ def _check_members(db, t: dict, players: list[str], skip_entrant: str | None = N
             raise ValueError(f"{who['display_name'] if who else 'That player'} is already in {clash['name']}")
 
 
+def _players_name(db, players: list[str]) -> str:
+    """A team named after its players: "Soup & Nuhni", first names if the full ones don't fit."""
+    names = [r[0] for pid in players for r in [db.execute("SELECT display_name FROM players WHERE id=?", (pid,)).fetchone()] if r]
+    full = " & ".join(names)
+    if len(full) <= 32:
+        return full
+    short = " & ".join(n.split()[0] for n in names)
+    return short if len(short) <= 32 else short[:31] + "…"
+
+
 def add_entrants(tid: str, entries: list[dict], squad_by_id: dict[str, dict]) -> dict:
     """entries: [{name?, color?, members: [key]}]. Solo modes may pass one entry per player."""
     with _lock, _conn() as db:
@@ -499,7 +509,7 @@ def add_entrants(tid: str, entries: list[dict], squad_by_id: dict[str, dict]) ->
             if t["team_size"] == 1:
                 name = db.execute("SELECT display_name FROM players WHERE id=?", (players[0],)).fetchone()[0]
             else:
-                name = (e.get("name") or "").strip()[:32] or f"Team {n + 1}"
+                name = (e.get("name") or "").strip()[:32] or _players_name(db, players) or f"Team {n + 1}"
             color = e.get("color") if e.get("color") in COLORS else next(
                 (c for c in COLORS if c not in used), COLORS[n % len(COLORS)])
             used.add(color)
@@ -528,6 +538,8 @@ def update_entrant(eid: str, *, name: str | None, color: str | None, members: li
         if members is not None:
             _draft_or_ffa(db, t["id"])
             players = _resolve_keys(db, members, squad_by_id)
+            old = [r[0] for r in db.execute("SELECT player_id FROM entrant_members WHERE entrant_id=?", (eid,))]
+            auto_name = e["name"] == _players_name(db, old)
             if t["team_size"] > 1 and players:
                 _check_members(db, t, players, eid)
             elif t["team_size"] == 1:
@@ -535,6 +547,8 @@ def update_entrant(eid: str, *, name: str | None, color: str | None, members: li
             db.execute("DELETE FROM entrant_members WHERE entrant_id=?", (eid,))
             for pid in players:
                 db.execute("INSERT INTO entrant_members(entrant_id,player_id) VALUES(?,?)", (eid, pid))
+            if t["team_size"] > 1 and players and auto_name and (name or "").strip() in ("", e["name"]):
+                db.execute("UPDATE entrants SET name=? WHERE id=?", (_players_name(db, players), eid))
             if t["team_size"] == 1 and players and name is None:
                 nm = db.execute("SELECT display_name FROM players WHERE id=?", (players[0],)).fetchone()[0]
                 db.execute("UPDATE entrants SET name=? WHERE id=?", (nm, eid))
@@ -586,7 +600,7 @@ def auto_teams(tid: str, keys: list[str], squad_by_id: dict[str, dict]) -> dict:
         teams = [players[i * size:(i + 1) * size] for i in range(count)]
         for extra, pid in enumerate(players[count * size:]):
             teams[extra % count].append(pid)
-    entries = [{"name": f"Team {chr(65 + i)}", "members": [f"p:{p}" for p in team]} for i, team in enumerate(teams)]
+    entries = [{"name": "", "members": [f"p:{p}" for p in team]} for i, team in enumerate(teams)]
     with _lock, _conn() as db:
         db.execute("DELETE FROM entrants WHERE tournament_id=?", (tid,))
         t = _t_row(db, tid)
@@ -2109,6 +2123,22 @@ def _record_stats(sid: str, tid: str, target: str, game_no: int) -> int:
         lines.append({"player_id": pid, "entrant_id": eid, "gamertag": r["gamertag"][:40], "team": str(r.get("team") or "")[:40],
                       "placement": _num(r.get("placement")), "kills": _num(r.get("kills")), "deaths": _num(r.get("deaths")),
                       "assists": _num(r.get("assists")), "score": _num(r.get("score")), "extra": stats})
+    if lob and t["team_size"] > 1:
+        # Team lobby (Cutthroat): an unrecognised gamertag joins the entrant of a teammate on the
+        # same side label, and takes the one squad member of that entrant nobody else claimed.
+        team_e = {}
+        for x in lines:
+            if x["entrant_id"] and x["team"]:
+                team_e.setdefault(_norm(x["team"]), x["entrant_id"])
+        for x in lines:
+            if not x["entrant_id"] and x["team"]:
+                x["entrant_id"] = team_e.get(_norm(x["team"]))
+        for e in t["entrants"]:
+            rows = [x for x in lines if x["entrant_id"] == e["id"]]
+            left = [p["id"] for p in e["members"] if p["id"] not in {x["player_id"] for x in rows}]
+            unknown = [x for x in rows if not x["player_id"]]
+            if len(left) == 1 and len(unknown) == 1:
+                unknown[0]["player_id"] = left[0]
     if not lines and m:
         # No per-player table (EA FC): each side's team stats go to the players on that side.
         for sd in _sides_from(reading):
@@ -2120,9 +2150,14 @@ def _record_stats(sid: str, tid: str, target: str, game_no: int) -> int:
                                   "placement": None, "kills": None, "deaths": None, "assists": None, "score": None, "extra": stats})
     with _lock, _conn() as db:
         db.execute("DELETE FROM player_stats WHERE shot_id=?", (sid,))
+        lob_place = {r["entrant_id"]: r["placement"] for r in (lob or {}).get("results") or []}
         for x in lines:
             won = None
-            if lob and x["placement"]:
+            if lob and t["team_size"] > 1:
+                # A team row's "placement" is the side's round count; the team's lobby result decides.
+                x["placement"] = lob_place.get(x["entrant_id"])
+                won = (1 if x["placement"] == 1 else 0) if x["placement"] else None
+            elif lob and x["placement"]:
                 won = 1 if x["placement"] == 1 else 0
             elif game_winner and x["entrant_id"]:
                 won = 1 if x["entrant_id"] == game_winner else 0

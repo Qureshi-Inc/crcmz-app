@@ -86,7 +86,7 @@ export function Setup({ t, managing = false }: { t: Tournament; managing?: boole
         <div className="su-pick">
           {(!solo || editing) && (
             <div className="su-team-row">
-              <input className="input" maxLength={32} placeholder={solo ? 'Name' : `Team ${t.entrants.length + 1}`} value={teamName} onChange={(e) => setTeamName(e.target.value)} aria-label={solo ? 'Player name' : 'Team name'} />
+              <input className="input" maxLength={32} placeholder={solo ? 'Name' : 'Team name (optional, defaults to the players)'} value={teamName} onChange={(e) => setTeamName(e.target.value)} aria-label={solo ? 'Player name' : 'Team name'} />
               {editing && (
                 <div className="su-colors" role="radiogroup" aria-label="Team colour">
                   {(cat.data?.colors ?? []).map((c) => (
