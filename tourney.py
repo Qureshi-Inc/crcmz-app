@@ -1154,6 +1154,47 @@ def _announce(kind: str, tid: str) -> None:
     threading.Thread(target=run, daemon=True).start()
 
 
+def _series_notify(tid: str, match_id: str, w1: int, w2: int, bo: int) -> None:
+    """Fire a WhatsApp message for mid-series milestones (1-1 tie, sweep)."""
+    if not wa_send:
+        return
+    # Determine which milestone this is before spinning up a thread.
+    if w1 == 1 and w2 == 1:
+        kind = "heated"
+    elif bo >= 2 and (w1 == 0 or w2 == 0) and max(w1, w2) * 2 > bo:
+        kind = "sweep"
+    else:
+        return
+
+    def run():
+        try:
+            with _lock, _conn() as db:
+                row = db.execute("SELECT e1, e2 FROM matches WHERE id=?", (match_id,)).fetchone()
+                if not row:
+                    return
+                names = {}
+                for eid in (row["e1"], row["e2"]):
+                    if eid:
+                        en = db.execute("SELECT name FROM entrants WHERE id=?", (eid,)).fetchone()
+                        names[eid] = en["name"] if en else "?"
+                t_row = db.execute("SELECT name FROM tournaments WHERE id=?", (tid,)).fetchone()
+            t_name = t_row["name"] if t_row else "Tournament"
+            a = names.get(row["e1"], "?")
+            b = names.get(row["e2"], "?")
+            if kind == "heated":
+                text = f"🔥 It's all tied up!\n\n{a} vs {b} is 1–1 in {t_name}.\nNext game decides it. Who's taking it? 🎮"
+            else:
+                # winner is whoever has more wins
+                winner = a if w1 > w2 else b
+                loser = b if w1 > w2 else a
+                text = (f"🧹 SWEEP! {winner} didn't drop a single game!\n\n"
+                        f"{winner} {max(w1,w2)}–{min(w1,w2)} {loser} in {t_name}. 👑")
+            wa_send(text)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("tourney: series notify failed: %s", e)
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _fmt_line(t: dict) -> str:
     bits = [t["game_label"], t["mode_label"], t["format_label"]]
     bo = 2 if t["settings"].get("legs") == 2 else t["settings"].get("best_of", 1)
@@ -1719,6 +1760,12 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
                 w2 = sum(1 for g in all_games if (g.get("s2") or 0) > (g.get("s1") or 0))
                 t = get_tournament(tt["id"])
                 note = f"Game {len(all_games)} saved: series {w1}–{w2}, best of {tt['settings'].get('best_of', 2)}"
+                _series_notify(tt["id"], target, w1, w2, tt["settings"].get("best_of", 2))
+            else:
+                # Series just completed — check for a sweep.
+                w1 = sum(1 for g in all_games if (g.get("s1") or 0) > (g.get("s2") or 0))
+                w2 = sum(1 for g in all_games if (g.get("s2") or 0) > (g.get("s1") or 0))
+                _series_notify(tt["id"], target, w1, w2, tt["settings"].get("best_of", 2))
         else:
             t = report_match(target, new, p, reporter=reporter, source=source, shot_id=sid)
     if games is None and rows is None:
