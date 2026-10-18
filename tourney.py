@@ -1041,9 +1041,22 @@ def undo_match(mid: str) -> dict:
         played_after = [d for d in _dependents(db, m["tournament_id"], mid) if d["games"] is not None]
         if played_after:
             raise ValueError(f"Undo {_code(played_after[0])} first, it depends on this result")
-        db.execute("UPDATE matches SET games=NULL, score1=NULL, score2=NULL, pens1=NULL, pens2=NULL,"
+        # For nested series: reconstruct partial without the decisive last round so the
+        # match resumes from its previous in-progress state (e.g. 1–1 before round 3).
+        t = _t_row(db, m["tournament_id"])
+        round_bo = t["settings"].get("round_bo", 1)
+        restored_partial = None
+        if round_bo > 1 and m["games"]:
+            try:
+                gs = json.loads(m["games"])
+                if isinstance(gs, list) and len(gs) > 1:
+                    prev = [{"won": 1 if g.get("s1", 0) > g.get("s2", 0) else 2, "maps": []} for g in gs[:-1]]
+                    restored_partial = json.dumps({"rounds": prev, "current": []})
+            except Exception:  # noqa: BLE001
+                pass
+        db.execute("UPDATE matches SET games=NULL, partial=?, score1=NULL, score2=NULL, pens1=NULL, pens2=NULL,"
                    " result_side=NULL, res_e1=NULL, res_e2=NULL, source=NULL, shot_id=NULL, played_at=NULL"
-                   " WHERE id=?", (mid,))
+                   " WHERE id=?", (restored_partial, mid))
         _rebuild(db, m["tournament_id"])
         _ret = m["tournament_id"]
     return get_tournament(_ret)
