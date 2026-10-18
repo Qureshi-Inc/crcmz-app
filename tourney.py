@@ -972,16 +972,20 @@ def _rebuild(db, tid: str) -> None:
     elif fmt == "ffa":
         lob = db.execute("SELECT status FROM lobbies WHERE tournament_id=?", (tid,)).fetchall()
         played = [r for r in lob if r["status"] == "played"]
+        pp = t["settings"].get("placement_points") or []
+        win_only = len(pp) >= 2 and pp[1] == 0
+        win_target = t["settings"].get("lobbies", 5)
         if played:
             board = _leaderboard(db, t)
             if board:
-                pp = t["settings"].get("placement_points") or []
-                win_only = len(pp) >= 2 and pp[1] == 0
-                win_target = t["settings"].get("lobbies", 5)
                 leader_wins = board[0]["wins"]
                 all_done = len(played) == len(lob)
                 if all_done or (win_only and leader_wins >= win_target):
                     champ = board[0]["entrant_id"]
+                elif win_only and all_done and not champ:
+                    # All slots played but no winner yet — add another lobby
+                    n = db.execute("SELECT COALESCE(MAX(num),0) FROM lobbies WHERE tournament_id=?", (tid,)).fetchone()[0]
+                    db.execute("INSERT INTO lobbies(id,tournament_id,num) VALUES(?,?,?)", (_id(), tid, n + 1))
     if champ:
         db.execute("UPDATE tournaments SET status='complete', champion_id=?, finished_at=COALESCE(finished_at, ?)"
                    " WHERE id=?", (champ, _now(), tid))
