@@ -32,8 +32,8 @@ export interface Match {
   partial: GameScore[]
   series_round: number | null
   series_maps: { s1: number; s2: number } | null
-  series_rounds: { s1: number; s2: number }[] | null
-  series_history: { won: 1 | 2; rounds: { s1: number; s2: number }[] }[] | null
+  series_rounds: { s1: number; s2: number; map?: string | null }[] | null
+  series_history: { won: 1 | 2; rounds: { s1: number; s2: number; map?: string | null }[] }[] | null
 }
 export interface TableRow { entrant_id: string; pos: number; p: number; w: number; d: number; l: number; f: number; a: number; pts: number; form: string[] }
 export interface LobbyResult { entrant_id: string; placement: number | null; kills: number; deaths: number | null }

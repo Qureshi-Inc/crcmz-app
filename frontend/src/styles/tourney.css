@@ -290,3 +290,23 @@ button.mc:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .pl-v { font: 800 var(--text-lg) / 1.1 var(--font-display); text-transform: none; }
 .pl-recent { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .pl-recent li { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-decorative); }
+
+/* Matches list: expanded nested-series row */
+.ml-series-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.ml-nested-wrap { display: block; width: 100%; text-align: left; padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); cursor: default; border: 1px solid transparent; }
+button.ml-nested-wrap { cursor: pointer; }
+button.ml-nested-wrap:hover, button.ml-nested-wrap:focus-visible { background: var(--surface-hover, color-mix(in srgb, var(--surface) 90%, var(--interactive-text))); }
+button.ml-nested-wrap:focus-visible { outline: var(--focus-ring); }
+.ml-nested-ready { border-color: var(--interactive-text); }
+.ml-nested { display: flex; flex-direction: column; gap: var(--space-2); }
+.ml-nested-head { display: flex; align-items: center; gap: var(--space-2); }
+.ml-nested-side { display: flex; align-items: center; gap: var(--space-2); flex: 1; min-width: 0; }
+.ml-nested-side2 { flex-direction: row-reverse; justify-content: flex-start; }
+.ml-nested-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.ml-nested-won { color: var(--text); }
+.ml-nested-lost { opacity: .45; }
+.ml-nested-pts { font: 800 var(--text-lg) / 1 var(--font-display); min-width: 20px; text-align: center; }
+.ml-nested-sep { color: var(--text-dim); font-weight: 700; flex-shrink: 0; }
+.ml-nested-breakdown { margin-top: 2px; }
+.ml-nested-meta { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-1); }
+.ml-nested-cta { font-weight: 700; font-size: var(--text-sm); color: var(--interactive-text); }

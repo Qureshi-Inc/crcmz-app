@@ -6,7 +6,7 @@ import { useTitle } from '../../app/title'
 import { Icon } from '../../components/Icon'
 import { ErrorStrip, SkeletonRows } from '../../components/states'
 import { toast } from '../../components/toast'
-import { api, progressText, useShots, useTournament, useTournaments, type Lobby, type Match, type Shot, type Summary, type Tournament } from '../../lib/tourney'
+import { api, progressText, useShots, useTournament, useTournaments, type Entrant, type Lobby, type Match, type Shot, type Summary, type Tournament } from '../../lib/tourney'
 import { Bracket, MatchCard } from './Bracket'
 import { Fixtures, Leaderboard, Standings } from './Tables'
 import { ReportLobby, ReportMatch, Sheet, errText } from './Report'
@@ -309,12 +309,86 @@ function MatchList({ t, onPick, onLobby }: { t: Tournament; onPick: (m: Match) =
 }
 
 function Rows({ title, ms, t, ents, onPick }: { title: string; ms: Match[]; t: Tournament; ents: Map<string, Tournament['entrants'][number]>; onPick: (m: Match) => void }) {
+  const nested = t.settings.round_bo > 1
   return (
     <section>
       <h2 className="eyebrow">{title}</h2>
-      <div className="fx-grid">{ms.map((m) => <MatchCard key={m.id} m={m} ents={ents} t={t} onPick={onPick} />)}</div>
+      {nested
+        ? <div className="ml-series-list">{ms.map((m) => <NestedMatchRow key={m.id} m={m} t={t} ents={ents} onPick={onPick} />)}</div>
+        : <div className="fx-grid">{ms.map((m) => <MatchCard key={m.id} m={m} ents={ents} t={t} onPick={onPick} />)}</div>}
     </section>
   )
+}
+
+function NestedMatchRow({ m, t, ents, onPick }: { m: Match; t: Tournament; ents: Map<string, Entrant>; onPick: (m: Match) => void }) {
+  const e1 = ents.get(m.e1 ?? '')
+  const e2 = ents.get(m.e2 ?? '')
+  const sh = m.series_history ?? []
+  const sr = m.series_rounds ?? []
+  const open = m.playable || (m.status === 'played' && t.status !== 'draft')
+  const s1wins = m.status === 'played' ? (m.score1 ?? 0) : sh.filter((s) => s.won === 1).length
+  const s2wins = m.status === 'played' ? (m.score2 ?? 0) : sh.filter((s) => s.won === 2).length
+
+  const inner = (
+    <div className="ml-nested">
+      <div className="ml-nested-head">
+        <span className="ml-nested-side">
+          <span className="dot" style={{ background: e1?.color ?? 'var(--border-control)' }} />
+          <span className={`ml-nested-name${m.status === 'played' && m.winner_id === e1?.id ? ' ml-nested-won' : m.status === 'played' && m.winner_id ? ' ml-nested-lost' : ''}`}>
+            {e1?.name ?? m.wait1 ?? 'TBD'}
+          </span>
+          <span className="ml-nested-pts num">{s1wins}</span>
+        </span>
+        <span className="ml-nested-sep">–</span>
+        <span className="ml-nested-side ml-nested-side2">
+          <span className="ml-nested-pts num">{s2wins}</span>
+          <span className={`ml-nested-name${m.status === 'played' && m.winner_id === e2?.id ? ' ml-nested-won' : m.status === 'played' && m.winner_id ? ' ml-nested-lost' : ''}`}>
+            {e2?.name ?? m.wait2 ?? 'TBD'}
+          </span>
+          <span className="dot" style={{ background: e2?.color ?? 'var(--border-control)' }} />
+        </span>
+      </div>
+      {(sh.length > 0 || sr.length > 0) && (
+        <div className="rp-series-breakdown ml-nested-breakdown">
+          {sh.map((s, i) => {
+            const winner = s.won === 1 ? e1 : e2
+            return (
+              <div key={i} className="rp-sb-row">
+                <span className="rp-sb-label">S{i + 1}</span>
+                <span className="rp-sb-winner" style={{ color: winner?.color }}>{winner?.name ?? `Side ${s.won}`}</span>
+                <span className="rp-sb-rounds">
+                  {s.rounds.map((r, j) => (
+                    <span key={j} className={`rp-sb-rd ${r.s1 > r.s2 ? 'w1' : 'w2'}`}>{r.s1}–{r.s2}</span>
+                  ))}
+                </span>
+              </div>
+            )
+          })}
+          {sr.length > 0 && (
+            <div className="rp-sb-row current">
+              <span className="rp-sb-label">S{sh.length + 1}</span>
+              <span className="rp-sb-live">Live</span>
+              <span className="rp-sb-rounds">
+                {sr.map((r, j) => (
+                  <span key={j} className={`rp-sb-rd ${r.s1 > r.s2 ? 'w1' : 'w2'}`}>{r.s1}–{r.s2}</span>
+                ))}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      <div className="ml-nested-meta">
+        <span className="meta">{m.code}</span>
+        {m.source?.startsWith('screenshot') && <span className="meta"><Icon name="cam" className="btn-ico" />AI</span>}
+        {m.playable && <span className="ml-nested-cta">{sr.length > 0 ? 'Next round' : sh.length > 0 ? 'Next series' : 'Start'}</span>}
+      </div>
+    </div>
+  )
+
+  const cls = `ml-nested-wrap glass${m.playable ? ' ml-nested-ready' : ''}`
+  return open
+    ? <button type="button" className={cls} onClick={() => onPick(m)}>{inner}</button>
+    : <div className={cls}>{inner}</div>
 }
 
 function Lineup({ t }: { t: Tournament }) {
