@@ -1767,43 +1767,59 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
             if not lob:
                 continue
             raw_rows = [r for r in (reading.get("rows") or []) if isinstance(r, dict)]
-            # For team-based FFA (e.g. Cutthroat 3v3v3): group reading rows by team label,
-            # then match each group to an entrant — if ANY player in the group matches
-            # (by gamertag alias or team name), the whole group belongs to that entrant.
+            sides_data = [s for s in (reading.get("sides") or []) if isinstance(s, dict)]
+            # For team-based FFA (e.g. Cutthroat): use sides[] ranked by score to determine
+            # placement. Each side has gamertags we match against entrant members.
+            # Falls back to rows[] grouping when no sides data.
             if t["team_size"] > 1:
-                # bucket rows by normalised team label (fall back to gamertag for solos)
+                mapped: set[str] = set()
+                rows = []
+                # Build row buckets keyed by normalised team label for kill/death aggregation
                 buckets: dict[str, list[dict]] = {}
                 for r in raw_rows:
                     key = _norm(str(r.get("team") or r.get("gamertag") or ""))
                     if key:
                         buckets.setdefault(key, []).append(r)
-                # try to match each bucket to an entrant
-                mapped: set[str] = set()
-                rows = []
-                for bucket_key, bucket in buckets.items():
-                    if not bucket:
-                        continue
-                    matched_eid = None
+
+                def _match_side_to_ent(label: str, gtags: list) -> str | None:
                     for eid, e in ents.items():
                         if eid in mapped:
                             continue
-                        # match by entrant name == team label
-                        if _alias_hit(bucket_key, {_norm(e["name"])}):
-                            matched_eid = eid
-                            break
-                        # match by any player gamertag in the bucket
-                        if any(_alias_hit(str(r.get("gamertag") or ""), every[eid]) for r in bucket):
-                            matched_eid = eid
-                            break
-                    if not matched_eid:
-                        continue
-                    mapped.add(matched_eid)
-                    placement = min((_int_or_none(r.get("placement")) for r in bucket if _int_or_none(r.get("placement"))), default=None)
-                    kills = sum(_int_or_none(r.get("kills")) or 0 for r in bucket)
-                    deaths_vals = [_int_or_none(r.get("deaths")) for r in bucket if _int_or_none(r.get("deaths")) is not None]
-                    deaths = sum(deaths_vals) if deaths_vals else None
-                    rows.append({"entrant_id": matched_eid, "placement": placement or len(rows) + 1,
-                                 "kills": kills, "deaths": deaths})
+                        if _alias_hit(_norm(label), {_norm(e["name"])}):
+                            return eid
+                        if any(_alias_hit(g, every[eid]) for g in gtags):
+                            return eid
+                    return None
+
+                if sides_data:
+                    # Rank sides by score descending → placement
+                    ranked = sorted(sides_data, key=lambda s: -(_int_or_none(s.get("score")) or 0))
+                    for place, side in enumerate(ranked, 1):
+                        label = str(side.get("label") or "")
+                        gtags = [str(g) for g in (side.get("gamertags") or [])]
+                        eid = _match_side_to_ent(label, gtags)
+                        if not eid:
+                            continue
+                        mapped.add(eid)
+                        bkey = _norm(label)
+                        bucket = buckets.get(bkey, [])
+                        kills = sum(_int_or_none(r.get("kills")) or 0 for r in bucket)
+                        deaths_vals = [_int_or_none(r.get("deaths")) for r in bucket if _int_or_none(r.get("deaths")) is not None]
+                        rows.append({"entrant_id": eid, "placement": place,
+                                     "kills": kills, "deaths": sum(deaths_vals) if deaths_vals else None})
+                else:
+                    # No sides data — fall back to bucket grouping via rows
+                    for bucket_key, bucket in buckets.items():
+                        gtags = [str(r.get("gamertag") or "") for r in bucket]
+                        eid = _match_side_to_ent(bucket_key, gtags)
+                        if not eid:
+                            continue
+                        mapped.add(eid)
+                        placement = min((_int_or_none(r.get("placement")) for r in bucket if _int_or_none(r.get("placement"))), default=None)
+                        kills = sum(_int_or_none(r.get("kills")) or 0 for r in bucket)
+                        deaths_vals = [_int_or_none(r.get("deaths")) for r in bucket if _int_or_none(r.get("deaths")) is not None]
+                        rows.append({"entrant_id": eid, "placement": placement or len(rows) + 1,
+                                     "kills": kills, "deaths": sum(deaths_vals) if deaths_vals else None})
             else:
                 rows, mapped = [], set()
                 for i, r in enumerate(raw_rows, 1):
