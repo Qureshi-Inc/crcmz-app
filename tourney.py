@@ -1027,9 +1027,12 @@ def report_match(mid: str, games: list[dict], pens: list | None, *, reporter: st
             if played_after and side != m["result_side"]:
                 raise ValueError(f"That changes the winner, but {_code(played_after[0])} is already played."
                                  " Undo the later match first.")
-        db.execute("UPDATE matches SET partial=NULL, games=?, score1=?, score2=?, pens1=?, pens2=?, result_side=?, res_e1=?,"
+        # For nested series, preserve the raw partial so series_history stays available after completion
+        round_bo = t["settings"].get("round_bo", 1)
+        keep_partial = m.get("partial") if round_bo > 1 else None
+        db.execute("UPDATE matches SET partial=?, games=?, score1=?, score2=?, pens1=?, pens2=?, result_side=?, res_e1=?,"
                    " res_e2=?, source=?, shot_id=?, reported_by=?, played_at=? WHERE id=?",
-                   (json.dumps(clean), s1, s2, p[0] if p else None, p[1] if p else None, side, m["e1"], m["e2"],
+                   (keep_partial, json.dumps(clean), s1, s2, p[0] if p else None, p[1] if p else None, side, m["e1"], m["e2"],
                     source, shot_id, reporter, _now(), mid))
         _rebuild(db, t["id"])
         _ret = t["id"]
@@ -1355,29 +1358,34 @@ def _labels(t: dict) -> dict:
 
 
 def _parse_partial(m: dict) -> dict:
-    """Deserialise the partial column for a pending match, handling both flat and nested formats."""
+    """Deserialise the partial column, handling both flat and nested formats."""
     raw = m.get("partial")
-    if not raw or m.get("status") != "pending":
-        return {"partial": [], "series_round": None, "series_maps": None}
+    pending = m.get("status") == "pending"
+    if not raw:
+        return {"partial": [], "series_round": None, "series_maps": None, "series_history": None, "series_rounds": None}
     try:
         parsed = json.loads(raw)
     except Exception:  # noqa: BLE001
-        return {"partial": [], "series_round": None, "series_maps": None}
+        return {"partial": [], "series_round": None, "series_maps": None, "series_history": None, "series_rounds": None}
     if isinstance(parsed, dict) and "rounds" in parsed:
         completed = [r for r in parsed.get("rounds", []) if r.get("won")]
         cur = parsed.get("current", [])
-        synthetic = [{"s1": 1, "s2": 0} if r["won"] == 1 else {"s1": 0, "s2": 1} for r in completed]
-        return {
-            "partial": synthetic,
-            "series_round": len(completed) + 1,
-            "series_maps": {
-                "s1": sum(1 for g in cur if (g.get("s1") or 0) > (g.get("s2") or 0)),
-                "s2": sum(1 for g in cur if (g.get("s2") or 0) > (g.get("s1") or 0)),
-            },
-            # per-round detail for display
-            "series_history": [{"won": r["won"], "rounds": r.get("maps", [])} for r in completed],
-            "series_rounds": cur,
-        }
+        history = [{"won": r["won"], "rounds": r.get("maps", [])} for r in completed]
+        if pending:
+            synthetic = [{"s1": 1, "s2": 0} if r["won"] == 1 else {"s1": 0, "s2": 1} for r in completed]
+            return {
+                "partial": synthetic,
+                "series_round": len(completed) + 1,
+                "series_maps": {
+                    "s1": sum(1 for g in cur if (g.get("s1") or 0) > (g.get("s2") or 0)),
+                    "s2": sum(1 for g in cur if (g.get("s2") or 0) > (g.get("s1") or 0)),
+                },
+                "series_history": history,
+                "series_rounds": cur,
+            }
+        # Played nested series: expose history only
+        return {"partial": [], "series_round": None, "series_maps": None,
+                "series_history": history, "series_rounds": cur if cur else None}
     return {"partial": parsed if isinstance(parsed, list) else [], "series_round": None, "series_maps": None,
             "series_history": None, "series_rounds": None}
 

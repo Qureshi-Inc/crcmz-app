@@ -4,7 +4,7 @@ import { Icon } from '../../components/Icon'
 import { roundName, type Entrant, type Match, type Tournament } from '../../lib/tourney'
 
 const W = 232
-const H = 84
+const H = 100
 const GAP = 56
 const PITCH = 104
 const HEAD = 36
@@ -103,7 +103,7 @@ export function MatchCard({ m, ents, t, onPick, gold = false }: {
         {m.status === 'played' && m.games.length > 1 && (
           <>
             <span>{m.games.length}/{t.settings.best_of > 1 ? t.settings.best_of : m.games.length} {t.settings.round_bo > 1 ? 'series' : 'games'}</span>
-            {t.settings.round_bo > 1 && <PlayedSeriesHistory games={m.games} />}
+            {t.settings.round_bo > 1 && <PlayedSeriesHistory games={m.games} history={m.series_history} />}
           </>
         )}
         {m.source?.startsWith('screenshot') && <span className="mc-src" title="Scored from a screenshot"><Icon name="cam" className="mc-ico" />AI</span>}
@@ -177,15 +177,30 @@ function SeriesHistory({ m, bo }: { m: Match; bo: number }) {
   )
 }
 
-function PlayedSeriesHistory({ games }: { games: { s1: number; s2: number }[] }) {
+function PlayedSeriesHistory({ games, history }: {
+  games: { s1: number; s2: number }[]
+  history: { won: 1 | 2; rounds: { s1: number; s2: number }[] }[] | null
+}) {
   return (
     <span className="mc-sh num">
-      {games.map((g, i) => (
-        <span key={i} className={`mc-sh-s mc-sh-done`}>
-          <span className="mc-sh-lbl">S{i + 1}</span>
-          <span className="mc-sh-w">T{g.s1 > g.s2 ? 1 : 2}</span>
-        </span>
-      ))}
+      {games.map((g, i) => {
+        const rounds = history?.[i]?.rounds ?? []
+        return (
+          <span key={i} className="mc-sh-s mc-sh-done">
+            <span className="mc-sh-lbl">S{i + 1}</span>
+            <span className="mc-sh-w">T{g.s1 > g.s2 ? 1 : 2}</span>
+            {rounds.length > 0 && (
+              <span className="mc-sh-rds">
+                {rounds.map((r, j) => (
+                  <span key={j} className={`mc-sh-rd ${r.s1 > r.s2 ? 'w1' : r.s2 > r.s1 ? 'w2' : ''}`}>
+                    {r.s1}–{r.s2}
+                  </span>
+                ))}
+              </span>
+            )}
+          </span>
+        )
+      })}
     </span>
   )
 }
