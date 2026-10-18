@@ -22,7 +22,7 @@ export interface Settings {
 
 export interface Member { id: string; display_name: string; psn_id: string; is_guest: boolean }
 export interface Entrant { id: string; name: string; color: string; seed: number; group_label: string | null; members: Member[] }
-export interface PlayerRow { tag: string; k: number | null; d: number | null }
+export interface PlayerRow { tag: string; k: number | null; d: number | null; s?: 1 | 2 | null }
 export interface GameScore { s1: number; s2: number; map?: string; rows?: PlayerRow[] }
 export interface Match {
   id: string; stage: 'W' | 'L' | 'GF' | 'K' | 'G' | 'R' | 'P'; round: number; slot: number; group: string | null

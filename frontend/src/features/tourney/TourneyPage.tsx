@@ -325,23 +325,53 @@ function Rows({ title, ms, t, ents, onPick }: { title: string; ms: Match[]; t: T
   )
 }
 
-function SeriesStats({ rounds }: { rounds: { rows?: PlayerRow[] }[] }) {
-  const totals = new Map<string, number>()
+function SeriesStats({ rounds, e1, e2 }: { rounds: { rows?: PlayerRow[] }[]; e1?: Entrant; e2?: Entrant }) {
+  const totals = new Map<string, { k: number; d: number; s: 1 | 2 | null }>()
   for (const rd of rounds) {
     for (const p of rd.rows ?? []) {
-      if (p.tag) totals.set(p.tag, (totals.get(p.tag) ?? 0) + (p.k ?? 0))
+      if (!p.tag) continue
+      const cur = totals.get(p.tag) ?? { k: 0, d: 0, s: null }
+      totals.set(p.tag, { k: cur.k + (p.k ?? 0), d: cur.d + (p.d ?? 0), s: cur.s ?? (p.s ?? null) })
     }
   }
   if (!totals.size) return null
-  const sorted = [...totals.entries()].sort((a, b) => b[1] - a[1])
-  return (
-    <div className="ml-nested-stats">
-      {sorted.map(([tag, kills]) => (
-        <span key={tag} className="ml-nested-stat">
-          <span className="ml-nested-tag">{tag.replace(/#\d+$/, '')}</span>
-          <span className="num">{kills}k</span>
-        </span>
+
+  const entries = [...totals.entries()]
+  const side1 = entries.filter(([, v]) => v.s === 1).sort((a, b) => b[1].k - a[1].k)
+  const side2 = entries.filter(([, v]) => v.s === 2).sort((a, b) => b[1].k - a[1].k)
+  const unsided = entries.filter(([, v]) => v.s == null).sort((a, b) => b[1].k - a[1].k)
+
+  const kd = (p: { k: number; d: number }) => p.d ? `${p.k}k / ${p.d}d` : `${p.k}k`
+
+  if (!side1.length && !side2.length) {
+    return (
+      <div className="ml-nested-stats">
+        {[...unsided].map(([tag, p]) => (
+          <span key={tag} className="ml-nested-stat">
+            <span className="ml-nested-tag">{tag.replace(/#\d+$/, '')}</span>
+            <span className="num">{kd(p)}</span>
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  const renderSide = (players: typeof entries, e?: Entrant) => (
+    <div className="ml-stats-side">
+      {e && <span className="ml-stats-label" style={{ color: e.color }}>{e.name}</span>}
+      {players.map(([tag, p]) => (
+        <div key={tag} className="ml-stats-row">
+          <span className="ml-stats-tag">{tag.replace(/#\d+$/, '')}</span>
+          <span className="ml-stats-kd num">{kd(p)}</span>
+        </div>
       ))}
+    </div>
+  )
+
+  return (
+    <div className="ml-stats-grid">
+      {renderSide(side1, e1)}
+      {renderSide([...side2, ...unsided], e2)}
     </div>
   )
 }
@@ -387,7 +417,7 @@ function FlatMatchRow({ m, t, ents, onPick }: { m: Match; t: Tournament; ents: M
                     {g.map && <span className="rp-sb-map">{g.map}</span>}
                   </span>
                 </div>
-                {g.rows?.length ? <SeriesStats rounds={[g]} /> : null}
+                {g.rows?.length ? <SeriesStats rounds={[g]} e1={e1} e2={e2} /> : null}
               </div>
             )
           })}
@@ -450,7 +480,7 @@ function NestedMatchRow({ m, t, ents, onPick }: { m: Match; t: Tournament; ents:
                     ))}
                   </span>
                 </div>
-                <SeriesStats rounds={s.rounds} />
+                <SeriesStats rounds={s.rounds} e1={e1} e2={e2} />
               </div>
             )
           })}
@@ -465,7 +495,7 @@ function NestedMatchRow({ m, t, ents, onPick }: { m: Match; t: Tournament; ents:
                   ))}
                 </span>
               </div>
-              <SeriesStats rounds={sr} />
+              <SeriesStats rounds={sr} e1={e1} e2={e2} />
             </div>
           )}
         </div>

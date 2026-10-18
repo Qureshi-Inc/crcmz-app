@@ -1719,10 +1719,27 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
                     s1, s2 = s2, s1
                     pens = list(reversed(pens)) if pens else None
                 map_name = str(reading.get("map") or "").strip()[:32] or None
-                r_rows = [{"tag": str(r.get("gamertag") or "").strip()[:32],
-                            "k": _int_or_none(r.get("kills")), "d": _int_or_none(r.get("deaths"))}
-                          for r in (reading.get("rows") or [])
-                          if isinstance(r, dict) and r.get("gamertag")]
+                e_s1 = ents.get(order[0], {})
+                e_s2 = ents.get(order[1], {})
+                r_rows = []
+                for r in (reading.get("rows") or []):
+                    if not isinstance(r, dict) or not r.get("gamertag"):
+                        continue
+                    tag = str(r.get("gamertag") or "").strip()[:32]
+                    team_raw = _norm(str(r.get("team") or ""))
+                    side = None
+                    if team_raw:
+                        if team_raw == _norm(e_s1.get("name", "")):
+                            side = 1
+                        elif team_raw == _norm(e_s2.get("name", "")):
+                            side = 2
+                    if side is None:
+                        for eid, aliases in every.items():
+                            if eid in (m["e1"], m["e2"]) and _alias_hit(tag, aliases):
+                                side = 1 if eid == order[0] else 2
+                                break
+                    r_rows.append({"tag": tag, "k": _int_or_none(r.get("kills")),
+                                   "d": _int_or_none(r.get("deaths")), "s": side})
                 game_entry = {"s1": s1, "s2": s2, "map": map_name}
                 if r_rows:
                     game_entry["rows"] = r_rows
