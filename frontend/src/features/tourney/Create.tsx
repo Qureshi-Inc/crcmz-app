@@ -142,12 +142,12 @@ export function CreatePage() {
           )}
           {format === 'ffa' && (
             <>
-              <Choice label="Games in the series" value={rules.lobbies ?? md.lobbies} options={[1, 2, 3, 4, 5, 6, 8, 10]} onPick={(n) => r('lobbies', n)}
-                show={(n) => {
-                  const winBased = (md.placement_points?.[1] ?? 1) === 0
-                  if (!winBased || n === 1) return `${n} game${n === 1 ? '' : 's'}`
-                  return `${n} games · first to ${n} wins`
-                }} />
+              {(md.placement_points?.[1] ?? 1) === 0 ? (
+                <Choice label="First to wins" value={rules.lobbies ?? md.lobbies} options={[2, 3, 4, 5, 6]} onPick={(n) => r('lobbies', n)}
+                  show={(n) => `First to ${n} wins`} />
+              ) : (
+                <Choice label="Games in the series" value={rules.lobbies ?? md.lobbies} options={[1, 2, 3, 4, 5, 6, 8, 10]} onPick={(n) => r('lobbies', n)} show={String} />
+              )}
               <Choice label="Points per kill" value={rules.kill_points ?? md.kill_points} options={[0, 1, 2]} onPick={(n) => r('kill_points', n)} show={(n) => (n === 0 ? 'None' : String(n))} />
               <p className="meta tn-note">Placement points: {md.placement_points.map((p, i) => `${i + 1}${['st', 'nd', 'rd'][i] ?? 'th'} ${p}`).join(' · ')}</p>
             </>
