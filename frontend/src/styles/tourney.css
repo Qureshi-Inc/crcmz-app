@@ -135,6 +135,19 @@ button.mc:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .mc-cta { margin-left: auto; color: var(--interactive-text); }
 .mc-series { color: var(--live-text); }
 .mc-score.mc-live { color: var(--live-text); }
+
+/* Nested series history strip */
+.mc-sh { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; width: 100%; margin-top: 2px; }
+.mc-sh-s { display: inline-flex; align-items: center; gap: 3px; padding: 1px 4px; border-radius: 3px; font-size: 10px; line-height: 1.3; }
+.mc-sh-done { background: color-mix(in srgb, var(--border-control) 20%, transparent); }
+.mc-sh-live { background: color-mix(in srgb, var(--live-text) 15%, transparent); color: var(--live-text); }
+.mc-sh-pending { opacity: .4; }
+.mc-sh-lbl { font-weight: 700; }
+.mc-sh-w { color: var(--text-dim); }
+.mc-sh-rds { display: inline-flex; gap: 2px; }
+.mc-sh-rd { padding: 0 2px; border-radius: 2px; }
+.mc-sh-rd.w1 { color: var(--team1-text, var(--text-base)); font-weight: 700; }
+.mc-sh-rd.w2 { color: var(--team2-text, var(--text-base)); font-weight: 700; }
 .mc-src { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; color: var(--violet-text); }
 .mc-ico { width: 13px; height: 13px; }
 

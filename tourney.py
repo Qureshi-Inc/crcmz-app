@@ -1374,8 +1374,12 @@ def _parse_partial(m: dict) -> dict:
                 "s1": sum(1 for g in cur if (g.get("s1") or 0) > (g.get("s2") or 0)),
                 "s2": sum(1 for g in cur if (g.get("s2") or 0) > (g.get("s1") or 0)),
             },
+            # per-round detail for display
+            "series_history": [{"won": r["won"], "rounds": r.get("maps", [])} for r in completed],
+            "series_rounds": cur,
         }
-    return {"partial": parsed if isinstance(parsed, list) else [], "series_round": None, "series_maps": None}
+    return {"partial": parsed if isinstance(parsed, list) else [], "series_round": None, "series_maps": None,
+            "series_history": None, "series_rounds": None}
 
 
 def get_tournament(tid: str) -> dict:
