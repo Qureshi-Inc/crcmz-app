@@ -1889,13 +1889,14 @@ def apply_shot(sid: str, *, reporter: str, target_id: str | None = None, games: 
             np_new = {"rounds": rounds_done, "current": current}
             if len(rounds_done) >= bo:
                 # All bo rounds played — close the match using total round wins.
+                # Write the completed partial first so report_match reads the full history.
+                with _lock, _conn() as db:
+                    db.execute("UPDATE matches SET partial=? WHERE id=?", (json.dumps(np_new), target))
                 syn_games = [{"s1": 1, "s2": 0} if r.get("won") == 1 else {"s1": 0, "s2": 1}
                              for r in rounds_done if r.get("won")]
                 try:
                     t = report_match(target, syn_games, p, reporter=reporter, source=source, shot_id=sid, force=True)
                 except ValueError:
-                    with _lock, _conn() as db:
-                        db.execute("UPDATE matches SET partial=? WHERE id=?", (json.dumps(np_new), target))
                     t = get_tournament(tt["id"])
                 else:
                     if t["status"] != "complete":
