@@ -1766,19 +1766,55 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
             lob = next((x for x in t["lobbies"] if (x["id"] == only_target if only_target else x["status"] == "pending")), None)
             if not lob:
                 continue
-            rows, mapped = [], set()
-            for i, r in enumerate(reading.get("rows") or [], 1):
-                if not isinstance(r, dict):
-                    continue
-                for eid, e in ents.items():
-                    if eid in mapped:
+            raw_rows = [r for r in (reading.get("rows") or []) if isinstance(r, dict)]
+            # For team-based FFA (e.g. Cutthroat 3v3v3): group reading rows by team label,
+            # then match each group to an entrant — if ANY player in the group matches
+            # (by gamertag alias or team name), the whole group belongs to that entrant.
+            if t["team_size"] > 1:
+                # bucket rows by normalised team label (fall back to gamertag for solos)
+                buckets: dict[str, list[dict]] = {}
+                for r in raw_rows:
+                    key = _norm(str(r.get("team") or r.get("gamertag") or ""))
+                    if key:
+                        buckets.setdefault(key, []).append(r)
+                # try to match each bucket to an entrant
+                mapped: set[str] = set()
+                rows = []
+                for bucket_key, bucket in buckets.items():
+                    if not bucket:
                         continue
-                    if _alias_hit(r.get("gamertag") or "", every[eid]) or (
-                            t["team_size"] > 1 and _alias_hit(r.get("team") or "", {_norm(e["name"])})):
-                        mapped.add(eid)
-                        rows.append({"entrant_id": eid, "placement": _int_or_none(r.get("placement")) or i,
-                                     "kills": _int_or_none(r.get("kills")) or 0, "deaths": _int_or_none(r.get("deaths"))})
-                        break
+                    matched_eid = None
+                    for eid, e in ents.items():
+                        if eid in mapped:
+                            continue
+                        # match by entrant name == team label
+                        if _alias_hit(bucket_key, {_norm(e["name"])}):
+                            matched_eid = eid
+                            break
+                        # match by any player gamertag in the bucket
+                        if any(_alias_hit(str(r.get("gamertag") or ""), every[eid]) for r in bucket):
+                            matched_eid = eid
+                            break
+                    if not matched_eid:
+                        continue
+                    mapped.add(matched_eid)
+                    placement = min((_int_or_none(r.get("placement")) for r in bucket if _int_or_none(r.get("placement"))), default=None)
+                    kills = sum(_int_or_none(r.get("kills")) or 0 for r in bucket)
+                    deaths_vals = [_int_or_none(r.get("deaths")) for r in bucket if _int_or_none(r.get("deaths")) is not None]
+                    deaths = sum(deaths_vals) if deaths_vals else None
+                    rows.append({"entrant_id": matched_eid, "placement": placement or len(rows) + 1,
+                                 "kills": kills, "deaths": deaths})
+            else:
+                rows, mapped = [], set()
+                for i, r in enumerate(raw_rows, 1):
+                    for eid, e in ents.items():
+                        if eid in mapped:
+                            continue
+                        if _alias_hit(r.get("gamertag") or "", every[eid]):
+                            mapped.add(eid)
+                            rows.append({"entrant_id": eid, "placement": _int_or_none(r.get("placement")) or i,
+                                         "kills": _int_or_none(r.get("kills")) or 0, "deaths": _int_or_none(r.get("deaths"))})
+                            break
             if not rows and not only_target:
                 continue
             rows.sort(key=lambda r: r["placement"])
