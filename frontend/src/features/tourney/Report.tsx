@@ -157,6 +157,46 @@ export function ReportMatch({ t, m, shotId, prefill, onClose }: {
         <span className="rp-v eyebrow">vs</span>
         <TeamHead e={e2} side="right" />
       </div>
+      {nestedSeries && (
+        <div className="rp-series-breakdown">
+          {Array.from({ length: t.settings.best_of }, (_, i) => {
+            const done = (m.series_history ?? [])[i]
+            const isCurrent = i === (m.series_history?.length ?? m.partial?.length ?? 0) && m.status === 'pending'
+            const curRounds = isCurrent ? (m.series_rounds ?? []) : []
+            const isPending = !done && !isCurrent
+            return (
+              <div key={i} className={`rp-sb-row${done ? ' done' : isCurrent ? ' current' : ' pending'}`}>
+                <span className="rp-sb-label">Series {i + 1}</span>
+                {done && (
+                  <>
+                    <span className="rp-sb-winner">{done.won === 1 ? e1.name : e2.name} won</span>
+                    {done.rounds.length > 0 && (
+                      <span className="rp-sb-rounds">
+                        {done.rounds.map((r, j) => (
+                          <span key={j} className={`rp-sb-rd ${r.s1 > r.s2 ? 'w1' : 'w2'}`}>{r.s1}–{r.s2}</span>
+                        ))}
+                      </span>
+                    )}
+                  </>
+                )}
+                {isCurrent && (
+                  <>
+                    <span className="rp-sb-live">In progress</span>
+                    {curRounds.length > 0 && (
+                      <span className="rp-sb-rounds">
+                        {curRounds.map((r, j) => (
+                          <span key={j} className={`rp-sb-rd ${r.s1 > r.s2 ? 'w1' : 'w2'}`}>{r.s1}–{r.s2}</span>
+                        ))}
+                      </span>
+                    )}
+                  </>
+                )}
+                {isPending && <span className="rp-sb-pending">Not started</span>}
+              </div>
+            )
+          })}
+        </div>
+      )}
       <div className="rp-rows">
         {rows.map((r, i) => (
           <div key={i} className="rp-row">

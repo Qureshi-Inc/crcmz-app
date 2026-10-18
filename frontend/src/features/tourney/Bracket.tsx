@@ -4,7 +4,7 @@ import { Icon } from '../../components/Icon'
 import { roundName, type Entrant, type Match, type Tournament } from '../../lib/tourney'
 
 const W = 232
-const H = 100
+const H = 84
 const GAP = 56
 const PITCH = 104
 const HEAD = 36
@@ -85,13 +85,10 @@ export function MatchCard({ m, ents, t, onPick, gold = false }: {
         <span>{m.code}</span>
         {m.status === 'bye' && <span>bye</span>}
         {m.playable && m.series_round != null && (
-          <>
-            <span className="mc-series num">
-              Series {m.series_round}/{t.settings.best_of}
-              {' · '}{m.series_maps?.s1 ?? 0}–{m.series_maps?.s2 ?? 0} rds
-            </span>
-            <SeriesHistory m={m} bo={t.settings.best_of} />
-          </>
+          <span className="mc-series num">
+            Series {m.series_round}/{t.settings.best_of}
+            {' · '}{m.series_maps?.s1 ?? 0}–{m.series_maps?.s2 ?? 0} rds
+          </span>
         )}
         {m.playable && m.series_round == null && t.settings.best_of > 1 && (
           <span className="mc-series num">
@@ -101,10 +98,7 @@ export function MatchCard({ m, ents, t, onPick, gold = false }: {
         )}
         {m.playable && <span className="mc-cta">{m.partial?.length || m.series_round != null ? 'Next round' : 'Report'}</span>}
         {m.status === 'played' && m.games.length > 1 && (
-          <>
-            <span>{m.games.length}/{t.settings.best_of > 1 ? t.settings.best_of : m.games.length} {t.settings.round_bo > 1 ? 'series' : 'games'}</span>
-            {t.settings.round_bo > 1 && <PlayedSeriesHistory games={m.games} history={m.series_history} />}
-          </>
+          <span>{m.games.length}/{t.settings.best_of > 1 ? t.settings.best_of : m.games.length} {t.settings.round_bo > 1 ? 'series' : 'games'}</span>
         )}
         {m.source?.startsWith('screenshot') && <span className="mc-src" title="Scored from a screenshot"><Icon name="cam" className="mc-ico" />AI</span>}
       </span>
@@ -144,63 +138,3 @@ function Side({ m, side, ents }: { m: Match; side: 1 | 2; ents: Map<string, Entr
   )
 }
 
-function SeriesHistory({ m, bo }: { m: Match; bo: number }) {
-  const done = m.partial ?? []
-  const curRounds = m.series_rounds ?? []
-  const items = Array.from({ length: bo }, (_, i) => {
-    if (i < done.length) {
-      const s = done[i]
-      const hist = m.series_history?.[i]
-      return { state: 'done' as const, winner: (s?.s1 ?? 0) > (s?.s2 ?? 0) ? 1 : 2, rounds: hist?.rounds ?? [] }
-    }
-    if (i === done.length) return { state: 'live' as const, rounds: curRounds }
-    return { state: 'pending' as const, rounds: [] }
-  })
-  return (
-    <span className="mc-sh num">
-      {items.map((item, i) => (
-        <span key={i} className={`mc-sh-s mc-sh-${item.state}`}>
-          <span className="mc-sh-lbl">S{i + 1}</span>
-          {item.state === 'done' && <span className="mc-sh-w">T{item.winner}</span>}
-          {item.rounds.length > 0 && (
-            <span className="mc-sh-rds">
-              {item.rounds.map((r, j) => (
-                <span key={j} className={`mc-sh-rd ${r.s1 > r.s2 ? 'w1' : r.s2 > r.s1 ? 'w2' : ''}`}>
-                  {r.s1}–{r.s2}
-                </span>
-              ))}
-            </span>
-          )}
-        </span>
-      ))}
-    </span>
-  )
-}
-
-function PlayedSeriesHistory({ games, history }: {
-  games: { s1: number; s2: number }[]
-  history: { won: 1 | 2; rounds: { s1: number; s2: number }[] }[] | null
-}) {
-  return (
-    <span className="mc-sh num">
-      {games.map((g, i) => {
-        const rounds = history?.[i]?.rounds ?? []
-        return (
-          <span key={i} className="mc-sh-s mc-sh-done">
-            <span className="mc-sh-lbl">S{i + 1}</span>
-            <span className="mc-sh-w">T{g.s1 > g.s2 ? 1 : 2}</span>
-            {rounds.length > 0 && (
-              <span className="mc-sh-rds">
-                {rounds.map((r, j) => (
-                  <span key={j} className={`mc-sh-rd ${r.s1 > r.s2 ? 'w1' : r.s2 > r.s1 ? 'w2' : ''}`}>
-                    {r.s1}–{r.s2}
-                  </span>
-                ))}
-              </span>
-            )}
-          </span>
-        )
-      })}
-    </span>
-  )
-}
