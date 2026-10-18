@@ -146,7 +146,7 @@ export function CreatePage() {
                 show={(n) => {
                   const winBased = (md.placement_points?.[1] ?? 1) === 0
                   if (!winBased || n === 1) return `${n} game${n === 1 ? '' : 's'}`
-                  return `${n} games · first to ${Math.ceil(n / 2)} wins`
+                  return `${n} games · first to ${n} wins`
                 }} />
               <Choice label="Points per kill" value={rules.kill_points ?? md.kill_points} options={[0, 1, 2]} onPick={(n) => r('kill_points', n)} show={(n) => (n === 0 ? 'None' : String(n))} />
               <p className="meta tn-note">Placement points: {md.placement_points.map((p, i) => `${i + 1}${['st', 'nd', 'rd'][i] ?? 'th'} ${p}`).join(' · ')}</p>
