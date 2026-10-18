@@ -1808,17 +1808,26 @@ def suggest(reading: dict, sender: str = "", only_tid: str | None = None, only_t
                         rows.append({"entrant_id": eid, "placement": place,
                                      "kills": kills, "deaths": sum(deaths_vals) if deaths_vals else None})
                 else:
-                    # No sides data — fall back to bucket grouping via rows
-                    for bucket_key, bucket in buckets.items():
+                    # No sides data. In Cutthroat the per-player "placement" field is
+                    # actually the team's ROUND WIN COUNT (e.g. 3 = won 3 rounds = 1st).
+                    # Rank teams by descending max placement value (= most rounds won).
+                    team_score: dict[str, int] = {}
+                    for r in raw_rows:
+                        key = _norm(str(r.get("team") or ""))
+                        val = _int_or_none(r.get("placement")) or 0
+                        if key and val > team_score.get(key, 0):
+                            team_score[key] = val
+                    ranked_keys = sorted(team_score, key=lambda k: -team_score[k])
+                    for place, bucket_key in enumerate(ranked_keys, 1):
+                        bucket = buckets.get(bucket_key, [])
                         gtags = [str(r.get("gamertag") or "") for r in bucket]
                         eid = _match_side_to_ent(bucket_key, gtags)
                         if not eid:
                             continue
                         mapped.add(eid)
-                        placement = min((_int_or_none(r.get("placement")) for r in bucket if _int_or_none(r.get("placement"))), default=None)
                         kills = sum(_int_or_none(r.get("kills")) or 0 for r in bucket)
                         deaths_vals = [_int_or_none(r.get("deaths")) for r in bucket if _int_or_none(r.get("deaths")) is not None]
-                        rows.append({"entrant_id": eid, "placement": placement or len(rows) + 1,
+                        rows.append({"entrant_id": eid, "placement": place,
                                      "kills": kills, "deaths": sum(deaths_vals) if deaths_vals else None})
             else:
                 rows, mapped = [], set()
