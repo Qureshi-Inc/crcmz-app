@@ -463,6 +463,16 @@ def _draft(db, tid: str) -> dict:
     return t
 
 
+def _draft_or_ffa(db, tid: str) -> dict:
+    """Like _draft but also permits active FFA tournaments (lobbies are flexible)."""
+    t = _t_row(db, tid)
+    if t["status"] == "draft":
+        return t
+    if t["status"] == "active" and t["format"] == "ffa":
+        return t
+    raise ValueError("The tournament has started. Reset it to change the line-up.")
+
+
 def _check_members(db, t: dict, players: list[str], skip_entrant: str | None = None) -> None:
     if t["team_size"] == 1 and len(players) != 1:
         raise ValueError("Pick one player")
@@ -480,7 +490,7 @@ def _check_members(db, t: dict, players: list[str], skip_entrant: str | None = N
 def add_entrants(tid: str, entries: list[dict], squad_by_id: dict[str, dict]) -> dict:
     """entries: [{name?, color?, members: [key]}]. Solo modes may pass one entry per player."""
     with _lock, _conn() as db:
-        t = _draft(db, tid)
+        t = _draft_or_ffa(db, tid)
         n = db.execute("SELECT COUNT(*) FROM entrants WHERE tournament_id=?", (tid,)).fetchone()[0]
         used = {r["color"] for r in db.execute("SELECT color FROM entrants WHERE tournament_id=?", (tid,))}
         for e in entries[:64]:
@@ -516,7 +526,7 @@ def update_entrant(eid: str, *, name: str | None, color: str | None, members: li
         if color in COLORS:
             db.execute("UPDATE entrants SET color=? WHERE id=?", (color, eid))
         if members is not None:
-            _draft(db, t["id"])
+            _draft_or_ffa(db, t["id"])
             players = _resolve_keys(db, members, squad_by_id)
             if t["team_size"] > 1 and players:
                 _check_members(db, t, players, eid)
@@ -537,7 +547,7 @@ def remove_entrant(eid: str) -> dict:
         e = db.execute("SELECT * FROM entrants WHERE id=?", (eid,)).fetchone()
         if not e:
             raise LookupError("Not found")
-        _draft(db, e["tournament_id"])
+        _draft_or_ffa(db, e["tournament_id"])
         db.execute("DELETE FROM entrants WHERE id=?", (eid,))
         _renumber(db, e["tournament_id"])
         _ret = e["tournament_id"]

@@ -7,7 +7,7 @@ import { toast } from '../../components/toast'
 import { api, usePeople, useCatalog, type Entrant, type Person, type Tournament } from '../../lib/tourney'
 import { errText } from './Report'
 
-export function Setup({ t }: { t: Tournament }) {
+export function Setup({ t, managing = false }: { t: Tournament; managing?: boolean }) {
   const qc = useQueryClient()
   const people = usePeople()
   const cat = useCatalog()
@@ -51,7 +51,7 @@ export function Setup({ t }: { t: Tournament }) {
       <section className="glass su-card">
         <div className="card-head">
           <h2 className="section-h2">{solo ? 'Players' : 'Teams'} <span className="dim num">{t.entrants.length}</span></h2>
-          {t.entrants.length > 1 && <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void run(() => api.seed(t.id, { shuffle: true }), 'Seeds shuffled')}>
+          {!managing && t.entrants.length > 1 && <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void run(() => api.seed(t.id, { shuffle: true }), 'Seeds shuffled')}>
             <Icon name="shuffle" className="btn-ico" />Shuffle seeds</button>}
         </div>
         {t.entrants.length === 0 ? <p className="su-empty meta">No one yet. Pick {solo ? 'players' : 'a team'} below.</p> : (
@@ -75,7 +75,7 @@ export function Setup({ t }: { t: Tournament }) {
             ))}
           </ol>
         )}
-        <p className="meta su-hint">Seed 1 is the favourite: top seeds meet late and get any byes.</p>
+        {!managing && <p className="meta su-hint">Seed 1 is the favourite: top seeds meet late and get any byes.</p>}
       </section>
 
       <section className="glass su-card">
@@ -124,13 +124,15 @@ export function Setup({ t }: { t: Tournament }) {
         </div>
       </section>
 
-      <div className="su-start">
-        <button type="button" className="btn btn-primary" disabled={busy || t.entrants.length < need}
-          onClick={() => void run(() => api.start(t.id), 'Tournament started')}>
-          <Icon name="play" className="btn-ico" />Start tournament
-        </button>
-        {t.entrants.length < need && <span className="meta">Needs at least {need} {solo ? 'players' : 'teams'}</span>}
-      </div>
+      {!managing && (
+        <div className="su-start">
+          <button type="button" className="btn btn-primary" disabled={busy || t.entrants.length < need}
+            onClick={() => void run(() => api.start(t.id), 'Tournament started')}>
+            <Icon name="play" className="btn-ico" />Start tournament
+          </button>
+          {t.entrants.length < need && <span className="meta">Needs at least {need} {solo ? 'players' : 'teams'}</span>}
+        </div>
+      )}
     </div>
   )
 }

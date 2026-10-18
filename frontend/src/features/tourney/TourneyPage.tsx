@@ -138,7 +138,12 @@ export function TournamentPage() {
           )}
           {tab === 'matches' && <MatchList t={t} onPick={onPick} onLobby={setLobby} />}
           {tab === 'stats' && <Leaders tournamentId={t.id} fixedGame={t.game} />}
-          {tab === 'lineup' && <Lineup t={t} />}
+          {tab === 'lineup' && (
+            <>
+              {t.kind === 'ffa' && t.status === 'active' && t.can_manage && <Setup t={t} managing />}
+              <Lineup t={t} />
+            </>
+          )}
           {tab === 'shots' && <Shots t={t} shots={shots.data ?? []} onOpen={(s) => {
             const sug = s.suggestion
             const m = t.matches.find((x) => x.id === sug?.target_id)
