@@ -313,9 +313,14 @@ function Rows({ title, ms, t, ents, onPick }: { title: string; ms: Match[]; t: T
   return (
     <section>
       <h2 className="eyebrow">{title}</h2>
-      {nested
-        ? <div className="ml-series-list">{ms.map((m) => <NestedMatchRow key={m.id} m={m} t={t} ents={ents} onPick={onPick} />)}</div>
-        : <div className="fx-grid">{ms.map((m) => <MatchCard key={m.id} m={m} ents={ents} t={t} onPick={onPick} />)}</div>}
+      <div className="ml-series-list">
+        {ms.map((m) => {
+          if (nested) return <NestedMatchRow key={m.id} m={m} t={t} ents={ents} onPick={onPick} />
+          if (m.status === 'played' || m.playable || m.games.length > 0 || (m.partial ?? []).length > 0)
+            return <FlatMatchRow key={m.id} m={m} t={t} ents={ents} onPick={onPick} />
+          return <MatchCard key={m.id} m={m} ents={ents} t={t} onPick={onPick} />
+        })}
+      </div>
     </section>
   )
 }
@@ -339,6 +344,67 @@ function SeriesStats({ rounds }: { rounds: { rows?: PlayerRow[] }[] }) {
       ))}
     </div>
   )
+}
+
+function FlatMatchRow({ m, t, ents, onPick }: { m: Match; t: Tournament; ents: Map<string, Entrant>; onPick: (m: Match) => void }) {
+  const e1 = ents.get(m.e1 ?? '')
+  const e2 = ents.get(m.e2 ?? '')
+  const open = m.playable || (m.status === 'played' && t.status !== 'draft')
+  const games = m.status === 'played' ? m.games : (m.partial ?? [])
+  const multiGame = t.settings.best_of > 1
+
+  const inner = (
+    <div className="ml-nested">
+      <div className="ml-nested-head">
+        <span className="ml-nested-side">
+          <span className="dot" style={{ background: e1?.color ?? 'var(--border-control)' }} />
+          <span className={`ml-nested-name${m.status === 'played' && m.winner_id === e1?.id ? ' ml-nested-won' : m.status === 'played' && m.winner_id ? ' ml-nested-lost' : ''}`}>
+            {e1?.name ?? m.wait1 ?? 'TBD'}
+          </span>
+          {m.status === 'played' && <span className="ml-nested-pts num">{m.score1}</span>}
+        </span>
+        <span className="ml-nested-sep">–</span>
+        <span className="ml-nested-side ml-nested-side2">
+          {m.status === 'played' && <span className="ml-nested-pts num">{m.score2}</span>}
+          <span className={`ml-nested-name${m.status === 'played' && m.winner_id === e2?.id ? ' ml-nested-won' : m.status === 'played' && m.winner_id ? ' ml-nested-lost' : ''}`}>
+            {e2?.name ?? m.wait2 ?? 'TBD'}
+          </span>
+          <span className="dot" style={{ background: e2?.color ?? 'var(--border-control)' }} />
+        </span>
+      </div>
+      {games.length > 0 && (
+        <div className="rp-series-breakdown ml-nested-breakdown">
+          {games.map((g, i) => {
+            const w1 = g.s1 > g.s2
+            const winner = w1 ? e1 : e2
+            return (
+              <div key={i} className="ml-nested-series-item">
+                <div className="rp-sb-row">
+                  {multiGame && <span className="rp-sb-label">G{i + 1}</span>}
+                  <span className="rp-sb-winner" style={{ color: winner?.color }}>{winner?.name}</span>
+                  <span className="rp-sb-rounds">
+                    <span title={g.map ?? undefined} className={`rp-sb-rd ${w1 ? 'w1' : 'w2'}`}>{g.s1}–{g.s2}</span>
+                    {g.map && <span className="rp-sb-map">{g.map}</span>}
+                  </span>
+                </div>
+                {g.rows?.length ? <SeriesStats rounds={[g]} /> : null}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <div className="ml-nested-meta">
+        <span className="meta">{m.code}</span>
+        {m.source?.startsWith('screenshot') && <span className="meta"><Icon name="cam" className="btn-ico" />AI</span>}
+        {m.playable && <span className="ml-nested-cta">{games.length > 0 ? `Game ${games.length + 1}` : 'Report'}</span>}
+      </div>
+    </div>
+  )
+
+  const cls = `ml-nested-wrap glass${m.playable ? ' ml-nested-ready' : ''}`
+  return open
+    ? <button type="button" className={cls} onClick={() => onPick(m)}>{inner}</button>
+    : <div className={cls}>{inner}</div>
 }
 
 function NestedMatchRow({ m, t, ents, onPick }: { m: Match; t: Tournament; ents: Map<string, Entrant>; onPick: (m: Match) => void }) {
