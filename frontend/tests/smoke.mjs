@@ -1343,10 +1343,24 @@ try {
     await page.click('.miniplayer-open')
     await page.waitForSelector('.sheet-player .player-controls')
     check('mini-player opens the player sheet', (await page.textContent('.sheet-player .player-title')).startsWith('Track'))
+    check('the player offers exactly one heart', (await page.locator('.sheet-player button[aria-label$="favourites"]').count()) === 1,
+      `${await page.locator('.sheet-player button[aria-label$="favourites"]').count()}`)
     await page.click('.sheet-player button[aria-label="Add to favourites"]')
-    await page.waitForFunction(() => document.querySelector('.sheet-player button[aria-label="Remove from favourites"]'), null, { timeout: 5000 }).catch(() => {})
+    // The heart has to flip, not just fire the write — it used to read a cache snapshot
+    // that never re-rendered, so it looked like hearting did nothing.
+    const flipped = await page.waitForSelector('.sheet-player button[aria-label="Remove from favourites"][data-on="true"]', { timeout: 5000 }).then(() => true).catch(() => false)
+    check('hearting fills the heart in', flipped)
     const title = await page.textContent('.sheet-player .player-title')
     check('favourite POSTs once for the current track', favs.length === 1 && `Track ${favs[0].slice(1)}` === title, `${JSON.stringify(favs)} ${title} ${page.violations}`)
+    await page.click('.sheet-player button[aria-label^="More for"]')
+    await page.waitForSelector('.menu-content')
+    check('the player can add the track to a playlist', (await page.locator('.menu-item', { hasText: 'Add to playlist' }).count()) === 1)
+    await page.click('.menu-item:has-text("Add to playlist")')
+    await page.waitForSelector('.sheet-body .group-row')
+    check('the add-to-playlist sheet lists the playlists you can edit', (await page.textContent('.sheet-body .group-row')).includes('Gym'),
+      await page.textContent('.sheet-body'))
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.sheet-body .group-row', { state: 'detached' })
     await shot(page, 'slap-375-sheet')
     await axe(page, 'Slap player sheet 375', '.sheet-player')
     await page.click('.sheet-player button[aria-label="Close player"]')

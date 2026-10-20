@@ -9,9 +9,10 @@ import { toast } from '../../components/toast'
 import { ApiError } from '../../lib/http'
 import { useDesktop } from '../../lib/media'
 import { useSwipeDown } from '../../lib/gestures'
+import { AddToPlaylist } from './AddToPlaylist'
 import { CommentBox, CommentThread } from './Comments'
 import {
-  artUrl, findSources, fmtTime, names, replaceTrack, rerollStatus, sendComment, shareSong, sourceLink, slapName, slapNames, sendThumb, setFavorite, useSlapMe, useTrackComments, useTrackSocial,
+  artUrl, findSources, fmtTime, names, replaceTrack, rerollStatus, sendComment, shareSong, sourceLink, slapName, slapNames, sendThumb, setFavorite, useLibrary, useSlapMe, useTrackComments, useTrackSocial,
   type Library, type QueueItem, type Source, type TrackSocial,
 } from '../../lib/slap'
 import {
@@ -74,31 +75,13 @@ export function MiniPlayer({ variant }: { variant: 'bar' | 'sidebar' }) {
   )
 }
 
-/** Compact heart toggle used in the player header on both layouts. */
-function HeartButton({ item }: { item: QueueItem }) {
-  const qc = useQueryClient()
-  const lib = qc.getQueryData<Library>(['slap', 'library'])
-  const fav = lib?.tracks.find((t) => t.id === item.id)?.fav ?? false
-  function favourite() {
-    const on = !fav
-    qc.setQueryData<Library>(['slap', 'library'], (d) => d && { ...d, tracks: d.tracks.map((x) => (x.id === item.id ? { ...x, fav: on } : x)) })
-    setFavorite(item.id, on).catch(() => {
-      qc.setQueryData<Library>(['slap', 'library'], (d) => d && { ...d, tracks: d.tracks.map((x) => (x.id === item.id ? { ...x, fav: !on } : x)) })
-    })
-  }
-  return (
-    <button type="button" className="icon-btn" onClick={favourite} aria-pressed={fav} aria-label={fav ? 'Remove from favourites' : 'Add to favourites'} data-on={fav}>
-      <Icon name={fav ? 'heartFill' : 'heart'} />
-    </button>
-  )
-}
-
 export function PlayerSheet() {
   const s = usePlayer()
   const desktop = useDesktop()
   const swipe = useSwipeDown(() => setExpanded(false))
   const item = current(s)
   const [reroll, setReroll] = useState<QueueItem | null>(null)
+  const [addTo, setAddTo] = useState<QueueItem | null>(null)
   return (
     <Dialog.Root open={s.expanded} onOpenChange={setExpanded}>
       <Dialog.Portal>
@@ -120,7 +103,6 @@ export function PlayerSheet() {
                 {s.mode === 'together' ? 'Listen Together' : 'Now playing'}
               </Dialog.Title>
               <div className="player-head-tools">
-                {item && <HeartButton item={item} />}
                 {item && (
                   <Menu.Root>
                     <Menu.Trigger asChild>
@@ -128,6 +110,7 @@ export function PlayerSheet() {
                     </Menu.Trigger>
                     <Menu.Portal>
                       <Menu.Content className="menu-content" sideOffset={4} align="end">
+                        <Menu.Item className="menu-item" onSelect={() => setAddTo(item)}>Add to playlist…</Menu.Item>
                         <Menu.Item className="menu-item" onSelect={() => shareSong(item)}>Share song</Menu.Item>
                         <Menu.Item className="menu-item" onSelect={() => setReroll(item)}>Wrong song? Find the right one</Menu.Item>
                       </Menu.Content>
@@ -142,6 +125,7 @@ export function PlayerSheet() {
             <PlayerBody s={s} />
           </div>
           {reroll && <RerollDialog item={reroll} onClose={() => setReroll(null)} />}
+          {addTo && <AddToPlaylist ids={[addTo.id]} title={addTo.title} open onOpenChange={(v) => { if (!v) setAddTo(null) }} />}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -383,7 +367,10 @@ function MiniAddedBy({ id }: { id: string | undefined }) {
 
 function TrackActions({ item }: { item: QueueItem }) {
   const qc = useQueryClient()
-  const lib = qc.getQueryData<Library>(['slap', 'library'])
+  // Subscribe, don't snapshot: getQueryData never re-renders, so the heart used to
+  // write the favourite but keep drawing the old state. It also loads the library when
+  // the player was opened from a page that never fetched it.
+  const lib = useLibrary().data
   const fav = lib?.tracks.find((t) => t.id === item.id)?.fav ?? false
   const social = useTrackSocial(item.id)
   const raw = social.data?.thumbs ?? { up: [], down: [], mine: 0 as const }
