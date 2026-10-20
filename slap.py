@@ -72,6 +72,10 @@ SLAP_ADMIN_TOKEN = os.environ.get("SLAP_ADMIN_TOKEN", "")
 _MUSIC_ROOT = "/media/music/"   # where Jellyfin sees the importer's library
 
 _client = httpx.AsyncClient(base_url=JELLYFIN_URL, timeout=httpx.Timeout(20.0, read=60.0))
+# Audio is proxied whole (static=true), so the browser buffers ahead and then stops
+# pulling for as long as it likes. A read timeout here would cut the response short
+# mid-song, which the player cannot tell apart from a track that ended.
+_stream_client = httpx.AsyncClient(base_url=JELLYFIN_URL, timeout=httpx.Timeout(20.0, read=None))
 _social = httpx.AsyncClient(base_url=SLAP_API_URL, timeout=20.0)
 
 
@@ -1135,15 +1139,17 @@ def build_router(get_session, is_admin) -> APIRouter:
         return {k: job[k] for k in ("tid", "state", "error", "duration")}
 
     async def stream(path: str, request: Request, params: dict | None = None,
-                     cache: str = "private, max-age=3600") -> StreamingResponse:
+                     cache: str = "private, max-age=3600",
+                     client: httpx.AsyncClient | None = None) -> StreamingResponse:
         if not configured():
             raise HTTPException(503, "the music library is not configured")
+        c = client or _client
         # Through Cloudflare the upstream may gzip; ask for the bytes as they are.
         headers = {**_jf_headers(), "Accept-Encoding": "identity"}
         if rng := request.headers.get("range"):
             headers["Range"] = rng
         try:
-            up = await _client.send(_client.build_request("GET", path, params=params, headers=headers), stream=True)
+            up = await c.send(c.build_request("GET", path, params=params, headers=headers), stream=True)
         except httpx.HTTPError as e:
             logger.warning("slap: stream %s failed: %s", path, e)
             raise HTTPException(502, "the music library is unreachable")
@@ -1163,7 +1169,8 @@ def build_router(get_session, is_admin) -> APIRouter:
     @router.get("/stream/{tid}")
     async def audio(tid: str, request: Request):
         await caller(request)
-        return await stream(f"/Audio/{check_id(tid)}/stream", request, {"static": "true"})
+        return await stream(f"/Audio/{check_id(tid)}/stream", request, {"static": "true"},
+                            client=_stream_client)
 
     @router.get("/art/{iid}")
     async def art(iid: str, request: Request, size: int = 300):

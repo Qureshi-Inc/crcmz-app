@@ -49,6 +49,12 @@ async function newPage({ width, height, mocks = {}, match = null, reducedMotion 
     window.__ms = {}
     ms.setActionHandler = (a, fn) => { if (fn) window.__ms[a] = fn; else delete window.__ms[a]; try { set(a, fn) } catch { /* */ } }
   })
+  // The Slap player's element is a detached `new Audio()`, so a check cannot reach it
+  // through the DOM. Hold on to whichever one was last asked to play.
+  await ctx.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play
+    HTMLMediaElement.prototype.play = function (...a) { window.__audio = this; return play.apply(this, a) }
+  })
   const page = await ctx.newPage()
   page.violations = []
   page.writes = []
@@ -1331,6 +1337,27 @@ try {
       check('slap lock screen: previous goes back', (await page.textContent('.miniplayer-title')) === before && (await lock(page)).title === before)
       await press(page, 'play')
     }
+    // A stream cut short fires `ended` exactly like a track that played out. The player
+    // has to pick the song back up rather than silently skipping to the next one.
+    {
+      const cutAt = () => page.evaluate(() => {
+        const a = window.__audio
+        a.currentTime = 1
+        a.dispatchEvent(new Event('ended'))
+      })
+      const before = await page.textContent('.miniplayer-title')
+      await cutAt()
+      await page.waitForTimeout(500)
+      check('a stream cut short does not skip the song', (await page.textContent('.miniplayer-title')) === before,
+        `${before} -> ${await page.textContent('.miniplayer-title')}`)
+      // Stopping again in the same place means the file really does end there: give up.
+      await cutAt()
+      const moved = await page.waitForFunction((t) => document.querySelector('.miniplayer-title')?.textContent !== t, before, { timeout: 5000 })
+        .then(() => true).catch(() => false)
+      check('a song that genuinely ends early still advances', moved,
+        `${before} -> ${await page.textContent('.miniplayer-title')}`)
+    }
+
     const geo = await page.evaluate(() => {
       const b = document.querySelector('.miniplayer-bar').getBoundingClientRect()
       const t = document.querySelector('.tabbar')?.getBoundingClientRect()

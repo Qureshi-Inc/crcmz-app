@@ -9670,6 +9670,32 @@ async def share_song(track_id: str):
     return HTMLResponse(page)
 
 
+def _og_preview(spa_path: str, params) -> str:
+    """Link-preview tags for a URL meant to be shared outside the app.
+
+    WhatsApp, iMessage and Slack fetch the URL and read the document; they never run
+    the SPA's JS. The preview has to live in the served HTML, and it has to stay on an
+    /app URL, because that is the only path both phone apps claim as a deep link.
+    Anonymous crawlers reach this, so nothing here may describe who is in the room.
+    """
+    import html as _html
+    if spa_path.strip("/") == "slap" and params.get("join") == "together":
+        og = {
+            "og:type": "website",
+            "og:site_name": "CRCMZ",
+            "og:title": "Listen Together on Slap",
+            "og:description": "One queue, one play button — everyone hears the same thing. "
+                              "Open this to drop straight into the room.",
+            "og:image": "https://app.crcmz.me/crcmz-logo.png",
+            "og:url": "https://app.crcmz.me/app/slap?join=together",
+        }
+        tags = [f'<meta property="{k}" content="{_html.escape(v)}">' for k, v in og.items()]
+        tags.append('<meta name="twitter:card" content="summary_large_image">')
+        tags.append(f'<meta name="description" content="{_html.escape(og["og:description"])}">')
+        return "".join(tags)
+    return ""
+
+
 @app.get("/app", include_in_schema=False)
 @app.get("/app/{spa_path:path}", include_in_schema=False)
 def app_shell(request: Request, spa_path: str = ""):
@@ -9690,8 +9716,11 @@ def app_shell(request: Request, spa_path: str = ""):
     # unexplainable syntax error in the console instead of an obvious missing asset.
     if not _wants_html(request) and Path(spa_path).suffix:
         return Response(status_code=404)
+    doc = index.read_text(encoding="utf-8")
+    if og := _og_preview(spa_path, request.query_params):
+        doc = doc.replace("<head>", "<head>" + og, 1)
     return HTMLResponse(
-        index.read_text(encoding="utf-8"),
+        doc,
         headers={
             # The document names the current fingerprinted bundles, so caching it is how
             # a browser ends up asking for assets that no longer exist after a deploy.

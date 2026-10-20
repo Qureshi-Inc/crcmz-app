@@ -33,6 +33,9 @@ export type Clock = { position: number; duration: number }
 
 const KEY = 'slap.player.v1'
 const DRIFT_S = 1.5
+/** Ending this far short of the known duration is a cut-off stream, not a finished song. */
+const CUTOFF_S = 5
+const CUTOFF_TRIES = 2
 const QUEUE_MAX = 500
 
 type Saved = { queue: QueueItem[]; index: number; shuffle: boolean; repeat: Repeat; position: number; order: string[] | null }
@@ -196,8 +199,35 @@ function finishListen(completed: boolean) {
   if (kind) reportListen(kind, item, completed ? Math.max(heard, item.duration) : heard, completed).catch(() => {})
 }
 
+/**
+ * A stream that gets cut short fires `ended` exactly like a track that played out, so a
+ * truncated song used to look finished and silently skip. If we stopped well short of the
+ * known duration, pick it up again where it stopped. After CUTOFF_TRIES we let it through,
+ * so a genuinely short file — or a stale duration from Jellyfin — can't trap the player.
+ */
+const cutoff = { qid: '', at: -1, tries: 0 }
+
+function resumedAfterCutoff(item: QueueItem): boolean {
+  const at = el().currentTime
+  if (!(item.duration > 0) || !(at > 0) || at >= item.duration - CUTOFF_S) return false
+  if (cutoff.qid !== item.qid) { cutoff.qid = item.qid; cutoff.at = -1; cutoff.tries = 0 }
+  // Stopped where the last attempt stopped: the file really does end here (a duration
+  // from Jellyfin can outlive the file it describes), so stop fighting it and move on.
+  if (cutoff.at >= 0 && at <= cutoff.at + DRIFT_S) return false
+  if (cutoff.tries >= CUTOFF_TRIES) return false
+  cutoff.at = at
+  cutoff.tries += 1
+  loaded = null
+  load(item, at)
+  void start()
+  return true
+}
+
 function onEnded() {
   const a = el()
+  const playing = current()
+  // Never report or advance on a cut-off stream — in Together that would skip for everyone.
+  if (playing && resumedAfterCutoff(playing)) return
   if (state.mode === 'together') {
     const qid = loaded
     finishListen(true)

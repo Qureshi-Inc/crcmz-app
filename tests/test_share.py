@@ -154,7 +154,33 @@ def tests():
         assert client.get("/api/share/pending", cookies=cookie).json()["url"] == "https://youtu.be/x"
         assert client.get("/api/share/pending", cookies=cookie).json()["url"] == ""
 
-    for fn in (a_link_left_for_the_app_is_picked_up_once, trailer_titles_become_a_film_name_and_year, a_song_goes_straight_to_slap, a_trailer_offers_its_film_first,
+    def a_shared_together_link_previews_itself():
+        """The Listen Together link gets shared into WhatsApp, which reads the document.
+
+        frontend/dist is a build artifact and is not in git, so this checks the tags and
+        the injection directly rather than going through the /app route.
+        """
+        import server
+        from starlette.datastructures import QueryParams
+        og = server._og_preview("slap", QueryParams("join=together"))
+        assert '<meta property="og:title" content="Listen Together on Slap">' in og, og
+        assert '<meta name="twitter:card" content="summary_large_image">' in og, og
+        assert "https://app.crcmz.me/crcmz-logo.png" in og, og
+        assert '<meta property="og:url" content="https://app.crcmz.me/app/slap?join=together">' in og, og
+        # A link-preview crawler is never signed in, so this must not say who is in the room.
+        assert "listening" not in og.lower(), og
+        # Every other page keeps the plain document.
+        assert server._og_preview("slap", QueryParams("")) == ""
+        assert server._og_preview("slap", QueryParams("join=nope")) == ""
+        assert server._og_preview("squad", QueryParams("join=together")) == ""
+        assert server._og_preview("", QueryParams("join=together")) == ""
+        # The tags have to actually land in the document's head.
+        doc = '<!doctype html>\n<html><head>\n<title>x</title></head><body></body></html>'
+        merged = doc.replace("<head>", "<head>" + og, 1)
+        assert merged.index("og:title") < merged.index("</head>"), merged
+
+    for fn in (a_shared_together_link_previews_itself,
+               a_link_left_for_the_app_is_picked_up_once, trailer_titles_become_a_film_name_and_year, a_song_goes_straight_to_slap, a_trailer_offers_its_film_first,
                a_trailer_for_an_unknown_film_is_just_a_video, videos_and_shorts_play_in_the_watch_party_straight_away,
                a_film_page_is_found_and_added_straight_away, a_page_built_in_the_browser_is_found_by_the_title_the_share_sheet_sent, an_unclear_film_offers_the_likely_ones, the_route_needs_a_session):
         check(fn.__name__, fn)
