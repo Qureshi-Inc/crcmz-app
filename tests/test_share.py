@@ -174,12 +174,35 @@ def tests():
         assert server._og_preview("slap", QueryParams("join=nope")) == ""
         assert server._og_preview("squad", QueryParams("join=together")) == ""
         assert server._og_preview("", QueryParams("join=together")) == ""
-        # The tags have to actually land in the document's head.
-        doc = '<!doctype html>\n<html><head>\n<title>x</title></head><body></body></html>'
-        merged = doc.replace("<head>", "<head>" + og, 1)
-        assert merged.index("og:title") < merged.index("</head>"), merged
 
-    for fn in (a_shared_together_link_previews_itself,
+    def a_signed_out_fetcher_gets_the_preview_and_nothing_else():
+        """WhatsApp fetches a shared link with no session. It must see the preview tags,
+        a person must be sent to sign in, and every neighbouring page stays gated."""
+        from fastapi.testclient import TestClient
+        import server
+        client = TestClient(server.app, base_url="https://app.crcmz.me", follow_redirects=False)
+        html = {"Accept": "text/html", "User-Agent": "WhatsApp/2.23"}
+        r = client.get("/app/slap?join=together", headers=html)
+        assert r.status_code == 200, r.status_code
+        assert '<meta property="og:title" content="Listen Together on Slap">' in r.text, r.text
+        assert "/auth/login?next=/app/slap%3Fjoin%3Dtogether" in r.text, r.text
+        assert "/app/assets/" not in r.text, "the app itself must not be served signed out"
+        assert server._safe_next("/app/slap?join=together") == "/app/slap?join=together"
+        # Anything else under /app still demands a session.
+        for p in ("/app/slap", "/app/slap?join=nope", "/app/squad?join=together", "/slap?join=together"):
+            g = client.get(p, headers=html)
+            assert g.status_code == 302 and "/auth/login" in g.headers["location"], (p, g.status_code)
+        assert client.post("/app/slap?join=together").status_code == 401
+        assert client.get("/api/slap/together").status_code == 401
+        assert client.get("/api/slap/library").status_code == 401
+        # Song shares reach their own handlers, which check the id themselves.
+        s = client.get("/share/song/not-an-id", headers=html)
+        assert s.status_code == 302 and s.headers["location"] == "/app/slap", s.status_code
+        assert client.get("/share/art/not-an-id").status_code == 404
+        assert client.get("/share/songs").status_code == 401
+        assert client.post("/share/song/" + "0" * 32).status_code == 401
+
+    for fn in (a_shared_together_link_previews_itself, a_signed_out_fetcher_gets_the_preview_and_nothing_else,
                a_link_left_for_the_app_is_picked_up_once, trailer_titles_become_a_film_name_and_year, a_song_goes_straight_to_slap, a_trailer_offers_its_film_first,
                a_trailer_for_an_unknown_film_is_just_a_video, videos_and_shorts_play_in_the_watch_party_straight_away,
                a_film_page_is_found_and_added_straight_away, a_page_built_in_the_browser_is_found_by_the_title_the_share_sheet_sent, an_unclear_film_offers_the_likely_ones, the_route_needs_a_session):

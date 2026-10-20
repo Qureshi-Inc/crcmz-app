@@ -782,7 +782,7 @@ def _portal_page(error: str = "", ok: str = "", known_mm: str = "") -> str:
 
 import hashlib as _hashlib, base64 as _base64, secrets as _secrets
 import hmac as _hmac, ipaddress as _ipaddress, html as _html
-from urllib.parse import urlencode as _urlencode
+from urllib.parse import quote as _quote, urlencode as _urlencode
 from itsdangerous import URLSafeTimedSerializer as _USTS, BadSignature, SignatureExpired
 
 ZITADEL_ISSUER        = os.environ.get("ZITADEL_ISSUER", "https://auth.crcmz.me")
@@ -1061,6 +1061,17 @@ async def _auth_gate(request: Request, call_next):
 
     if _get_session(request):
         return await call_next(request)
+
+    # Link previews. WhatsApp and iMessage fetch a shared link signed out, so these
+    # are the only pages a stranger may load. Each handler validates its own id and
+    # serves preview tags plus a hand-off; none of them is the app.
+    if request.method == "GET" and path.startswith(_SHARE_PREFIXES):
+        return await call_next(request)
+    if (request.method == "GET" and path.startswith("/app/")
+            and (og := _og_preview(path[len("/app/"):], request.query_params))):
+        here = path + "?" + request.scope.get("query_string", b"").decode("latin-1")
+        return HTMLResponse(_preview_page(og, "/auth/login?next=" + _quote(here, safe="/")),
+                            headers={"Cache-Control": "no-store"})
 
     accept = request.headers.get("accept", "")
     if request.method == "GET" and "text/html" in accept:
@@ -9696,6 +9707,19 @@ def _og_preview(spa_path: str, params) -> str:
     return ""
 
 
+# Share pages that a signed-out link-preview fetcher may load (see _auth_gate).
+_SHARE_PREFIXES = ("/share/song/", "/share/art/")
+
+
+def _preview_page(og: str, dest: str) -> str:
+    """Preview tags for the fetcher, and a hand-off for a person (to sign in)."""
+    import html as _html
+    import json as _json
+    return (f'<!doctype html><html><head><meta charset="utf-8">{og}'
+            f'<meta http-equiv="refresh" content="0;url={_html.escape(dest)}"></head>'
+            f'<body><script>location.replace({_json.dumps(dest)})</script></body></html>')
+
+
 @app.get("/app", include_in_schema=False)
 @app.get("/app/{spa_path:path}", include_in_schema=False)
 def app_shell(request: Request, spa_path: str = ""):
@@ -9716,11 +9740,8 @@ def app_shell(request: Request, spa_path: str = ""):
     # unexplainable syntax error in the console instead of an obvious missing asset.
     if not _wants_html(request) and Path(spa_path).suffix:
         return Response(status_code=404)
-    doc = index.read_text(encoding="utf-8")
-    if og := _og_preview(spa_path, request.query_params):
-        doc = doc.replace("<head>", "<head>" + og, 1)
     return HTMLResponse(
-        doc,
+        index.read_text(encoding="utf-8"),
         headers={
             # The document names the current fingerprinted bundles, so caching it is how
             # a browser ends up asking for assets that no longer exist after a deploy.
