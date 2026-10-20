@@ -21,6 +21,7 @@ import { useSwipeDown } from '../lib/gestures'
 import { usePanelCollapsed } from '../features/chat/panelState'
 import { MiniPlayer, PlayerSheet } from '../features/slap/NowPlaying'
 import { current as nowPlaying, usePlayer } from '../features/slap/player'
+import { RoomChat } from '../features/slap/RoomChat'
 import { WatchPage } from '../features/watch/WatchPage'
 import { CallBar, useHuddleBar, useWatchBar } from '../features/watch/WatchBar'
 import { useWatchSelect } from '../features/watch/session'
@@ -116,6 +117,7 @@ export function Shell() {
         <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
         {keepWatch && <WatchPage visible={onWatch} />}
       </main>
+      <RoomChat />
       {!desktop && callRows > 0 && <CallBar variant="bar" watch={watchBar} huddle={huddleBar} />}
       {!desktop && <MiniPlayer variant="bar" />}
       {!desktop && (nativeShell() ? <NativeTabs current={current} isAdmin={isAdmin} /> : <TabBar current={current} isAdmin={isAdmin} />)}

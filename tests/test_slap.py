@@ -560,6 +560,68 @@ def t_together_resolves_server_side():
     slap.ROOM.members.clear()
 
 
+def t_room_chat_reaches_members_and_dies_with_the_room():
+    r = slap.Room()
+    qa, qb = r.join("a", "Moiz"), r.join("b", "Zubair")
+    for q in (qa, qb):
+        while not q.empty():
+            q.get_nowait()
+    try:
+        r.say("c", "Outsider", "hi")
+        raise AssertionError("only members may talk")
+    except HTTPException as e:
+        assert e.status_code == 409
+    m = r.say("a", "Moiz", "this one slaps")
+    for q in (qa, qb):
+        kind, data = q.get_nowait()
+        assert kind == "chat" and data["text"] == "this one slaps"
+    assert slap.chat_line(m, "a")["mine"] and not slap.chat_line(m, "b")["mine"]
+    assert "sub" not in slap.chat_line(m, "a"), "never a Zitadel id"
+    assert [x["text"] for x in r.chat_view("b")["messages"]] == ["this one slaps"]
+    # Not in the snapshot: the peek is open to everyone signed in, the chat isn't.
+    assert "chat" not in r.snapshot() and "this one slaps" not in json.dumps(r.snapshot())
+    r.leave("a", qa)
+    assert r.chat, "someone's still here"
+    r.leave("b", qb)
+    assert r.chat == [] and r.chat_view("a")["messages"] == []
+
+
+def t_room_chat_is_rate_limited():
+    r = slap.Room()
+    r.join("a", "Moiz")
+    for i in range(slap._CHAT_BURST):
+        r.say("a", "Moiz", f"line {i}")
+    try:
+        r.say("a", "Moiz", "one too many")
+        raise AssertionError("should slow down")
+    except HTTPException as e:
+        assert e.status_code == 429
+
+
+def t_together_chat_routes():
+    sent: list[tuple] = []
+    orig = slap.notifications.route_in_background
+    slap.notifications.route_in_background = lambda *a, **k: sent.append((a, k))
+    try:
+        as_("200")
+        assert client.post("/api/slap/together/chat", json={"text": "hi"}).status_code == 409
+        assert client.get("/api/slap/together/chat").status_code == 409
+        slap.ROOM.members["200"] = {"name": "Zubair", "conns": 1, "since": 0}
+        assert client.post("/api/slap/together/chat", json={"text": "   "}).status_code == 400
+        r = client.post("/api/slap/together/chat", json={"text": "x" * 900})
+        assert r.status_code == 200 and len(r.json()["text"]) == slap._CHAT_MAX and r.json()["mine"]
+        assert sent == [], "no mention, no alert"
+        client.post("/api/slap/together/chat", json={"text": "@moiz get in here"})
+        assert len(sent) == 1 and sent[0][1]["only"] == ["100"] and sent[0][1]["exclude"] == "200", sent
+        assert sent[0][0][0] == "mentions" and sent[0][0][3] == "/app/slap?join=together", sent
+        got = client.get("/api/slap/together/chat").json()
+        assert [m["text"][:4] for m in got["messages"]][-1] == "@moi" and got["seq"] >= 2
+    finally:
+        slap.notifications.route_in_background = orig
+        slap.ROOM.members.clear()
+        slap.ROOM.chat, slap.ROOM._said = [], {}
+
+
 def t_tools_registered():
     import assistant
     names = assistant.tool_names()

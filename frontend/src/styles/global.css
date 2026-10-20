@@ -3045,3 +3045,44 @@ html[data-native-shell] .tabbar { display: none; }
 }
 @media (hover: hover) { .pill:hover { background: rgba(34, 230, 255, .08); color: var(--text); } }
 .pill-active { background: rgba(34, 230, 255, .15); border-color: var(--cyan); color: var(--cyan-text); }
+
+/* ── Listen Together room chat: a floating button on every page while in the room ── */
+.room-chat-fab {
+  position: fixed; z-index: var(--z-minibar); right: var(--gutter);
+  bottom: calc(var(--c-tabbar-h) + var(--c-minibar-row-h) + var(--space-3) + env(safe-area-inset-bottom));
+  width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+  color: var(--text); background: #0c081c; border: 1px solid var(--neon-cyan);
+  box-shadow: 0 0 14px rgba(34, 230, 255, .28), var(--c-sheet-shadow);
+}
+.room-chat-fab svg { width: 24px; height: 24px; }
+.room-chat-fab[data-unread="true"] { border-color: var(--neon-magenta); box-shadow: 0 0 16px rgba(255, 47, 214, .4), var(--c-sheet-shadow); }
+.room-chat-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: var(--radius-pill); background: var(--neon-magenta); color: #fff;
+  font-size: var(--text-xs); font-weight: 800; line-height: 20px; text-align: center;
+}
+/* Clear of the Squad chat handle and the call bar, which share that bottom stack. */
+.app-main[data-chat="mobile"] ~ .room-chat-fab { bottom: calc(var(--c-tabbar-h) + var(--c-minibar-row-h) + max(var(--handle-h), var(--tap-min)) + var(--space-3) + env(safe-area-inset-bottom)); }
+html[data-watchbar] .room-chat-fab { bottom: calc(var(--c-tabbar-h) + (var(--callbar-rows, 1) + 1) * var(--c-minibar-row-h) + var(--space-3) + env(safe-area-inset-bottom)); }
+@media (min-width: 1024px) {
+  .room-chat-fab, html[data-watchbar] .room-chat-fab { bottom: var(--space-6); right: var(--space-6); }
+  .app-main[data-chat="panel"] ~ .room-chat-fab { right: calc(360px + var(--space-6)); }
+  .app-main[data-chat="rail"] ~ .room-chat-fab { right: calc(60px + var(--space-6)); }
+}
+/* Solid: the shared sheet colour is translucent, and chat is text over a busy page. */
+.room-chat-sheet, .room-chat-dialog { background: #0c081c; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.room-chat-sheet { height: min(72dvh, 640px); padding: 0 var(--gutter) var(--space-3); }
+.room-chat-dialog { display: flex; flex-direction: column; height: min(640px, calc(100dvh - 2 * var(--gutter))); }
+.room-chat-who { margin: 0 0 var(--space-2); }
+.room-chat-lines, .room-chat-empty { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.room-chat-lines { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) 0; }
+.room-chat-line { display: flex; flex-direction: column; align-items: flex-start; max-width: 85%; }
+.room-chat-line[data-mine="true"] { align-self: flex-end; align-items: flex-end; }
+.room-chat-name { font-size: var(--text-xs); font-weight: 700; color: var(--text-dim); margin: var(--space-2) var(--space-2) 2px; }
+.room-chat-text {
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: rgba(141, 120, 196, .16);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.room-chat-line[data-mine="true"] .room-chat-text { background: rgba(34, 230, 255, .16); }
+.room-chat-form { padding-top: var(--space-2); }
+.room-chat-form .input { flex: 1; min-width: 0; }

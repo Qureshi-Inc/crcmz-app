@@ -1443,6 +1443,87 @@ try {
     check('no unmocked writes and no page errors (Together)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
+  // Room chat: a floating button on every page while you're in the room.
+  {
+    const said = []
+    const line = (seq, name, text, mine = false) => ({ seq, name, text, at: NOW * 1000 - (10 - seq) * 60_000, mine })
+    const roomEvents = (r) => r.fulfill({
+      status: 200, contentType: 'text/event-stream', headers: { 'cache-control': 'no-cache' },
+      body: 'retry: 60000\n\n'
+        + `event: chat_all\ndata: ${JSON.stringify({ seq: 2, messages: [line(1, 'zubair', 'who queued this'), line(2, 'Moiz', 'me, obviously', true)] })}\n\n`
+        + `event: state\ndata: ${JSON.stringify(SLAP_ROOM)}\n\n`
+        + `event: chat\ndata: ${JSON.stringify(line(3, 'noor', 'turn it up'))}\n\n`,
+    })
+    const { ctx, page } = await newPage({
+      width: 375, height: 800, mocks: SLAP_BASE,
+      match: slapMatch({
+        'GET /api/slap/together/events': roomEvents,
+        'POST /api/slap/together/chat': (r) => { const b = r.request().postDataJSON(); said.push(b); return json(200, line(4, 'Moiz', b.text, true))(r) },
+        // Joining the room says so on the presence board.
+        'POST /api/activity/ping': json(200, { ok: true }),
+        'POST /api/activity/clear': json(200, { ok: true }),
+        'POST /api/slap/listen/play': json(200, { ok: true }),
+        'POST /api/slap/listen/skip': json(200, { ok: true }),
+      }),
+    })
+    await ready(page, '/app/slap?tab=together')
+    await page.waitForSelector('.together-actions .btn-primary')
+    check('room chat: no chat button before you join', (await page.locator('.room-chat-fab').count()) === 0)
+    await page.click('.together-actions .btn-primary')
+    await page.waitForSelector('.room-chat-fab')
+    await page.waitForFunction(() => document.querySelector('.room-chat-badge')?.textContent === '1', null, { timeout: 5000 }).catch(() => {})
+    check('room chat: a new line from someone else shows as 1 unread', (await page.textContent('.room-chat-badge').catch(() => '')) === '1',
+      await page.getAttribute('.room-chat-fab', 'aria-label'))
+    const geo = await page.evaluate(() => ({ fab: document.querySelector('.room-chat-fab').getBoundingClientRect().bottom, bar: document.querySelector('.miniplayer-bar').getBoundingClientRect().top }))
+    check('room chat: the button sits clear of the mini-player', geo.fab <= geo.bar, JSON.stringify(geo))
+    await tapTargets(page, 'Room chat button 375')
+    await page.click('.room-chat-fab')
+    await page.waitForSelector('.room-chat-sheet .room-chat-line')
+    check('room chat: the panel shows what the room has said', (await page.locator('.room-chat-line').count()) === 3)
+    check('room chat: your own lines are marked as yours', (await page.locator('.room-chat-line[data-mine="true"]').count()) === 1
+      && (await page.textContent('.room-chat-line[data-mine="true"]')).includes('You'))
+    check('room chat: opening it clears the unread count', (await page.locator('.room-chat-badge').count()) === 0)
+    await page.fill('#room-chat-input', 'this one slaps')
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(() => document.querySelectorAll('.room-chat-line').length === 4)
+    check('room chat: sending posts the line and clears the box', said.length === 1 && said[0].text === 'this one slaps'
+      && (await page.inputValue('#room-chat-input')) === '', JSON.stringify(said))
+    await shot(page, 'slap-375-room-chat')
+    await axe(page, 'Room chat 375', '.room-chat-sheet')
+    await tapTargets(page, 'Room chat sheet 375')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.room-chat-sheet', { state: 'detached' })
+    await page.click('.tabbar a:has-text("Squad")')
+    await page.waitForFunction(() => location.pathname === '/app/' || location.pathname === '/app')
+    check('room chat: the button stays on other pages, and so does the music', (await page.isVisible('.room-chat-fab')) && (await page.isVisible('.miniplayer-bar')))
+    await page.click('.miniplayer-bar .miniplayer-close')
+    await page.waitForSelector('.room-chat-fab', { state: 'detached' })
+    check('room chat: leaving the room takes the button away', true)
+    check('no unmocked writes and no page errors (room chat)', page.violations.length === 0, page.violations.join(', '))
+    await ctx.close()
+
+    // Desktop: the button keeps clear of the Squad page's Chat Board panel.
+    const d = await newPage({
+      width: 1440, height: 900, mocks: SLAP_BASE,
+      match: slapMatch({
+        'GET /api/slap/together/events': roomEvents,
+        'POST /api/activity/ping': json(200, { ok: true }),
+        'POST /api/activity/clear': json(200, { ok: true }),
+      }),
+    })
+    await ready(d.page, '/app/slap?tab=together')
+    await d.page.click('.together-actions .btn-primary')
+    await d.page.waitForSelector('.room-chat-fab')
+    await d.page.click('.sidebar a:has-text("Squad")')
+    await d.page.waitForSelector('.chat-panel')
+    const dg = await d.page.evaluate(() => ({ fab: document.querySelector('.room-chat-fab').getBoundingClientRect().right, panel: document.querySelector('.chat-panel').getBoundingClientRect().left }))
+    check('room chat 1440: the button keeps clear of the Chat Board panel', dg.fab <= dg.panel, JSON.stringify(dg))
+    await d.page.click('.room-chat-fab')
+    await d.page.waitForSelector('.room-chat-dialog .room-chat-line')
+    await shot(d.page, 'slap-1440-room-chat')
+    await axe(d.page, 'Room chat 1440', '.room-chat-dialog')
+    await d.ctx.close()
+  }
   {
     const { ctx, page } = await newPage({
       width: 1440, height: 900, mocks: SLAP_BASE,

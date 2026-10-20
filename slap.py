@@ -500,6 +500,15 @@ def can_edit(me: dict, pid: str, name: str) -> bool:
 
 # ── Listen Together ──────────────────────────────────────────────────────────
 _QUEUE_MAX = 500
+_CHAT_KEEP = 200        # lines the room remembers
+_CHAT_MAX = 500         # characters a line may hold
+_CHAT_BURST = 8         # lines one person may send per window
+_CHAT_WINDOW_MS = 10_000
+
+
+def chat_line(m: dict, sub: str) -> dict:
+    """A chat line as one member sees it: no Zitadel id, just whether it's theirs."""
+    return {"seq": m["seq"], "name": m["name"], "text": m["text"], "at": m["at"], "mine": m["sub"] == sub}
 
 
 def _now_ms() -> int:
@@ -520,6 +529,11 @@ class Room:
         self.last = ""
         self.members: dict[str, dict] = {}   # sub → {name, conns, since}
         self._subs: set[asyncio.Queue] = set()
+        # The room's chat: members only, in memory, gone when the last person leaves.
+        # Never exposed to the assistant or MCP — "only the room sees it" is the point.
+        self.chat: list[dict] = []           # {seq, sub, name, text, at}
+        self.chat_seq = 0
+        self._said: dict[str, list[int]] = {}  # sub → recent send times (ms)
 
     def head(self) -> float:
         if not self.playing:
@@ -549,23 +563,42 @@ class Room:
             self.index = len(self.queue) - 1 if self.queue else -1
             self._set_head(0.0, False)
 
+    def _send(self, item: tuple[str, dict]) -> None:
+        for q in list(self._subs):
+            if q.full():  # a slow client: drop the oldest. Chat has a seq, so a gap is seen.
+                q.get_nowait()
+            q.put_nowait(item)
+
     def publish(self) -> None:
         self.version += 1
-        payload = self.snapshot()
-        for q in list(self._subs):
-            if q.full():  # a slow client only needs the newest state
-                q.get_nowait()
-            q.put_nowait(payload)
+        self._send(("state", self.snapshot()))
+
+    def chat_view(self, sub: str) -> dict:
+        return {"seq": self.chat_seq, "messages": [chat_line(m, sub) for m in self.chat]}
+
+    def say(self, sub: str, name: str, text: str) -> dict:
+        if sub not in self.members:
+            raise HTTPException(409, "join Listen Together first")
+        now = _now_ms()
+        recent = [t for t in self._said.get(sub, []) if now - t < _CHAT_WINDOW_MS]
+        if len(recent) >= _CHAT_BURST:
+            raise HTTPException(429, "slow down a little")
+        self._said[sub] = recent + [now]
+        self.chat_seq += 1
+        m = {"seq": self.chat_seq, "sub": sub, "name": name, "text": text, "at": now}
+        self.chat = (self.chat + [m])[-_CHAT_KEEP:]
+        self._send(("chat", m))
+        return m
 
     def join(self, sub: str, name: str) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=4)
+        q: asyncio.Queue = asyncio.Queue(maxsize=32)
         self._subs.add(q)
         m = self.members.setdefault(sub, {"name": name, "conns": 0, "since": _now_ms()})
         m["conns"] += 1
         if m["conns"] == 1:
             self.publish()
         else:
-            q.put_nowait(self.snapshot())
+            q.put_nowait(("state", self.snapshot()))
         return q
 
     def leave(self, sub: str, q: asyncio.Queue) -> None:
@@ -578,6 +611,7 @@ class Room:
                 if not self.members:
                     # Nobody left to hear it: hold the place rather than run on.
                     self._set_head(self.head(), False)
+                    self.chat, self._said = [], {}
                 self.publish()
 
     def apply(self, op: str, body: dict, tracks: list[dict], who: str) -> None:
@@ -1411,10 +1445,14 @@ def build_router(get_session, is_admin) -> APIRouter:
             q = ROOM.join(me["sub"], me["name"])
             try:
                 yield "retry: 3000\n\n"
+                # Whatever the room has said so far, so a (re)joining member is caught up.
+                yield f"event: chat_all\ndata: {json.dumps(ROOM.chat_view(me['sub']))}\n\n"
                 while True:
                     try:
-                        state = await asyncio.wait_for(q.get(), timeout=15)
-                        yield f"event: state\ndata: {json.dumps(state)}\n\n"
+                        kind, data = await asyncio.wait_for(q.get(), timeout=15)
+                        if kind == "chat":
+                            data = chat_line(data, me["sub"])
+                        yield f"event: {kind}\ndata: {json.dumps(data)}\n\n"
                     except asyncio.TimeoutError:
                         yield f": ping {_now_ms()}\n\n"
             finally:
@@ -1437,6 +1475,33 @@ def build_router(get_session, is_admin) -> APIRouter:
             tracks = [{k: t[k] for k in _QUEUE_FIELDS} for t in await track_rows(me, b.get("ids"))]
         ROOM.apply(op, b, tracks, me["name"])
         return ROOM.snapshot()
+
+    @router.get("/together/chat")
+    async def together_chat(request: Request):
+        """The room's chat so far. Members only: the room's talk is the room's."""
+        me = await caller(request)
+        if me["sub"] not in ROOM.members:
+            raise HTTPException(409, "join Listen Together first")
+        return ROOM.chat_view(me["sub"])
+
+    @router.post("/together/chat")
+    async def together_say(request: Request):
+        me = await caller(request)
+        b = await body_of(request)
+        text = _s(b.get("text"), _CHAT_MAX).strip()
+        if not text:
+            raise HTTPException(400, "say something")
+        m = ROOM.say(me["sub"], me["name"], text)
+        # An @mention reaches that person's phone, and doubles as an invite in.
+        people = await asyncio.to_thread(crcmz_identity.people)
+        tagged = [p for p in mentioned(text, people) if p["zitadel_id"] != me["sub"]]
+        if tagged:
+            notifications.route_in_background(
+                "mentions", f"{me['name']} mentioned you in Listen Together", f"“{text[:200]}”",
+                "/app/slap?join=together", exclude=me["sub"], only=[p["zitadel_id"] for p in tagged],
+                tag="slap-together-chat",
+                dm_text=f"🎧 {me['name']} mentioned you in Listen Together: “{text[:300]}”")
+        return chat_line(m, me["sub"])
 
     @router.post("/invite")
     async def invite_together(request: Request):

@@ -12,6 +12,7 @@ import * as lockScreen from '../../lib/mediaSession'
 import { nativeAudio, nativeAudioElement, nativeNowPlaying, onNativePlayingAtBoot, type Remote } from '../../lib/nativeAudio'
 import { artUrl, bumpStream, reportListen, streamUrl, together, type QueueItem, type Room, type TogetherOp, type Track } from '../../lib/slap'
 import { startActivity, stopActivity } from '../../lib/activity'
+import { chatAll, chatLine, resetChat, type ChatLine } from './roomChat'
 
 export type Repeat = 'off' | 'all' | 'one'
 export type Link = 'off' | 'connecting' | 'live' | 'retrying'
@@ -507,6 +508,12 @@ function open() {
   src.addEventListener('state', (e) => {
     try { applyRoom(JSON.parse((e as MessageEvent<string>).data) as Room, true) } catch { /* ignore a torn frame */ }
   })
+  src.addEventListener('chat_all', (e) => {
+    try { chatAll(JSON.parse((e as MessageEvent<string>).data)) } catch { /* ignore a torn frame */ }
+  })
+  src.addEventListener('chat', (e) => {
+    try { chatLine(JSON.parse((e as MessageEvent<string>).data) as ChatLine) } catch { /* ignore a torn frame */ }
+  })
   src.addEventListener('error', () => {
     if (es !== src) return
     if (src.readyState === EventSource.CLOSED) {
@@ -533,6 +540,7 @@ export function leaveTogether() {
   backoff = 0
   if (state.mode !== 'together') return
   stopActivity('together')
+  resetChat()
   unload()
   set({ mode: 'solo', room: null, link: 'off', playing: false, blocked: false })
   const item = current()
