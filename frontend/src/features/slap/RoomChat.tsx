@@ -1,6 +1,6 @@
 // The Listen Together room's chat: a floating button on every page while you're in
 // the room, opening a panel. The music never stops for it — the player lives outside.
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
@@ -8,7 +8,7 @@ import { ApiError } from '../../lib/http'
 import { useDesktop } from '../../lib/media'
 import { useSwipeDown } from '../../lib/gestures'
 import { usePlayer } from './player'
-import { say, setChatOpen, useRoomChat, type ChatLine } from './roomChat'
+import { say, setChatOpen, showChatInline, useRoomChat, type ChatLine } from './roomChat'
 
 const MAX = 500
 const time = (at: number) => new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -52,14 +52,30 @@ export function RoomChat() {
   )
 }
 
+/** The room chat inside the player, where song comments go when you listen alone. */
+export function RoomChatInline() {
+  const c = useRoomChat()
+  useEffect(() => showChatInline(), [])
+  return (
+    <section className="room-chat-inline" aria-labelledby="room-chat-inline-h">
+      <h3 className="room-chat-inline-h" id="room-chat-inline-h">Room chat</h3>
+      <p className="meta room-chat-who">Stays across every song, and clears when the session ends.</p>
+      <Lines lines={c.lines} />
+      <Composer />
+    </section>
+  )
+}
+
 function Lines({ lines }: { lines: ChatLine[] }) {
-  const end = useRef<HTMLDivElement>(null)
-  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }) }, [lines.length])
+  // Scroll the list, never the page: inside the player, scrollIntoView would drag the
+  // whole player down to the chat every time someone said something.
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => { const b = box.current; if (b) b.scrollTop = b.scrollHeight }, [lines.length])
   if (!lines.length) {
     return <div className="empty room-chat-empty"><p className="empty-title">Say something</p><p className="dim">Talk about what's playing. @name someone to ping their phone.</p></div>
   }
   return (
-    <div className="room-chat-lines" role="log" aria-live="polite" aria-label="Messages">
+    <div ref={box} className="room-chat-lines" role="log" aria-live="polite" aria-label="Messages">
       {lines.map((m, i) => {
         const prev = lines[i - 1]
         const first = !prev || prev.name !== m.name || m.at - prev.at > 5 * 60_000
@@ -70,12 +86,12 @@ function Lines({ lines }: { lines: ChatLine[] }) {
           </div>
         )
       })}
-      <div ref={end} />
     </div>
   )
 }
 
 function Composer() {
+  const id = useId()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   async function submit(e: FormEvent) {
@@ -89,9 +105,9 @@ function Composer() {
   }
   return (
     <form className="comment-form room-chat-form" onSubmit={submit}>
-      <label className="sr-only" htmlFor="room-chat-input">Message the room</label>
+      <label className="sr-only" htmlFor={id}>Message the room</label>
       <input
-        id="room-chat-input" className="input" value={text} onChange={(e) => setText(e.target.value)}
+        id={id} name="room-chat" className="input" value={text} onChange={(e) => setText(e.target.value)}
         placeholder="Message the room" maxLength={MAX} enterKeyHint="send" autoComplete="off"
       />
       <button type="submit" className="icon-btn btn-cyan" disabled={busy || !text.trim()} aria-label="Send"><Icon name="send" /></button>

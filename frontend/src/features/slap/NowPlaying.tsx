@@ -11,6 +11,7 @@ import { useDesktop } from '../../lib/media'
 import { useSwipeDown } from '../../lib/gestures'
 import { AddToPlaylist } from './AddToPlaylist'
 import { CommentBox, CommentThread } from './Comments'
+import { RoomChatInline } from './RoomChat'
 import {
   artUrl, findSources, fmtTime, names, replaceTrack, rerollStatus, sendComment, shareSong, sourceLink, slapName, slapNames, sendThumb, setFavorite, useLibrary, useSlapMe, useTrackComments, useTrackSocial,
   type Library, type QueueItem, type Source, type TrackSocial,
@@ -312,7 +313,7 @@ function PlayerBody({ s }: { s: PlayerState }) {
         </div>
         <Seek disabled={!item} />
         {s.blocked && <button type="button" className="btn btn-primary" onClick={toggle}>Tap to listen with everyone</button>}
-        {item && <TrackActions item={item} />}
+        {item && <TrackActions item={item} together={s.mode === 'together'} />}
         <button type="button" className="btn btn-ghost player-close" onClick={closePlayer}>
           <Icon name="close" />{s.mode === 'together' ? 'Leave and close player' : 'Stop and close player'}
         </button>
@@ -365,7 +366,7 @@ function MiniAddedBy({ id }: { id: string | undefined }) {
   return by.length ? <span className="miniplayer-by">· {names(by, 1)}</span> : null
 }
 
-function TrackActions({ item }: { item: QueueItem }) {
+function TrackActions({ item, together }: { item: QueueItem; together: boolean }) {
   const qc = useQueryClient()
   // Subscribe, don't snapshot: getQueryData never re-renders, so the heart used to
   // write the favourite but keep drawing the old state. It also loads the library when
@@ -453,8 +454,8 @@ function TrackActions({ item }: { item: QueueItem }) {
         })}
       </div>
       {rated.length > 0 && <p className="track-rated meta">{rated.join(' · ')}</p>}
-      <CommentBox item={t} />
-      <CommentThread trackId={item.id} tally={false} />
+      {/* Together, the room talks in one chat that runs across every song; alone, each song keeps its comments. */}
+      {together ? <RoomChatInline /> : <><CommentBox item={t} /><CommentThread trackId={item.id} tally={false} /></>}
     </div>
   )
 }

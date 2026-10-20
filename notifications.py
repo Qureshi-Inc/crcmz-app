@@ -50,6 +50,7 @@ KEEP_ROWS = 5000
 SOURCES: dict[str, str] = {
     "squad": "squad", "watch": "watch", "huddle": "huddle", "giveaway": "giveaway",
     "clips": "clips", "mentions": "slap", "movies": "watch", "notes": "huddle", "music": "slap",
+    "together": "slap",
 }
 # Personal categories: these can also DM the person on WhatsApp and Mattermost.
 DIRECT = {"mentions", "movies"}

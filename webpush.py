@@ -45,6 +45,7 @@ CATEGORIES: dict[str, str] = {
     "movies": "A movie is added to the library, and when it's ready to watch",
     "notes": "The notes from a Huddle you were in are ready",
     "music": "A song you shared is in the Slap library",
+    "together": "Listen Together: invites, and the room's chat while you're in it",
 }
 
 # We POST to whatever endpoint a browser gives us, so only real push services:

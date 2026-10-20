@@ -1459,6 +1459,7 @@ try {
       match: slapMatch({
         'GET /api/slap/together/events': roomEvents,
         'POST /api/slap/together/chat': (r) => { const b = r.request().postDataJSON(); said.push(b); return json(200, line(4, 'Moiz', b.text, true))(r) },
+        'POST /api/slap/together/leave': json(200, { ok: true }),
         // Joining the room says so on the presence board.
         'POST /api/activity/ping': json(200, { ok: true }),
         'POST /api/activity/clear': json(200, { ok: true }),
@@ -1483,16 +1484,29 @@ try {
     check('room chat: your own lines are marked as yours', (await page.locator('.room-chat-line[data-mine="true"]').count()) === 1
       && (await page.textContent('.room-chat-line[data-mine="true"]')).includes('You'))
     check('room chat: opening it clears the unread count', (await page.locator('.room-chat-badge').count()) === 0)
-    await page.fill('#room-chat-input', 'this one slaps')
+    await page.fill('.room-chat-sheet input[name="room-chat"]', 'this one slaps')
     await page.keyboard.press('Enter')
     await page.waitForFunction(() => document.querySelectorAll('.room-chat-line').length === 4)
     check('room chat: sending posts the line and clears the box', said.length === 1 && said[0].text === 'this one slaps'
-      && (await page.inputValue('#room-chat-input')) === '', JSON.stringify(said))
+      && (await page.inputValue('.room-chat-sheet input[name="room-chat"]')) === '', JSON.stringify(said))
     await shot(page, 'slap-375-room-chat')
     await axe(page, 'Room chat 375', '.room-chat-sheet')
     await tapTargets(page, 'Room chat sheet 375')
     await page.keyboard.press('Escape')
     await page.waitForSelector('.room-chat-sheet', { state: 'detached' })
+    // In the player, Together swaps the song's comments for the room chat.
+    await page.click('.miniplayer-open')
+    await page.waitForSelector('.sheet-player .room-chat-inline')
+    check('room chat: the player shows the room chat in place of song comments',
+      (await page.locator('.sheet-player .room-chat-inline .room-chat-line').count()) === 4
+      && (await page.locator('.sheet-player #slap-comment, .sheet-player .comment-thread').count()) === 0)
+    check('room chat: the player keeps the heart and reactions', (await page.locator('.sheet-player .reaction-btn').count()) > 0
+      && (await page.locator('.sheet-player button[aria-label$="favourites"]').count()) === 1)
+    await page.evaluate(() => document.querySelector('.sheet-player .room-chat-inline').scrollIntoView({ block: 'center' }))
+    await shot(page, 'slap-375-player-room-chat')
+    await axe(page, 'Player room chat 375', '.sheet-player')
+    await page.click('.sheet-player button[aria-label="Close player"]')
+    await page.waitForSelector('.sheet-player', { state: 'detached' })
     await page.click('.tabbar a:has-text("Squad")')
     await page.waitForFunction(() => location.pathname === '/app/' || location.pathname === '/app')
     check('room chat: the button stays on other pages, and so does the music', (await page.isVisible('.room-chat-fab')) && (await page.isVisible('.miniplayer-bar')))

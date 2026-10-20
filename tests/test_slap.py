@@ -622,6 +622,71 @@ def t_together_chat_routes():
         slap.ROOM.chat, slap.ROOM._said = [], {}
 
 
+def t_room_chat_alerts_everyone_in_the_room_without_flooding():
+    r = slap.Room()
+    qa, qb, qc = r.join("a", "Moiz"), r.join("b", "Zubair"), r.join("c", "Noor")
+    r.say("a", "Moiz", "first")
+    assert r.chat_audience("a") == ["b", "c"], "everyone but the sender"
+    r.say("a", "Moiz", "second")
+    assert r.chat_audience("a") == [], "one alert a minute stands in for a burst"
+    r._pinged.clear()
+    r.say("b", "Zubair", "replying")
+    assert r.chat_audience("a") == ["c"], "someone chatting right now is looking at it"
+    r._pinged.clear()
+    r.leave("c", qc)                      # a locked phone dropping its stream
+    assert "c" in r.chat_audience("a"), "a dropped stream still hears the room for a while"
+    r._pinged.clear()
+    r.left_for_good("c")                  # pressed Leave
+    assert "c" not in r.chat_audience("a")
+    r._pinged.clear()
+    assert r.chat_audience("a", skip={"b"}) == [], "a mention already told them"
+    r.dropped["c"] = slap._now_ms() - slap._CHAT_DROPPED_MS - 1
+    r._pinged.clear()
+    assert "c" not in r.chat_audience("x"), "the grace period runs out"
+    r.leave("a", qa); r.leave("b", qb)
+
+
+def t_together_chat_alerts_go_out_as_together():
+    import notifications as n
+    import webpush
+    assert "together" in n.SOURCES and "together" in webpush.CATEGORIES, "a category the inbox and push both accept"
+    sent: list[tuple] = []
+    orig = slap.notifications.route_in_background
+    slap.notifications.route_in_background = lambda *a, **k: sent.append((a, k))
+    try:
+        as_("200")
+        slap.ROOM.members["200"] = {"name": "Zubair", "conns": 1, "since": 0}
+        slap.ROOM.members["300"] = {"name": "Shahraiz", "conns": 1, "since": 0}
+        client.post("/api/slap/together/chat", json={"text": "turn it up"})
+        assert len(sent) == 1 and sent[0][0][0] == "together" and sent[0][1]["only"] == ["300"], sent
+        assert sent[0][1]["dms"] is False and sent[0][0][3] == "/app/slap?join=together", "push only, never a DM"
+        sent.clear()
+        slap.ROOM._pinged.clear()
+        client.post("/api/slap/together/chat", json={"text": "@moiz you too"})
+        cats = sorted((a[0], tuple(k["only"])) for a, k in sent)
+        assert cats == [("mentions", ("100",)), ("together", ("300",))], cats
+        assert client.post("/api/slap/together/leave").json() == {"ok": True}
+    finally:
+        slap.notifications.route_in_background = orig
+        slap.ROOM.members.clear()
+        slap.ROOM.chat, slap.ROOM._said, slap.ROOM._pinged, slap.ROOM._last_said = [], {}, {}, {}
+        slap.ROOM.dropped.clear()
+
+
+def t_an_invite_uses_a_real_category():
+    calls: list[tuple] = []
+    orig = slap.notifications.route
+    slap.notifications.route = lambda *a, **k: calls.append((a, k))
+    try:
+        as_("200")
+        r = client.post("/api/slap/invite", json={"name": "Moiz"})
+        assert r.status_code == 200 and r.json()["ok"], (r.status_code, r.text)
+        import notifications as n
+        assert calls and calls[0][0][0] in n.SOURCES, calls   # "slap" was not, so every invite raised
+    finally:
+        slap.notifications.route = orig
+
+
 def t_tools_registered():
     import assistant
     names = assistant.tool_names()

@@ -6,7 +6,7 @@
 //               command, so anyone in the room can drive it.
 import { useSyncExternalStore } from 'react'
 import { toast } from '../../components/toast'
-import { ApiError } from '../../lib/http'
+import { ApiError, request } from '../../lib/http'
 import { readLocal, writeLocal } from '../../lib/media'
 import * as lockScreen from '../../lib/mediaSession'
 import { nativeAudio, nativeAudioElement, nativeNowPlaying, onNativePlayingAtBoot, type Remote } from '../../lib/nativeAudio'
@@ -540,6 +540,8 @@ export function leaveTogether() {
   backoff = 0
   if (state.mode !== 'together') return
   stopActivity('together')
+  // Leaving on purpose ends the room's chat alerts now; a dropped stream keeps them a while.
+  void request('/api/slap/together/leave', { method: 'POST', quiet401: true }).catch(() => {})
   resetChat()
   unload()
   set({ mode: 'solo', room: null, link: 'off', playing: false, blocked: false })

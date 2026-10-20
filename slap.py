@@ -504,6 +504,9 @@ _CHAT_KEEP = 200        # lines the room remembers
 _CHAT_MAX = 500         # characters a line may hold
 _CHAT_BURST = 8         # lines one person may send per window
 _CHAT_WINDOW_MS = 10_000
+_CHAT_DROPPED_MS = 10 * 60_000   # a dropped stream still hears the chat this long
+_CHAT_ACTIVE_MS = 2 * 60_000     # said something this recently: they're looking at it
+_CHAT_PING_GAP_MS = 60_000       # one chat alert per person per minute, at most
 
 
 def chat_line(m: dict, sub: str) -> dict:
@@ -534,6 +537,11 @@ class Room:
         self.chat: list[dict] = []           # {seq, sub, name, text, at}
         self.chat_seq = 0
         self._said: dict[str, list[int]] = {}  # sub → recent send times (ms)
+        # Who hears about the chat while not looking. A locked phone can drop its stream,
+        # so someone who fell off recently still counts; pressing Leave ends that.
+        self.dropped: dict[str, int] = {}    # sub → when their last connection closed (ms)
+        self._pinged: dict[str, int] = {}    # sub → when we last pushed them a chat line
+        self._last_said: dict[str, int] = {}  # sub → when they last said something
 
     def head(self) -> float:
         if not self.playing:
@@ -584,17 +592,41 @@ class Room:
         if len(recent) >= _CHAT_BURST:
             raise HTTPException(429, "slow down a little")
         self._said[sub] = recent + [now]
+        self._last_said[sub] = now
         self.chat_seq += 1
         m = {"seq": self.chat_seq, "sub": sub, "name": name, "text": text, "at": now}
         self.chat = (self.chat + [m])[-_CHAT_KEEP:]
         self._send(("chat", m))
         return m
 
+    def left_for_good(self, sub: str) -> None:
+        """They pressed Leave: no more chat alerts, even if a stream is still closing."""
+        self.dropped.pop(sub, None)
+
+    def chat_audience(self, sender: str, skip: set[str] = frozenset()) -> list[str]:
+        """Who to push a new line to: the room, plus anyone who fell off recently.
+        Not the sender, not someone chatting right now (they can see it), and not
+        anyone pushed in the last minute — one alert stands in for a burst."""
+        now = _now_ms()
+        self.dropped = {k: t for k, t in self.dropped.items() if now - t < _CHAT_DROPPED_MS}
+        out = []
+        for sub in sorted(set(self.members) | set(self.dropped)):
+            if sub == sender or sub in skip:
+                continue
+            if now - self._last_said.get(sub, 0) < _CHAT_ACTIVE_MS:
+                continue
+            if now - self._pinged.get(sub, 0) < _CHAT_PING_GAP_MS:
+                continue
+            self._pinged[sub] = now
+            out.append(sub)
+        return out
+
     def join(self, sub: str, name: str) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=32)
         self._subs.add(q)
         m = self.members.setdefault(sub, {"name": name, "conns": 0, "since": _now_ms()})
         m["conns"] += 1
+        self.dropped.pop(sub, None)
         if m["conns"] == 1:
             self.publish()
         else:
@@ -608,10 +640,11 @@ class Room:
             m["conns"] -= 1
             if m["conns"] <= 0:
                 self.members.pop(sub, None)
+                self.dropped[sub] = _now_ms()
                 if not self.members:
                     # Nobody left to hear it: hold the place rather than run on.
                     self._set_head(self.head(), False)
-                    self.chat, self._said = [], {}
+                    self.chat, self._said, self._last_said, self._pinged = [], {}, {}, {}
                 self.publish()
 
     def apply(self, op: str, body: dict, tracks: list[dict], who: str) -> None:
@@ -1501,7 +1534,20 @@ def build_router(get_session, is_admin) -> APIRouter:
                 "/app/slap?join=together", exclude=me["sub"], only=[p["zitadel_id"] for p in tagged],
                 tag="slap-together-chat",
                 dm_text=f"🎧 {me['name']} mentioned you in Listen Together: “{text[:300]}”")
+        # Everyone else in the room hears about it too — on their phone, not as a DM.
+        if room := ROOM.chat_audience(me["sub"], skip={p["zitadel_id"] for p in tagged}):
+            notifications.route_in_background(
+                "together", f"{me['name']} · Listen Together", text[:200],
+                "/app/slap?join=together", exclude=me["sub"], only=room,
+                tag="slap-together-chat", dms=False)
         return chat_line(m, me["sub"])
+
+    @router.post("/together/leave")
+    async def together_leave(request: Request):
+        """Pressed Leave: stop the room's chat alerts now, not after the grace period."""
+        me = await caller(request)
+        ROOM.left_for_good(me["sub"])
+        return {"ok": True}
 
     @router.post("/invite")
     async def invite_together(request: Request):
@@ -1519,7 +1565,7 @@ def build_router(get_session, is_admin) -> APIRouter:
         if not target:
             return {"ok": False, "reason": "not found"}
         notifications.route(
-            "slap",
+            "together",
             f"{me['name']} wants to listen together",
             "Tap to join on Slap",
             url="/app/slap?join=together",

@@ -3086,3 +3086,8 @@ html[data-watchbar] .room-chat-fab { bottom: calc(var(--c-tabbar-h) + (var(--cal
 .room-chat-line[data-mine="true"] .room-chat-text { background: rgba(34, 230, 255, .16); }
 .room-chat-form { padding-top: var(--space-2); }
 .room-chat-form .input { flex: 1; min-width: 0; }
+/* The room chat inside the player, in place of a song's comments. */
+.room-chat-inline { display: flex; flex-direction: column; margin-top: var(--space-3); }
+.room-chat-inline-h { font: 800 var(--text-md, 1rem) / 1 var(--font-display); text-transform: uppercase; letter-spacing: var(--tracking-caps); margin: 0 0 var(--space-1); }
+.room-chat-inline .room-chat-lines { max-height: 320px; }
+.room-chat-inline .room-chat-empty { flex: none; padding: var(--space-3) 0; }

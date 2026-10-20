@@ -37,12 +37,20 @@ export function chatLine(m: ChatLine) {
   set({
     lines: [...chat.lines, m].slice(-KEEP),
     seq: m.seq,
-    unread: chat.open || m.mine ? chat.unread : chat.unread + 1,
+    unread: chat.open || inline > 0 || m.mine ? chat.unread : chat.unread + 1,
   })
 }
 
 export function resetChat() { set({ lines: [], seq: 0, unread: 0, open: false }) }
 export function setChatOpen(open: boolean) { set(open ? { open, unread: 0 } : { open }) }
+
+// The chat can also show inside the player. While it's on screen there, it's read.
+let inline = 0
+export function showChatInline(): () => void {
+  inline += 1
+  if (chat.unread) set({ unread: 0 })
+  return () => { inline -= 1 }
+}
 
 export async function say(text: string): Promise<void> {
   const m = await request<ChatLine>('/api/slap/together/chat', { body: { text } })
