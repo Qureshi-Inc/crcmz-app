@@ -557,6 +557,44 @@ try {
     await shot(page, 'not-found-375')
     await ctx.close()
   }
+  // The "Live now" banner. The API sends absolute URLs (/app/slap?join=together) because
+  // they double as deep links, but the router is mounted at basename /app — so a chip that
+  // passes one straight through resolves to /app/app/slap and lands on not-found.
+  {
+    const SESSIONS = { sessions: [
+      { type: 'slap', name: 'Interesting Soup', participant_count: 1, join_url: '/app/slap?join=together' },
+      { type: 'huddle', name: 'crcmz', participant_count: 2, join_url: '/app/huddle?room=crcmz' },
+      { type: 'watch', name: 'w1', participant_count: 2, join_url: '/app/watch/party' },
+    ] }
+    const { ctx, page } = await newPage({
+      width: 375, height: 800,
+      mocks: {
+        ...SLAP_BASE,
+        // A 401 anywhere marks the page signed out, which hides the banner entirely.
+        'GET /auth/settings/psn': json(200, { linked: true, online_id: 'Goopy' }),
+        'GET /api/activity': json(200, { sessions: [] }),
+        'GET /api/sessions/active': json(200, SESSIONS),
+        'GET /api/slap/together/events': sse(SLAP_ROOM),
+      },
+      match: slapMatch(),
+    })
+    await page.goto(`${BASE}/app/`)
+    await page.waitForSelector('.session-banner .session-chip')
+    const hrefs = await page.$$eval('.session-banner .session-chip', (els) => els.map((e) => e.getAttribute('href')))
+    check('Live now chips never double the /app basename', hrefs.length === 3 && hrefs.every((h) => h && !h.startsWith('/app/app')), hrefs.join(', '))
+    await page.click('.session-banner .session-chip[aria-label="Join Slap"]')
+    await page.waitForFunction(() => location.pathname !== '/app/')
+    await page.waitForSelector('.together-live', { timeout: 20_000 })
+    const u = new URL(page.url())
+    check('Join on the Slap chip opens Listen Together, not not-found',
+      u.pathname === '/app/slap' && (await page.textContent('h1')) !== 'Not here', `${u.pathname}${u.search} · ${await page.textContent('h1')}`)
+    check('a join link lands on the Together tab, in the room', u.searchParams.get('tab') === 'together', u.search)
+    // Already in the room: the banner stops offering you a Join for it.
+    await page.waitForTimeout(100)
+    const after = await page.$$eval('.session-banner .session-chip', (els) => els.map((e) => e.getAttribute('aria-label')))
+    check('no Join chip for the Together room you are already in', !after.includes('Join Slap'), after.join(', '))
+    await ctx.close()
+  }
   {
     const { ctx, page } = await newPage({ width: 1440, height: 900, mocks: { ...ADMIN_READS, 'GET /api/admin/check': json(200, { admin: true }) } })
     await ready(page, '/app/admin')

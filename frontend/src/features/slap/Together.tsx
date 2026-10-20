@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Icon } from '../../components/Icon'
 import { ErrorStrip, SkeletonRows } from '../../components/states'
 import { getJSON } from '../../lib/http'
-import { fmtTime, type Room } from '../../lib/slap'
+import { fmtTime, shareTogether, type Room } from '../../lib/slap'
 import { Art, QueueList, TogetherBanner } from './NowPlaying'
 import { joinTogether, setExpanded, shareMyQueue, usePlayer } from './player'
 
@@ -85,6 +85,7 @@ export function Together({ onBrowse }: { onBrowse: () => void }) {
             <div className="together-actions">
               <button type="button" className="btn btn-secondary" onClick={onBrowse}><Icon name="search" />Add from the library</button>
               <button type="button" className="btn btn-secondary" onClick={shareMyQueue} disabled={!s.queue.length}><Icon name="queue" />Start from my queue</button>
+              <button type="button" className="btn btn-secondary" onClick={() => void shareTogether()}><Icon name="link" />Share a join link</button>
             </div>
           </section>
           {r.queue.length > 0 && <div className="glass together-queue"><QueueList queue={r.queue} index={r.index} together level={2} /></div>}

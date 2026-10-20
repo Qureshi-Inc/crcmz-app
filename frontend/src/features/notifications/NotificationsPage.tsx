@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { routerPath } from '../../app/nav'
 import { useTitle } from '../../app/title'
 import { HelpLink } from '../../components/HelpLink'
 import { Icon, type IconName } from '../../components/Icon'
@@ -39,7 +40,7 @@ export function NotificationsPage() {
   }
   function open(n: Notice) {
     if (!n.read) markRead([n.id]).then(refresh).catch(() => {})
-    navigate(n.url.replace(/^\/app/, '') || '/')
+    navigate(routerPath(n.url))
   }
 
   return (

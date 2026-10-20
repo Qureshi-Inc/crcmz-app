@@ -43,12 +43,19 @@ export function SlapPage() {
   useEffect(() => {
     if (!params.has('join') || joinOnce.current) return
     joinOnce.current = true
-    if (params.get('join') === 'together') {
+    const together = params.get('join') === 'together'
+    if (together) {
       joinTogether()
       const inviteName = params.get('invite_name')
       if (inviteName) void request('/api/slap/invite', { body: { name: inviteName }, quiet401: true })
     }
-    setParams((p) => { const n = new URLSearchParams(p); n.delete('join'); n.delete('invite_name'); return n }, { replace: true })
+    setParams((p) => {
+      const n = new URLSearchParams(p)
+      n.delete('join'); n.delete('invite_name')
+      // Someone opening a join link should land in the room, not on Discover.
+      if (together) n.set('tab', 'together')
+      return n
+    }, { replace: true })
   }, [params, setParams])
 
   // ?song=<id>: auto-play that track once when the library loads.

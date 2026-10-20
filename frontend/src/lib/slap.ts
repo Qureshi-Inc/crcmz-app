@@ -2,6 +2,7 @@
 // the server holds the Jellyfin key and stamps every social write with the
 // caller's own Jellyfin name.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from '../components/toast'
 import { getJSON, request } from './http'
 
 export type Track = {
@@ -254,5 +255,28 @@ export function shareSong(t: { id: string; title: string; artist: string }) {
     void navigator.share({ title: `${t.title} · ${t.artist}`, url })
   } else {
     void navigator.clipboard.writeText(url)
+  }
+}
+
+/** The Listen Together room is one room for the whole squad, so its link is fixed. */
+export const TOGETHER_LINK = '/app/slap?join=together'
+
+/** Share a link that drops whoever opens it straight into Listen Together. */
+export async function shareTogether() {
+  const url = `${window.location.origin}${TOGETHER_LINK}`
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Listen Together on CRCMZ', text: "Come listen with me — we're in the same room.", url })
+      return
+    } catch (e) {
+      // Dismissing the sheet is not a failure; anything else falls back to the clipboard.
+      if ((e as DOMException)?.name === 'AbortError') return
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url)
+    toast('Link copied: whoever opens it joins the room', 'success')
+  } catch {
+    toast("Couldn't copy the link", 'error')
   }
 }

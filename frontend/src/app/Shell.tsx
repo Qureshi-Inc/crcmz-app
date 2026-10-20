@@ -24,7 +24,7 @@ import { current as nowPlaying, usePlayer } from '../features/slap/player'
 import { WatchPage } from '../features/watch/WatchPage'
 import { CallBar, useHuddleBar, useWatchBar } from '../features/watch/WatchBar'
 import { useWatchSelect } from '../features/watch/session'
-import { DESTS, MORE_ACCOUNT, SIDEBAR_FOOT, SIDEBAR_MAIN, destForPath, moreSquad, type DestId } from './nav'
+import { DESTS, MORE_ACCOUNT, SIDEBAR_FOOT, SIDEBAR_MAIN, destForPath, moreSquad, routerPath, type DestId } from './nav'
 import { useTabs } from './tabs'
 import { useSlapNames } from '../lib/slap'
 import { nativeShell, onShellGo, toShell } from '../lib/nativeShell'
@@ -112,7 +112,7 @@ export function Shell() {
         )}
         <UpdateStrip />
         {!desktop && <InstallStrip />}
-        {!signedOut && <SessionBanner inHuddle={huddleBar} inWatch={watchBar} />}
+        {!signedOut && <SessionBanner inHuddle={huddleBar} inWatch={watchBar} inTogether={player.mode === 'together'} />}
         <Outlet context={{ isAdmin, adminKnown: admin.isSuccess || admin.isError }} />
         {keepWatch && <WatchPage visible={onWatch} />}
       </main>
@@ -150,7 +150,7 @@ function useActivitySessions() {
   })
 }
 
-function SessionBanner({ inHuddle, inWatch }: { inHuddle: boolean; inWatch: boolean }) {
+function SessionBanner({ inHuddle, inWatch, inTogether }: { inHuddle: boolean; inWatch: boolean; inTogether: boolean }) {
   const q = useActiveSessions()
   const aq = useActivitySessions()
   const navigate = useNavigate()
@@ -161,11 +161,12 @@ function SessionBanner({ inHuddle, inWatch }: { inHuddle: boolean; inWatch: bool
   const sessions: ActiveSession[] = raw.filter((s) => {
     if (s.type === 'huddle' && inHuddle) return false
     if (s.type === 'watch' && inWatch) return false
+    if (s.type === 'slap' && inTogether) return false
     return true
   })
 
   // Add solo slap listeners from activity (if no Together session already showing)
-  const hasTogether = sessions.some((s) => s.type === 'slap')
+  const hasTogether = raw.some((s) => s.type === 'slap')
   if (!hasTogether) {
     const soloSlap = (aq.data?.sessions ?? []).filter((s) => s.type === 'slap')
     for (const s of soloSlap) {
@@ -183,13 +184,14 @@ function SessionBanner({ inHuddle, inWatch }: { inHuddle: boolean; inWatch: bool
         const who = s.type === 'huddle' || s.type === 'watch'
           ? `${s.participant_count} ${s.participant_count === 1 ? 'person' : 'people'}`
           : s.name
+        const to = routerPath(s.join_url)
         return (
           <Link
             key={`${s.type}-${s.name}`}
-            to={s.join_url}
+            to={to}
             className="session-chip"
             aria-label={s.invite_name ? `Listen together with ${s.name}` : `Join ${label}`}
-            onClick={s.invite_name ? () => { navigate(s.join_url) } : undefined}
+            onClick={s.invite_name ? () => { navigate(to) } : undefined}
           >
             <Icon name={s.type === 'huddle' ? 'huddle' : s.type === 'watch' ? 'watch' : 'slap'} />
             <span className="session-chip-label">

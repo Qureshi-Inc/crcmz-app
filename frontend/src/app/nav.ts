@@ -69,6 +69,20 @@ export function helpHref(id: DestId): string | null {
   return id === 'help' || id === 'getapp' ? null : `/help#${id}`
 }
 
+/**
+ * Turn an absolute in-app URL into a router path. The API and notifications send
+ * absolute URLs (`/app/slap?join=together`) because they also have to work as deep
+ * links, but the router is mounted at basename `/app`, so handing one straight to
+ * <Link to> would resolve to /app/app/slap and land on NotFound.
+ */
+export function routerPath(url: string): string {
+  if (!url.startsWith('/app')) return url
+  const rest = url.slice(4)
+  if (rest === '') return '/'
+  if (rest[0] === '?' || rest[0] === '#') return '/' + rest
+  return rest[0] === '/' ? rest : url
+}
+
 /** Which destination owns an in-app pathname (relative to /app). */
 export function destForPath(pathname: string): DestId | null {
   const p = pathname.replace(/\/+$/, '') || '/'
