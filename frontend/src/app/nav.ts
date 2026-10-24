@@ -51,8 +51,8 @@ export const DESTS: Record<DestId, Dest> = {
     blurb: 'Users, PSN accounts and service health.',
   },
   sounds: {
-    id: 'sounds', label: 'Sounds', path: '/sounds', icon: 'megaphone', classicHref: '/dashboard',
-    blurb: 'Upload audio clips and assign them to stream deck buttons.',
+    id: 'sounds', label: 'Soundboard', path: '/sounds', icon: 'megaphone', classicHref: '/dashboard',
+    blurb: 'Shared soundboard — upload clips and play them on the squad Pi.',
   },
 }
 
@@ -64,10 +64,10 @@ export const TAB_CHOICES: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giv
 export const DEFAULT_TABS: DestId[] = ['squad', 'slap', 'watch']
 /** More sheet, Squad group: every slot choice that isn't in the bar right now. */
 export const moreSquad = (tabs: DestId[]): DestId[] => TAB_CHOICES.filter((id) => !tabs.includes(id))
-export const MORE_ACCOUNT: DestId[] = ['notifications', 'sounds', 'settings', 'help', 'getapp', 'admin']
+export const MORE_ACCOUNT: DestId[] = ['notifications', 'settings', 'help', 'getapp', 'admin']
 /** Desktop sidebar (≥ 1024 px). */
-export const SIDEBAR_MAIN: DestId[] = ['squad', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'tourney', 'ask']
-export const SIDEBAR_FOOT: DestId[] = ['notifications', 'sounds', 'settings', 'help', 'getapp', 'admin']
+export const SIDEBAR_MAIN: DestId[] = ['squad', 'sounds', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'tourney', 'ask']
+export const SIDEBAR_FOOT: DestId[] = ['notifications', 'settings', 'help', 'getapp', 'admin']
 
 /** The ⓘ beside a page title: that page's section on the Help page. */
 export function helpHref(id: DestId): string | null {
