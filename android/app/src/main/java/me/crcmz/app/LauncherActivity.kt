@@ -65,6 +65,8 @@ class LauncherActivity : AppCompatActivity() {
     lateinit var web: WebView
         private set
     private lateinit var refresh: SwipeRefreshLayout
+    /** The page has a sheet or dialog open (Shell's `sheet`). */
+    var sheetOpen = false
     private lateinit var content: LinearLayout
     lateinit var root: FrameLayout
         private set
@@ -151,8 +153,9 @@ class LauncherActivity : AppCompatActivity() {
             setOnRefreshListener { web.reload(); postDelayed({ isRefreshing = false }, 800) }
             setProgressBackgroundColorSchemeColor(getColor(R.color.bg))
             setColorSchemeColors(getColor(R.color.accent))
-            // Only from the very top: a page that scrolls inside itself keeps its own pull.
-            setOnChildScrollUpCallback { _, _ -> web.scrollY > 0 }
+            // Only from the very top: a page that scrolls inside itself keeps its own pull. An
+            // open sheet scrolls inside itself and drags down to close, so it never reloads.
+            setOnChildScrollUpCallback { _, _ -> sheetOpen || web.scrollY > 0 }
         }
         shell = Shell(this) { path -> go(path) }
         content = LinearLayout(this).apply {

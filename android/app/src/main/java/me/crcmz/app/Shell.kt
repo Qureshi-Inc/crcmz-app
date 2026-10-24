@@ -62,8 +62,9 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
         return ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(on, off))
     }
 
-    /** From the page: {tabs, more, active, badge, hidden}. */
+    /** From the page: {tabs, more, active, badge, hidden, sheet}. */
     fun update(m: JSONObject) {
+        app.sheetOpen = m.optBoolean("sheet", false)
         fun items(key: String) = (0 until (m.optJSONArray(key)?.length() ?: 0)).mapNotNull { i ->
             val d = m.optJSONArray(key)!!.optJSONObject(i) ?: return@mapNotNull null
             Item(d.optString("id"), d.optString("label"), d.optString("path"), d.optString("group"))
