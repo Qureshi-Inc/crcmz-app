@@ -1391,7 +1391,7 @@ html[data-player] .toasts { bottom: calc(var(--c-tabbar-h) + var(--c-minibar-row
 .track-actions { display: flex; flex-direction: column; gap: var(--space-3); border-top: 1px solid var(--border-decorative); padding-top: var(--space-3); }
 .player-by { margin: var(--space-1) 0 0; }
 .player-by b, .miniplayer-by { color: var(--text); font-weight: 700; }
-.player-head-tools { display: flex; gap: var(--space-2); }
+.player-head-tools { display: flex; gap: var(--space-2); margin-left: auto; }
 .reroll-dialog { z-index: calc(var(--z-sheet) + 1); }
 .reroll-now { margin: 0 0 var(--space-3); }
 .reroll-now b { color: var(--text); }
