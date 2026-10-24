@@ -8,13 +8,13 @@ import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
 import { ApiError } from '../../lib/http'
 import { useDesktop } from '../../lib/media'
-import { useSwipeDown } from '../../lib/gestures'
+import { useSheetDrag } from '../../lib/gestures'
 import { AddToPlaylist } from './AddToPlaylist'
 import { CommentBox, CommentThread } from './Comments'
 import { RoomChatInline } from './RoomChat'
 import {
-  artUrl, findSources, fmtTime, names, replaceTrack, rerollStatus, sendComment, shareSong, sourceLink, slapName, slapNames, sendThumb, setFavorite, useLibrary, useSlapMe, useTrackComments, useTrackSocial,
-  type Library, type QueueItem, type Source, type TrackSocial,
+  artUrl, findSources, fmtTime, names, replaceTrack, rerollStatus, shareSong, sourceLink, slapNames, setFavorite, useLibrary, useTrackSocial,
+  type Library, type QueueItem, type Source,
 } from '../../lib/slap'
 import {
   clearUpcoming, closePlayer, current, cycleRepeat, jump, leaveTogether, move, next, prev, reloadTrack, remove, seek, setExpanded,
@@ -79,7 +79,7 @@ export function MiniPlayer({ variant }: { variant: 'bar' | 'sidebar' }) {
 export function PlayerSheet() {
   const s = usePlayer()
   const desktop = useDesktop()
-  const swipe = useSwipeDown(() => setExpanded(false))
+  const drag = useSheetDrag(() => setExpanded(false))
   const item = current(s)
   const [reroll, setReroll] = useState<QueueItem | null>(null)
   const [addTo, setAddTo] = useState<QueueItem | null>(null)
@@ -87,7 +87,7 @@ export function PlayerSheet() {
     <Dialog.Root open={s.expanded} onOpenChange={setExpanded}>
       <Dialog.Portal>
         <Dialog.Overlay className="scrim" />
-        <Dialog.Content className={desktop ? 'dialog player-dialog' : 'sheet sheet-player'} aria-describedby={undefined}>
+        <Dialog.Content ref={desktop ? undefined : drag} className={desktop ? 'dialog player-dialog' : 'sheet sheet-player'} aria-describedby={undefined}>
           {/* blurred art backdrop (mobile full-screen sheet only) */}
           {!desktop && item?.art && (
             <div
@@ -98,7 +98,7 @@ export function PlayerSheet() {
           )}
           {/* inner scroll wrapper on mobile; desktop dialog scrolls natively */}
           <div className={desktop ? undefined : 'player-scroll'}>
-            {!desktop && <div className="sheet-knob-row" {...swipe}><span className="sheet-knob" /></div>}
+            {!desktop && <div className="sheet-knob-row"><span className="sheet-knob" /></div>}
             <div className="sheet-title-row">
               <Dialog.Title className={desktop ? 'sheet-title' : 'sr-only'}>
                 {s.mode === 'together' ? 'Listen Together' : 'Now playing'}
@@ -123,7 +123,7 @@ export function PlayerSheet() {
                 </Dialog.Close>
               </div>
             </div>
-            <PlayerBody s={s} />
+            <PlayerBody s={s} onAdd={setAddTo} />
           </div>
           {reroll && <RerollDialog item={reroll} onClose={() => setReroll(null)} />}
           {addTo && <AddToPlaylist ids={[addTo.id]} title={addTo.title} open onOpenChange={(v) => { if (!v) setAddTo(null) }} />}
@@ -284,7 +284,7 @@ function RerollDialog({ item, onClose }: { item: QueueItem; onClose: () => void 
   )
 }
 
-function PlayerBody({ s }: { s: PlayerState }) {
+function PlayerBody({ s, onAdd }: { s: PlayerState; onAdd: (item: QueueItem) => void }) {
   const item = current(s)
   const queue = s.mode === 'together' ? s.room?.queue ?? [] : s.queue
   const index = s.mode === 'together' ? s.room?.index ?? -1 : s.index
@@ -294,10 +294,13 @@ function PlayerBody({ s }: { s: PlayerState }) {
       {/* Art lives outside player-main so desktop grid can put it in its own column */}
       <Art id={item?.art} size={600} className="slap-art player-art" />
       <div className="player-main">
-        <div className="player-meta">
-          <p className="player-title">{item?.title ?? 'Nothing playing'}</p>
-          <p className="player-artist">{item ? [item.artist, item.album].filter(Boolean).join(' · ') : s.mode === 'together' ? 'Add a track from Listen to start the room.' : 'Pick something from Listen.'}</p>
-          <AddedBy item={item} together={s.mode === 'together'} />
+        <div className="player-meta-row">
+          <div className="player-meta">
+            <p className="player-title">{item?.title ?? 'Nothing playing'}</p>
+            <p className="player-artist">{item ? [item.artist, item.album].filter(Boolean).join(' · ') : s.mode === 'together' ? 'Add a track from Listen to start the room.' : 'Pick something from Listen.'}</p>
+            <AddedBy item={item} together={s.mode === 'together'} />
+          </div>
+          {item && <SongButtons item={item} onAdd={() => onAdd(item)} />}
         </div>
         {/* Transport controls come before the seek bar (Apple Music / Spotify order) */}
         <div className="player-controls">
@@ -313,7 +316,7 @@ function PlayerBody({ s }: { s: PlayerState }) {
         </div>
         <Seek disabled={!item} />
         {s.blocked && <button type="button" className="btn btn-primary" onClick={toggle}>Tap to listen with everyone</button>}
-        {item && <TrackActions item={item} together={s.mode === 'together'} />}
+        {item && <TrackTalk item={item} together={s.mode === 'together'} />}
         <button type="button" className="btn btn-ghost player-close" onClick={closePlayer}>
           <Icon name="close" />{s.mode === 'together' ? 'Leave and close player' : 'Stop and close player'}
         </button>
@@ -344,8 +347,6 @@ function Seek({ disabled }: { disabled: boolean }) {
   )
 }
 
-const REACTIONS = ['🔥', '😂', '💀', '😍', '🫡']
-
 /** "Added by Noor" (from the picks playlists) and, in the room, who queued it. */
 function AddedBy({ item, together }: { item: QueueItem | null | undefined; together: boolean }) {
   const q = useTrackSocial(item?.id)
@@ -366,96 +367,47 @@ function MiniAddedBy({ id }: { id: string | undefined }) {
   return by.length ? <span className="miniplayer-by">· {names(by, 1)}</span> : null
 }
 
-function TrackActions({ item, together }: { item: QueueItem; together: boolean }) {
+/** Beside the title, like a native player: the heart keeps the song in your Favorites
+ *  playlist, the + puts it in any playlist you can edit. */
+function SongButtons({ item, onAdd }: { item: QueueItem; onAdd: () => void }) {
   const qc = useQueryClient()
   // Subscribe, don't snapshot: getQueryData never re-renders, so the heart used to
   // write the favourite but keep drawing the old state. It also loads the library when
   // the player was opened from a page that never fetched it.
-  const lib = useLibrary().data
-  const fav = lib?.tracks.find((t) => t.id === item.id)?.fav ?? false
-  const social = useTrackSocial(item.id)
-  const raw = social.data?.thumbs ?? { up: [], down: [], mine: 0 as const }
-  const thumbs = { ...raw, up: slapNames(raw.up), down: slapNames(raw.down) }
-  const me = useSlapMe().data?.slap_user?.toLowerCase()
-  const comments = useTrackComments(item.id).data?.comments ?? []
-  const [busy, setBusy] = useState<string | null>(null)
-
-  const t = { id: item.id, title: item.title, artist: item.artist, album: item.album }
-  const fail = (e: unknown) => toast(e instanceof ApiError && e.detail ? e.detail : "Slap didn't take that", 'error')
-  const key = ['slap', 'track', item.id]
+  const fav = useLibrary().data?.tracks.find((t) => t.id === item.id)?.fav ?? false
+  const mark = (on: boolean) =>
+    qc.setQueryData<Library>(['slap', 'library'], (d) => d && { ...d, tracks: d.tracks.map((x) => (x.id === item.id ? { ...x, fav: on } : x)) })
 
   function favourite() {
     const on = !fav
-    qc.setQueryData<Library>(['slap', 'library'], (d) => d && { ...d, tracks: d.tracks.map((x) => (x.id === item.id ? { ...x, fav: on } : x)) })
-    setFavorite(item.id, on).catch((e) => {
-      qc.setQueryData<Library>(['slap', 'library'], (d) => d && { ...d, tracks: d.tracks.map((x) => (x.id === item.id ? { ...x, fav: !on } : x)) })
-      fail(e)
-    })
+    mark(on)
+    setFavorite(item.id, on)
+      .then(() => {
+        toast(on ? 'Saved to Favorites' : 'Removed from Favorites', 'success')
+        void qc.invalidateQueries({ queryKey: ['slap', 'library'] })
+        void qc.invalidateQueries({ queryKey: ['slap', 'playlist'] })
+      })
+      .catch((e) => { mark(!on); toast(e instanceof ApiError && e.detail ? e.detail : "Slap didn't take that", 'error') })
   }
-  function rate(v: -1 | 1) {
-    const nv = thumbs.mine === v ? 0 : v
-    const before = qc.getQueryData<TrackSocial>(key)
-    qc.setQueryData<TrackSocial>(key, (d) => d && { ...d, thumbs: { ...d.thumbs, mine: nv } })
-    sendThumb(t, nv)
-      .then((th) => qc.setQueryData<TrackSocial>(key, (d) => ({ picked_by: d?.picked_by ?? [], thumbs: th })))
-      .catch((e) => { qc.setQueryData(key, before); fail(e) })
-  }
-  // Each emoji's reactors, from the thread; yours shows as pressed.
-  const reacted = new Map<string, { who: string[]; mine: boolean }>()
-  for (const c of comments) {
-    if (!c.is_reaction) continue
-    const r = reacted.get(c.text) ?? { who: [], mine: false }
-    const name = c.username.toLowerCase()
-    if (!r.who.includes(slapName(c.username))) r.who.push(slapName(c.username))
-    if (me && name === me) r.mine = true
-    reacted.set(c.text, r)
-  }
-  async function react(r: string) {
-    if (busy) return
-    if (reacted.get(r)?.mine) { toast(`You already reacted ${r}`, 'info'); return }
-    setBusy(r)
-    try {
-      await sendComment(t, r, true)
-      void qc.invalidateQueries({ queryKey: ['slap', 'social'] })
-    } catch (e) { fail(e) } finally { setBusy(null) }
-  }
-  const rated = [thumbs.up.length ? `👍 ${names(thumbs.up, 3)}` : '', thumbs.down.length ? `👎 ${names(thumbs.down, 3)}` : ''].filter(Boolean)
+  return (
+    <div className="player-song-btns">
+      <button type="button" className="icon-btn" onClick={onAdd} aria-label={`Add ${item.title} to a playlist`}>
+        <Icon name="plus" />
+      </button>
+      <button type="button" className="icon-btn fav-btn" onClick={favourite} aria-pressed={fav} data-on={fav}
+        aria-label={fav ? 'Remove from Favorites' : 'Save to Favorites'}>
+        <Icon name={fav ? 'heartFill' : 'heart'} />
+      </button>
+    </div>
+  )
+}
 
+function TrackTalk({ item, together }: { item: QueueItem; together: boolean }) {
+  const t = { id: item.id, title: item.title, artist: item.artist, album: item.album }
   return (
     <div className="track-actions">
-      <div className="track-actions-row">
-        <button type="button" className="icon-btn" onClick={favourite} aria-pressed={fav} aria-label={fav ? 'Remove from favourites' : 'Add to favourites'} data-on={fav}>
-          <Icon name={fav ? 'heartFill' : 'heart'} />
-        </button>
-        <button
-          type="button" className="icon-btn thumb-btn" onClick={() => rate(1)} aria-pressed={thumbs.mine === 1}
-          aria-label={`Thumbs up${thumbs.up.length ? `, ${thumbs.up.length} so far` : ''}`} title={thumbs.up.join(', ') || undefined}
-        >
-          <Icon name="thumbUp" />{thumbs.up.length > 0 && <span className="thumb-n num" aria-hidden="true">{thumbs.up.length}</span>}
-        </button>
-        <button
-          type="button" className="icon-btn thumb-btn" onClick={() => rate(-1)} aria-pressed={thumbs.mine === -1}
-          aria-label={`Thumbs down${thumbs.down.length ? `, ${thumbs.down.length} so far` : ''}`} title={thumbs.down.join(', ') || undefined}
-        >
-          <Icon name="thumbDown" />{thumbs.down.length > 0 && <span className="thumb-n num" aria-hidden="true">{thumbs.down.length}</span>}
-        </button>
-        <span className="track-actions-sep" />
-        {REACTIONS.map((r) => {
-          const x = reacted.get(r)
-          return (
-            <button
-              key={r} type="button" className="reaction-btn" onClick={() => void react(r)} disabled={busy === r}
-              aria-pressed={!!x?.mine} title={x ? x.who.join(', ') : undefined}
-              aria-label={`React ${r}${x ? `, ${x.who.length} so far${x.mine ? ', including you' : ''}` : ''}`}
-            >
-              <span aria-hidden="true">{r}</span>{x && <span className="reaction-n num" aria-hidden="true">{x.who.length}</span>}
-            </button>
-          )
-        })}
-      </div>
-      {rated.length > 0 && <p className="track-rated meta">{rated.join(' · ')}</p>}
       {/* Together, the room talks in one chat that runs across every song; alone, each song keeps its comments. */}
-      {together ? <RoomChatInline /> : <><CommentBox item={t} /><CommentThread trackId={item.id} tally={false} /></>}
+      {together ? <RoomChatInline /> : <><CommentThread trackId={item.id} /><CommentBox item={t} /></>}
     </div>
   )
 }

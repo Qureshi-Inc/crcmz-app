@@ -1,12 +1,13 @@
 // Slap comments: the @mention composer and one track's thread. Tagging someone
 // (@handle) reaches them in Notifications, on their phone, and as a WhatsApp and
 // Mattermost DM; the server works out who a handle is.
-import { useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { Icon } from '../../components/Icon'
 import { toast } from '../../components/toast'
 import { ApiError } from '../../lib/http'
 import { ago } from '../../lib/notifications'
-import { sendComment, slapName, useMentionable, useTrackComments, type Mentionable, type QueueItem, type SlapComment } from '../../lib/slap'
+import { sendComment, slapName, useMentionable, useSlapMe, useTrackComments, type Mentionable, type QueueItem, type SlapComment } from '../../lib/slap'
 
 /** The `@partial` right before the caret, if the person is typing a tag. */
 export function mentionQuery(text: string, caret: number): { start: number; q: string } | null {
@@ -69,7 +70,7 @@ export function MentionInput({ id, value, onChange, placeholder, disabled }: {
     <div className="mention-wrap">
       <input
         ref={ref} id={id} className="input" value={value} maxLength={500} placeholder={placeholder} disabled={disabled}
-        autoComplete="off" role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={listId}
+        autoComplete="off" role="combobox" aria-autocomplete="list" enterKeyHint="send" aria-expanded={open} aria-controls={listId}
         aria-activedescendant={open ? `${listId}-${pick}` : undefined}
         onChange={(e) => { onChange(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); setActive(0); setClosed(false) }}
         onKeyDown={onKey} onKeyUp={sync} onClick={sync} onBlur={() => setClosed(true)} onFocus={() => setClosed(false)}
@@ -88,9 +89,11 @@ export function MentionInput({ id, value, onChange, placeholder, disabled }: {
   )
 }
 
-/** The composer: post a comment, tell the poster who their tags reached. */
+/** The composer: post a comment, tell the poster who their tags reached. It shows in
+ *  the thread at once, then the server's copy replaces it. */
 export function CommentBox({ item, inputId = 'slap-comment', onPosted }: { item: Pick<QueueItem, 'id' | 'title' | 'artist' | 'album'>; inputId?: string; onPosted?: () => void }) {
   const qc = useQueryClient()
+  const me = useSlapMe().data?.slap_user ?? ''
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   async function submit(e: FormEvent) {
@@ -98,22 +101,29 @@ export function CommentBox({ item, inputId = 'slap-comment', onPosted }: { item:
     const body = text.trim()
     if (!body || busy) return
     setBusy(true)
+    const draft: SlapComment = { id: `draft-${Date.now()}`, username: me, title: item.title, artist: item.artist, text: body, is_reaction: false, created_at: new Date().toISOString() }
+    const threads = { queryKey: ['slap', 'social', 'listening/comments', `?track_id=${item.id}&limit=30`] }
+    qc.setQueriesData<{ comments: SlapComment[] }>(threads, (d) => d && { ...d, comments: [draft, ...d.comments] })
+    setText('')
     try {
       const r = await sendComment(item, body, false)
-      setText('')
       const who = r.mentioned ?? []
-      toast(who.length ? `Posted. Tagged ${who.join(', ')}.` : 'Comment posted', 'success')
-      void qc.invalidateQueries({ queryKey: ['slap', 'social'] })
+      if (who.length) toast(`Tagged ${who.join(', ')}`, 'success')
       onPosted?.()
     } catch (err) {
+      qc.setQueriesData<{ comments: SlapComment[] }>(threads, (d) => d && { ...d, comments: d.comments.filter((c) => c.id !== draft.id) })
+      setText(body)
       toast(err instanceof ApiError && err.detail ? err.detail : "Slap didn't take that", 'error')
-    } finally { setBusy(false) }
+    } finally {
+      setBusy(false)
+      void qc.invalidateQueries({ queryKey: ['slap', 'social'] })
+    }
   }
   return (
-    <form className="comment-form" onSubmit={submit}>
+    <form className="comment-form comment-compose" onSubmit={submit}>
       <label className="sr-only" htmlFor={inputId}>Comment on this track</label>
-      <MentionInput id={inputId} value={text} onChange={setText} placeholder="Say something… type @ to tag someone" disabled={busy} />
-      <button type="submit" className="btn btn-secondary" disabled={busy || !text.trim()}>Post</button>
+      <MentionInput id={inputId} value={text} onChange={setText} placeholder="Add a comment… @ to tag" disabled={busy} />
+      <button type="submit" className="icon-btn btn-cyan" disabled={busy || !text.trim()} aria-label="Post comment"><Icon name="send" /></button>
     </form>
   )
 }
@@ -124,41 +134,44 @@ function Rich({ text }: { text: string }) {
   return <>{parts.map((p, i) => (i % 2 ? <span key={i} className="mention-tag">{p}</span> : p))}</>
 }
 
-/** One track's thread: reactions summed up top, then comments and reactions newest first. */
-export function CommentThread({ trackId, limit = 8, tally = true }: { trackId: string; limit?: number; tally?: boolean }) {
+/** One track's comments, read like a chat: oldest at the top, yours on the right, the
+ *  newest in view. Old emoji reactions aren't shown. */
+export function CommentThread({ trackId, limit = 8 }: { trackId: string; limit?: number }) {
   const q = useTrackComments(trackId)
-  const all: SlapComment[] = q.data?.comments ?? []
-  const reactions = all.filter((c) => c.is_reaction)
-  const comments = all.slice(0, limit)
-  const counts = new Map<string, string[]>()
-  for (const r of reactions) counts.set(r.text, [...(counts.get(r.text) ?? []), slapName(r.username)])
+  const me = useSlapMe().data?.slap_user?.toLowerCase()
+  const [all, setAll] = useState(false)
+  const box = useRef<HTMLOListElement>(null)
+  const said = (q.data?.comments ?? []).filter((c) => !c.is_reaction)
+  const shown = (all ? said : said.slice(0, limit)).slice().reverse()
+  // Scroll the list, never the page (inside the player that would drag it down).
+  useEffect(() => { const b = box.current; if (b) b.scrollTop = b.scrollHeight }, [shown.length, trackId])
+  useEffect(() => setAll(false), [trackId])
 
-  if (q.isPending) return <p className="meta comment-thread-note">Loading comments…</p>
-  if (q.isError) return <p className="meta comment-thread-note">Couldn't load comments. <button type="button" className="link-btn" onClick={() => q.refetch()}>Try again</button></p>
   return (
-    <section className="comment-thread" aria-label="Comments on this track">
-      {tally && counts.size > 0 && (
-        <ul className="reaction-tally" aria-label="Reactions">
-          {[...counts].map(([emoji, who]) => (
-            <li key={emoji} className="reaction-chip" title={[...new Set(who)].join(', ')}>
-              <span aria-hidden="true">{emoji}</span><span className="num">{who.length}</span>
-              <span className="sr-only">{emoji} from {[...new Set(who)].join(', ')}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {comments.length ? (
-        <ol className="comment-list">
-          {comments.map((c) => (
-            <li key={c.id} className="comment-item" data-reaction={c.is_reaction}>
-              {c.is_reaction
-                ? <span className="comment-who">{slapName(c.username)} <span className="comment-react">reacted <span className="comment-emoji">{c.text}</span></span></span>
-                : <><span className="comment-who">{slapName(c.username)}</span><span className="comment-body"><Rich text={c.text} /></span></>}
-              <span className="meta num"><time dateTime={c.created_at}>{ago(toAt(c.created_at))}</time></span>
-            </li>
-          ))}
-        </ol>
-      ) : <p className="meta comment-thread-note">No comments on this one yet.</p>}
+    <section className="comment-thread" aria-labelledby={`comments-${trackId}`}>
+      <h3 className="comment-h" id={`comments-${trackId}`}>Comments{said.length > 0 && <span className="meta num"> {said.length}</span>}</h3>
+      {q.isPending ? <p className="meta comment-thread-note">Loading comments…</p>
+        : q.isError ? <p className="meta comment-thread-note">Couldn't load comments. <button type="button" className="link-btn" onClick={() => q.refetch()}>Try again</button></p>
+        : shown.length ? (
+          <>
+            {said.length > shown.length && <button type="button" className="link-btn comment-more" onClick={() => setAll(true)}>Show {said.length - shown.length} earlier</button>}
+            <ol ref={box} className="comment-list">
+              {shown.map((c, i) => {
+                const mine = !!me && c.username.toLowerCase() === me
+                const prev = shown[i - 1]
+                const first = !prev || prev.username !== c.username || toAt(c.created_at) - toAt(prev.created_at) > 5 * 60_000
+                return (
+                  <li key={c.id} className="comment-item" data-mine={mine} data-draft={c.id.startsWith('draft-')}>
+                    {first && (
+                      <span className="comment-who">{mine ? 'You' : slapName(c.username)} <time className="meta num" dateTime={c.created_at}>{ago(toAt(c.created_at))}</time></span>
+                    )}
+                    <span className="comment-body"><Rich text={c.text} /></span>
+                  </li>
+                )
+              })}
+            </ol>
+          </>
+        ) : <p className="meta comment-thread-note">No comments yet. Start it off.</p>}
     </section>
   )
 }

@@ -557,7 +557,7 @@ function Feed() {
 
 function Comments() {
   const q = useSocial<{ comments: Comment[] } | Comment[]>('listening/comments', { limit: 20 })
-  const list = (d: { comments: Comment[] } | Comment[]) => (Array.isArray(d) ? d : d.comments ?? [])
+  const list = (d: { comments: Comment[] } | Comment[]) => (Array.isArray(d) ? d : d.comments ?? []).filter((c) => !c.is_reaction)
   return (
     <Panel title="Comments" q={q} empty={(d) => (list(d).length ? null : 'No comments yet. Say something from the player.')}>
       {(d) => (

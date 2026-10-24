@@ -1370,13 +1370,17 @@ try {
     await page.click('.miniplayer-open')
     await page.waitForSelector('.sheet-player .player-controls')
     check('mini-player opens the player sheet', (await page.textContent('.sheet-player .player-title')).startsWith('Track'))
-    check('the player offers exactly one heart', (await page.locator('.sheet-player button[aria-label$="favourites"]').count()) === 1,
-      `${await page.locator('.sheet-player button[aria-label$="favourites"]').count()}`)
-    await page.click('.sheet-player button[aria-label="Add to favourites"]')
+    check('the player offers exactly one heart', (await page.locator('.sheet-player .fav-btn').count()) === 1,
+      `${await page.locator('.sheet-player .fav-btn').count()}`)
+    check('the heart and + sit with the title, by the controls', await page.evaluate(() => !!document.querySelector('.sheet-player .player-meta-row .fav-btn')
+      && !!document.querySelector('.sheet-player .player-meta-row button[aria-label^="Add "][aria-label$="to a playlist"]')))
+    check('no thumbs and no emoji reactions in the player', (await page.locator('.sheet-player .reaction-btn, .sheet-player .thumb-btn, .sheet-player [aria-label^="Thumbs"]').count()) === 0)
+    await page.click('.sheet-player button[aria-label="Save to Favorites"]')
     // The heart has to flip, not just fire the write — it used to read a cache snapshot
     // that never re-rendered, so it looked like hearting did nothing.
-    const flipped = await page.waitForSelector('.sheet-player button[aria-label="Remove from favourites"][data-on="true"]', { timeout: 5000 }).then(() => true).catch(() => false)
+    const flipped = await page.waitForSelector('.sheet-player button[aria-label="Remove from Favorites"][data-on="true"]', { timeout: 5000 }).then(() => true).catch(() => false)
     check('hearting fills the heart in', flipped)
+    check('hearting says it went to Favorites', await page.waitForSelector('.toast:has-text("Saved to Favorites")', { timeout: 3000 }).then(() => true).catch(() => false))
     const title = await page.textContent('.sheet-player .player-title')
     check('favourite POSTs once for the current track', favs.length === 1 && `Track ${favs[0].slice(1)}` === title, `${JSON.stringify(favs)} ${title} ${page.violations}`)
     await page.click('.sheet-player button[aria-label^="More for"]')
@@ -1388,10 +1392,33 @@ try {
       await page.textContent('.sheet-body'))
     await page.keyboard.press('Escape')
     await page.waitForSelector('.sheet-body .group-row', { state: 'detached' })
+    await page.click('.sheet-player .player-meta-row button[aria-label$="to a playlist"]')
+    check('the + opens the playlist picker', await page.waitForSelector('.sheet-body .group-row', { timeout: 3000 }).then(() => true).catch(() => false))
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.sheet-body .group-row', { state: 'detached' })
+    check('Escape closes only the picker, not the player', (await page.locator('.sheet-player').count()) === 1)
     await shot(page, 'slap-375-sheet')
     await axe(page, 'Slap player sheet 375', '.sheet-player')
-    await page.click('.sheet-player button[aria-label="Close player"]')
-    await page.waitForSelector('.sheet-player', { state: 'detached' })
+    // Dragging the sheet down follows the finger and closes it, like a native sheet.
+    const drag = (dy) => page.evaluate(async (dy) => {
+      const el = document.querySelector('.sheet-player')
+      const at = el.querySelector('.player-art') ?? el
+      const r = at.getBoundingClientRect()
+      const touch = (y) => new Touch({ identifier: 1, target: at, clientX: r.left + 20, clientY: y })
+      const fire = (type, y) => at.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: type === 'touchend' ? [] : [touch(y)], changedTouches: [touch(y)] }))
+      const y0 = r.top + 20
+      fire('touchstart', y0)
+      let moved = ''
+      for (let i = 1; i <= 10; i++) { fire('touchmove', y0 + (dy * i) / 10); await new Promise((f) => setTimeout(f, 16)); if (i === 5) moved = el.style.transform }
+      fire('touchend', y0 + dy)
+      return moved
+    }, dy)
+    const followed = await drag(60)
+    await page.waitForTimeout(450)
+    check('the player sheet follows a short drag, then springs back', /translateY\(\d/.test(followed) && (await page.locator('.sheet-player').count()) === 1, followed)
+    await drag(320)
+    check('dragging the player down closes it', await page.waitForSelector('.sheet-player', { state: 'detached', timeout: 3000 }).then(() => true).catch(() => false))
+    check('the mini-player stays after the drag', (await page.locator('.miniplayer-bar').count()) === 1)
 
     await page.click('.seg-tab:has-text("Together")')
     await page.waitForSelector('.together-who')
@@ -1500,8 +1527,8 @@ try {
     check('room chat: the player shows the room chat in place of song comments',
       (await page.locator('.sheet-player .room-chat-inline .room-chat-line').count()) === 4
       && (await page.locator('.sheet-player #slap-comment, .sheet-player .comment-thread').count()) === 0)
-    check('room chat: the player keeps the heart and reactions', (await page.locator('.sheet-player .reaction-btn').count()) > 0
-      && (await page.locator('.sheet-player button[aria-label$="favourites"]').count()) === 1)
+    check('room chat: the player keeps the heart, with no reactions', (await page.locator('.sheet-player .reaction-btn').count()) === 0
+      && (await page.locator('.sheet-player .fav-btn').count()) === 1)
     await page.evaluate(() => document.querySelector('.sheet-player .room-chat-inline').scrollIntoView({ block: 'center' }))
     await shot(page, 'slap-375-player-room-chat')
     await axe(page, 'Player room chat 375', '.sheet-player')
@@ -3404,24 +3431,19 @@ try {
     check('slap: posting says who the tag reached', (await page.locator('.toast:has-text("Tagged Noor Amin")').count()) === 1 && posted.length === 1 && posted[0].text === 'banger @nooramin40 listen' && posted[0].is_reaction === false, JSON.stringify(posted))
     check('slap: the box clears after posting', (await page.inputValue('#slap-comment')) === '')
     check('slap: the player sheet shows the track thread', (await page.locator('.sheet-player .comment-thread').count()) === 1)
-    await page.click('.sheet-player .reaction-btn >> nth=0')
-    await page.waitForTimeout(200)
-    check('slap: a reaction posts as a reaction', posted.length === 2 && posted[1].is_reaction === true && posted[1].text === '🔥', JSON.stringify(posted))
+    check('slap: comments read like a chat (name over a bubble)', (await page.locator('.sheet-player .comment-item .comment-body').count()) >= 1
+      && (await page.textContent('.sheet-player .comment-item .comment-who')).includes('zubair'))
     await axe(page, 'Slap sheet with thread 375', '.sheet-player')
     check('no unmocked writes and no page errors (Slap mentions)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 
-  // ── 19. Slap player: who added it, thumbs that remember, reactions you can see ──
+  // ── 19. Slap player: who added it; old emoji reactions stay out of sight ──
   {
-    const thumbed = []
     const mine = new Date((NOW - 120) * 1000).toISOString()
     const { ctx, page } = await newPage({
       width: 375, height: 800,
-      mocks: {
-        ...SLAP_BASE,
-        'POST /api/slap/thumb': (r) => { const b = r.request().postDataJSON(); thumbed.push(b.thumbs); return json(200, { up: b.thumbs === 1 ? ['zubair221b', 'moiz'] : ['zubair221b'], down: [], mine: b.thumbs })(r) },
-      },
+      mocks: SLAP_BASE,
       match: slapMatch({
         'POST /api/slap/listen/play': json(200, { ok: true }), 'POST /api/slap/listen/skip': json(200, { ok: true }),
         'GET /api/slap/social/listening/comments': json(200, { comments: [
@@ -3439,24 +3461,13 @@ try {
     await page.click('.miniplayer-open')
     await page.waitForSelector('.sheet-player .player-by')
     check('slap: the player says who added the track', (await page.textContent('.sheet-player .player-by')).includes('Added by noor and moose'))
-    const up = '.sheet-player button[aria-label^="Thumbs up"]'
-    check('slap: thumbs show how many and who', (await page.getAttribute(up, 'aria-label')) === 'Thumbs up, 1 so far' && (await page.textContent('.sheet-player .track-rated')).includes('zubair'))
-    const fire = '.sheet-player .reaction-btn >> nth=0'
-    check('slap: your reaction shows as pressed, with the count', (await page.getAttribute(fire, 'aria-pressed')) === 'true' && (await page.textContent(fire)).includes('2'))
-    check('slap: reactions show in the thread', (await page.locator('.sheet-player .comment-item[data-reaction="true"]').count()) === 2)
-    await page.click(up)
-    await page.waitForFunction((sel) => document.querySelector(sel)?.getAttribute('aria-pressed') === 'true', up.replace(' >> nth=0', ''))
-    check('slap: a thumb sticks and the tally follows the server', thumbed.join() === '1' && (await page.getAttribute(up, 'aria-label')) === 'Thumbs up, 2 so far')
-    await page.click(up)
-    await page.waitForFunction((sel) => document.querySelector(sel)?.getAttribute('aria-pressed') === 'false', up)
-    check('slap: pressing it again takes the thumb back', thumbed.join() === '1,0')
-    await page.click(fire)
-    await page.waitForSelector('.toast:has-text("already reacted")', { timeout: 3000 }).catch(() => {})
-    check('slap: a second identical reaction is not posted', (await page.locator('.toast:has-text("already reacted")').count()) === 1)
+    await page.waitForSelector('.sheet-player .comment-thread-note')
+    check('slap: old emoji reactions are not shown', (await page.locator('.sheet-player .comment-item').count()) === 0
+      && !(await page.textContent('.sheet-player')).includes('🔥') && (await page.locator('.sheet-player .track-rated').count()) === 0)
     await tapTargets(page, 'Slap player actions 375')
-    await shot(page, 'slap-375-thumbs')
+    await shot(page, 'slap-375-player-actions')
     await axe(page, 'Slap player actions 375', '.sheet-player')
-    check('no unmocked writes and no page errors (Slap thumbs)', page.violations.length === 0, page.violations.join(', '))
+    check('no unmocked writes and no page errors (Slap player)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }
 
@@ -3479,6 +3490,12 @@ try {
     await page.waitForFunction(() => location.pathname === '/app/slap')
     await page.waitForFunction(() => window.__shell.at(-1).active === 'slap')
     check('ios shell: a native tap routes in place and the app hears the new tab', true)
+    check('shell: no sheet open, pull-to-refresh allowed', (await page.evaluate(() => window.__shell.at(-1).sheet)) === false)
+    // Radix marks the body while a modal sheet is open; the Android app holds pull-to-refresh then.
+    await page.evaluate(() => document.body.setAttribute('data-scroll-locked', '1'))
+    check('shell: an open sheet tells the app', await page.waitForFunction(() => window.__shell.at(-1).sheet === true, null, { timeout: 3000 }).then(() => true).catch(() => false))
+    await page.evaluate(() => document.body.removeAttribute('data-scroll-locked'))
+    check('shell: closing it lets pull-to-refresh back', await page.waitForFunction(() => window.__shell.at(-1).sheet === false, null, { timeout: 3000 }).then(() => true).catch(() => false))
     check('no page errors (ios shell)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }

@@ -367,6 +367,59 @@ def _record_owner(pid: str, sub: str) -> None:
         logger.warning("slap: couldn't record playlist owner: %s", e)
 
 
+# Jellyfin only lets a playlist's owner add to it, and the API key can't skip that
+# check. The owner is whoever made it: the creator here, music-importer's admin for
+# the picks playlists. The API names no owner, so the first add finds it and it's kept.
+_jf_owner: dict[str, str] = {}
+
+
+async def add_to_playlist(pid: str, ids: list[str], caller_jf: str) -> None:
+    tried: list[str] = []
+    for uid in (_jf_owner.get(pid), caller_jf, *(u["id"] for u in (await _jf_users()).values())):
+        if not uid or uid in tried:
+            continue
+        tried.append(uid)
+        r = await _jf("POST", f"/Playlists/{pid}/Items", params={"ids": ",".join(ids), "userId": uid})
+        if r.status_code in (403, 404):
+            continue
+        _ok(r)
+        _jf_owner[pid] = uid
+        return
+    logger.warning("slap: no Jellyfin user may add to playlist %s", pid)
+    raise HTTPException(502, "the music library wouldn't add to that playlist")
+
+
+FAVORITES = "Favorites"
+_fav_locks: dict[str, asyncio.Lock] = {}
+
+
+def is_favorites(pid: str, name: str, sub: str | None = None) -> bool:
+    """A Favorites playlist made here; with `sub`, that person's own."""
+    owner = _owned().get(pid)
+    return name == FAVORITES and owner is not None and (sub is None or owner == sub)
+
+
+async def favorites_playlist(me: dict, seed: str | None = None) -> tuple[str | None, bool]:
+    """(the caller's Favorites playlist, just made). With `seed` it's made when missing,
+    holding that song and every song already hearted, so the two never disagree."""
+    async with _fav_locks.setdefault(me["sub"], asyncio.Lock()):
+        data = _ok(await _jf("GET", "/Items", params={
+            "userId": me["jf"]["id"], "IncludeItemTypes": "Playlist", "Recursive": "true"})) or {}
+        for p in data.get("Items", []):
+            if p.get("Id") and is_favorites(p["Id"], p.get("Name") or "", me["sub"]):
+                return p["Id"], False
+        if not seed:
+            return None, False
+        hearted = [t["id"] for t in await library_for(me["jf"]["id"]) if t["fav"] and t["id"] != seed]
+        made = _ok(await _jf("POST", "/Playlists", json={
+            "Name": FAVORITES, "Ids": [seed, *hearted][:_QUEUE_MAX], "UserId": me["jf"]["id"], "MediaType": "Audio"})) or {}
+        if not made.get("Id"):
+            raise HTTPException(502, "your Favorites playlist wasn't created")
+        _record_owner(made["Id"], me["sub"])
+        _jf_owner[made["Id"]] = me["jf"]["id"]
+        return made["Id"], True
+
+
 def _names_of(me: dict) -> set[str]:
     p = me["person"]
     return {n.casefold() for n in (me["jf"]["name"], p.get("username"), p.get("mm_username"),
@@ -1028,6 +1081,9 @@ def build_router(get_session, is_admin) -> APIRouter:
                       "art": p["Id"] if (p.get("ImageTags") or {}).get("Primary") else None,
                       "editable": can_edit(me, p["Id"], p.get("Name") or "")}
                      for p in data.get("Items", []) if p.get("Id")]
+        # Everyone has a Favorites; show only yours, first.
+        playlists = [p for p in playlists if not is_favorites(p["id"], p["name"]) or is_favorites(p["id"], p["name"], me["sub"])]
+        playlists.sort(key=lambda p: not is_favorites(p["id"], p["name"], me["sub"]))
         return {"tracks": tracks, "playlists": playlists}
 
     @router.get("/playlists/{pid}")
@@ -1055,14 +1111,18 @@ def build_router(get_session, is_admin) -> APIRouter:
         if not pid:
             raise HTTPException(502, "the playlist wasn't created")
         _record_owner(pid, me["sub"])
+        _jf_owner[pid] = me["jf"]["id"]
         return {"id": pid, "name": name}
 
-    async def editable(me: dict, pid: str) -> None:
+    async def editable(me: dict, pid: str) -> str:
+        """The playlist's name, once the caller may edit it."""
         info = _ok(await _jf("GET", f"/Items/{check_id(pid)}", params={"userId": me["jf"]["id"]})) or {}
         if info.get("Type") != "Playlist":
             raise HTTPException(404, "not found")
-        if not can_edit(me, pid, info.get("Name") or ""):
+        name = info.get("Name") or ""
+        if not can_edit(me, pid, name):
             raise HTTPException(403, "that's someone else's playlist")
+        return name
 
     @router.post("/playlists/{pid}/items")
     async def playlist_add(pid: str, request: Request):
@@ -1071,18 +1131,26 @@ def build_router(get_session, is_admin) -> APIRouter:
         ids = [t["id"] for t in await track_rows(me, (await body_of(request)).get("ids"))]
         if not ids:
             raise HTTPException(400, "no playable tracks")
-        _ok(await _jf("POST", f"/Playlists/{pid}/Items",
-                      params={"ids": ",".join(ids), "userId": me["jf"]["id"]}))
+        await add_to_playlist(pid, ids, me["jf"]["id"])
         return {"ok": True, "added": len(ids)}
 
     @router.post("/playlists/{pid}/remove")
     async def playlist_remove(pid: str, request: Request):
         me = await caller(request)
-        await editable(me, pid)
+        name = await editable(me, pid)
         entries = [e for e in (await body_of(request)).get("entries") or [] if isinstance(e, str) and _ID.match(e)]
         if not entries:
             raise HTTPException(400, "nothing to remove")
+        # Taking a song out of your Favorites takes the heart off it too.
+        unheart = []
+        if is_favorites(pid, name, me["sub"]):
+            items = _ok(await _jf("GET", f"/Playlists/{pid}/Items", params={"userId": me["jf"]["id"]})) or {}
+            unheart = [i["Id"] for i in items.get("Items", []) if i.get("PlaylistItemId") in entries and i.get("Id")]
         _ok(await _jf("DELETE", f"/Playlists/{pid}/Items", params={"entryIds": ",".join(entries)}))
+        for tid in unheart:
+            _ok(await _jf("DELETE", f"/UserFavoriteItems/{tid}", params={"userId": me["jf"]["id"]}))
+        if unheart:
+            _forget(f"lib:{me['jf']['id']}")
         return {"ok": True}
 
     @router.delete("/playlists/{pid}")
@@ -1094,15 +1162,29 @@ def build_router(get_session, is_admin) -> APIRouter:
 
     @router.post("/favorites/{tid}")
     async def fav_on(tid: str, request: Request):
+        # The heart also keeps the song in your own Favorites playlist.
         me = await caller(request)
-        _ok(await _jf("POST", f"/UserFavoriteItems/{check_id(tid)}", params={"userId": me["jf"]["id"]}))
+        if not await track_rows(me, [check_id(tid)]):
+            raise HTTPException(404, "not found")
+        pid, made = await favorites_playlist(me, seed=tid)
+        if pid and not made:
+            items = _ok(await _jf("GET", f"/Playlists/{pid}/Items", params={"userId": me["jf"]["id"]})) or {}
+            if not any(i.get("Id") == tid for i in items.get("Items", [])):
+                await add_to_playlist(pid, [tid], me["jf"]["id"])
+        _ok(await _jf("POST", f"/UserFavoriteItems/{tid}", params={"userId": me["jf"]["id"]}))
         _forget(f"lib:{me['jf']['id']}")
-        return {"ok": True, "fav": True}
+        return {"ok": True, "fav": True, "playlist": pid}
 
     @router.delete("/favorites/{tid}")
     async def fav_off(tid: str, request: Request):
         me = await caller(request)
         _ok(await _jf("DELETE", f"/UserFavoriteItems/{check_id(tid)}", params={"userId": me["jf"]["id"]}))
+        pid, _ = await favorites_playlist(me)
+        if pid:
+            items = _ok(await _jf("GET", f"/Playlists/{pid}/Items", params={"userId": me["jf"]["id"]})) or {}
+            entries = [i["PlaylistItemId"] for i in items.get("Items", []) if i.get("Id") == tid and i.get("PlaylistItemId")]
+            if entries:
+                _ok(await _jf("DELETE", f"/Playlists/{pid}/Items", params={"entryIds": ",".join(entries)}))
         _forget(f"lib:{me['jf']['id']}")
         return {"ok": True, "fav": False}
 

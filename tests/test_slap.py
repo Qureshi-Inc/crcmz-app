@@ -26,6 +26,10 @@ USERS = [{"Name": "moiz", "Id": "a" * 32}, {"Name": "shahraiz", "Id": "b" * 32},
 # "<name>'s picks" contents, and playlists only the who-added test turns on.
 PLAYLIST_ITEMS = {"4" * 32: ["1" * 32], "5" * 32: ["1" * 32], "6" * 32: ["1" * 32, "3" * 32]}
 EXTRA_PLAYLISTS: list[dict] = []
+# Jellyfin 10.11 lets only a playlist's owner add to it; music-importer's admin (here
+# babefaze) owns the picks playlists.
+PLAYLIST_OWNER = {"4" * 32: "e" * 32}
+FAVS: dict[str, set[str]] = {}
 IMPORTER_LOG: list[tuple] = []
 SSO = "505ce9d1-d916-42fa-86ca-673ef241d7df"
 # Made by Zitadel sign-ins to Jellyfin; the plugin stores the GUID with dashes.
@@ -102,10 +106,32 @@ class Handler(BaseHTTPRequestHandler):
                 {"Id": "4" * 32, "Name": "moiz's picks", "ChildCount": 2},
                 {"Id": "5" * 32, "Name": "shahraiz's picks", "ChildCount": 1}, *EXTRA_PLAYLISTS]})
         if p.startswith("/Playlists/") and p.endswith("/Items") and method == "GET":
-            return self._send(200, {"Items": [{"Id": i} for i in PLAYLIST_ITEMS.get(p.split("/")[2], [])]})
+            return self._send(200, {"Items": [{"Id": i, "PlaylistItemId": f"{n:032x}"}
+                                              for n, i in enumerate(PLAYLIST_ITEMS.get(p.split("/")[2], []), 1)]})
+        if p.startswith("/Playlists/") and p.endswith("/Items") and method == "POST":
+            pid = p.split("/")[2]
+            if PLAYLIST_OWNER.get(pid, q.get("userId")) != q.get("userId"):
+                return self._send(403)
+            PLAYLIST_ITEMS.setdefault(pid, []).extend(q["ids"].split(","))
+            return self._send(204)
+        if p.startswith("/Playlists/") and p.endswith("/Items") and method == "DELETE":
+            pid, gone = p.split("/")[2], q["entryIds"].split(",")
+            PLAYLIST_ITEMS[pid] = [i for n, i in enumerate(PLAYLIST_ITEMS.get(pid, []), 1) if f"{n:032x}" not in gone]
+            return self._send(204)
+        if p == "/Playlists" and method == "POST":
+            pid = f"{len(EXTRA_PLAYLISTS) + 10:x}".rjust(32, "f")
+            EXTRA_PLAYLISTS.append({"Id": pid, "Name": body["Name"]})
+            PLAYLIST_OWNER[pid] = body["UserId"]
+            PLAYLIST_ITEMS[pid] = list(body["Ids"])
+            return self._send(200, {"Id": pid})
+        if p.startswith("/UserFavoriteItems/"):
+            mine = FAVS.setdefault(q["userId"], set())
+            (mine.add if method == "POST" else mine.discard)(p.split("/")[2])
+            return self._send(200, {})
         if p.startswith("/Items/") and method == "GET":
             iid = p.split("/")[2]
-            names = {"4" * 32: "moiz's picks", "5" * 32: "shahraiz's picks"}
+            names = {"4" * 32: "moiz's picks", "5" * 32: "shahraiz's picks",
+                     **{x["Id"]: x["Name"] for x in EXTRA_PLAYLISTS}}
             if iid in names:
                 return self._send(200, {"Id": iid, "Name": names[iid], "Type": "Playlist"})
             return self._send(200, {"Id": iid, "Name": "Breezeblocks", "Type": "Audio", "Artists": ["alt-J"],
@@ -685,6 +711,53 @@ def t_an_invite_uses_a_real_category():
         assert calls and calls[0][0][0] in n.SOURCES, calls   # "slap" was not, so every invite raised
     finally:
         slap.notifications.route = orig
+
+
+def t_adding_to_a_playlist_someone_else_owns_in_jellyfin():
+    # moiz's picks belongs to music-importer's admin; adding as moiz got a 403 (shown as a 502).
+    as_("100")
+    slap._jf_owner.clear()
+    PLAYLIST_ITEMS["4" * 32] = ["1" * 32]
+    r = client.post(f"/api/slap/playlists/{'4' * 32}/items", json={"ids": ["3" * 32]})
+    assert r.status_code == 200, r.text
+    assert PLAYLIST_ITEMS["4" * 32] == ["1" * 32, "3" * 32], PLAYLIST_ITEMS["4" * 32]
+    JF_LOG.clear()
+    client.post(f"/api/slap/playlists/{'4' * 32}/items", json={"ids": ["1" * 32]})
+    adds = [q["userId"] for m, p, q, b, h in JF_LOG if m == "POST" and p.endswith("/Items")]
+    assert adds == ["e" * 32], f"the owner is remembered: {adds}"
+    PLAYLIST_ITEMS["4" * 32] = ["1" * 32]
+
+
+def t_the_heart_keeps_your_favorites_playlist():
+    before = list(EXTRA_PLAYLISTS)
+    try:
+        as_("100")   # Breezeblocks (1…) is already hearted
+        r = client.post(f"/api/slap/favorites/{'3' * 32}")
+        assert r.status_code == 200, r.text
+        pid = r.json()["playlist"]
+        assert PLAYLIST_OWNER[pid] == "a" * 32, "made as you, so Jellyfin lets you add to it"
+        assert PLAYLIST_ITEMS[pid] == ["3" * 32, "1" * 32], "starts with this song and what you'd hearted"
+        assert "3" * 32 in FAVS["a" * 32]
+        client.post(f"/api/slap/favorites/{'3' * 32}")
+        assert PLAYLIST_ITEMS[pid].count("3" * 32) == 1, "hearting twice doesn't add twice"
+        assert sum(x["Name"] == "Favorites" for x in EXTRA_PLAYLISTS) == 1, "one per person"
+        assert client.delete(f"/api/slap/favorites/{'3' * 32}").status_code == 200
+        assert PLAYLIST_ITEMS[pid] == ["1" * 32] and "3" * 32 not in FAVS["a" * 32]
+
+        lists = client.get("/api/slap/library").json()["playlists"]
+        assert lists[0]["id"] == pid and lists[0]["editable"], lists
+        as_("400")   # mazino has a Favorites of their own, and never sees moiz's
+        mz = client.post(f"/api/slap/favorites/{'1' * 32}").json()["playlist"]
+        names = [(p["id"], p["name"]) for p in client.get("/api/slap/library").json()["playlists"]]
+        assert (mz, "Favorites") in names and (pid, "Favorites") not in names, names
+        assert client.post(f"/api/slap/playlists/{pid}/items", json={"ids": ["3" * 32]}).status_code == 403
+
+        as_("100")   # taking it out of the playlist takes the heart off
+        FAVS["a" * 32].add("1" * 32)
+        assert client.post(f"/api/slap/playlists/{pid}/remove", json={"entries": [f"{1:032x}"]}).status_code == 200
+        assert PLAYLIST_ITEMS[pid] == [] and "1" * 32 not in FAVS["a" * 32]
+    finally:
+        EXTRA_PLAYLISTS[:] = before
 
 
 def t_tools_registered():
