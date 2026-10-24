@@ -83,6 +83,10 @@ services:
       - "127.0.0.1:3001:3000"   # the host only: the Stream Deck uses app.crcmz.me + CRCMZ_MACHINE_TOKEN
     volumes:
       - psn_data:/data
+      # Audio soundboard: SSH key for psaudio sync + ragnaros profile/icon dirs
+      - /home/opti3/.ssh/id_ed25519_aicontroller:/run/secrets/psaudio_key:ro
+      - /home/opti3/.config/ragnaros/profiles:/data/ragnaros-profiles:rw
+      - /home/opti3/.config/ragnaros/assets/icons:/data/ragnaros-icons:rw
     restart: unless-stopped
 
 volumes:

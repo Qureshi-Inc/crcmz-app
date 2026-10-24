@@ -9506,6 +9506,88 @@ def api_order_personal_board(req: BoardOrderRequest, request: Request):
     return {"status": "saved", "buttons": mine}
 
 
+
+# ── Audio Soundboard ─────────────────────────────────────────────────────────
+import audio_sounds as _audio_sounds
+
+
+@app.get("/api/audio-sounds")
+def api_audio_sounds_list(request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    sounds = _audio_sounds.list_sounds()
+    return {"sounds": sounds, "builtins": list(_audio_sounds.BUILTIN_SOUNDS.keys())}
+
+
+@app.post("/api/audio-sounds/upload")
+async def api_audio_sounds_upload(request: Request, file: UploadFile = File(...)):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    name = (file.filename or "").rsplit(".", 1)[0]
+    name = name[:40].replace(" ", "_").replace("-", "_")
+    import re as _re_mod
+    name = _re_mod.sub(r"[^a-zA-Z0-9_-]", "", name) or "sound"
+    if name in _audio_sounds.BUILTIN_SOUNDS:
+        name = f"custom_{name}"
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (20 MB max)")
+    try:
+        _audio_sounds.save_sound(name, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "uploaded", "name": name}
+
+
+@app.delete("/api/audio-sounds/{name}")
+def api_audio_sounds_delete(name: str, request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    try:
+        _audio_sounds.delete_sound(name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "deleted"}
+
+
+@app.post("/api/audio-sounds/{name}/play")
+def api_audio_sounds_play(name: str, request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    ok = _audio_sounds.play_sound(name)
+    if not ok:
+        raise HTTPException(status_code=502, detail="Playback failed — check psaudio connection")
+    return {"status": "playing"}
+
+
+@app.get("/api/audio-sounds/deck")
+def api_audio_sounds_deck_get(request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    return _audio_sounds.get_deck()
+
+
+class DeckAssignRequest(BaseModel):
+    slots: dict[str, dict | None]
+
+
+@app.post("/api/audio-sounds/deck")
+def api_audio_sounds_deck_set(req: DeckAssignRequest, request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    try:
+        _audio_sounds.set_deck(req.slots)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "saved", "deck": _audio_sounds.get_deck()}
+
+
 _VIEW_COOKIE = "crcmz_view"   # "classic": app.crcmz.me/ opens the classic dashboard
 
 

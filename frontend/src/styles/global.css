@@ -3026,7 +3026,7 @@ html[data-native-shell] .tabbar { display: none; }
   font-size: var(--text-sm); font-weight: 600; color: var(--text); text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out);
 }
-@media (hover: hover) { .session-chip:hover { background: rgba(34, 230, 255, .16); border-color: var(--cyan); } }
+@media (hover: hover) { .session-chip:hover { background: rgba(34, 230, 255, .16); border-color: var(--neon-cyan); } }
 .session-chip .nav-icon { width: 16px; height: 16px; flex: none; color: var(--cyan-text); }
 .session-chip-label { display: flex; flex-direction: column; line-height: 1.15; }
 .session-chip-type { font-size: var(--text-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--interactive-text); }
@@ -3045,7 +3045,7 @@ html[data-native-shell] .tabbar { display: none; }
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 @media (hover: hover) { .pill:hover { background: rgba(34, 230, 255, .08); color: var(--text); } }
-.pill-active { background: rgba(34, 230, 255, .15); border-color: var(--cyan); color: var(--cyan-text); }
+.pill-active { background: rgba(34, 230, 255, .15); border-color: var(--neon-cyan); color: var(--cyan-text); }
 
 /* ── Listen Together room chat: a floating button on every page while in the room ── */
 .room-chat-fab {
@@ -3092,3 +3092,68 @@ html[data-watchbar] .room-chat-fab { bottom: calc(var(--c-tabbar-h) + (var(--cal
 .room-chat-inline-h { font: 800 var(--text-md, 1rem) / 1 var(--font-display); text-transform: uppercase; letter-spacing: var(--tracking-caps); margin: 0 0 var(--space-1); }
 .room-chat-inline .room-chat-lines { max-height: 320px; }
 .room-chat-inline .room-chat-empty { flex: none; padding: var(--space-3) 0; }
+
+/* ── Audio Sounds page ──────────────────────────────────────────────────────── */
+.audio-section { padding: var(--space-4); margin-bottom: var(--space-4); border-radius: var(--radius-lg); }
+.audio-section .section-h2 { margin-bottom: var(--space-3); }
+
+/* Deck grid: 5+5 layout matching physical stream deck rows */
+.deck-grid {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-2);
+}
+.deck-slot {
+  display: flex; flex-direction: column; gap: 2px; align-items: center;
+  padding: var(--space-2) var(--space-1); border-radius: var(--radius-md);
+  background: var(--glass); border: 1px solid var(--glass-border);
+  cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  min-height: 64px;
+}
+@media (hover: hover) { .deck-slot:hover { border-color: var(--neon-cyan); background: rgba(34, 230, 255, .08); } }
+.deck-slot--empty { opacity: .45; }
+.deck-slot--pending { border-color: var(--neon-gold) !important; }
+.deck-slot--home { cursor: default; opacity: .5; }
+.deck-slot--home:hover { border-color: var(--glass-border) !important; background: var(--glass) !important; }
+.deck-slot-index { font-size: 9px; font-weight: 800; color: var(--text-dim); letter-spacing: .04em; line-height: 1; }
+.deck-slot-name { font-size: var(--text-xs); font-weight: 700; color: var(--text); text-align: center; word-break: break-word; line-height: 1.2; }
+.deck-slot-tag { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .06em; line-height: 1; }
+
+/* Upload zone */
+.upload-zone {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  padding: var(--space-6) var(--space-4); border-radius: var(--radius-lg);
+  border: 1px dashed var(--border-control); cursor: pointer; text-align: center;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+@media (hover: hover) { .upload-zone:hover { border-color: var(--neon-cyan); background: rgba(34, 230, 255, .04); } }
+.upload-zone--drag { border-color: var(--neon-cyan); background: rgba(34, 230, 255, .08); }
+.upload-zone--busy { pointer-events: none; opacity: .6; }
+.upload-zone .nav-icon { width: 32px; height: 32px; color: var(--text-dim); }
+.upload-zone-label { font-size: var(--text-sm); font-weight: 600; color: var(--text); }
+.upload-zone-hint { font-size: var(--text-xs); color: var(--text-dim); }
+
+/* Sound cards grid */
+.audio-sounds-grid { display: flex; flex-direction: column; gap: var(--space-2); }
+.audio-sound-card {
+  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3);
+  border-radius: var(--radius-md); background: rgba(18, 10, 38, .5);
+  border: 1px solid var(--border-decorative);
+}
+.audio-sound-name { flex: 1; font-size: var(--text-sm); font-weight: 700; color: var(--text); word-break: break-all; }
+.audio-sound-meta { font-size: var(--text-xs); color: var(--text-dim); flex-shrink: 0; }
+.audio-sound-actions { display: flex; gap: var(--space-1); flex-shrink: 0; }
+.btn-icon--active { color: var(--cyan-text); }
+
+/* Sound picker dialog */
+.picker-section-label { font-size: var(--text-xs); font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--text-dim); margin: 0 0 var(--space-2); }
+.picker-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.picker-item {
+  padding: var(--space-1) var(--space-3); border-radius: var(--radius-pill);
+  background: var(--sheet); border: 1px solid var(--border-control);
+  font-size: var(--text-sm); font-weight: 600; color: var(--text-dim); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+@media (hover: hover) { .picker-item:hover { background: rgba(34, 230, 255, .08); color: var(--text); } }
+.picker-item--active { background: rgba(34, 230, 255, .15); border-color: var(--neon-cyan); color: var(--cyan-text); }
+
+/* btn-sm variant */
+.btn.btn-sm { min-height: 32px; padding: 0 var(--space-3); font-size: var(--text-sm); }
