@@ -176,6 +176,16 @@ def main():
         assert not (a.PROFILES_DIR / ".soundboard.yaml.tmp").exists()
     check("deck assignment rewrites only keys 0-8 of soundboard.yaml", deck_yaml_is_lossless)
 
+    def deck_yaml_keeps_pinned_keys():
+        prof = a.PROFILES_DIR / "soundboard.yaml"
+        prof.write_text(SOUNDBOARD_YAML.replace('keys:\n', 'keys:\n  "5":\n    icon: icons/aibuddy_off.png\n'
+                        '    action: /x/aibuddy press\n    release: /x/aibuddy release\n    pinned: true\n', 1))
+        a.set_deck({str(i): {"type": "builtin", "name": "combo"} for i in range(9)})
+        text = prof.read_text()
+        assert "aibuddy press" in text and "release: /x/aibuddy release" in text, text
+        assert text.count('"5":') == 1, text
+    check("pinned keys inside 0-8 are never rewritten", deck_yaml_keeps_pinned_keys)
+
     def deck_yaml_from_nothing():
         (a.PROFILES_DIR / "soundboard.yaml").unlink()
         a.set_deck({"0": {"type": "builtin", "name": "coin"}})

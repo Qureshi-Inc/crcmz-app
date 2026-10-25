@@ -409,7 +409,8 @@ def _write_soundboard_yaml(deck: dict) -> None:
     Everything else in the file — knobs, strip, layers, key 9, and the icon or
     extra fields a slot was given in Deck Manager while its sound stays the
     same — is kept verbatim, so editing the deck here never undoes changes
-    made elsewhere.
+    made elsewhere. A key marked `pinned: true` (e.g. the AI BUDDY keys) is
+    never touched, even inside 0-8.
     """
     _ensure_dirs()
     prof = PROFILES_DIR / "soundboard.yaml"
@@ -423,6 +424,10 @@ def _write_soundboard_yaml(deck: dict) -> None:
 
     entries: dict[str, list[str]] = {}
     for i in range(9):
+        prev = old.get(str(i))
+        if prev and any(l.strip() == "pinned: true" for l in prev):
+            entries[str(i)] = [l for l in prev if l.strip()]
+            continue
         info = deck["slots"].get(str(i))
         if info is None:
             entries[str(i)] = [f'  "{i}":', f"    icon: {_icon_for(None)}"]
