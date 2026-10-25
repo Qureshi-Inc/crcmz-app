@@ -46,6 +46,13 @@ STORES: dict[str, list[str] | None] = {
     "/data/assistant_facts.db": ["squad_facts", "person_profile"],
     "/data/soundboard.json": ["soundboard_buttons"],
     "/data/soundboard_personal.json": ["soundboard_buttons", "person_profile"],
+    # The audio soundboard (/app/sounds): the clips are WAV files mirrored to the PS5
+    # audio Pi, and the board file only holds their order, labels and who added them.
+    "/data/audio-sounds": None,          # the clip audio itself; not something to read out
+    "/data/audio-board.json": None,      # order/labels of those clips (the app's own UI)
+    "/data/audio-deck.json": None,       # which clip sits on which stream-deck key
+    "/data/ragnaros-profiles": None,     # the stream deck's page files, mounted for writing
+    "/data/ragnaros-icons": None,        # generated key icons
     "/data/users": ["squad_members", "squad_roster", "person_profile"],
     "/data/game_history.db": ["games_played", "game_sessions", "person_profile",
                               "platform_overview"],

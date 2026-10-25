@@ -2039,6 +2039,106 @@ def call_tool(name: str, args: dict) -> tuple[str, bool]:
 #  - Every call appended to write_audit
 #  - Message prefixed [via <name>] 🤖 so recipients see the source
 
+# ── Trip hub (trip.crcmz.me) ────────────────────────────────────────────────
+# The CRCMZ BOYZ Calgary trip lives in its own app; trip_hub GETs the Trip AI's
+# read tools from it. Nothing here can change the trip.
+import trip_hub as _trip  # noqa: E402
+
+_NO_ARGS = {"type": "object", "properties": {}, "required": []}
+
+
+@tool("trip_overview",
+      "The squad's Calgary trip (trip.crcmz.me): dates, countdown, the stay at a glance, the "
+      "days, who is on the expense Split, food/buds counts and Calgary local time. Call this "
+      "first for any trip question.", _NO_ARGS)
+def _trip_overview() -> Any:
+    return _trip.read("get_overview")
+
+
+@tool("trip_days",
+      "The trip itinerary: each day's plan (title, bullets, who lands when). One day or all.",
+      {"type": "object", "properties": {"day": {"type": "string", "description":
+       "Optional: Thu/Fri/Sat/Sun, a date like 2026-10-30, or an index 0-3."}}, "required": []})
+def _trip_days(day: str = "") -> Any:
+    return _trip.read("get_days", {"day": str(day)[:20]} if day else None)
+
+
+@tool("trip_stay",
+      "The trip's Airbnb: area, check-in/out, beds, house rules, amenities and the price "
+      "breakdown.", _NO_ARGS)
+def _trip_stay() -> Any:
+    return _trip.read("get_stay")
+
+
+@tool("trip_split",
+      "The trip's shared expenses (the Split): every expense, settlements, each person's net "
+      "balance and who owes whom. All amounts CAD.", _NO_ARGS)
+def _trip_split() -> Any:
+    return _trip.read("get_split")
+
+
+@tool("trip_flights",
+      "Everyone's flights to and from the trip: person, flight number, route, date/time, "
+      "status, gate, terminal.", _NO_ARGS)
+def _trip_flights() -> Any:
+    return _trip.read("get_flights")
+
+
+@tool("trip_packing",
+      "The trip's shared packing list: items, category, who is bringing each and whether it's "
+      "packed.", _NO_ARGS)
+def _trip_packing() -> Any:
+    return _trip.read("get_packing")
+
+
+@tool("trip_poll",
+      "The trip's group poll: the active question with votes (who voted for what) and past "
+      "polls.", _NO_ARGS)
+def _trip_poll() -> Any:
+    return _trip.read("get_poll")
+
+
+@tool("trip_weather",
+      "Calgary forecast for the trip days (high/low C, precipitation %, wind).", _NO_ARGS)
+def _trip_weather() -> Any:
+    return _trip.read("get_weather")
+
+
+@tool("trip_food_search",
+      "Search the trip's halal food guide (~100 Calgary/Airdrie spots) by words in the name, "
+      "area or note, and/or a category id from trip_overview.",
+      {"type": "object", "properties": {
+          "query": {"type": "string", "description": "Words to match, e.g. 'shawarma' or 'Airdrie'."},
+          "category": {"type": "string", "description": "Optional category id (see trip_overview foodCats)."},
+          "limit": {"type": "integer", "description": "1-40, default 12."}}, "required": []})
+def _trip_food_search(query: str = "", category: str = "", limit: int = 12) -> Any:
+    args = {"query": str(query)[:80], "limit": max(1, min(int(limit or 12), 40))}
+    if category:
+        args["category"] = str(category)[:40]
+    return _trip.read("search_food", args)
+
+
+@tool("trip_buds_search",
+      "Search the trip's cannabis menu (flower, pre-rolls, edibles) with THC/CBD %, price per "
+      "gram, stock and rating.",
+      {"type": "object", "properties": {
+          "query": {"type": "string", "description": "Words in the product or brand name."},
+          "type": {"type": "string", "enum": ["flower", "preroll", "edible"]},
+          "in_stock_only": {"type": "boolean"},
+          "max_price": {"type": "number", "description": "Max price per gram, CAD."},
+          "limit": {"type": "integer", "description": "1-40, default 12."}}, "required": []})
+def _trip_buds_search(query: str = "", type: str = "", in_stock_only: bool = False,  # noqa: A002
+                      max_price: float = 0, limit: int = 12) -> Any:
+    args: dict = {"query": str(query)[:80], "limit": max(1, min(int(limit or 12), 40))}
+    if type in ("flower", "preroll", "edible"):
+        args["type"] = type
+    if in_stock_only:
+        args["in_stock_only"] = True
+    if max_price:
+        args["max_price"] = max(0.0, float(max_price))
+    return _trip.read("search_buds", args)
+
+
 _WRITE_TOOLS: dict[str, dict[str, Any]] = {}
 
 # The app's private Ask AI chat (signed in, one person's own thread) may use these write
