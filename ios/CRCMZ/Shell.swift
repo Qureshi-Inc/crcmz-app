@@ -115,6 +115,7 @@ final class Shell: NSObject, UITabBarDelegate {
         case "watch": return "play.tv.fill"
         case "huddle": return "video.fill"
         case "coach": return "brain.head.profile"
+        case "sounds": return "megaphone.fill"
         case "ask": return "sparkles"
         case "notifications": return "bell.fill"
         case "portal": return "link"

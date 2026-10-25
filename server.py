@@ -9511,34 +9511,129 @@ def api_order_personal_board(req: BoardOrderRequest, request: Request):
 import audio_sounds as _audio_sounds
 
 
-@app.get("/api/audio-sounds")
-def api_audio_sounds_list(request: Request):
+def _sounds_user(request: Request) -> dict:
     session = _get_session(request)
     if not session:
         raise HTTPException(status_code=401, detail="Sign in required")
-    sounds = _audio_sounds.list_sounds()
-    return {"sounds": sounds, "builtins": list(_audio_sounds.BUILTIN_SOUNDS.keys())}
+    return session
+
+
+def _sounds_who(session: dict) -> str:
+    return session.get("name") or session.get("preferred_username") or (session.get("email") or "").split("@")[0] or "Someone"
+
+
+@app.get("/api/audio-sounds")
+def api_audio_sounds_list(request: Request, fresh: bool = False):
+    _sounds_user(request)
+    return _audio_sounds.board(fresh=fresh)
+
+
+_CLIP_MAX_BYTES = 20 * 1024 * 1024
 
 
 @app.post("/api/audio-sounds/upload")
-async def api_audio_sounds_upload(request: Request, file: UploadFile = File(...)):
-    session = _get_session(request)
-    if not session:
-        raise HTTPException(status_code=401, detail="Sign in required")
-    name = (file.filename or "").rsplit(".", 1)[0]
-    name = name[:40].replace(" ", "_").replace("-", "_")
-    import re as _re_mod
-    name = _re_mod.sub(r"[^a-zA-Z0-9_-]", "", name) or "sound"
-    if name in _audio_sounds.BUILTIN_SOUNDS:
-        name = f"custom_{name}"
-    data = await file.read()
-    if len(data) > 20 * 1024 * 1024:
+async def api_audio_sounds_upload(request: Request, file: UploadFile = File(...),
+                                  label: str = Form(""), source: str = Form("upload")):
+    session = _sounds_user(request)
+    data = await file.read(_CLIP_MAX_BYTES + 1)
+    if len(data) > _CLIP_MAX_BYTES:
         raise HTTPException(status_code=400, detail="File too large (20 MB max)")
+    stem = (label or (file.filename or "").rsplit(".", 1)[0] or "clip")
     try:
-        _audio_sounds.save_sound(name, data)
+        r = await asyncio.to_thread(_audio_sounds.add_sound, data, name=stem, label=label,
+                                    source="record" if source == "record" else "upload", by=_sounds_who(session))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"status": "uploaded", "name": name}
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"status": "uploaded", **r}
+
+
+class SoundLinkRequest(BaseModel):
+    url: str
+    label: str = ""
+
+
+_MYINSTANTS_MP3 = _re.compile(r"""(?:data-url|onclick="play\()['"=\s]*['"]([^'"]+\.mp3)""")
+_AUDIO_EXT = (".mp3", ".wav", ".ogg", ".m4a", ".aac", ".opus", ".flac", ".webm", ".mp4")
+
+
+async def _fetch_clip(url: str) -> tuple[bytes, str]:
+    """A clip from a link: a myinstants.com page, or a direct audio/video file."""
+    import httpx
+    try:
+        u = httpx.URL(url.strip())
+    except httpx.InvalidURL:
+        raise HTTPException(status_code=400, detail="That isn't a link")
+    if u.scheme not in ("http", "https") or not u.host:
+        raise HTTPException(status_code=400, detail="Paste an http(s) link")
+    headers = {"User-Agent": "Mozilla/5.0 (CRCMZ soundboard)"}
+    async with _safe_fetch.client(timeout=20.0, follow_redirects=True, headers=headers) as c:
+        target = u
+        if u.host.endswith("myinstants.com") and not u.path.lower().endswith(_AUDIO_EXT):
+            page = await c.get(u)
+            m = _MYINSTANTS_MP3.search(page.text)
+            if not m:
+                raise HTTPException(status_code=400, detail="No sound found on that MyInstants page")
+            target = u.join(m.group(1))
+        async with c.stream("GET", target) as r:
+            if r.status_code != 200:
+                raise HTTPException(status_code=400, detail=f"The link answered {r.status_code}")
+            kind = r.headers.get("content-type", "")
+            if not (kind.startswith(("audio/", "video/")) or target.path.lower().endswith(_AUDIO_EXT)
+                    or kind == "application/octet-stream"):
+                raise HTTPException(status_code=400, detail="That link isn't an audio file or a MyInstants page")
+            buf = bytearray()
+            async for chunk in r.aiter_bytes():
+                buf += chunk
+                if len(buf) > _CLIP_MAX_BYTES:
+                    raise HTTPException(status_code=400, detail="That clip is over 20 MB")
+    stem = target.path.rstrip("/").rsplit("/", 1)[-1].rsplit(".", 1)[0] or "clip"
+    return bytes(buf), stem
+
+
+@app.post("/api/audio-sounds/link")
+async def api_audio_sounds_link(req: SoundLinkRequest, request: Request):
+    session = _sounds_user(request)
+    try:
+        data, stem = await _fetch_clip(req.url)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Couldn't download that link")
+    try:
+        r = await asyncio.to_thread(_audio_sounds.add_sound, data, name=req.label or stem, label=req.label,
+                                    source="link", by=_sounds_who(session), url=req.url.strip()[:300])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"status": "added", **r}
+
+
+class SoundOrderRequest(BaseModel):
+    order: list[str]
+
+
+@app.put("/api/audio-sounds/order")
+def api_audio_sounds_order(req: SoundOrderRequest, request: Request):
+    _sounds_user(request)
+    _audio_sounds.reorder(req.order[:500])
+    return _audio_sounds.board()
+
+
+class SoundLabelRequest(BaseModel):
+    label: str
+
+
+@app.patch("/api/audio-sounds/{name}")
+def api_audio_sounds_rename(name: str, req: SoundLabelRequest, request: Request):
+    _sounds_user(request)
+    try:
+        _audio_sounds.rename(name, req.label)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "saved"}
 
 
 @app.delete("/api/audio-sounds/{name}")

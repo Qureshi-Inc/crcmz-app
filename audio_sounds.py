@@ -1,6 +1,7 @@
-"""Audio soundboard: user-uploadable sounds for the stream deck and psaudio.
+"""Audio soundboard: the squad's shared clip board, played through psaudio.
 
 Files:
+  /data/audio-board.json               — board order, labels, who added each clip
   /data/audio-sounds/<name>.wav        — uploaded audio files
   /data/audio-deck.json                — deck slot assignments (slots 0-8)
   /data/ragnaros-profiles/soundboard.yaml — written when deck changes
@@ -17,6 +18,9 @@ import json
 import logging
 import re
 import subprocess
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -140,6 +144,7 @@ def delete_sound(name: str) -> None:
         _ssh(["delete_sound", name])
     except Exception as exc:
         logger.warning("psaudio delete error for %s: %s", name, exc)
+    _forget(name)
     # Remove from deck if assigned
     deck = get_deck()
     changed = False
@@ -161,6 +166,156 @@ def play_sound(name: str) -> bool:
     except Exception as exc:
         logger.warning("play_sound error for %s: %s", name, exc)
         return False
+
+
+# ── Shared board ──────────────────────────────────────────────────────────────
+# The clip library is the Pi itself: clips added here, in Deck Manager or on the
+# stream deck all land in the same place, so everyone sees one board. This file
+# only adds what the Pi doesn't keep: the board's order, display labels and who
+# added each clip.
+BOARD_FILE = Path("/data/audio-board.json")
+MAX_CLIP_SECONDS = 60
+_board_lock = threading.Lock()
+_pi_cache: dict = {"t": 0.0, "names": None}
+
+
+def _pi_sounds(fresh: bool = False) -> list[str]:
+    """Clip names on the Pi (cached 15 s); local copies if the Pi is unreachable."""
+    if not fresh and _pi_cache["names"] is not None and time.monotonic() - _pi_cache["t"] < 15:
+        return _pi_cache["names"]
+    try:
+        r = _ssh(["sounds"])
+        if r.returncode == 0:
+            names = [l.strip() for l in r.stdout.decode(errors="replace").splitlines()
+                     if l.strip() and not l.lower().startswith("available") and _valid_name(l.strip())]
+            _pi_cache.update(t=time.monotonic(), names=names)
+            return names
+        logger.warning("psaudio sounds failed: %s", r.stderr[:200])
+    except Exception as exc:
+        logger.warning("psaudio sounds error: %s", exc)
+    if _pi_cache["names"] is not None:
+        return _pi_cache["names"]
+    return [f.stem for f in sorted(AUDIO_DIR.glob("*.wav"))]
+
+
+def _load_board() -> dict:
+    try:
+        data = json.loads(BOARD_FILE.read_text())
+        if isinstance(data, dict):
+            return {"order": [n for n in data.get("order", []) if isinstance(n, str)],
+                    "labels": dict(data.get("labels") or {}), "meta": dict(data.get("meta") or {})}
+    except (OSError, ValueError):
+        pass
+    return {"order": [], "labels": {}, "meta": {}}
+
+
+def _save_board(board: dict) -> None:
+    tmp = BOARD_FILE.with_name(f".{BOARD_FILE.name}.tmp")
+    tmp.write_text(json.dumps(board, indent=1))
+    tmp.replace(BOARD_FILE)
+
+
+def _pretty(name: str) -> str:
+    return re.sub(r"[_-]+", " ", name).strip() or name
+
+
+def board(fresh: bool = False) -> dict:
+    """The shared board, in its saved order; clips new to the board go last."""
+    names = [n for n in _pi_sounds(fresh) if n not in BUILTIN_SOUNDS]
+    with _board_lock:
+        b = _load_board()
+    present = set(names)
+    order = [n for n in dict.fromkeys(b["order"]) if n in present]
+    order += sorted((n for n in names if n not in order),
+                    key=lambda n: (b["meta"].get(n, {}).get("at", 0), n))
+    items = []
+    for n in order:
+        meta = b["meta"].get(n, {})
+        items.append({"name": n, "label": b["labels"].get(n) or _pretty(n),
+                      "by": meta.get("by"), "at": meta.get("at"), "source": meta.get("source")})
+    return {"sounds": items, "builtins": [n for n in BUILTIN_SOUNDS if n in set(_pi_sounds())] or list(BUILTIN_SOUNDS)}
+
+
+def _to_wav(data: bytes) -> bytes:
+    """Any audio/video container -> 48 kHz mono 16-bit WAV, trimmed to MAX_CLIP_SECONDS."""
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = Path(tmp) / "in", Path(tmp) / "out.wav"
+        src.write_bytes(data)
+        r = subprocess.run(["ffmpeg", "-nostdin", "-y", "-i", str(src), "-vn", "-t", str(MAX_CLIP_SECONDS),
+                            "-ar", "48000", "-ac", "1", "-sample_fmt", "s16", str(dst)],
+                           capture_output=True, timeout=120)
+        if r.returncode != 0 or not dst.exists() or dst.stat().st_size < 1024:
+            raise ValueError("That file doesn't have audio we can read")
+        return dst.read_bytes()
+
+
+def safe_name(raw: str) -> str:
+    name = re.sub(r"[^a-z0-9_-]+", "-", (raw or "").lower()).strip("-_")[:36]
+    return name or "clip"
+
+
+def _unique(name: str) -> str:
+    taken = set(_pi_sounds(fresh=True)) | set(BUILTIN_SOUNDS) | {f.stem for f in AUDIO_DIR.glob("*.wav")}
+    out, n = name, 2
+    while out in taken:
+        out = f"{name[:33]}-{n}"
+        n += 1
+    return out
+
+
+def add_sound(data: bytes, *, name: str, label: str = "", source: str = "upload",
+              by: str | None = None, url: str | None = None) -> dict:
+    """Convert, push to the Pi and put a clip at the end of the shared board."""
+    _ensure_dirs()
+    wav = _to_wav(data)
+    name = _unique(safe_name(name))
+    r = _ssh(["receive_sound", name], stdin=wav)
+    if r.returncode != 0:
+        raise RuntimeError("The squad Pi didn't take the clip — try again in a moment")
+    (AUDIO_DIR / f"{name}.wav").write_bytes(wav)
+    _pi_cache["t"] = 0.0
+    try:
+        _gen_icon(name)
+    except Exception as exc:
+        logger.warning("icon gen failed for %s: %s", name, exc)
+    current = [s["name"] for s in board(fresh=True)["sounds"] if s["name"] != name]
+    with _board_lock:
+        b = _load_board()
+        b["order"] = current + [name]  # pin today's order so the new clip lands last
+        if label.strip():
+            b["labels"][name] = label.strip()[:40]
+        b["meta"][name] = {k: v for k, v in {"by": by, "at": int(time.time()), "source": source, "url": url}.items() if v}
+        _save_board(b)
+    return {"name": name, "label": label.strip()[:40] or _pretty(name)}
+
+
+def reorder(order: list[str]) -> None:
+    with _board_lock:
+        b = _load_board()
+        b["order"] = [n for n in dict.fromkeys(order) if isinstance(n, str) and _valid_name(n)]
+        _save_board(b)
+
+
+def rename(name: str, label: str) -> None:
+    if not _valid_name(name):
+        raise ValueError(f"Invalid name: {name!r}")
+    with _board_lock:
+        b = _load_board()
+        if label.strip():
+            b["labels"][name] = label.strip()[:40]
+        else:
+            b["labels"].pop(name, None)
+        _save_board(b)
+
+
+def _forget(name: str) -> None:
+    with _board_lock:
+        b = _load_board()
+        b["order"] = [n for n in b["order"] if n != name]
+        b["labels"].pop(name, None)
+        b["meta"].pop(name, None)
+        _save_board(b)
+    _pi_cache["t"] = 0.0
 
 
 def get_deck() -> dict:
@@ -209,28 +364,92 @@ def _icon_for(info: dict | None) -> str:
     return f"icons/sb_{name}.png" if icon_file.exists() else "icons/sb_alert.png"
 
 
+_TOP_KEY = re.compile(r"^([A-Za-z_][\w-]*):")
+_KEY_HDR = re.compile(r'^  ["\']?(\d+)["\']?:\s*$')
+
+
+def _split_sections(text: str) -> list[tuple[str | None, list[str]]]:
+    """Top-level YAML sections in file order: (key or None for preamble, lines)."""
+    sections: list[tuple[str | None, list[str]]] = [(None, [])]
+    for line in text.splitlines():
+        m = _TOP_KEY.match(line)
+        if m:
+            sections.append((m.group(1), [line]))
+        else:
+            sections[-1][1].append(line)
+    return sections
+
+
+def _key_entries(lines: list[str]) -> dict[str, list[str]]:
+    """keys: block -> {"0": [header, body lines...]} (two-space indented entries)."""
+    entries: dict[str, list[str]] = {}
+    current = None
+    for line in lines[1:]:
+        m = _KEY_HDR.match(line)
+        if m:
+            current = m.group(1)
+            entries[current] = [line]
+        elif current is not None and (line.startswith("    ") or not line.strip()):
+            entries[current].append(line)
+        else:
+            current = None
+    return entries
+
+
+def _entry_action(entry: list[str]) -> str | None:
+    for line in entry[1:]:
+        if line.startswith("    action:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
 def _write_soundboard_yaml(deck: dict) -> None:
+    """Rewrite only keys 0-8 of soundboard.yaml (the slots this page owns).
+
+    Everything else in the file — knobs, strip, layers, key 9, and the icon or
+    extra fields a slot was given in Deck Manager while its sound stays the
+    same — is kept verbatim, so editing the deck here never undoes changes
+    made elsewhere.
+    """
     _ensure_dirs()
-    lines = ["name: soundboard", "", "keys:"]
+    prof = PROFILES_DIR / "soundboard.yaml"
+    try:
+        text = prof.read_text()
+    except OSError:
+        text = ""
+    sections = _split_sections(text) if text.strip() else [(None, []), ("name", ["name: soundboard", ""])]
+    keys_idx = next((i for i, (k, _) in enumerate(sections) if k == "keys"), None)
+    old = _key_entries(sections[keys_idx][1]) if keys_idx is not None else {}
+
+    entries: dict[str, list[str]] = {}
     for i in range(9):
         info = deck["slots"].get(str(i))
-        icon = _icon_for(info)
         if info is None:
-            lines += [f'  "{i}":', f'    icon: {icon}']
+            entries[str(i)] = [f'  "{i}":', f"    icon: {_icon_for(None)}"]
             continue
-        name = info["name"]
-        action = f'{_DECK_SSH} "play {name}"'
-        lines += [f'  "{i}":', f'    icon: {icon}', f'    action: {action}']
-    lines += [
-        '  "9":',
-        '    icon: icons/sb_home.png',
-        '    action: ragnarosctl profile macbook',
-        '',
-    ]
-    content = "\n".join(lines) + "\n" + _KNOBS_YAML
-    prof = PROFILES_DIR / "soundboard.yaml"
-    prof.write_text(content)
-    logger.info("wrote soundboard.yaml (%d bytes)", len(content))
+        action = f'{_DECK_SSH} "play {info["name"]}"'
+        prev = old.get(str(i))
+        if prev and _entry_action(prev) == action:
+            entries[str(i)] = [l for l in prev if l.strip()]
+        else:
+            entries[str(i)] = [f'  "{i}":', f"    icon: {_icon_for(info)}", f"    action: {action}"]
+    for k, entry in old.items():
+        if k not in entries:
+            entries[k] = [l for l in entry if l.strip()]
+    entries.setdefault("9", ['  "9":', "    icon: icons/sb_home.png", "    action: ragnarosctl profile macbook"])
+    block = ["keys:"] + [l for k in sorted(entries, key=int) for l in entries[k]] + [""]
+
+    if keys_idx is None:
+        sections.append(("keys", block))
+    else:
+        sections[keys_idx] = ("keys", block)
+    if not any(k == "knobs" for k, _ in sections):
+        sections.append(("knobs", _KNOBS_YAML.rstrip("\n").splitlines()))
+    content = "\n".join(l for _, lines in sections for l in lines).rstrip("\n") + "\n"
+    tmp = prof.with_name(f".{prof.name}.tmp")
+    tmp.write_text(content)
+    tmp.replace(prof)  # atomic: ragnarosd hot-reloads on mtime and must never read half a file
+    logger.info("wrote soundboard.yaml keys 0-8 (%d bytes)", len(content))
 
 
 def _gen_icon(name: str) -> None:

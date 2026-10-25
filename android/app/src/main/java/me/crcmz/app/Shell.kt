@@ -165,6 +165,7 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
             "watch" -> R.drawable.ic_watch
             "huddle" -> R.drawable.ic_huddle
             "coach" -> R.drawable.ic_coach
+            "sounds" -> R.drawable.ic_sounds
             "ask" -> R.drawable.ic_ai_chat
             "notifications" -> R.drawable.ic_bell
             "portal" -> R.drawable.ic_link

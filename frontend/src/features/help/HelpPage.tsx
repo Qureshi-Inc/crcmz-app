@@ -39,6 +39,17 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'sounds', title: 'Soundboard', icon: 'megaphone', open: '/sounds',
+    body: (
+      <ul>
+        <li>One board for the whole squad. Tap a clip and it plays through the squad Pi: the headset and the PS5 party both hear it.</li>
+        <li><b>Add clip</b> takes an audio or video file, a recording (in the phone apps your phone's recorder opens), or a link: a MyInstants page or a direct audio link. Clips are trimmed to 60 seconds.</li>
+        <li><b>Edit</b> lets anyone reorder the board (drag the grip, or the arrows), rename a clip, or remove it (tap the bin twice). Changes show up for everyone.</li>
+        <li>Clips added on the stream deck's Deck Manager show up here too, and the deck can play anything on this board.</li>
+      </ul>
+    ),
+  },
+  {
     id: 'clips', title: 'Clips', icon: 'clips', open: '/clips',
     body: (
       <>
