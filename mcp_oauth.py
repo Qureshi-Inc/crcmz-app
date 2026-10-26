@@ -25,8 +25,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 DB_PATH            = Path("/data/mcp_user_tokens.db")
-ACCESS_TOKEN_TTL   = 30 * 86400    # 30 days (Claude Code doesn't auto-refresh between sessions)
-REFRESH_TOKEN_TTL  = 30 * 86400    # 30 days
+ACCESS_TOKEN_TTL   = None           # no expiry — revoke explicitly in app settings
+REFRESH_TOKEN_TTL  = None           # no expiry — revoke explicitly in app settings
 AUTH_CODE_TTL      = 60            # 60 seconds
 
 
@@ -204,9 +204,10 @@ def _issue_tokens(
         "INSERT INTO refresh_tokens VALUES (?,?,?,NULL,NULL)",
         (refresh, zid, now),
     )
+    exp = (now + ACCESS_TOKEN_TTL) if ACCESS_TOKEN_TTL is not None else 0
     db.execute(
         "INSERT INTO access_tokens VALUES (?,?,?,?,?,NULL)",
-        (access, zid, refresh, now, now + ACCESS_TOKEN_TTL),
+        (access, zid, refresh, now, exp),
     )
     return access, refresh
 
@@ -226,7 +227,7 @@ def refresh_access_token(refresh_token: str) -> tuple[str, str]:
         ).fetchone()
         if not row:
             raise ValueError("invalid_grant")
-        if row["created_at"] + REFRESH_TOKEN_TTL < now:
+        if REFRESH_TOKEN_TTL is not None and row["created_at"] + REFRESH_TOKEN_TTL < now:
             raise ValueError("invalid_grant")
         zid = row["zitadel_id"]
         db.execute(
@@ -255,11 +256,16 @@ def lookup_access_token(token: str) -> str | None:
     try:
         with _connect() as db:
             row = db.execute(
-                "SELECT zitadel_id FROM access_tokens "
-                "WHERE token=? AND revoked_at IS NULL AND expires_at>?",
-                (token, now),
+                "SELECT zitadel_id, expires_at FROM access_tokens "
+                "WHERE token=? AND revoked_at IS NULL",
+                (token,),
             ).fetchone()
-            return row["zitadel_id"] if row else None
+            if not row:
+                return None
+            # expires_at=0 means no expiry (revoke-only)
+            if row["expires_at"] != 0 and row["expires_at"] <= now:
+                return None
+            return row["zitadel_id"]
     except Exception as e:  # noqa: BLE001
         logger.debug("mcp_oauth: lookup_access_token: %s", e)
         return None
@@ -273,10 +279,10 @@ def user_status(zitadel_id: str) -> dict:
     try:
         with _connect() as db:
             active = db.execute(
-                "SELECT 1 FROM refresh_tokens "
+                "SELECT 1 FROM access_tokens "
                 "WHERE zitadel_id=? AND revoked_at IS NULL "
-                "AND created_at+? > ? LIMIT 1",
-                (zitadel_id, REFRESH_TOKEN_TTL, now),
+                "AND (expires_at=0 OR expires_at>?) LIMIT 1",
+                (zitadel_id, now),
             ).fetchone()
             audit_t = db.execute(
                 "SELECT MAX(called_at) AS t FROM write_audit WHERE zitadel_id=?",
