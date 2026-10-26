@@ -3276,6 +3276,7 @@ html[data-watchbar] .room-chat-fab { bottom: calc(var(--c-tabbar-h) + (var(--cal
 }
 .sb-local-menu-item:hover { background: rgba(255,255,255,.06); }
 .sb-local-menu-item .nav-icon { width: 18px; height: 18px; flex: none; }
+.sb-local-menu-item--off { color: var(--text-dim); cursor: default; font-size: var(--text-sm); }
 
 /* Upload zone */
 .upload-zone {

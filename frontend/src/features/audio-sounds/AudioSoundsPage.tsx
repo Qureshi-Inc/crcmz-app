@@ -15,7 +15,7 @@ import { ApiError, getJSON, request } from '../../lib/http'
 import { nativeShell } from '../../lib/nativeShell'
 import { useSwipeDown } from '../../lib/gestures'
 
-type Sound = { name: string; label: string; by?: string | null; at?: number | null; source?: string | null }
+type Sound = { name: string; label: string; by?: string | null; at?: number | null; source?: string | null; hasFile?: boolean }
 type Board = { sounds: Sound[]; builtins: string[] }
 
 // Kept at module level so the element isn't GC'd mid-playback
@@ -61,7 +61,7 @@ export function AudioSoundsPage() {
   const [virtual, setVirtual] = useState(false)
   const sidebarCollapsed = useSidebarCollapsed()
   const [imgSeeds, setImgSeeds] = useState<Record<string, number>>({})
-  const [localMenu, setLocalMenu] = useState<{ name: string; label: string; x: number; y: number } | null>(null)
+  const [localMenu, setLocalMenu] = useState<{ name: string; label: string; hasFile: boolean; x: number; y: number } | null>(null)
 
   useEffect(() => { if (board.data) setOrder(board.data.sounds) }, [board.data])
 
@@ -180,13 +180,14 @@ export function AudioSoundsPage() {
           onPlay={(s) => void play(s.name, s.label)} onReorder={(next) => void saveOrder(next)}
           onRename={(s, l) => void rename(s, l)} onRemove={(s) => void remove(s)}
           onRegenImage={(s) => void regenImage(s)}
-          onLongPress={(s, x, y) => setLocalMenu({ name: s.name, label: s.label, x, y })} />
+          onLongPress={(s, x, y) => setLocalMenu({ name: s.name, label: s.label, hasFile: !!s.hasFile, x, y })} />
       )}
       {localMenu && (
         <LocalMenu
           name={localMenu.label}
           x={localMenu.x}
           y={localMenu.y}
+          canPlayLocal={!!localMenu.hasFile}
           onPlayLocal={() => playLocally(localMenu.name, localMenu.label)}
           onPlaySquad={() => { setLocalMenu(null); void play(localMenu.name, localMenu.label) }}
           onClose={() => setLocalMenu(null)}
@@ -328,8 +329,8 @@ function PlayTile({ s, playing, imgSeeds, onPlay, onLongPress }: {
 }
 
 // ── Local-play context menu (appears on long-press) ───────────────────────────
-function LocalMenu({ name, x, y, onPlayLocal, onPlaySquad, onClose }: {
-  name: string; x: number; y: number
+function LocalMenu({ name, x, y, canPlayLocal, onPlayLocal, onPlaySquad, onClose }: {
+  name: string; x: number; y: number; canPlayLocal: boolean
   onPlayLocal: () => void; onPlaySquad: () => void; onClose: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -352,9 +353,10 @@ function LocalMenu({ name, x, y, onPlayLocal, onPlaySquad, onClose }: {
   return (
     <div ref={ref} className="sb-local-menu" style={style} role="menu" aria-label={`Options for ${name}`}>
       <div className="sb-local-menu-title">{name}</div>
-      <button type="button" className="sb-local-menu-item" role="menuitem" onClick={onPlayLocal}>
-        <Icon name="vol" />Play on this device
-      </button>
+      {canPlayLocal
+        ? <button type="button" className="sb-local-menu-item" role="menuitem" onClick={onPlayLocal}><Icon name="vol" />Play on this device</button>
+        : <span className="sb-local-menu-item sb-local-menu-item--off"><Icon name="vol" />Only available on squad Pi</span>
+      }
       <button type="button" className="sb-local-menu-item" role="menuitem" onClick={onPlaySquad}>
         <Icon name="play" />Play on squad Pi
       </button>

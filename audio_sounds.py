@@ -231,11 +231,13 @@ def board(fresh: bool = False) -> dict:
     order = [n for n in dict.fromkeys(b["order"]) if n in present]
     order += sorted((n for n in names if n not in order),
                     key=lambda n: (b["meta"].get(n, {}).get("at", 0), n))
+    local_wavs = {f.stem for f in AUDIO_DIR.glob("*.wav")}
     items = []
     for n in order:
         meta = b["meta"].get(n, {})
         items.append({"name": n, "label": b["labels"].get(n) or _pretty(n),
-                      "by": meta.get("by"), "at": meta.get("at"), "source": meta.get("source")})
+                      "by": meta.get("by"), "at": meta.get("at"), "source": meta.get("source"),
+                      "hasFile": n in local_wavs})
     return {"sounds": items, "builtins": [n for n in BUILTIN_SOUNDS if n in set(_pi_sounds())] or list(BUILTIN_SOUNDS)}
 
 
@@ -462,39 +464,61 @@ def _write_soundboard_yaml(deck: dict) -> None:
     logger.info("wrote soundboard.yaml keys 0-8 (%d bytes)", len(content))
 
 
+def _tile_colors(name: str) -> tuple[str, str, str]:
+    """Return (bg1, bg2, accent) hex colours derived from the sound name."""
+    import hashlib
+    h = int(hashlib.md5(name.encode()).hexdigest(), 16)
+    palettes = [
+        ("#0d0d1a", "#1a0533", "#ff2fd6"),  # magenta
+        ("#0a1a0a", "#001a33", "#00e5ff"),  # cyan
+        ("#1a0a00", "#1a1a00", "#ff7b00"),  # orange
+        ("#0d001a", "#1a0010", "#7b2fff"),  # purple
+        ("#001a1a", "#001a0d", "#00ff9f"),  # green
+        ("#1a0000", "#1a0d00", "#ff3d3d"),  # red
+        ("#001a1a", "#00101a", "#00c8ff"),  # sky blue
+        ("#1a1a00", "#0a1a00", "#d4ff00"),  # lime
+    ]
+    bg1, bg2, acc = palettes[h % len(palettes)]
+    return bg1, bg2, acc
+
+
 def _gen_bedrock_image(name: str, label: str) -> None:
-    """Generate a square button image via Amazon Nova Canvas (background thread)."""
+    """Generate a square SVG tile image for a soundboard button."""
     try:
-        import base64
-        import json as _json
-        import boto3
         SOUND_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-        prompt = (
-            f"A vibrant soundboard button icon for a sound clip called '{label}'. "
-            "Bold punchy illustration, square frame, full-bleed, no text or letters, "
-            "neon synthwave aesthetic, dark background."
-        )
-        client = boto3.client("bedrock-runtime", region_name="us-east-1")
-        body = _json.dumps({
-            "taskType": "TEXT_IMAGE",
-            "textToImageParams": {
-                "text": prompt,
-                "negativeText": "text, letters, words, watermark, blurry, low quality, distorted",
-            },
-            "imageGenerationConfig": {
-                "numberOfImages": 1, "height": 512, "width": 512, "cfgScale": 8.0,
-            },
-        })
-        resp = client.invoke_model(modelId="amazon.nova-canvas-v1:0", body=body,
-                                   contentType="application/json", accept="application/json")
-        result = _json.loads(resp["body"].read())
-        if result.get("error"):
-            raise RuntimeError(result["error"])
-        png = base64.b64decode(result["images"][0])
-        (SOUND_IMAGES_DIR / f"{name}.png").write_bytes(png)
-        logger.info("bedrock image ready for %s (%d bytes)", name, len(png))
+        bg1, bg2, acc = _tile_colors(name)
+        initials = "".join(w[0].upper() for w in label.split()[:2]) or label[:2].upper()
+        # Escape XML special chars in label
+        safe_label = label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="30%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="{bg2}"/>
+      <stop offset="100%" stop-color="{bg1}"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="{acc}" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="{acc}" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="18"/></filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <circle cx="256" cy="200" r="260" fill="url(#glow)" filter="url(#blur)"/>
+  <text x="256" y="290" text-anchor="middle" dominant-baseline="middle"
+        font-family="system-ui,sans-serif" font-weight="900" font-size="180"
+        fill="{acc}" opacity="0.15">{initials}</text>
+  <text x="256" y="282" text-anchor="middle" dominant-baseline="middle"
+        font-family="system-ui,sans-serif" font-weight="900" font-size="172"
+        fill="white">{initials}</text>
+  <text x="256" y="430" text-anchor="middle" dominant-baseline="middle"
+        font-family="system-ui,sans-serif" font-weight="700" font-size="38"
+        fill="white" opacity="0.7" letter-spacing="1">{safe_label[:20]}</text>
+</svg>"""
+        out = SOUND_IMAGES_DIR / f"{name}.svg"
+        out.write_text(svg, encoding="utf-8")
+        logger.info("tile image ready for %s", name)
     except Exception as exc:
-        logger.warning("bedrock image gen failed for %s: %s", name, exc)
+        logger.warning("tile image gen failed for %s: %s", name, exc)
 
 
 def _gen_icon(name: str) -> None:

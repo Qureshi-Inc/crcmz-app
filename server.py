@@ -9682,11 +9682,15 @@ def api_audio_sounds_image(name: str, request: Request):
         raise HTTPException(status_code=401, detail="Sign in required")
     if not _audio_sounds._valid_name(name):
         raise HTTPException(status_code=400, detail="Invalid name")
-    img_path = _audio_sounds.SOUND_IMAGES_DIR / f"{name}.png"
-    if not img_path.exists():
-        raise HTTPException(status_code=404, detail="Image not ready yet")
-    return Response(img_path.read_bytes(), media_type="image/png",
-                    headers={"Cache-Control": "public, max-age=86400"})
+    svg_path = _audio_sounds.SOUND_IMAGES_DIR / f"{name}.svg"
+    png_path = _audio_sounds.SOUND_IMAGES_DIR / f"{name}.png"
+    if svg_path.exists():
+        return Response(svg_path.read_bytes(), media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    if png_path.exists():
+        return Response(png_path.read_bytes(), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    raise HTTPException(status_code=404, detail="Image not ready yet")
 
 
 @app.post("/api/audio-sounds/{name}/regenerate-image")
