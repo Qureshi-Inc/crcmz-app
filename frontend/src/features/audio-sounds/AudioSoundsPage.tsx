@@ -2,7 +2,7 @@
 // (headset + PS5 party). Anyone can add a clip (upload, record or a link), put the
 // board in order, rename or remove clips. Clips added in Deck Manager or on the
 // stream deck show up here too: the Pi is the one library.
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent, type CSSProperties } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -57,8 +57,8 @@ export function AudioSoundsPage() {
   const [order, setOrder] = useState<Sound[]>([])
   const [virtual, setVirtual] = useState(false)
   const sidebarCollapsed = useSidebarCollapsed()
-  // bump this to force-reload images after regenerate
   const [imgSeeds, setImgSeeds] = useState<Record<string, number>>({})
+  const [localMenu, setLocalMenu] = useState<{ name: string; label: string; x: number; y: number } | null>(null)
 
   useEffect(() => { if (board.data) setOrder(board.data.sounds) }, [board.data])
 
@@ -76,6 +76,13 @@ export function AudioSoundsPage() {
     } finally {
       setTimeout(() => setPlaying(null), 1400)
     }
+  }
+
+  function playLocally(name: string, label: string) {
+    setLocalMenu(null)
+    const audio = new Audio(`/api/audio-sounds/${encodeURIComponent(name)}/file`)
+    audio.play().catch(() => err("Couldn't play locally"))
+    ok(`Playing ${label} locally`)
   }
 
   async function saveOrder(next: Sound[]) {
@@ -166,7 +173,18 @@ export function AudioSoundsPage() {
         <BoardGrid sounds={sounds} editing={editing} playing={playing} imgSeeds={imgSeeds}
           onPlay={(s) => void play(s.name, s.label)} onReorder={(next) => void saveOrder(next)}
           onRename={(s, l) => void rename(s, l)} onRemove={(s) => void remove(s)}
-          onRegenImage={(s) => void regenImage(s)} />
+          onRegenImage={(s) => void regenImage(s)}
+          onLongPress={(s, x, y) => setLocalMenu({ name: s.name, label: s.label, x, y })} />
+      )}
+      {localMenu && (
+        <LocalMenu
+          name={localMenu.label}
+          x={localMenu.x}
+          y={localMenu.y}
+          onPlayLocal={() => playLocally(localMenu.name, localMenu.label)}
+          onPlaySquad={() => { setLocalMenu(null); void play(localMenu.name, localMenu.label) }}
+          onClose={() => setLocalMenu(null)}
+        />
       )}
 
       {!isVirtual && (board.data?.builtins.length ?? 0) > 0 && (
@@ -188,11 +206,11 @@ export function AudioSoundsPage() {
 }
 
 // ── Board grid (play / edit) ──────────────────────────────────────────────────
-function BoardGrid({ sounds, editing, playing, imgSeeds, onPlay, onReorder, onRename, onRemove, onRegenImage }: {
+function BoardGrid({ sounds, editing, playing, imgSeeds, onPlay, onReorder, onRename, onRemove, onRegenImage, onLongPress }: {
   sounds: Sound[]; editing: boolean; playing: string | null; imgSeeds: Record<string, number>
   onPlay: (s: Sound) => void; onReorder: (next: Sound[]) => void
   onRename: (s: Sound, label: string) => void; onRemove: (s: Sound) => void
-  onRegenImage: (s: Sound) => void
+  onRegenImage: (s: Sound) => void; onLongPress: (s: Sound, x: number, y: number) => void
 }) {
   const grid = useRef<HTMLUListElement>(null)
   const [drag, setDrag] = useState<{ name: string; list: Sound[] } | null>(null)
@@ -239,22 +257,102 @@ function BoardGrid({ sounds, editing, playing, imgSeeds, onPlay, onReorder, onRe
             ? <EditTile s={s} first={i === 0} last={i === list.length - 1} onUp={() => move(i, -1)} onDown={() => move(i, 1)}
                 onRename={(l) => onRename(s, l)} onRemove={() => onRemove(s)} onRegenImage={() => onRegenImage(s)}
                 handle={{ onPointerDown: (e) => startDrag(e, s.name), onPointerMove: onDragMove, onPointerUp: endDrag, onPointerCancel: endDrag }} />
-            : (
-              <button type="button" className="sb-tile" data-playing={playing === s.name || undefined}
-                onClick={() => onPlay(s)} aria-label={`Play ${s.label}`}>
-                <SoundImage name={s.name} label={s.label} seed={imgSeeds[s.name]} />
-                <span className="sb-tile-body">
-                  <span className="sb-tile-label">{s.label}</span>
-                  {s.by && <span className="sb-tile-by">{s.by}</span>}
-                </span>
-                <span className="sb-tile-play" aria-hidden="true">
-                  <Icon name={playing === s.name ? 'vol' : 'play'} />
-                </span>
-              </button>
-            )}
+            : <PlayTile s={s} playing={playing} imgSeeds={imgSeeds} onPlay={onPlay} onLongPress={onLongPress} />}
         </li>
       ))}
     </ul>
+  )
+}
+
+// ── Play tile with long-press → local-play menu ───────────────────────────────
+const LONG_PRESS_MS = 420
+
+function PlayTile({ s, playing, imgSeeds, onPlay, onLongPress }: {
+  s: Sound; playing: string | null; imgSeeds: Record<string, number>
+  onPlay: (s: Sound) => void; onLongPress: (s: Sound, x: number, y: number) => void
+}) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fired = useRef(false)
+
+  function cancel() {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null }
+  }
+
+  function onDown(e: RPointerEvent<HTMLButtonElement>) {
+    fired.current = false
+    cancel()
+    const { clientX, clientY } = e
+    timer.current = setTimeout(() => {
+      fired.current = true
+      onLongPress(s, clientX, clientY)
+    }, LONG_PRESS_MS)
+  }
+
+  function onUp() {
+    cancel()
+    // click event fires after pointerup — let it propagate only if not long-press
+  }
+
+  function onClick() {
+    if (fired.current) { fired.current = false; return } // long press already handled
+    onPlay(s)
+  }
+
+  return (
+    <button
+      type="button"
+      className="sb-tile"
+      data-playing={playing === s.name || undefined}
+      onPointerDown={onDown}
+      onPointerUp={onUp}
+      onPointerCancel={cancel}
+      onClick={onClick}
+      aria-label={`Play ${s.label}`}
+    >
+      <SoundImage name={s.name} label={s.label} seed={imgSeeds[s.name]} />
+      <span className="sb-tile-body">
+        <span className="sb-tile-label">{s.label}</span>
+        {s.by && <span className="sb-tile-by">{s.by}</span>}
+      </span>
+      <span className="sb-tile-play" aria-hidden="true">
+        <Icon name={playing === s.name ? 'vol' : 'play'} />
+      </span>
+    </button>
+  )
+}
+
+// ── Local-play context menu (appears on long-press) ───────────────────────────
+function LocalMenu({ name, x, y, onPlayLocal, onPlaySquad, onClose }: {
+  name: string; x: number; y: number
+  onPlayLocal: () => void; onPlaySquad: () => void; onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onDown(e: MouseEvent | TouchEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [onClose])
+
+  // Keep menu inside the viewport
+  const style: CSSProperties = {
+    position: 'fixed',
+    left: Math.min(x, window.innerWidth - 200),
+    top: Math.min(y, window.innerHeight - 120),
+  }
+
+  return (
+    <div ref={ref} className="sb-local-menu" style={style} role="menu" aria-label={`Options for ${name}`}>
+      <div className="sb-local-menu-title">{name}</div>
+      <button type="button" className="sb-local-menu-item" role="menuitem" onClick={onPlayLocal}>
+        <Icon name="vol" />Play on this device
+      </button>
+      <button type="button" className="sb-local-menu-item" role="menuitem" onClick={onPlaySquad}>
+        <Icon name="play" />Play on squad Pi
+      </button>
+    </div>
   )
 }
 

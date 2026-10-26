@@ -9661,6 +9661,20 @@ def api_audio_sounds_play(name: str, request: Request):
     return {"status": "playing"}
 
 
+@app.get("/api/audio-sounds/{name}/file")
+def api_audio_sounds_file(name: str, request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    if not _audio_sounds._valid_name(name):
+        raise HTTPException(status_code=400, detail="Invalid name")
+    path = _audio_sounds.AUDIO_DIR / f"{name}.wav"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Sound not found")
+    return Response(path.read_bytes(), media_type="audio/wav",
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
 @app.get("/api/audio-sounds/{name}/image")
 def api_audio_sounds_image(name: str, request: Request):
     session = _get_session(request)

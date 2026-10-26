@@ -3258,6 +3258,25 @@ html[data-watchbar] .room-chat-fab { bottom: calc(var(--c-tabbar-h) + (var(--cal
 .sb-rec-time { font: 800 var(--text-xl) / 1 var(--font-display); font-variant-numeric: tabular-nums; }
 .sb-rec-audio { width: 100%; }
 
+/* Long-press local-play menu */
+.sb-local-menu {
+  z-index: var(--z-sheet);
+  background: var(--sheet); border: 1px solid var(--border-control); border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0,0,0,.5); padding: var(--space-1); min-width: 190px;
+}
+.sb-local-menu-title {
+  font-size: var(--text-sm); font-weight: 700; color: var(--text-dim);
+  padding: var(--space-1) var(--space-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border-decorative); margin-bottom: var(--space-1);
+}
+.sb-local-menu-item {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
+  font-size: var(--text-base); font-weight: 600; color: var(--text); text-align: left;
+}
+.sb-local-menu-item:hover { background: rgba(255,255,255,.06); }
+.sb-local-menu-item .nav-icon { width: 18px; height: 18px; flex: none; }
+
 /* Upload zone */
 .upload-zone {
   width: 100%; display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
