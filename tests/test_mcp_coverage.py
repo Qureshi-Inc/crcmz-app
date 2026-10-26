@@ -55,6 +55,7 @@ STORES: dict[str, list[str] | None] = {
     "/data/audio-sounds": None,          # the clip audio itself; not something to read out
     "/data/audio-board.json": None,      # order/labels of those clips (the app's own UI)
     "/data/audio-deck.json": None,       # which clip sits on which stream-deck key
+    "/data/sound-images": None,          # the clips' tile pictures; artwork, nothing to read out
     "/data/ragnaros-profiles": None,     # the stream deck's page files, mounted for writing
     "/data/ragnaros-icons": None,        # generated key icons
     "/data/users": ["squad_members", "squad_roster", "person_profile"],

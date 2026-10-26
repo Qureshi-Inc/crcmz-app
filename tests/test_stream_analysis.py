@@ -191,6 +191,77 @@ def rate_limited():
         sa._hits.clear()
 
 
+def rate_is_configurable_without_flipping():
+    before = sa.status("zid-streamer")["enabled"]
+    out = w("stream_analysis_toggle", {"max_per_min": 300})
+    assert out["ok"] and out["max_per_min"] == 300 and out["enabled"] is before, out
+    st = r("stream_analysis_status", {"person": "test_streamer"})
+    assert st["max_per_min"] == 300 and st["max_per_min_ceiling"] == sa.RATE_CEILING, st
+    big = w("stream_analysis_toggle", {"max_per_min": 10 ** 6})
+    assert big["max_per_min"] == sa.RATE_CEILING, big
+    for bad in (0, -5, "fast", True):
+        assert w("stream_analysis_toggle", {"max_per_min": bad})["ok"] is False, bad
+    assert w("stream_analysis_toggle", {"max_per_min": 300})["max_per_min"] == 300
+
+
+def batches_go_past_120_a_minute():
+    sa._hits.clear()
+    frame = {"type": "frame", "image_base64": B64(JPEG), "mime": "image/jpeg"}
+    stored = 0
+    for b in range(6):                                    # 180 samples inside one minute
+        out = w("stream_sample_add", {"session_id": "fast", "timestamp": 1792990100 + b,
+                                      "samples": [frame] * 30})
+        assert out["ok"] and out["stored"] == 30, out
+        stored += out["stored"]
+    assert stored == 180
+    w("stream_analysis_toggle", {"max_per_min": 200})
+    out = w("stream_sample_add", {"session_id": "fast", "timestamp": 1792990200, "samples": [frame] * 30})
+    assert out["stored"] == 20 and not out["ok"], out          # the configured ceiling still bites
+    assert "rate limit: 200" in out["results"][-1]["error"], out["results"][-1]
+    with mcp_oauth._connect() as db:
+        rows = db.execute("SELECT result FROM write_audit WHERE tool='stream_sample_add' "
+                          "AND result LIKE 'batch:%'").fetchall()
+    assert len(rows) == 7, "one audit row per call, not per sample"
+    sa._hits.clear()
+
+
+def batch_limits_and_off():
+    frame = {"type": "frame", "image_base64": B64(JPEG)}
+    out = w("stream_sample_add", {"session_id": "fast", "timestamp": 1, "samples": [frame] * 31})
+    assert out["ok"] is False and "at most 30" in out["error"], out
+    mixed = w("stream_sample_add", {"session_id": "fast", "timestamp": 1792990300, "samples": [
+        {"type": "event", "event": {"kind": "kill_feed", "killer": "a", "victim": "b", "weapon": "M4"}},
+        {"type": "chat", "text": ""}, "nope"]})
+    assert mixed["stored"] == 1 and [x["ok"] for x in mixed["results"]] == [True, False, False], mixed
+    w("stream_analysis_toggle", {"enabled": False})
+    n = count_samples()
+    out = w("stream_sample_add", {"session_id": "fast", "timestamp": 1792990301, "samples": [frame] * 5})
+    assert out == {"ok": False, "error": "analysis is off", "enabled": False}, out
+    assert count_samples() == n
+    w("stream_analysis_toggle", {"enabled": True, "max_per_min": sa.RATE_LIMIT})
+
+
+def type_filter_and_cursor_with_batches():
+    ev = r("stream_samples", {"session_id": "fast", "type": "event"})
+    assert [s["event"]["kind"] for s in ev["samples"]] == ["kill_feed"], ev
+    first = r("stream_samples", {"session_id": "fast", "limit": 100})      # r() fails on cut JSON
+    n1 = len(first["samples"])
+    assert 0 < n1 < 100 and first["remaining"] == 201 - n1, (n1, first["remaining"])
+    upto = first["next_after_id"]
+    assert upto == first["samples"][-1]["sample_id"]
+    w("stream_analysis_record", {"session_id": "fast", "kind": "moment", "good": "batch read",
+                                 "upto_sample_id": upto}, MUSE)
+    seen, after = n1, 0
+    while True:
+        page = r("stream_samples", {"session_id": "fast", "limit": 100, "after_id": after})
+        assert page["after_id"] >= upto and all(s["sample_id"] > upto for s in page["samples"]), page["after_id"]
+        seen += len(page["samples"])
+        if not page["remaining"]:
+            break
+        after = page["next_after_id"]
+    assert seen == 201, seen
+
+
 def record_round_trips_and_cursor_advances():
     before = r("stream_samples", {"session_id": "s1"})["samples"]
     assert before, "need unprocessed samples"
@@ -306,6 +377,10 @@ for name, fn in [
     ("a personal token only flips its own switch", personal_token_cannot_flip_someone_else),
     ("a service token must name the person", service_token_must_name_person),
     ("ingestion is rate limited", rate_limited),
+    ("rate is configurable per person, clamped, without flipping the switch", rate_is_configurable_without_flipping),
+    ("batches carry more than 120 samples a minute; the set rate still caps", batches_go_past_120_a_minute),
+    ("batch size cap, mixed results, nothing stored while OFF", batch_limits_and_off),
+    ("type filter and the processed cursor work with batches", type_filter_and_cursor_with_batches),
     ("record with good/bad/next_time/roast round-trips; cursor advances", record_round_trips_and_cursor_advances),
     ("bad records rejected", bad_records_rejected),
     ("summary is one per session and readable", summary_upserts),

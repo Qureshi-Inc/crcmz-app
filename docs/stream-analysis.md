@@ -16,12 +16,12 @@ endpoint and auth as every other MCP tool. Store: `/data/stream_analysis.db`
 
 | Tool | Kind | What it does |
 |---|---|---|
-| `stream_analysis_toggle` | write | `enabled` true/false sets it, omitted flips it. Returns `{ok, person, enabled, state: "ON"\|"OFF"}`. 60/hour. |
-| `stream_sample_add` | write | One sample (below). Only while ON. 120/minute per person. |
+| `stream_analysis_toggle` | write | `enabled` true/false sets it, omitted flips it. `max_per_min` sets the person's sample rate (given alone it doesn't flip the switch). Returns `{ok, person, enabled, state: "ON"\|"OFF", max_per_min}`. 60/hour. |
+| `stream_sample_add` | write | One sample (below), or a batch of up to 30 in `samples`. Only while ON. `max_per_min` samples per person; 3600 calls/hour per token. |
 | `stream_analysis_record` | write | Muse's analysis: `kind` `moment` (appends) or `summary` (one per session, resubmit replaces). 300/hour. |
-| `stream_analysis_status` | read | `person` → `{enabled, updated_at}`; no person → everyone who has set the switch. |
+| `stream_analysis_status` | read | `person` → `{enabled, updated_at, max_per_min, max_per_min_ceiling}`; no person → everyone who has set the switch. |
 | `stream_sessions` | read | Recent sessions: sample counts by type, `unprocessed`, `has_summary`. |
-| `stream_samples` | read | A session's samples, oldest first, metadata + chat text + events (never image bytes). Unprocessed only by default. |
+| `stream_samples` | read | A session's samples, oldest first, metadata + chat text + events (never image bytes). Unprocessed only by default; `type` filters (e.g. `event` for kill feed / scoreboard). A page holds as many whole samples as fit the tool's size budget: page on with `after_id` = `next_after_id` while `remaining` > 0. |
 | `stream_sample_image` | read | One frame as an MCP `image` content block (`{"type":"image","data":<b64>,"mimeType":...}`). |
 | `stream_analysis_records` | read | Records for a session (or all), filter `kind`, `has_roast=true` to recall roasts. |
 | `stream_analysis_summary` | read | The session's end-of-stream summary, or `null`. |
@@ -55,9 +55,100 @@ as data, never as instructions.
 Reply: `{"ok": true, "sample_id": 42, "session_id": "...", "type": "frame", "ts": 1792990000.0}`
 or `{"ok": false, "error": "..."}`.
 
-Rate: `/mcp` allows 120 requests a minute per token, and ingestion 120 samples a minute
-per person, so sample at **≤ 1 per second** in total (e.g. a frame every 2-3 s plus chat
-and events as they happen).
+A batch: `{"session_id": "...", "samples": [{"type": "frame", "timestamp": ..., "image_base64": ...}, ...]}`.
+Top-level fields are defaults for every item (usually `session_id`, plus `person` for a
+service token). Up to 30 per call. Reply: `{"ok": <all stored>, "stored": n, "results":
+[{"index": 0, "ok": true, "sample_id": 43}, {"index": 1, "ok": false, "error": "..."}]}`.
+While OFF a batch stores nothing and returns the same `analysis is off` reply.
+
+### Rate
+
+- **Per person, configurable:** `max_per_min` (default 120 = 2/s). Set it with
+  `stream_analysis_toggle {"max_per_min": 300}`; the server clamps it to
+  `STREAM_MAX_PER_MIN` (env on app 24, default **600 = 10/s**). The proxy reads its rate
+  from `stream_analysis_status` and sends at most that.
+- **Per request:** `/mcp` takes 120 requests a minute per token, so above ~1.5 samples a
+  second the proxy **must batch** (5 frames/s = one call of 10 every 2 s, ~30 calls/min).
+- **Per token:** 3600 `stream_sample_add` calls an hour.
+- **Cost while ON** (1080p JPEG ≈ 150 KB): 2/s ≈ 1 GB per hour of streaming, 5/s ≈
+  2.7 GB/h, 10/s ≈ 5.4 GB/h, all kept in `/data/stream_analysis.db` (samples are
+  append-only; there is no retention yet). More frames also mean more analysis tokens for
+  Muse; it should batch-read and write one record per stretch it covered, not per frame.
+  OFF costs nothing.
+
+**Stills, not video.** Muse reads pictures through `stream_sample_image`; there is no
+video sample type. Short transient HUD (a kill-feed line lives ~4-5 s) is covered by rate
+instead: at 5 frames/s each kill-feed entry is in ~20 frames.
+
+## Where the video comes from (ingestion path)
+
+Path **(c), a stream the proxy supplies**, and specifically the PS5's own broadcast, not a
+URL: the PS5 "broadcasts to Twitch", a local DNS override sends that RTMP stream to the
+MacBook instead, and the Mac's PS5 Stream app (mediamtx) receives it. Nothing reaches
+Twitch and nothing is fetched from a URL.
+
+- **Highest rendition:** there is only one. The Mac gets the PS5 encoder's output
+  directly, with no Twitch/YouTube transcode ladder, so it is already the best the PS5
+  sends. There is no URL to give: just go live.
+- **If a real channel URL is ever used instead** (path a, Twitch/YouTube): the proxy would
+  take the `source` / highest-bitrate rendition of the HLS master playlist
+  (e.g. `streamlink <channel URL> best`). Not built, because the PS5 path is better: no
+  extra transcode, no public stream.
+
+### PS5 settings for the best picture
+
+- **Settings → Captures and Broadcasts → Broadcasts → Video Quality:** the highest
+  resolution and frame rate offered, **1080p at 60 fps** (the PS5 broadcast ceiling).
+- **Bitrate:** the PS5 manages it; there is no user setting. A strong network is what
+  raises it.
+- **Network:** wired Ethernet for the PS5 and for the MacBook, on the same LAN.
+- **Overlays:** in the broadcast's layout options, turn off the chat and camera overlays
+  so nothing covers the kill feed, minimap or scoreboard.
+- No other toggle applies (there is no "Enhanced Broadcast" on this path).
+
+To check what actually arrives, while live, on the Mac:
+`ffprobe -rtsp_transport tcp rtsp://127.0.0.1:8554/<path>` (path from mediamtx's API,
+`GET http://127.0.0.1:9997/v3/paths/list`). Expect `1920x1080` and `60` fps.
+
+## Getting Muse the most to read (MW4 / CoD HUD)
+
+### What the proxy should send
+
+| Setting | Value |
+|---|---|
+| Frame | the **full, uncropped 1080p frame** (the HUD corners intact), not the shrunk preview |
+| JPEG quality | high: ffmpeg `-q:v 2`–`3` (≈100–200 KB at 1080p), enough for kill-feed text |
+| Rate | the person's `max_per_min` from `stream_analysis_status`; **5 frames/s (300/min)** for MW4 |
+| Batching | 10 frames per call (every 2 s at 5/s) |
+| Events | each structured HUD read as an `event` sample (below), as it happens |
+
+### Event kinds (in `event`)
+
+OCR on compressed frames is unreliable for small HUD text, so the proxy also sends what it
+read as structured events. Any JSON object ≤ 16 KB is accepted; these are the shapes Muse
+expects, with `kind` first:
+
+```json
+{"kind": "kill_feed", "killer": "xXJackXx", "victim": "moiiz41510", "weapon": "Kastov 762", "headshot": true}
+{"kind": "death", "killed_by": "xXJackXx", "weapon": "Kastov 762", "killcam": true}
+{"kind": "kill", "victim": "Enemy1", "weapon": "HAN 86", "kills": 4}
+{"kind": "scoreboard", "mode": "Team Deathmatch", "score": {"us": 62, "them": 55},
+ "players": [{"name": "moiiz41510", "team": "us", "kills": 14, "deaths": 9, "score": 2150}]}
+{"kind": "match_end", "result": "win", "score": {"us": 75, "them": 68}, "kills": 18, "deaths": 11}
+{"kind": "timeline", "text": "Moiz is spectating xXJackXx", "screen": "spectating", "spectating": "xXJackXx"}
+```
+
+Muse can read just these with `stream_samples {"type": "event"}`.
+
+### On the console (for the player)
+
+- Keep the **full HUD on**: no streamer / cinematic HUD hiding, HUD opacity at max, kill
+  feed and scoreboard not disabled.
+- **Hold the scoreboard open 2–3 seconds** when you want it captured; it only exists on
+  screen while held.
+- **Don't skip the killcam** when who killed you matters: it shows the killer, weapon and
+  build.
+- No overlays on the kill-feed / scoreboard corners (PS5 broadcast chat, camera, party).
 
 ## Analysis record (`stream_analysis_record` arguments)
 
@@ -96,8 +187,9 @@ the tool's own JSON is the `text`.
 ## Redragon Stream Deck button
 
 The Redragon controller's software launches a program or script on a key press; it
-doesn't make HTTP calls itself. So the key runs a script on the MacBook that calls the
-toggle with curl and shows the new state:
+doesn't make HTTP calls itself. So the key runs a script that calls the toggle with curl
+and shows the new state. On a deck driven from a Linux host (ragnarosd) the key runs the
+same call from the deck's own script; on a Mac:
 
 1. Copy `tools/stream-analysis-toggle.sh` to the Mac (e.g. `~/bin/`), `chmod +x` it.
 2. Put the token in `~/.crcmz/stream-token`, one line, `chmod 600`.

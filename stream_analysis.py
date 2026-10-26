@@ -36,8 +36,10 @@ MAX_TEXT_CHARS = 4000
 MAX_EVENT_BYTES = 16_384
 MAX_FIELD_CHARS = 2000
 MAX_ROAST_CHARS = 280
-RATE_LIMIT = 120          # accepted samples per person per window
+RATE_LIMIT = 120          # default accepted samples per person per minute
+RATE_CEILING = int(os.environ.get("STREAM_MAX_PER_MIN", "600"))   # most a person may set
 RATE_WINDOW = 60.0
+MAX_BATCH = 30            # samples per stream_sample_add call
 _SESSION_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 _MAGIC = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"))
 
@@ -102,24 +104,34 @@ def init() -> None:
             CREATE TRIGGER IF NOT EXISTS samples_no_delete BEFORE DELETE ON samples
                 BEGIN SELECT RAISE(ABORT, 'samples are append-only'); END;
         """)
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(state)")}
+        if "max_per_min" not in cols:
+            db.execute("ALTER TABLE state ADD COLUMN max_per_min INTEGER")
 
 
 # ── Switch ───────────────────────────────────────────────────────────────────
 
+def _effective_rate(setting) -> int:
+    return max(1, min(int(setting or RATE_LIMIT), RATE_CEILING))
+
+
 def status(user_sub: str) -> dict:
     with _conn() as db:
-        row = db.execute("SELECT enabled, updated_at FROM state WHERE user_sub=?",
+        row = db.execute("SELECT enabled, updated_at, max_per_min FROM state WHERE user_sub=?",
                          (user_sub,)).fetchone()
     return {"enabled": bool(row and row["enabled"]),
-            "updated_at": row["updated_at"] if row else None}
+            "updated_at": row["updated_at"] if row else None,
+            "max_per_min": _effective_rate(row["max_per_min"] if row else None),
+            "max_per_min_ceiling": RATE_CEILING}
 
 
 def statuses() -> list[dict]:
     with _conn() as db:
-        rows = db.execute("SELECT user_sub, enabled, updated_at FROM state "
+        rows = db.execute("SELECT user_sub, enabled, updated_at, max_per_min FROM state "
                           "ORDER BY updated_at DESC").fetchall()
     return [{"user_sub": r["user_sub"], "enabled": bool(r["enabled"]),
-             "updated_at": r["updated_at"]} for r in rows]
+             "updated_at": r["updated_at"], "max_per_min": _effective_rate(r["max_per_min"])}
+            for r in rows]
 
 
 def set_enabled(user_sub: str, enabled: bool | None, by: str = "") -> dict:
@@ -133,6 +145,18 @@ def set_enabled(user_sub: str, enabled: bool | None, by: str = "") -> dict:
                    "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
                    (user_sub, int(new), now, by[:64]))
     return {"enabled": new, "updated_at": now}
+
+
+def set_rate(user_sub: str, max_per_min: int, by: str = "") -> dict:
+    """Set how many samples a minute this person's proxy may send (1..RATE_CEILING)."""
+    rate = _effective_rate(max_per_min)
+    now = time.time()
+    with _lock, _conn() as db:
+        db.execute("INSERT INTO state(user_sub, enabled, updated_at, updated_by, max_per_min) "
+                   "VALUES (?,0,?,?,?) ON CONFLICT(user_sub) DO UPDATE SET "
+                   "max_per_min=excluded.max_per_min, updated_at=excluded.updated_at, "
+                   "updated_by=excluded.updated_by", (user_sub, now, by[:64], rate))
+    return status(user_sub)
 
 
 # ── Samples ──────────────────────────────────────────────────────────────────
@@ -157,13 +181,13 @@ def parse_ts(value) -> float | None:
     return dt.timestamp() if dt.tzinfo is not None else None
 
 
-def _within_rate(user_sub: str) -> bool:
+def _within_rate(user_sub: str, limit: int) -> bool:
     now = time.monotonic()
     with _hits_lock:
         q = _hits.setdefault(user_sub, collections.deque())
         while q and now - q[0] >= RATE_WINDOW:
             q.popleft()
-        if len(q) >= RATE_LIMIT:
+        if len(q) >= limit:
             return False
         q.append(now)
         return True
@@ -196,7 +220,8 @@ def add_sample(user_sub: str, session_id: str, type: str, timestamp,  # noqa: A0
                image_base64: str = "", mime: str = "", text: str = "",
                event=None) -> dict:
     """Store one sample if this person's analysis is on. Never stores anything when off."""
-    if not status(user_sub)["enabled"]:
+    st = status(user_sub)
+    if not st["enabled"]:
         return {"ok": False, "error": "analysis is off", "enabled": False}
     session_id = (session_id or "").strip()
     if not _SESSION_RE.match(session_id):
@@ -236,8 +261,9 @@ def add_sample(user_sub: str, session_id: str, type: str, timestamp,  # noqa: A0
                            (session_id,)).fetchone()
     if owner and owner["user_sub"] != user_sub:
         return {"ok": False, "error": "that session_id belongs to someone else; pick a new one"}
-    if not _within_rate(user_sub):
-        return {"ok": False, "error": f"rate limit: {RATE_LIMIT} samples per minute"}
+    if not _within_rate(user_sub, st["max_per_min"]):
+        return {"ok": False, "error": f"rate limit: {st['max_per_min']} samples per minute",
+                "max_per_min": st["max_per_min"]}
 
     now = time.time()
     with _lock, _conn() as db:
@@ -250,6 +276,31 @@ def add_sample(user_sub: str, session_id: str, type: str, timestamp,  # noqa: A0
         if data:
             db.execute("INSERT INTO sample_media(sample_id, data) VALUES (?,?)", (sid, data))
     return {"ok": True, "sample_id": sid, "session_id": session_id, "type": type, "ts": ts}
+
+
+def add_samples(user_sub: str, items: list, defaults: dict) -> dict:
+    """A batch of samples (max MAX_BATCH); each item's fields override `defaults`."""
+    if not isinstance(items, list) or not items:
+        return {"ok": False, "error": "samples must be a non-empty list"}
+    if len(items) > MAX_BATCH:
+        return {"ok": False, "error": f"at most {MAX_BATCH} samples per call"}
+    if not status(user_sub)["enabled"]:
+        return {"ok": False, "error": "analysis is off", "enabled": False}
+    results = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            results.append({"index": i, "ok": False, "error": "each sample must be an object"})
+            continue
+        a = {**defaults, **{k: v for k, v in item.items() if v not in (None, "")}}
+        r = add_sample(user_sub, str(a.get("session_id") or ""), str(a.get("type") or ""),
+                       a.get("timestamp"), image_base64=str(a.get("image_base64") or ""),
+                       mime=str(a.get("mime") or ""), text=str(a.get("text") or ""),
+                       event=a.get("event"))
+        results.append({"index": i, **{k: r[k] for k in ("ok", "sample_id", "error") if k in r}})
+        if r.get("enabled") is False:
+            break
+    stored = sum(1 for r in results if r["ok"])
+    return {"ok": stored == len(items), "stored": stored, "results": results}
 
 
 def _sample_out(r: sqlite3.Row) -> dict:
@@ -273,13 +324,16 @@ def cursor(session_id: str) -> int:
 
 
 def list_samples(session_id: str, after_id: int = 0, unprocessed_only: bool = True,
-                 limit: int = 50) -> dict:
+                 limit: int = 50, type: str = "") -> dict:  # noqa: A002
     after = max(int(after_id or 0), cursor(session_id) if unprocessed_only else 0)
+    where, args = "session_id=? AND id>?", [session_id, after]
+    if type in SAMPLE_TYPES:
+        where += " AND type=?"
+        args.append(type)
     with _conn() as db:
-        rows = db.execute("SELECT * FROM samples WHERE session_id=? AND id>? ORDER BY id LIMIT ?",
-                          (session_id, after, limit)).fetchall()
-        total = db.execute("SELECT COUNT(*) AS n FROM samples WHERE session_id=? AND id>?",
-                           (session_id, after)).fetchone()["n"]
+        rows = db.execute(f"SELECT * FROM samples WHERE {where} ORDER BY id LIMIT ?",
+                          (*args, limit)).fetchall()
+        total = db.execute(f"SELECT COUNT(*) AS n FROM samples WHERE {where}", args).fetchone()["n"]
     return {"session_id": session_id, "after_id": after, "samples": [_sample_out(r) for r in rows],
             "remaining": max(0, total - len(rows))}
 

@@ -2267,7 +2267,8 @@ def _named(rows: list[dict], key: str = "user_sub") -> list[dict]:
 
 @tool("stream_analysis_status",
       "Whether live stream analysis is switched ON for a person (their Stream Deck "
-      "button). When OFF the stream proxy sends nothing and nothing is stored. "
+      "button). When OFF the stream proxy sends nothing and nothing is stored. Also "
+      "max_per_min: how many samples a minute that person's proxy may send. "
       "`person` is a name, @username or PSN id; leave it out to list everyone who "
       "has ever set the switch.",
       {"type": "object", "properties": {
@@ -2304,12 +2305,21 @@ def _stream_sessions(limit: int = 10) -> dict:
           "session_id": {"type": "string"},
           "after_id": {"type": "integer", "description": "Only samples with a larger id."},
           "unprocessed_only": {"type": "boolean", "description": "Default true."},
+          "type": {"type": "string", "enum": ["frame", "chat", "event"],
+                   "description": "Only this sample type, e.g. event for kill feed / scoreboard."},
           "limit": {"type": "integer", "description": "1-100, default 50."}}})
 def _stream_samples(session_id: str, after_id: int = 0, unprocessed_only: bool = True,
-                    limit: int = 50) -> dict:
-    return _sa().list_samples(str(session_id or "").strip(), after_id=max(0, int(after_id or 0)),
-                              unprocessed_only=unprocessed_only is not False,
-                              limit=max(1, min(int(limit or 50), 100)))
+                    limit: int = 50, type: str = "") -> dict:  # noqa: A002
+    out = _sa().list_samples(str(session_id or "").strip(), after_id=max(0, int(after_id or 0)),
+                             unprocessed_only=unprocessed_only is not False,
+                             limit=max(1, min(int(limit or 50), 100)), type=str(type or ""))
+    # Whole samples only: a page cut at MAX_TOOL_CHARS would be broken JSON.
+    while len(out["samples"]) > 1 and len(json.dumps(out, default=str)) > MAX_TOOL_CHARS - 200:
+        out["samples"].pop()
+        out["remaining"] += 1
+    if out["samples"]:
+        out["next_after_id"] = out["samples"][-1]["sample_id"]
+    return out
 
 
 @tool("stream_sample_image",
@@ -2706,13 +2716,17 @@ def _stream_target(caller: dict, person: str) -> tuple[str, str] | dict:
 @write_tool(
     "stream_analysis_toggle",
     "Switch live stream analysis ON or OFF for a person (what their Stream Deck button "
-    "does). Pass enabled=true/false to set it, or leave it out to flip it. Returns the "
-    "new state. A personal token changes its own switch; a service token must pass "
-    "`person`. Rate limit: 60 per hour.",
+    "does). Pass enabled=true/false to set it, or leave it out to flip it. max_per_min "
+    "sets how many samples a minute the proxy may send (default 120, ceiling in "
+    "stream_analysis_status); given alone it changes only the rate, not the switch. "
+    "Returns the new state. A personal token changes its own switch; a service token "
+    "must pass `person`. Rate limit: 60 per hour.",
     {"type": "object", "properties": {
         "enabled": {"type": "boolean", "description": "true = ON, false = OFF, omit = flip."},
+        "max_per_min": {"type": "integer", "description": "Samples per minute the proxy may send."},
         "person": {"type": "string", "description": "Whose stream (service tokens only)."}}})
-def _stream_analysis_toggle(caller: dict, enabled: Any = None, person: str = "") -> dict:
+def _stream_analysis_toggle(caller: dict, enabled: Any = None, person: str = "",
+                            max_per_min: Any = None) -> dict:
     import mcp_oauth
     target = _stream_target(caller, person)
     if isinstance(target, dict):
@@ -2721,14 +2735,22 @@ def _stream_analysis_toggle(caller: dict, enabled: Any = None, person: str = "")
     zid = caller.get("zitadel_id", "")
     if enabled is not None and not isinstance(enabled, bool):
         return {"ok": False, "error": "enabled must be true or false"}
+    if max_per_min is not None and (isinstance(max_per_min, bool) or not isinstance(max_per_min, int)
+                                    or max_per_min < 1):
+        return {"ok": False, "error": "max_per_min must be a positive whole number"}
     if not mcp_oauth.within_rate_limit(zid, "stream_analysis_toggle", 60, 3600):
         return {"ok": False, "error": "rate limit: 60 per hour"}
-    state = _sa().set_enabled(sub, enabled, by=_caller_name(caller))
+    sa = _sa()
+    if max_per_min is not None:
+        sa.set_rate(sub, max_per_min, by=_caller_name(caller))
+    if enabled is not None or max_per_min is None:
+        sa.set_enabled(sub, enabled, by=_caller_name(caller))
+    state = sa.status(sub)
     mcp_oauth.audit_write(zid, "stream_analysis_toggle",
-                          json.dumps({"person": sub, "enabled": enabled}),
-                          "on" if state["enabled"] else "off")
+                          json.dumps({"person": sub, "enabled": enabled, "max_per_min": max_per_min}),
+                          ("on" if state["enabled"] else "off") + f" {state['max_per_min']}/min")
     return {"ok": True, "person": name, "enabled": state["enabled"],
-            "state": "ON" if state["enabled"] else "OFF"}
+            "state": "ON" if state["enabled"] else "OFF", "max_per_min": state["max_per_min"]}
 
 
 @write_tool(
@@ -2737,8 +2759,10 @@ def _stream_analysis_toggle(caller: dict, enabled: Any = None, person: str = "")
     "analysis is ON (when OFF it returns ok:false, enabled:false and stores nothing). "
     "type frame needs image_base64 (JPEG/PNG, max 1.5 MB); chat needs text (max 4000 "
     "chars); event needs an `event` JSON object (max 16 KB). session_id: 1-64 of "
-    "A-Z a-z 0-9 . _ : -. timestamp: epoch seconds or ISO 8601 with a timezone. Rate "
-    "limit: 120 per minute per person.",
+    "A-Z a-z 0-9 . _ : -. timestamp: epoch seconds or ISO 8601 with a timezone. "
+    "Batch: pass `samples` (up to 30 objects with the same fields; top-level fields are "
+    "defaults, e.g. session_id). Rate limit: max_per_min samples per person (default "
+    "120, see stream_analysis_status) and 3600 calls per hour per token.",
     {"type": "object", "required": ["session_id", "type", "timestamp"], "properties": {
         "session_id": {"type": "string"},
         "type": {"type": "string", "enum": ["frame", "chat", "event"]},
@@ -2747,28 +2771,38 @@ def _stream_analysis_toggle(caller: dict, enabled: Any = None, person: str = "")
         "mime": {"type": "string", "description": "frame: image/jpeg or image/png (checked against the bytes)."},
         "text": {"type": "string", "description": "chat: the message; frame: optional caption."},
         "event": {"type": "object", "description": "event: the game event."},
+        "samples": {"type": "array", "items": {"type": "object"},
+                    "description": "Batch of up to 30 samples (same fields as above)."},
         "person": {"type": "string", "description": "Whose stream (service tokens only)."}}})
 def _stream_sample_add(caller: dict, session_id: str = "", type: str = "",  # noqa: A002
                        timestamp: Any = None, image_base64: str = "", mime: str = "",
-                       text: str = "", event: Any = None, person: str = "") -> dict:
+                       text: str = "", event: Any = None, person: str = "",
+                       samples: Any = None) -> dict:
     import mcp_oauth
     target = _stream_target(caller, person)
     if isinstance(target, dict):
         return target
     zid = caller.get("zitadel_id", "")
-    # Per-minute limit per person lives in stream_analysis; this is the hourly ceiling
-    # per token, counted from the audit rows below.
-    if not mcp_oauth.within_rate_limit(zid, "stream_sample_add", 7200, 3600):
-        return {"ok": False, "error": "rate limit: 7200 samples per hour"}
-    result = _sa().add_sample(target[0], str(session_id or ""), str(type or ""), timestamp,
-                              image_base64=str(image_base64 or ""), mime=str(mime or ""),
-                              text=str(text or ""), event=event)
+    # Samples per minute per person live in stream_analysis; this caps calls per token,
+    # counted from the audit rows below (one per call, however many samples it carries).
+    if not mcp_oauth.within_rate_limit(zid, "stream_sample_add", 3600, 3600):
+        return {"ok": False, "error": "rate limit: 3600 calls per hour"}
+    sa = _sa()
+    if samples is not None:
+        result = sa.add_samples(target[0], samples, {
+            "session_id": session_id, "type": type, "timestamp": timestamp,
+            "image_base64": image_base64, "mime": mime, "text": text, "event": event})
+        outcome = f"batch:{result.get('stored', 0)}/{len(samples) if isinstance(samples, list) else 0}"
+    else:
+        result = sa.add_sample(target[0], str(session_id or ""), str(type or ""), timestamp,
+                               image_base64=str(image_base64 or ""), mime=str(mime or ""),
+                               text=str(text or ""), event=event)
+        outcome = f"ok:{result['sample_id']}" if result.get("ok") else f"error:{result.get('error', '')[:60]}"
     # OFF stores nothing, the audit log included. Never the image or the text itself.
     if result.get("enabled") is not False:
         mcp_oauth.audit_write(zid, "stream_sample_add",
                               json.dumps({"person": target[0], "session_id": str(session_id or "")[:64],
-                                          "type": str(type or "")[:8]}),
-                              f"ok:{result['sample_id']}" if result.get("ok") else f"error:{result.get('error', '')[:60]}")
+                                          "type": str(type or "")[:8]}), outcome)
     return result
 
 
