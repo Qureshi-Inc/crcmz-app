@@ -288,12 +288,14 @@ html[data-sidebar-collapsed] .app-main { padding-left: calc(56px + var(--gutter)
 @media (hover: hover) { .sidebar-collapse-btn:hover { color: var(--text); background: rgba(255,60,200,.05); } }
 .sidebar-collapse-btn svg { width: 16px; height: 16px; }
 
-.sidebar-brand { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-3) var(--space-2); text-decoration: none; border-bottom: 1px solid var(--border-decorative); overflow: hidden; }
-.sidebar-brand .mascot { width: var(--brand-mark); height: var(--brand-mark); object-fit: contain; flex: none; }
+.sidebar-brand { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3); text-decoration: none; border-bottom: 1px solid var(--border-decorative); overflow: visible; }
+.sidebar-brand .mascot { width: 36px; height: 36px; object-fit: contain; flex: none; }
+.sidebar[data-collapsed] .sidebar-brand { padding: var(--space-3) 0; justify-content: center; }
 .sidebar[data-collapsed] .sidebar-brand .mascot { width: 32px; height: 32px; }
-/* --text-xl does not fit beside the 64 px mark in 240 px; the top-bar size does. */
-.sidebar-brand .wordmark-text { font-size: var(--text-lg); font-weight: 800; }
-.sidebar-brand .topbar-words { gap: 8px; }
+.sidebar-brand .wordmark-text { font-size: var(--text-base); font-weight: 800; }
+.sidebar-brand .topbar-words { gap: 4px; min-width: 0; overflow: hidden; }
+.sidebar-brand .wordmark-wrap { max-width: 100%; }
+.sidebar-brand .tagline { overflow: hidden; text-overflow: ellipsis; }
 .sidebar-group { list-style: none; margin: 0; padding: var(--space-2) 0; }
 .sidebar-group + .sidebar-group { border-top: 1px solid var(--border-decorative); }
 .sidebar-spacer { flex: 1; }
@@ -2873,6 +2875,34 @@ textarea.ask-input { flex: 1; min-width: 0; resize: none; min-height: var(--tap-
 .notif-empty { margin: 0; padding: var(--space-5) 0; }
 .notif-delivery { margin-top: var(--space-3); }
 .notif-delivery-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* Grouped notification row */
+.notif-group { position: relative; display: flex; align-items: stretch; }
+.notif-group .notif-group-row { flex: 1; border-radius: var(--radius-md) 0 0 var(--radius-md); border-right: none; }
+.notif-group-open .notif-group-row,
+.notif-group-open .notif-expand-btn { border-radius: var(--radius-md) var(--radius-md) 0 0; border-bottom-color: transparent; }
+.notif-group-open .notif-group-row { border-right: none; border-radius: var(--radius-md) 0 0 0; }
+.notif-expand-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; flex: none; cursor: pointer;
+  background: rgba(6, 4, 18, .35); border: 1px solid var(--border-decorative); border-left: none;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--text-dim); transition: color var(--dur-std) var(--ease-out);
+}
+.notif-expand-btn:hover { color: var(--text); }
+.notif-group[data-unread="true"] .notif-expand-btn { border-color: var(--border-control); background: rgba(34, 230, 255, .06); }
+.notif-group-open .notif-expand-btn { border-radius: 0 var(--radius-md) 0 0; }
+.notif-group-count {
+  position: absolute; top: -4px; right: -6px;
+  min-width: 16px; height: 16px; padding: 0 3px;
+  font: 700 10px/16px var(--font-body); text-align: center;
+  background: var(--neon-cyan); color: #000; border-radius: 8px;
+}
+.notif-group-icon { position: relative; }
+.notif-group-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.notif-group-items > li:last-child .notif-row { border-radius: 0 0 var(--radius-md) var(--radius-md); }
+.notif-group-items > li .notif-row { border-radius: 0; border-top: none; }
+.notif-row-indent { padding-left: calc(var(--space-3) + var(--space-6)); }
+.notif-unreachable { font-size: var(--text-sm); }
 
 /* ── Slap comments + @mentions ───────────────────────────────────────────── */
 .mention-wrap { position: relative; flex: 1; min-width: 0; }
