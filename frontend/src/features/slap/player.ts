@@ -55,7 +55,8 @@ let state: PlayerState = {
   loading: false,
   expanded: false,
 }
-let clock: Clock = { position: saved?.position ?? 0, duration: 0 }
+const _savedItem = (saved && saved.index >= 0 && saved.index < (saved.queue?.length ?? 0)) ? saved.queue[saved.index] : null
+let clock: Clock = { position: saved?.position ?? 0, duration: _savedItem?.duration ?? 0 }
 /** Where the solo track was when Together took over the element. */
 let soloPos = saved?.position ?? 0
 /** Queue order before shuffle, by qid, so turning shuffle off puts it back. */
@@ -428,13 +429,19 @@ export function reloadTrack(id: string, duration = 0) {
   if (wasPlaying) void start()
 }
 
-/** Stop and put the player away: no sound, no queue, no mini-player. */
+/** Stop playback and hide the player for this session.
+ *  The queue is preserved in localStorage so the mini-player comes back on next visit. */
 export function closePlayer() {
+  // Snapshot position before unloading so the next visit resumes from here.
+  if (state.queue.length > 0) persist()
   leaveTogether()
   unload()
   unshuffled = null
   soloPos = 0
-  set({ queue: [], index: -1, playing: false, blocked: false, expanded: false })
+  // Mutate directly — calling set() would re-persist the now-empty queue, wiping the snapshot.
+  state = { ...state, queue: [], index: -1, playing: false, blocked: false, expanded: false, loading: false }
+  listeners.forEach((l) => l())
+  syncLockScreen()
   lockScreen.release('slap')
 }
 
