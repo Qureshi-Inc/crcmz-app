@@ -2139,6 +2139,86 @@ def _trip_buds_search(query: str = "", type: str = "", in_stock_only: bool = Fal
     return _trip.read("search_buds", args)
 
 
+# ── Gun meta (warzone-gun-search-bot's /api) ────────────────────────────────
+import gun_meta as _gm  # noqa: E402
+
+_GM_GAME = {"type": "string", "description": "Game id: mw4 (Modern Warfare 4), warzone or bo6."}
+_GM_FILTERS = {
+    "game": _GM_GAME,
+    "mode": {"type": "string", "description":
+             "Mode id or loose name, e.g. multiplayer, resurgence, 'dmz pvp', 'dmz pve' (mw4); "
+             "resurgence, verdansk (warzone); multiplayer (bo6)."},
+    "category": {"type": "string", "description":
+                 "Optional: 'long range', 'close range', sniper (mw4); in bo6 the categories are "
+                 "weapon types (smg, assault rifle, ...)."},
+    "weapon_type": {"type": "string", "description":
+                    "Optional weapon type: ar, smg, lmg, shotgun, sniper, marksman rifle, pistol."},
+}
+
+
+@tool("gun_meta_games",
+      "Call of Duty gun meta: which games have data (mw4 = Modern Warfare 4, warzone, bo6) "
+      "and, given `game`, its modes, categories and weapon types. Call this before "
+      "gun_meta_class when you don't know the valid options, and if the person didn't say "
+      "which mode or range they want, ask them using these options.",
+      {"type": "object", "properties": {"game": _GM_GAME}, "required": []})
+def _gun_meta_games(game: str = "") -> Any:
+    return _gm.games(game)
+
+
+@tool("gun_meta_class",
+      "The meta class: top-ranked guns for a game + mode (+ optional category / weapon type), "
+      "each with tier, rank and its best build (attachments by slot, unlock levels, DMZ costs, "
+      "playstyle). Loose names work ('dmz pvp', 'long range', 'smg'). An error lists the valid "
+      "options; use them or ask. If a build has build_from_mode set, it's borrowed from that "
+      "mode (Resurgence / DMZ PvE have few published builds): say so. `updated` is how fresh "
+      "the data is; warzone/bo6 data is older, mention that.",
+      {"type": "object", "properties": {
+          **_GM_FILTERS,
+          "limit": {"type": "integer", "description": "How many guns, 1-10, default 3."}},
+       "required": ["game"]})
+def _gun_meta_class(game: str, mode: str = "", category: str = "", weapon_type: str = "",
+                    limit: int = 3) -> Any:
+    return _gm.meta(game, mode, category, weapon_type, max(1, min(int(limit or 3), 10)))
+
+
+@tool("gun_meta_tier_list",
+      "The full ranked tier list for a game + mode (optionally one category, weapon type or "
+      "tier such as META): every gun's tier and rank, without builds. Use for 'where does X "
+      "rank' or 'what's in meta tier'; use gun_meta_class for loadouts.",
+      {"type": "object", "properties": {
+          **_GM_FILTERS,
+          "tier": {"type": "string", "description": "Optional tier filter, e.g. META, A, B."}},
+       "required": ["game"]})
+def _gun_meta_tier_list(game: str, mode: str = "", category: str = "", weapon_type: str = "",
+                        tier: str = "") -> Any:
+    return _gm.tier_list(game, mode, category, weapon_type, tier)
+
+
+@tool("gun_meta_weapon",
+      "One gun in detail: type, unlock level, where it places in each mode, and every build "
+      "(attachments, unlock levels, DMZ costs, playstyle). `name` can be loose (kastov, han). "
+      "An unknown name comes back with a 'Did you mean' suggestion.",
+      {"type": "object", "properties": {
+          "game": _GM_GAME,
+          "name": {"type": "string", "description": "Weapon name, loose is fine."},
+          "mode": {"type": "string", "description": "Optional: only builds for this mode."}},
+       "required": ["game", "name"]})
+def _gun_meta_weapon(game: str, name: str, mode: str = "") -> Any:
+    return _gm.weapon(game, name, mode)
+
+
+@tool("gun_meta_search",
+      "Fuzzy gun-name search across mw4, warzone and bo6 (or one `game`): returns matching "
+      "weapon ids and which game they're in. Use when you're not sure of a name or game.",
+      {"type": "object", "properties": {
+          "q": {"type": "string", "description": "Part of a weapon name."},
+          "game": {"type": "string", "description": "Optional game id to search within."}},
+       "required": ["q"]})
+def _gun_meta_search(q: str, game: str = "") -> Any:
+    return _gm.search(q, game)
+
+
 _WRITE_TOOLS: dict[str, dict[str, Any]] = {}
 
 # The app's private Ask AI chat (signed in, one person's own thread) may use these write
