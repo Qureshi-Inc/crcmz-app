@@ -7,13 +7,15 @@
 #
 # Token: ~/.crcmz/stream-token (chmod 600), one line. Either a personal token from
 # app.crcmz.me Settings -> MCP (crcmz_...), or a scoped service token.
-# CRCMZ_STREAM_PERSON: your PSN id. Needed for `status`, and for every mode with a
-# service token (a service token isn't a person, so it must say whose stream it is).
+# CRCMZ_STREAM_PERSON or ~/.crcmz/stream-person: your PSN id. Needed for `status`, and
+# for every mode with a service token (a service token isn't a person, so it must say
+# whose stream it is). The file is for launchers like the Redragon software that don't
+# pass your shell's environment.
 set -euo pipefail
 
 URL="${CRCMZ_MCP_URL:-https://app.crcmz.me/mcp}"
 TOKEN_FILE="${CRCMZ_STREAM_TOKEN_FILE:-$HOME/.crcmz/stream-token}"
-PERSON="${CRCMZ_STREAM_PERSON:-}"
+PERSON="${CRCMZ_STREAM_PERSON:-$(tr -d '\r\n' < "$HOME/.crcmz/stream-person" 2>/dev/null || true)}"
 MODE="${1:-toggle}"
 
 [ -r "$TOKEN_FILE" ] || { echo "no token at $TOKEN_FILE" >&2; exit 2; }

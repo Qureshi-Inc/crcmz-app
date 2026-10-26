@@ -103,8 +103,9 @@ toggle with curl and shows the new state:
 2. Put the token in `~/.crcmz/stream-token`, one line, `chmod 600`.
 3. In the Redragon software, set the key's action to "open program / run file" with the
    script (wrap it in an Automator "Run Shell Script" app if the software only launches
-   `.app` bundles). Set `CRCMZ_STREAM_PERSON` to your PSN id in the script's environment
-   (or edit the default at the top).
+   `.app` bundles). Put your PSN id in `~/.crcmz/stream-person` (one line); the Redragon
+   software doesn't pass your shell's environment, so `CRCMZ_STREAM_PERSON` alone won't
+   reach the script.
 
 Modes: no argument flips it, `on` / `off` set it, `status` reads it. Each prints `ON` or
 `OFF` (or `ERROR <why>`, exit 1) and shows a macOS notification, so you can see the state
@@ -118,5 +119,5 @@ included). For a machine that only needs two tools, prefer a scoped service toke
 owner adds an entry to `CRCMZ_SERVICE_TOKENS` in Coolify (app 24), e.g.
 `streamproxy:<random 32+ chars>:stream_sample_add,stream_analysis_toggle`, and Muse's
 existing entry gains `stream_analysis_record` (plus `stream_analysis_toggle` if Muse
-should flip it). Service tokens must pass `person`, so set `CRCMZ_STREAM_PERSON` and have
-the proxy send `"person": "<PSN id>"` with each sample.
+should flip it). Service tokens must pass `person`, so the button reads `~/.crcmz/stream-person` and
+the proxy must send `"person": "<PSN id>"` with each sample.
