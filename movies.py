@@ -96,6 +96,7 @@ _tb_blocked_until = 0.0
 ADDING_GIVE_UP_S = 30 * 60
 RESCAN_AFTER_S = 20      # Zurg notices a deleted torrent within seconds
 POLL_S = 1.5            # between TorBox checks while a copy is being tried
+COPY_WAIT_S = 12        # seconds to wait for a cached copy before giving up
 STREAM_PREFIX = "/api/watch/movies/stream/"
 
 # The server's own disk. Containers see it at different paths: this app writes LOCAL_DIR,
@@ -680,9 +681,11 @@ async def _tb_delete(tid: int | str) -> None:
         logger.info("movies: couldn't remove a TorBox torrent")
 
 
-async def _try_copy(c: dict, *, keep: bool, wait_s: float = 12) -> tuple[str, str] | None:
+async def _try_copy(c: dict, *, keep: bool, wait_s: float | None = None) -> tuple[str, str] | None:
     """Add one copy to TorBox. Returns (torrent_id:file_id, status) when complete (or
     `keep` is set); otherwise deletes it again and returns None."""
+    if wait_s is None:
+        wait_s = COPY_WAIT_S
     try:
         added = await _tb("POST", "/api/torrents/createtorrent",
                           data={"magnet": f"magnet:?xt=urn:btih:{c['hash']}"})

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Watch · Library (movies.py): choosing a copy, adding through Real-Debrid, copying it onto
+"""Watch · Library (movies.py): choosing a copy, adding through TorBox, copying it onto
 the server's disk, Jellyfin, notifications, the migration, streaming.
 
 Plain asserts, no pytest — run inside the app image where the deps live:
 
     tests/run-all.sh test_movies
 
-Nothing leaves the box: Real-Debrid, Torrentio, Cinemeta and Jellyfin are fakes, and
-Real-Debrid's download server is a local HTTPServer (so the real httpx download path,
+Nothing leaves the box: TorBox, Torrentio, Cinemeta and Jellyfin are fakes, and
+TorBox's download server is a local HTTPServer (so the real httpx download path,
 Range resume included, runs against it).
 """
 
@@ -26,7 +26,7 @@ os.environ.setdefault("NPSSO_TOKEN", "test-npsso")
 os.environ.setdefault("GROUP_ID", "test-group")
 os.environ.setdefault("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 os.environ["JELLYFIN_TOKEN"] = "test-jf"
-os.environ["REAL_DEBRID_TOKEN"] = "test-rd"
+os.environ["TORBOX_TOKEN"] = "test-tb"
 TMP = Path(tempfile.mkdtemp())
 os.environ["MOVIES_DB"] = str(TMP / "movies.db")
 
@@ -126,50 +126,53 @@ class DLServer:
 DL = DLServer()
 
 
-class FakeRD:
+class FakeTB:
     def __init__(self, cached=()):
         self.cached = set(cached)
         self.torrents: dict[str, dict] = {}
         self.calls: list[tuple[str, str]] = []
-        self.filesize: dict[str, int] = {}
+        self.blocked: set = set()
+        self._next_id = 1
 
     async def __call__(self, method, path, **kw):
         self.calls.append((method, path))
         data = kw.get("data") or {}
-        if path == "/torrents/addMagnet":
+        params = kw.get("params") or {}
+        json_body = kw.get("json") or {}
+        if path == "/api/torrents/createtorrent":
             h = data["magnet"].rsplit(":", 1)[1]
-            if h in getattr(self, "blocked", set()):
-                raise HTTPException(451, "Real-Debrid has that copy blocked")
-            tid = f"T{len(self.torrents) + 1}"
-            self.torrents[tid] = {"hash": h, "status": "waiting_files_selection", "progress": 0,
-                                  "files": [{"id": 1, "path": "/Sample/sample.mkv", "bytes": 10, "selected": 0},
-                                            {"id": 2, "path": "/Movie.mkv", "bytes": FILE_BYTES, "selected": 0}],
-                                  "links": []}
-            return {"id": tid}
-        if method == "GET" and path == "/torrents":
-            return [{"id": k, "filename": v.get("filename", ""), "status": v.get("status", "downloaded")}
-                    for k, v in self.torrents.items()]
-        if path == "/unrestrict/link":
-            tid = data["link"].rsplit("/", 1)[1]
-            f = next(f for f in self.torrents[tid]["files"] if f["selected"])
-            DL.files[tid] = DL.files.get(tid) or blob(f["bytes"])
-            return {"download": f"{DL.url}/dl/{tid}", "filesize": self.filesize.get(tid, f["bytes"]),
-                    "filename": f["path"].rsplit("/", 1)[1]}
-        tid = path.rsplit("/", 1)[1]
-        t = self.torrents.get(tid)
-        if path.startswith("/torrents/info/"):
-            return {**t, "files": t["files"]}
-        if path.startswith("/torrents/selectFiles/"):
-            assert data["files"] == "2", data
-            t["files"][1]["selected"] = 1
-            t["links"] = [f"https://real-debrid.com/d/{tid}"]
-            t["status"] = "downloaded" if t["hash"] in self.cached else "downloading"
-            t["progress"] = 100 if t["status"] == "downloaded" else 3
-            return None
-        if path.startswith("/torrents/delete/"):
-            if tid not in self.torrents:
-                raise HTTPException(404, "unknown_ressource")
-            del self.torrents[tid]
+            if h in self.blocked:
+                raise HTTPException(451, "TorBox has that copy blocked")
+            existing = next((t for t in self.torrents.values() if t.get("hash") == h), None)
+            if existing:
+                return {"torrent_id": existing["id"]}
+            tid = str(self._next_id)
+            self._next_id += 1
+            self.torrents[tid] = {
+                "id": tid, "hash": h,
+                "status": "completed" if h in self.cached else "downloading",
+                "cached": h in self.cached,
+                "progress": 100 if h in self.cached else 3,
+                "files": [{"id": 1, "name": "Sample/sample.mkv", "size": 10},
+                          {"id": 2, "name": "Movie.mkv", "size": FILE_BYTES}],
+            }
+            return {"torrent_id": tid}
+        if method == "GET" and path == "/api/torrents/mylist":
+            tid = str(params.get("id", ""))
+            if tid:
+                return self.torrents.get(tid)
+            return list(self.torrents.values())
+        if method == "GET" and path == "/api/torrents/requestdl":
+            tid = str(params.get("torrent_id", ""))
+            t = self.torrents.get(tid)
+            if not t:
+                return None
+            DL.files[tid] = DL.files.get(tid) or blob(FILE_BYTES)
+            return f"{DL.url}/dl/{tid}"
+        if path == "/api/torrents/controltorrent":
+            tid = str(json_body.get("torrent_id", ""))
+            if json_body.get("operation") == "delete":
+                self.torrents.pop(tid, None)
             return None
         raise AssertionError(path)
 
@@ -202,7 +205,7 @@ class FakeJF:
                            "MediaSources": [{"Size": size, "MediaStreams": [{"Type": "Video", "Width": width, "VideoRangeType": rng}]}]})
 
 
-RD = FakeRD()
+TB = FakeTB()
 JF = FakeJF()
 TORRENTIO: dict[str, list] = {"tt15239678": DUNE}
 NOTES: list[tuple] = []
@@ -242,13 +245,13 @@ async def fake_cinemeta(path):
 
 
 CATALOG_CALLS: list[str] = []
-mv._rd = RD
+mv._tb = TB
 mv._torrentio = fake_torrentio
 mv._cinemeta = fake_cinemeta
 slap._jf = JF
 
 
-mv.POLL_S = 0   # no real waiting between Real-Debrid checks
+mv.POLL_S = 0   # no real waiting between TorBox checks
 mv.RESCAN_AFTER_S = 0
 
 
@@ -274,10 +277,12 @@ def reset(cached=()):
     mv._copy_fails.clear()
     DL.files.clear()
     DL.ranges.clear()
-    RD.__init__(cached)
+    TB.__init__(cached)
     JF.__init__()
     mv._cache.clear()
     mv._last_tick = mv._last_scan = 0.0
+    mv._tb_blocked_until = 0.0
+    mv.COPY_WAIT_S = 0.001
     NOTES.clear()
     CHANNEL.clear()
 
@@ -334,7 +339,7 @@ def add_tests():
         assert r["status"] == "finding" and r["by"] == "Zubair" and r["title"] == "Dune: Part Two"
         row = mv._row("tt15239678")
         assert row["status"] == "adding" and row["quality"] == "4K HDR" and "Tigole" in row["release"], row
-        assert list(RD.torrents) == [row["rd_id"]], "the uncached FLUX copy we tried is deleted again"
+        assert list(TB.torrents) == [row["rd_id"].split(":")[0]], "the uncached FLUX copy we tried is deleted again"
 
     def the_adder_can_pick_1080p_or_4k_when_both_exist():
         reset()
@@ -342,11 +347,11 @@ def add_tests():
         assert o["4k"] and o["1080p"] and o["1080p"]["label"] == "1080p" and o["4k"]["label"].startswith("4K"), o
         run(add_and_wait("u-zub", "Zubair", "tt15239678", want="1080p"))
         row = mv._row("tt15239678")
-        assert row["want"] == "1080p" and RD.torrents[row["rd_id"]]["hash"] == "2" * 40, (row["want"], RD.torrents)
+        assert row["want"] == "1080p" and TB.torrents[row["rd_id"].split(":")[0]]["hash"] == "2" * 40, (row["want"], TB.torrents)
         reset()
         run(add_and_wait("u-zub", "Zubair", "tt15239678", want="4k"))
         row = mv._row("tt15239678")
-        assert RD.torrents[row["rd_id"]]["hash"] == "a" * 40 and len(RD.torrents) == 1, RD.torrents
+        assert TB.torrents[row["rd_id"].split(":")[0]]["hash"] == "a" * 40 and len(TB.torrents) == 1, TB.torrents
         reset()
         run(add_and_wait("u-zub", "Zubair", "tt15239678", want="8k?"))
         assert mv._row("tt15239678")["want"] == "", "anything else is the best copy, as before"
@@ -355,8 +360,8 @@ def add_tests():
         reset()
         run(add_and_wait("u-zub", "Zubair", "tt15239678"))
         row = mv._row("tt15239678")
-        assert row["status"] == "downloading" and RD.torrents[row["rd_id"]]["hash"] == "a" * 40, row
-        assert len(RD.torrents) == 1
+        assert row["status"] == "downloading" and TB.torrents[row["rd_id"].split(":")[0]]["hash"] == "a" * 40, row
+        assert len(TB.torrents) == 1
 
     def a_cached_1080p_beats_an_uncached_4k():
         reset(cached={"2" * 40})
@@ -374,13 +379,13 @@ def add_tests():
         reset()
         JF.movie("c" * 32, "Dune: Part Two", "tt15239678")
         r = run(mv.add("u-zub", "Zubair", "tt15239678"))
-        assert r["status"] == "ready" and r["id"] == "c" * 32 and not RD.calls and mv._row("tt15239678") is None
+        assert r["status"] == "ready" and r["id"] == "c" * 32 and not TB.calls and mv._row("tt15239678") is None
 
     def a_second_press_joins_the_first_and_bad_ids_are_refused():
         reset(cached={"a" * 40})
         run(add_and_wait("u-zub", "Zubair", "tt15239678"))
         again = run(mv.add("u-noor", "Noor", "tt15239678"))
-        assert again["by"] == "Zubair" and len(RD.torrents) == 1
+        assert again["by"] == "Zubair" and len(TB.torrents) == 1
         for bad in ("", "tt12", "../etc", "tt15239678; drop"):
             try:
                 run(mv.add("u-zub", "Zubair", bad))
@@ -402,14 +407,14 @@ def add_tests():
             assert e.status_code == 429
         else:
             raise AssertionError("no daily cap")
-        RD.cached = {"a" * 40}
+        TB.cached = {"a" * 40}
         assert run(add_and_wait("u-zub", "Zubair", "tt15239678", admin=True))["status"] == "finding"
 
     def a_failed_add_can_be_tried_again():
         reset()
         run(add_and_wait("u-zub", "Zubair", "tt0000001"))
         TORRENTIO["tt0000001"] = [DUNE[3]]
-        RD.cached = {"d" * 40}
+        TB.cached = {"d" * 40}
         try:
             run(add_and_wait("u-noor", "Noor", "tt0000001"))
             row = mv._row("tt0000001")
@@ -417,23 +422,23 @@ def add_tests():
         finally:
             TORRENTIO.pop("tt0000001")
 
-    def a_copy_real_debrid_has_blocked_is_skipped_not_fatal():
+    def a_copy_torbox_has_blocked_is_skipped_not_fatal():
         reset(cached={"d" * 40})
-        RD.blocked = {"a" * 40}
+        TB.blocked = {"a" * 40}
         try:
             run(add_and_wait("u-zub", "Zubair", "tt15239678"))
         finally:
-            RD.blocked = set()
+            TB.blocked = set()
         row = mv._row("tt15239678")
         assert row["status"] != "failed" and "Tigole" in row["release"], row
 
     def when_every_copy_is_blocked_only_the_adder_hears_why():
         reset()
-        RD.blocked = {c["hash"] for c in mv.rank(DUNE)}
+        TB.blocked = {c["hash"] for c in mv.rank(DUNE)}
         try:
             run(add_and_wait("u-zub", "Zubair", "tt15239678"))
         finally:
-            RD.blocked = set()
+            TB.blocked = set()
         row = mv._row("tt15239678")
         assert row["status"] == "failed" and "blocked" in row["error"], row
         assert len(NOTES) == 1 and NOTES[0][1]["only"] == ["u-zub"] and NOTES[0][1]["dms"] is False, NOTES
@@ -442,12 +447,12 @@ def add_tests():
 
     def a_server_wide_block_stops_at_once_and_pauses_adds():
         reset()
-        RD.blocked = {c["hash"] for c in mv.rank(DUNE)} | {mv.PROBE_HASH}
+        TB.blocked = {c["hash"] for c in mv.rank(DUNE)} | {mv.PROBE_HASH}
         try:
             run(add_and_wait("u-zub", "Zubair", "tt15239678"))
         finally:
-            RD.blocked = set()
-        adds = [p for m, p in RD.calls if p == "/torrents/addMagnet"]
+            TB.blocked = set()
+        adds = [p for m, p in TB.calls if p == "/api/torrents/createtorrent"]
         assert len(adds) == 2, f"one copy, then the free-film check: {len(adds)}"
         assert mv._row("tt15239678")["error"] == mv.SERVER_BLOCKED
         try:
@@ -457,12 +462,12 @@ def add_tests():
         else:
             raise AssertionError("adds weren't paused")
         finally:
-            mv._rd_blocked_until = 0.0
+            mv._tb_blocked_until = 0.0
 
     def a_movie_never_costs_more_than_three_adds():
         reset()   # nothing cached: two 4K and one 1080p, the first held to download
         run(add_and_wait("u-zub", "Zubair", "tt15239678"))
-        adds = [p for m, p in RD.calls if p == "/torrents/addMagnet"]
+        adds = [p for m, p in TB.calls if p == "/api/torrents/createtorrent"]
         assert len(adds) <= mv.MAX_ADDS and mv._row("tt15239678")["status"] == "downloading", (len(adds), mv._row("tt15239678"))
 
     def the_copies_list_starts_with_what_add_picks_and_one_can_be_pinned():
@@ -473,11 +478,11 @@ def add_tests():
         reset()
         run(add_and_wait("u-zub", "Zubair", "tt15239678", want="hash:" + "2" * 40))
         row = mv._row("tt15239678")
-        assert row["want"] == "hash:" + "2" * 40 and list(RD.torrents.values())[0]["hash"] == "2" * 40 and len(RD.torrents) == 1
+        assert row["want"] == "hash:" + "2" * 40 and list(TB.torrents.values())[0]["hash"] == "2" * 40 and len(TB.torrents) == 1
         reset()
         run(add_and_wait("u-zub", "Zubair", "tt15239678", want="hash:" + "9" * 40))
         row = mv._row("tt15239678")
-        assert row["status"] == "failed" and "pick another" in row["error"] and not RD.torrents, row
+        assert row["status"] == "failed" and "pick another" in row["error"] and not TB.torrents, row
         for bad in ("tt12", "../x"):
             try:
                 run(mv.copies(bad))
@@ -489,8 +494,9 @@ def add_tests():
     def replacing_swaps_the_copy_for_the_adder_or_an_admin_only():
         reset(cached={"d" * 40})
         run(add_and_wait("u-zub", "Zubair", "tt15239678"))
-        tid = mv._row("tt15239678")["rd_id"]
-        RD.torrents[tid]["filename"] = "Dune.Tigole"
+        rid = mv._row("tt15239678")["rd_id"]
+        tb_tid = rid.split(":")[0]
+        TB.torrents[tb_tid]["name"] = "Dune.Tigole"
         JF.movie("c" * 32, "Dune: Part Two", "tt15239678", path="/zurg/movies/Dune.Tigole/Movie.mkv")
         try:
             run(mv.replace("u-noor", "Noor", "tt15239678", "2" * 40))
@@ -498,7 +504,7 @@ def add_tests():
             assert e.status_code == 403
         else:
             raise AssertionError("someone else replaced it")
-        assert tid in RD.torrents, "a refused replace leaves the copy alone"
+        assert tb_tid in TB.torrents, "a refused replace leaves the copy alone"
         for bad in ("", "x" * 40, "2" * 39):
             try:
                 run(mv.replace("u-zub", "Zubair", "tt15239678", bad))
@@ -508,8 +514,8 @@ def add_tests():
                 raise AssertionError(bad)
         r = run(and_wait(mv.replace("u-zub", "Zubair", "tt15239678", "2" * 40)))
         row = mv._row("tt15239678")
-        assert r["status"] == "finding" and tid not in RD.torrents, (r, RD.torrents)
-        assert row["want"] == "hash:" + "2" * 40 and [t["hash"] for t in RD.torrents.values()] == ["2" * 40], RD.torrents
+        assert r["status"] == "finding" and tb_tid not in TB.torrents, (r, TB.torrents)
+        assert row["want"] == "hash:" + "2" * 40 and [t["hash"] for t in TB.torrents.values()] == ["2" * 40], TB.torrents
         # An add that hasn't reached Jellyfin yet: still only the adder.
         try:
             run(mv.replace("u-noor", "Noor", "tt15239678", "d" * 40))
@@ -518,7 +524,7 @@ def add_tests():
         else:
             raise AssertionError("someone else replaced a pending add")
         assert run(and_wait(mv.replace("u-noor", "Noor", "tt15239678", "d" * 40, admin=True)))["status"] == "finding"
-        assert [t["hash"] for t in RD.torrents.values()] == ["d" * 40], "the pending copy's torrent went too"
+        assert [t["hash"] for t in TB.torrents.values()] == ["d" * 40], "the pending copy's torrent went too"
 
     def a_search_cut_off_by_a_restart_is_picked_up_again():
         reset(cached={"d" * 40})
@@ -535,7 +541,7 @@ def add_tests():
             db.execute("INSERT INTO adds (imdb, title, sub, name, status, created, updated) VALUES (?,?,?,?,?,?,?)",
                        ("tt15239678", "Dune: Part Two", "u-zub", "Zubair", "finding", now, now))
         run(and_wait(mv.tick(force=True)))
-        assert mv._row("tt15239678")["status"] == "finding" and not RD.calls
+        assert mv._row("tt15239678")["status"] == "finding" and not TB.calls
 
     def history_gets_the_library_poster_for_a_stream():
         reset()
@@ -567,7 +573,7 @@ def add_tests():
         else:
             raise AssertionError("cleared an add that's working")
 
-    for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_server_wide_block_stops_at_once_and_pauses_adds, a_movie_never_costs_more_than_three_adds, a_copy_real_debrid_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
+    for fn in (the_first_cached_4k_copy_wins_and_the_rest_are_removed, a_server_wide_block_stops_at_once_and_pauses_adds, a_movie_never_costs_more_than_three_adds, a_copy_torbox_has_blocked_is_skipped_not_fatal, when_every_copy_is_blocked_only_the_adder_hears_why, with_nothing_cached_the_best_seeded_4k_downloads,
                a_cached_1080p_beats_an_uncached_4k, no_copy_says_so, already_in_the_library_is_not_added_again,
                a_second_press_joins_the_first_and_bad_ids_are_refused, five_a_day_unless_admin,
                a_failed_add_can_be_tried_again, the_adder_can_pick_1080p_or_4k_when_both_exist,
@@ -585,10 +591,11 @@ def follow_tests():
         reset()
         run(add_and_wait("u-zub", "Zubair", "tt15239678"))
         tid = mv._row("tt15239678")["rd_id"]
-        RD.torrents[tid]["progress"] = 42.5
+        tb_tid = tid.split(":")[0]
+        TB.torrents[tb_tid]["progress"] = 42.5
         run(mv.tick(force=True))
         assert mv._row("tt15239678")["progress"] == 42.5
-        RD.torrents[tid].update(status="downloaded", progress=100)
+        TB.torrents[tb_tid].update(status="completed", progress=100)
         run(mv.tick(force=True))
         assert mv._row("tt15239678")["status"] == "adding"
         assert any(m == "POST" and p == f"/Items/{'f' * 32}/Refresh" for m, p, _ in JF.calls), JF.calls
@@ -678,7 +685,7 @@ def local_tests():
         assert list((loc / ".incoming").iterdir()) == [], "no .part left behind"
         assert row["status"] == "adding" and row["local_dir"] == folder and row["bytes_done"] == FILE_BYTES, row
         assert DL.ranges == [""], DL.ranges
-        assert RD.torrents, "Real-Debrid's copy stays until Jellyfin lists ours"
+        assert TB.torrents, "TorBox copy stays until Jellyfin lists ours"
 
     def the_card_shows_the_copy_progress():
         fresh(cached={"d" * 40})
@@ -702,7 +709,7 @@ def local_tests():
     def a_copy_of_the_wrong_size_never_reaches_the_library():
         fresh(cached={"d" * 40})
         run(add_and_wait("u-zub", "Zubair", "tt15239678"))
-        DL.files[mv._row("tt15239678")["rd_id"]] = blob(FILE_BYTES - 5)
+        DL.files[mv._row("tt15239678")["rd_id"].split(":")[0]] = blob(FILE_BYTES - 5)
         assert run(mv.copy_one(mv._row("tt15239678"))) == "failed"
         row = mv._row("tt15239678")
         assert row["status"] == "failed" and "wrong size" in row["error"], row
@@ -710,21 +717,21 @@ def local_tests():
 
     def only_the_local_copy_is_left_and_never_while_someone_watches():
         row = copied()
-        tid = row["rd_id"]
-        RD.torrents[tid]["filename"] = "Dune.FLUX"
+        tb_tid = row["rd_id"].split(":")[0]
+        TB.torrents[tb_tid]["name"] = "Dune.FLUX"
         JF.movie("c" * 32, "Dune: Part Two", "tt15239678", path="/zurg/movies/Dune.FLUX/Movie.mkv")
-        assert run(mv.tick(force=True)) == 0 and tid in RD.torrents, "not before Jellyfin lists our copy"
+        assert run(mv.tick(force=True)) == 0 and tb_tid in TB.torrents, "not before Jellyfin lists our copy"
         JF.movie("d" * 32, "Dune: Part Two", "tt15239678", path=f"/media/movies-local/{folder}/Movie.mkv")
         mv._streamed["c" * 32] = time.time()
-        assert run(mv.tick(force=True)) == 0 and tid in RD.torrents, "someone is streaming the Real-Debrid copy"
+        assert run(mv.tick(force=True)) == 0 and tb_tid in TB.torrents, "someone is streaming the TorBox copy"
         mv._streamed.clear()
         JF.sessions = [{"NowPlayingItem": {"Id": "c" * 32}}]
-        assert run(mv.tick(force=True)) == 0 and tid in RD.torrents, "Jellyfin says it's playing"
+        assert run(mv.tick(force=True)) == 0 and tb_tid in TB.torrents, "Jellyfin says it's playing"
         assert mv._row("tt15239678")["status"] == "adding"
         JF.sessions = []
         assert run(mv.tick(force=True)) == 1
         row = mv._row("tt15239678")
-        assert row["status"] == "ready" and row["jf_id"] == "d" * 32 and not RD.torrents, (row, RD.torrents)
+        assert row["status"] == "ready" and row["jf_id"] == "d" * 32 and not TB.torrents, (row, TB.torrents)
         cards = run(mv.library("u-zub"))["movies"]
         assert [(c["id"], c["by"], c["can_remove"]) for c in cards] == [("d" * 32, "Zubair", True)], cards
 
@@ -766,11 +773,11 @@ def local_tests():
         run(add_and_wait("u-zub", "Zubair", "tt15239678"))
         mv._part("tt15239678").parent.mkdir(exist_ok=True)
         mv._part("tt15239678").write_bytes(b"x" * 10)
-        tid = mv._row("tt15239678")["rd_id"]
-        RD.torrents[tid]["filename"] = "Dune.FLUX"
+        tb_tid = mv._row("tt15239678")["rd_id"].split(":")[0]
+        TB.torrents[tb_tid]["name"] = "Dune.FLUX"
         JF.movie("c" * 32, "Dune: Part Two", "tt15239678", path="/zurg/movies/Dune.FLUX/Movie.mkv")
         assert run(mv.remove("u-zub", "c" * 32))["removed"] == 1
-        assert not mv._part("tt15239678").exists() and not RD.torrents
+        assert not mv._part("tt15239678").exists() and not TB.torrents
 
     def the_disk_guard_takes_1080p_when_4k_wont_fit_and_refuses_when_nothing_does():
         TORRENTIO["tt0000002"] = [DUNE[0], DUNE[7]]     # 29.26 GB 4K, 11.2 GB 1080p
@@ -797,7 +804,7 @@ def local_tests():
             run(add_and_wait("u-zub", "Zubair", "tt0000002"))
             row = mv._row("tt0000002")
             assert row["status"] == "failed" and "isn't room" in row["error"] and "100 GB" in row["error"], row
-            assert not RD.torrents
+            assert not TB.torrents
         finally:
             TORRENTIO.pop("tt0000002")
 
@@ -820,28 +827,27 @@ def local_tests():
         mv._set("tt0000012", status="ready")
         assert mv._next_copy()["imdb"] == "tt0000011"
 
-    def the_migration_copies_films_only_on_real_debrid_silently_and_once():
+    def the_migration_copies_films_only_on_torbox_silently_and_once():
         fresh()
         JF.movie("1" * 32, "Back to the Future", "tt0088763", path="/zurg/movies/BTTF.1985.2160p/BTTF.mkv")
         JF.movie("2" * 32, "Half Baked", "tt0120693", path="/media/movies-local/Half Baked/hb.mkv")
-        JF.movie("3" * 32, "Heat", "tt0113277", path="/zurg/movies/Heat.1995/Heat.mkv")   # not on RD any more
+        JF.movie("3" * 32, "Heat", "tt0113277", path="/zurg/movies/Heat.1995/Heat.mkv")   # not on TorBox any more
         JF.movie("4" * 32, "No Id", "", path="/zurg/movies/NoId/n.mkv")
-        RD.torrents["M1"] = {"filename": "BTTF.1985.2160p", "status": "downloaded", "hash": "7" * 40,
-                             "files": [{"id": 1, "path": "/BTTF.mkv", "bytes": FILE_BYTES, "selected": 1}],
-                             "links": ["https://real-debrid.com/d/M1"]}
-        RD.torrents["ODY"] = {"filename": "The.Odyssey.2026", "status": "downloaded", "hash": "6" * 40}
+        TB.torrents["100"] = {"id": "100", "name": "BTTF.1985.2160p", "status": "completed", "hash": "7" * 40,
+                              "files": [{"id": 1, "name": "BTTF.mkv", "size": FILE_BYTES}]}
+        TB.torrents["200"] = {"id": "200", "name": "The.Odyssey.2026", "status": "completed", "hash": "6" * 40, "files": []}
         assert run(mv.migrate_existing()) == 1
         row = mv._row("tt0088763")
-        assert row["status"] == "copying" and row["migrate"] == 1 and row["rd_id"] == "M1" and row["src_file"] == "BTTF.mkv"
+        assert row["status"] == "copying" and row["migrate"] == 1 and row["rd_id"] == "100:1" and row["src_file"] == "BTTF.mkv"
         assert run(mv.library())["adding"] == [], "the migration isn't anyone's add"
         assert run(mv.migrate_existing()) == 0, "once"
         assert run(mv.copy_one(row)) == "done"
         bttf = "Back to the Future (2024) [imdbid-tt0088763]"
         assert (loc / bttf / "BTTF.mkv").read_bytes() == blob(FILE_BYTES)
-        assert run(mv.tick(force=True)) == 0 and "M1" in RD.torrents, "still only on Real-Debrid as far as Jellyfin knows"
+        assert run(mv.tick(force=True)) == 0 and "100" in TB.torrents, "still only on TorBox as far as Jellyfin knows"
         JF.movie("5" * 32, "Back to the Future", "tt0088763", path=f"/media/movies-local/{bttf}/BTTF.mkv")
         assert run(mv.tick(force=True)) == 1
-        assert set(RD.torrents) == {"ODY"}, RD.torrents
+        assert set(TB.torrents) == {"200"}, TB.torrents
         assert NOTES == [], "the migration tells nobody"
         cards = {c["title"]: c for c in run(mv.library("u-admin", True))["movies"]}
         assert cards["Back to the Future"]["id"] == "5" * 32 and cards["Back to the Future"]["can_remove"]
@@ -853,7 +859,7 @@ def local_tests():
         with mv._conn() as db:
             assert db.execute("SELECT COUNT(*) FROM adds WHERE migrate = 1").fetchone()[0] == 1
 
-    def without_the_disk_mounted_it_streams_from_real_debrid_as_before():
+    def without_the_disk_mounted_it_streams_from_zurg_as_before():
         fresh(cached={"d" * 40})
         mv.LOCAL_DIR = TMP / "not-mounted"
         try:
@@ -871,8 +877,8 @@ def local_tests():
                    removing_mid_copy_drops_the_part_file,
                    the_disk_guard_takes_1080p_when_4k_wont_fit_and_refuses_when_nothing_does,
                    a_copy_that_no_longer_fits_stops_before_filling_the_disk, peoples_adds_are_copied_before_the_migration,
-                   the_migration_copies_films_only_on_real_debrid_silently_and_once,
-                   without_the_disk_mounted_it_streams_from_real_debrid_as_before):
+                   the_migration_copies_films_only_on_torbox_silently_and_once,
+                   without_the_disk_mounted_it_streams_from_zurg_as_before):
             check(fn.__name__, fn)
     finally:
         mv.LOCAL_DIR, mv.CHUNK, mv.shutil.disk_usage = real_dir, real_chunk, real_usage
@@ -919,16 +925,16 @@ def remove_tests():
     def setup():
         reset(cached={"a" * 40})
         run(add_and_wait("u-zub", "Zubair", "tt15239678"))
-        tid = mv._row("tt15239678")["rd_id"]
-        RD.torrents[tid]["filename"] = "Dune.Part.Two.2024.2160p.WEB-DL-FLUX"
-        RD.torrents["OLD"] = {"filename": "Dune Part Two 2024.mkv", "hash": "9" * 40}
-        RD.torrents["KEEP"] = {"filename": "Heat.1995.mkv", "hash": "8" * 40}
+        tb_tid = mv._row("tt15239678")["rd_id"].split(":")[0]
+        TB.torrents[tb_tid]["name"] = "Dune.Part.Two.2024.2160p.WEB-DL-FLUX"
+        TB.torrents["300"] = {"id": "300", "name": "Dune Part Two 2024.mkv", "hash": "9" * 40, "status": "completed", "files": []}
+        TB.torrents["400"] = {"id": "400", "name": "Heat.1995.mkv", "hash": "8" * 40, "status": "completed", "files": []}
         JF.movie("c" * 32, "Dune: Part Two", "tt15239678", path="/zurg/movies/Dune.Part.Two.2024.2160p.WEB-DL-FLUX/dune.mkv")
         JF.movie("d" * 32, "Dune: Part Two", "tt15239678", width=1920, rng="SDR", path="/zurg/movies/Dune 1080/Dune Part Two 2024.mkv")
         JF.movie("e" * 32, "Heat", "tt0113277", path="/zurg/movies/Heat.1995/Heat.1995.mkv")
         JF.movie("1" * 32, "Half Baked", "tt0120693", path="/media/movies-local/Half Baked/hb.mkv")
         run(mv.tick(force=True))
-        return tid
+        return tb_tid
 
     def the_adder_or_an_admin_can_remove_and_it_says_so():
         setup()
@@ -937,12 +943,12 @@ def remove_tests():
         lib = {m["title"]: m["can_remove"] for m in run(mv.library("u-admin", True))["movies"]}
         assert lib == {"Dune: Part Two": True, "Heat": True, "Half Baked": False}, lib
 
-    def removing_deletes_every_real_debrid_copy_and_hides_it_at_once():
-        tid = setup()
+    def removing_deletes_every_torbox_copy_and_hides_it_at_once():
+        tb_tid = setup()
         out = run(mv.remove("u-zub", "d" * 32))
         run(asyncio.gather(*list(mv._tasks)) if mv._tasks else asyncio.sleep(0))
         assert out == {"title": "Dune: Part Two", "removed": 2}, out
-        assert set(RD.torrents) == {"KEEP"} and tid not in RD.torrents
+        assert set(TB.torrents) == {"400"} and tb_tid not in TB.torrents
         assert "Dune: Part Two" not in [m["title"] for m in run(mv.library("u-zub"))["movies"]]
         assert mv._row("tt15239678") is None, "it can be added again"
 
@@ -970,10 +976,10 @@ def remove_tests():
                 assert e.status_code == code, (who, jf, e.status_code)
             else:
                 raise AssertionError(f"{who} removed {jf}")
-        assert {"OLD", "KEEP"} <= set(RD.torrents)
-        assert run(mv.remove("u-admin", "e" * 32, admin=True))["removed"] == 1 and "KEEP" not in RD.torrents
+        assert {"300", "400"} <= set(TB.torrents)
+        assert run(mv.remove("u-admin", "e" * 32, admin=True))["removed"] == 1 and "400" not in TB.torrents
 
-    for fn in (the_adder_or_an_admin_can_remove_and_it_says_so, removing_deletes_every_real_debrid_copy_and_hides_it_at_once,
+    for fn in (the_adder_or_an_admin_can_remove_and_it_says_so, removing_deletes_every_torbox_copy_and_hides_it_at_once,
                nobody_else_and_never_a_film_on_the_servers_disk, added_again_it_shows_up_even_with_the_same_jellyfin_id):
         check(fn.__name__, fn)
 
@@ -1183,7 +1189,7 @@ def http_tests():
         assert "movie_library" in assistant.tool_names()
         out, ok = assistant.call_tool("movie_library", {"limit": 5000})
         assert ok and "Dune" in out and "Zubair" in out, out
-        for leak in ("u-zub", "test-rd", "test-jf", "rd_id"):
+        for leak in ("u-zub", "test-tb", "test-jf", "rd_id"):
             assert leak not in out, leak
 
     for fn in (the_library_needs_a_session_and_adds_credit_the_caller, an_app_review_account_gets_the_party_but_no_movies,
@@ -1205,7 +1211,7 @@ def share_undo_tests():
                 assert mv.undo_add("u-zub", "tt15239678")["ok"]
                 await asyncio.gather(*list(mv._tasks))
             run(go())
-            assert mv._row("tt15239678") is None, "undone: no add, nothing on Real-Debrid"
+            assert mv._row("tt15239678") is None, "undone: no add, nothing on TorBox"
         finally:
             mv.UNDO_S = old
 
