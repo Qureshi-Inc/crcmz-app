@@ -1759,7 +1759,7 @@ def _huddle_meeting_get(id: str, include_transcript: bool = False) -> dict:  # n
       "checks of everything it depends on (the AI model, speech to text, squad memory, "
       "Jellyfin, the music importer, the Watch Party server, the link extractor, the "
       "WhatsApp bridge and whether it's connected, voice replies, Zurg, LiveKit, "
-      "Real-Debrid and days left, the PSN sign-in and days left, Zitadel, Mattermost, "
+      "TorBox and plan status, the PSN sign-in and days left, Zitadel, Mattermost, "
       "the movie catalogue), and adds Uptime Kuma's history from status.crcmz.me: each "
       "monitor's state, its 24 h uptime, when it last changed and the last failure's "
       "reason (Kuma also watches the public site, DNS, the TURN relay, the servers and "
@@ -1767,7 +1767,7 @@ def _huddle_meeting_get(id: str, include_transcript: bool = False) -> dict:  # n
       "Times are ISO strings in Kuma's timezone (Los Angeles).",
       {"type": "object", "properties": {
           "check": {"type": "string", "description": "One dependency: ai, whisper, memory, jellyfin, importer, "
-                                                       "watchparty, extract, whatsapp, tts, zurg, livekit, realdebrid, "
+                                                       "watchparty, extract, whatsapp, tts, zurg, livekit, torbox, "
                                                        "psn, zitadel, mattermost, movie-catalogue. Omit for all."},
       }})
 def _platform_status(check: str = "") -> dict:
@@ -1960,9 +1960,9 @@ def _slap_discover(limit: int = 20) -> dict:
 @tool("movie_library",
       "The Watch tab's movie library: films in Jellyfin that a watch party can play (title, "
       "year, quality such as 4K HDR) and movies friends added recently with their state "
-      "(finding a copy, downloading on Real-Debrid with a percent, copying onto the server's "
+      "(finding a copy, downloading on TorBox with a percent, copying onto the server's "
       "own disk with a percent, adding to the library, ready, or failed) and who added each. "
-      "on_server_disk means the film is kept on the server, not streamed from Real-Debrid; "
+      "on_server_disk means the film is kept on the server, not streamed from TorBox; "
       "migrating rows are older films being moved onto the server in the background (nobody "
       "added them just now). Ask for a title with query.",
       {"type": "object", "properties": {

@@ -274,7 +274,7 @@ function Copies({ d, ready, onDone }: { d: Details; ready: boolean; onDone: () =
   const current = (d.release || '').toLowerCase()
   return (
     <details className="mv-copies" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary>{ready ? 'Other copies' : 'Copies on Real-Debrid'}</summary>
+      <summary>{ready ? 'Other copies' : 'Copies on TorBox'}</summary>
       {q.isLoading && <p className="meta" role="status"><span className="spinner" aria-hidden="true" /> Looking for copies…</p>}
       {q.isError && <ErrorStrip text="Couldn't list the copies" onRetry={() => q.refetch()} />}
       {q.data && !q.data.copies.length && <p className="meta">No good copy of this one yet.</p>}

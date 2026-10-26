@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.NotificationManager
 import android.app.PictureInPictureParams
+import android.app.UiModeManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -158,6 +159,7 @@ class LauncherActivity : AppCompatActivity() {
             setOnChildScrollUpCallback { _, _ -> sheetOpen || web.scrollY > 0 }
         }
         shell = Shell(this) { path -> go(path) }
+        if (isTV) { refresh.isEnabled = false; shell.forceHidden = true }
         content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(refresh, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -414,6 +416,7 @@ class LauncherActivity : AppCompatActivity() {
     // MARK: First launch: notifications, the FCM token, ring setup
 
     private fun startUp() {
+        if (isTV) return withToken()
         val prefs = Push.prefs(this)
         if (Build.VERSION.SDK_INT >= 33 && !prefs.getBoolean(ASKED, false) &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -462,6 +465,7 @@ class LauncherActivity : AppCompatActivity() {
     /** The next ring setting still to ask about (each asked once, ever), then load. */
     @SuppressLint("BatteryLife")
     private fun setup() {
+        if (isTV) return load()
         val prefs = Push.prefs(this)
         val nm = getSystemService(NotificationManager::class.java)
         val pm = getSystemService(PowerManager::class.java)
@@ -495,10 +499,12 @@ class LauncherActivity : AppCompatActivity() {
     private fun load() {
         if (loaded) return
         loaded = true
-        val start = Uri.parse(pendingUrl ?: "$ORIGIN/app").buildUpon().appendQueryParameter("crcmz_app", "android-app")
+        val start = Uri.parse(pendingUrl ?: "$ORIGIN/app").buildUpon()
+            .appendQueryParameter("crcmz_app", if (isTV) "android-tv" else "android-app")
         Push.token(this)?.let { start.appendQueryParameter("crcmz_fcm", it) }
         pendingUrl = null
         web.loadUrl(start.build().toString())
+        if (isTV) web.post { web.requestFocus() }
     }
 
     // MARK: Picture in picture (a call or Watch Party on screen when you leave the app)
@@ -556,6 +562,10 @@ class LauncherActivity : AppCompatActivity() {
         if (current === this) current = null
         super.onDestroy()
     }
+
+    val isTV: Boolean
+        get() = getSystemService(UiModeManager::class.java)
+            ?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
 
     companion object {
         const val ORIGIN = "https://app.crcmz.me"

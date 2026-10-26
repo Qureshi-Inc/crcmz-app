@@ -34,8 +34,8 @@
                 H.264 HLS transcode, proxied here so the Jellyfin token stays on the
                 server. Each viewer gets their own transcode session.
 
-The Real-Debrid token is Zurg's (same account, or Jellyfin never sees the file):
-REAL_DEBRID_TOKEN.
+The TorBox token is Zurg's (same account, or Jellyfin never sees the file):
+TORBOX_TOKEN.
 
 DB: /data/movies.db
   adds     one row per movie someone added (or being migrated): what it is, which copy,
@@ -76,26 +76,26 @@ _DB_PATH = Path(os.environ.get("MOVIES_DB", "/data/movies.db"))
 _lock = threading.Lock()
 _ready = False
 
-RD_TOKEN = os.environ.get("REAL_DEBRID_TOKEN", "")
-RD_URL = os.environ.get("REAL_DEBRID_URL", "https://api.real-debrid.com/rest/1.0").rstrip("/")
+TORBOX_TOKEN = os.environ.get("TORBOX_TOKEN", "")
+TORBOX_URL = "https://api.torbox.app/v1"
 CINEMETA_URL = os.environ.get("CINEMETA_URL", "https://v3-cinemeta.strem.io").rstrip("/")
 TORRENTIO_URL = os.environ.get("TORRENTIO_URL", "https://torrentio.strem.fun").rstrip("/")
 _UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 ADDS_PER_DAY = 5        # per person; admins aren't capped
-# Every try is an add (and usually a delete) on Real-Debrid; a burst of them looks like
+# Every try is an add (and usually a delete) on TorBox; a burst of them looks like
 # abuse and can get our IP refused, so a movie gets at most MAX_ADDS.
 MAX_ADDS = 3
 TRY_4K = 2              # cached-copy attempts in 4K, then one in 1080p, then one to download
 BLOCK_PAUSE_S = 6 * 3600
-# Big Buck Bunny (public domain): if Real-Debrid refuses even this, it's refusing us, not the film.
+# Big Buck Bunny (public domain): if TorBox refuses even this, it's refusing us, not the film.
 PROBE_HASH = "dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c"
-SERVER_BLOCKED = ("Real-Debrid is refusing new movies from our server right now (every torrent, even free "
+SERVER_BLOCKED = ("TorBox is refusing new movies from our server right now (every torrent, even free "
                   "ones). It's usually temporary; try again later.")
-_rd_blocked_until = 0.0
+_tb_blocked_until = 0.0
 ADDING_GIVE_UP_S = 30 * 60
 RESCAN_AFTER_S = 20      # Zurg notices a deleted torrent within seconds
-POLL_S = 1.5            # between Real-Debrid checks while a copy is being tried
+POLL_S = 1.5            # between TorBox checks while a copy is being tried
 STREAM_PREFIX = "/api/watch/movies/stream/"
 
 # The server's own disk. Containers see it at different paths: this app writes LOCAL_DIR,
@@ -115,7 +115,7 @@ _VIDEO_EXT = re.compile(r"\.(mkv|mp4|m4v|avi|mov|ts|webm)$", re.I)
 
 
 def configured() -> bool:
-    return bool(RD_TOKEN) and slap.configured()
+    return bool(TORBOX_TOKEN) and slap.configured()
 
 
 def _conn() -> sqlite3.Connection:
@@ -645,69 +645,87 @@ async def _rescan() -> None:
                                            "ImageRefreshMode": "Default"})
 
 
-# ── Real-Debrid ──────────────────────────────────────────────────────────────
-async def _rd(method: str, path: str, **kw) -> Any:
-    if not RD_TOKEN:
+# ── TorBox ───────────────────────────────────────────────────────────────────
+async def _tb(method: str, path: str, **kw) -> Any:
+    if not TORBOX_TOKEN:
         raise HTTPException(503, "adding movies isn't set up yet")
     try:
         async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.request(method, f"{RD_URL}{path}", headers={"Authorization": f"Bearer {RD_TOKEN}"}, **kw)
+            r = await c.request(method, f"{TORBOX_URL}{path}",
+                                headers={"Authorization": f"Bearer {TORBOX_TOKEN}"}, **kw)
     except httpx.HTTPError as e:
-        logger.warning("movies: real-debrid %s %s failed: %s", method, path.split("/")[1:3], e)
-        raise HTTPException(502, "Real-Debrid is unreachable")
+        logger.warning("movies: torbox %s %s failed: %s", method, path.split("/")[1:3], e)
+        raise HTTPException(502, "TorBox is unreachable")
+    if r.status_code == 429:
+        raise HTTPException(429, "TorBox says we're asking too often. Try again in a few minutes.")
     if r.status_code >= 400:
-        logger.warning("movies: real-debrid %s answered %s: %s", path.split("/")[1:3], r.status_code, r.text[:200])
-        if r.status_code == 451:
-            # "infringing_file": Real-Debrid has this one torrent blocked (a takedown). Others may be fine.
-            raise HTTPException(451, "Real-Debrid has that copy blocked")
-        if r.status_code == 429:
-            raise HTTPException(429, "Real-Debrid says we're asking too often. Try again in a few minutes.")
-        raise HTTPException(502, "Real-Debrid refused the request")
-    return r.json() if r.content else None
+        logger.warning("movies: torbox %s answered %s: %s", path.split("/")[1:3], r.status_code, r.text[:200])
+        raise HTTPException(502, "TorBox refused the request")
+    body = r.json() if r.content else {}
+    if not body.get("success"):
+        detail = body.get("detail") or body.get("error") or "TorBox error"
+        # "hash_exists_already" means TorBox already has it — treat as success and re-fetch list
+        if body.get("error") == "TORRENT_EXISTS":
+            return body.get("data")
+        logger.warning("movies: torbox %s %s: %s", method, path, detail)
+        return None
+    return body.get("data")
+
+
+async def _tb_delete(tid: int | str) -> None:
+    try:
+        await _tb("POST", "/api/torrents/controltorrent",
+                  json={"torrent_id": int(tid), "operation": "delete"})
+    except HTTPException:
+        logger.info("movies: couldn't remove a TorBox torrent")
 
 
 async def _try_copy(c: dict, *, keep: bool, wait_s: float = 12) -> tuple[str, str] | None:
-    """Add one copy to Real-Debrid. Returns (torrent id, status) when it's cached (or
+    """Add one copy to TorBox. Returns (torrent_id:file_id, status) when complete (or
     `keep` is set); otherwise deletes it again and returns None."""
     try:
-        added = await _rd("POST", "/torrents/addMagnet", data={"magnet": f"magnet:?xt=urn:btih:{c['hash']}"})
+        added = await _tb("POST", "/api/torrents/createtorrent",
+                          data={"magnet": f"magnet:?xt=urn:btih:{c['hash']}"})
     except HTTPException as e:
-        if e.status_code != 451:
+        if e.status_code not in (451, 502):
             raise
         c["blocked"] = True
-        logger.info("movies: Real-Debrid has %s blocked; trying the next copy", c["release"][:60])
+        logger.info("movies: TorBox couldn't add %s; trying the next copy", c["release"][:60])
         return None
-    tid = str((added or {}).get("id") or "")
+    tid = str((added or {}).get("torrent_id") or "")
     if not tid:
         return None
     try:
         deadline = time.time() + wait_s
         info: dict = {}
-        selected = False
         while time.time() < deadline:
-            info = await _rd("GET", f"/torrents/info/{tid}") or {}
+            info = await _tb("GET", "/api/torrents/mylist", params={"id": tid}) or {}
             st = info.get("status")
-            if st == "waiting_files_selection" and not selected:
-                vids = [f for f in info.get("files") or [] if _VIDEO_EXT.search(f.get("path") or "")
-                        and not re.search(r"sample|trailer|extras?/", f.get("path") or "", re.I)]
-                pick = max(vids, key=lambda f: f.get("bytes") or 0) if vids else None
-                await _rd("POST", f"/torrents/selectFiles/{tid}", data={"files": str(pick["id"]) if pick else "all"})
-                selected = True
-            elif st == "downloaded":
-                return tid, "downloaded"
-            elif st in ("error", "magnet_error", "virus", "dead"):
+            cached = info.get("cached", False)
+            if st == "completed" or cached:
+                # Pick the largest video file
+                files = info.get("files") or []
+                vids = [f for f in files if _VIDEO_EXT.search(f.get("name") or "")
+                        and not re.search(r"sample|trailer|extras?/", f.get("name") or "", re.I)]
+                pick = max(vids, key=lambda f: f.get("size") or 0) if vids else (files[0] if files else None)
+                file_id = str(pick["id"]) if pick else "0"
+                return f"{tid}:{file_id}", "downloaded"
+            elif st in ("error", "stalled", "paused") and not keep:
                 break
-            elif selected and st in ("queued", "downloading") and not keep:
-                break   # not cached
+            elif st == "downloading" and not keep and not cached:
+                # Give it a few polls before giving up on a cache hit
+                if time.time() > deadline - wait_s / 2:
+                    break
             await asyncio.sleep(POLL_S)
-        if keep and info.get("status") not in ("error", "magnet_error", "virus", "dead"):
-            return tid, str(info.get("status") or "queued")
+        if keep and info.get("status") not in ("error",):
+            files = info.get("files") or []
+            vids = [f for f in files if _VIDEO_EXT.search(f.get("name") or "")]
+            pick = max(vids, key=lambda f: f.get("size") or 0) if vids else (files[0] if files else None)
+            file_id = str(pick["id"]) if pick else "0"
+            return f"{tid}:{file_id}", str(info.get("status") or "queued")
     except HTTPException:
         pass
-    try:
-        await _rd("DELETE", f"/torrents/delete/{tid}")
-    except HTTPException:
-        logger.info("movies: couldn't remove a copy we didn't keep")
+    await _tb_delete(tid)
     return None
 
 
@@ -952,9 +970,9 @@ async def add(sub: str, name: str, imdb: str, *, admin: bool = False, want: str 
     if not _IMDB.match(imdb or ""):
         raise HTTPException(400, "which movie?")
     want = want if want in ("4k", "1080p") or _HASH_WANT.match(want or "") else ""
-    if not RD_TOKEN:
+    if not TORBOX_TOKEN:
         raise HTTPException(503, "adding movies isn't set up yet")
-    if time.time() < _rd_blocked_until:
+    if time.time() < _tb_blocked_until:
         raise HTTPException(503, SERVER_BLOCKED)
     have = (await library_index()).get(imdb)
     if have:
@@ -999,11 +1017,9 @@ async def replace(sub: str, name: str, imdb: str, copy_id: str, *, admin: bool =
     elif (r := _row(imdb)) and r["status"] != "failed" and not (admin or r["sub"] == sub):
         raise HTTPException(403, "only the person who added it, or an admin, can change its copy")
     elif r:
-        if r["rd_id"]:   # still on its way: its Real-Debrid copy goes too
-            try:
-                await _rd("DELETE", f"/torrents/delete/{r['rd_id']}")
-            except HTTPException:
-                pass
+        if r["rd_id"]:   # still on its way: its TorBox copy goes too
+            tid = r["rd_id"].split(":")[0]
+            await _tb_delete(tid)
         with _lock, _conn() as db:
             db.execute("DELETE FROM adds WHERE imdb = ?", (imdb,))
         _part(imdb).unlink(missing_ok=True)
@@ -1039,13 +1055,13 @@ def undo_add(sub: str, imdb: str) -> dict:
     return {"ok": True, "imdb": imdb}
 
 
-def _after_rd() -> str:
-    """Where an add goes once Real-Debrid has the whole file."""
+def _after_tb() -> str:
+    """Where an add goes once TorBox has the whole file."""
     return "copying" if local_on() else "adding"
 
 
 async def fetch(imdb: str, grace: float = 0) -> None:
-    """Find the best copy and start it on Real-Debrid, then tell people how it went."""
+    """Find the best copy and start it on TorBox, then tell people how it went."""
     _finding.add(imdb)
     try:
         await _fetch_and_tell(imdb, grace)
@@ -1069,7 +1085,7 @@ async def _fetch_and_tell(imdb: str, grace: float) -> None:
 
 
 async def _fetch(imdb: str) -> None:
-    """Find the best copy and start it on Real-Debrid. One movie at a time."""
+    """Find the best copy and start it on TorBox. One movie at a time."""
     async with _fetch_lock:
         try:
             ranked = rank(await _torrentio(imdb))
@@ -1113,11 +1129,8 @@ async def _fetch(imdb: str) -> None:
                 got = await _try_copy(c, keep=held is None)
                 if got and got[1] == "downloaded":
                     if held:
-                        try:
-                            await _rd("DELETE", f"/torrents/delete/{held[1]}")
-                        except HTTPException:
-                            logger.info("movies: couldn't remove the copy we held")
-                    _chosen(imdb, c, got[0], _after_rd())
+                        await _tb_delete(held[1].split(":")[0])
+                    _chosen(imdb, c, got[0], _after_tb())
                     return
                 if got and held is None:
                     held = (c, got[0])
@@ -1129,8 +1142,8 @@ async def _fetch(imdb: str) -> None:
                 return
             blocked = sum(1 for x in plan if x.get("blocked"))
             _set(imdb, status="failed", error=(
-                "Real-Debrid has the copies of this one blocked (a takedown claim). New releases often are; "
-                "try again in a few days." if blocked else "Real-Debrid couldn't get a copy"))
+                "TorBox has the copies of this one blocked (a takedown claim). New releases often are; "
+                "try again in a few days." if blocked else "TorBox couldn't get a copy"))
         except HTTPException as e:
             _set(imdb, status="failed", error=str(e.detail))
         except Exception:  # noqa: BLE001
@@ -1139,23 +1152,22 @@ async def _fetch(imdb: str) -> None:
 
 
 async def _we_are_blocked() -> bool:
-    """The first copy was refused: is Real-Debrid refusing this film, or us? Adds a public
+    """The first copy was refused: is TorBox refusing this film, or us? Adds a public
     domain film once to find out (deleted straight away). If us, adds pause for a while."""
-    global _rd_blocked_until
+    global _tb_blocked_until
     try:
-        added = await _rd("POST", "/torrents/addMagnet", data={"magnet": f"magnet:?xt=urn:btih:{PROBE_HASH}"})
+        added = await _tb("POST", "/api/torrents/createtorrent",
+                          data={"magnet": f"magnet:?xt=urn:btih:{PROBE_HASH}"})
     except HTTPException as e:
-        if e.status_code == 451:
-            _rd_blocked_until = time.time() + BLOCK_PAUSE_S
-            logger.warning("movies: Real-Debrid refuses every add from this server; pausing adds for %d h",
+        if e.status_code in (451, 502):
+            _tb_blocked_until = time.time() + BLOCK_PAUSE_S
+            logger.warning("movies: TorBox refuses every add from this server; pausing adds for %d h",
                            BLOCK_PAUSE_S // 3600)
             return True
         return False
-    try:
-        if (added or {}).get("id"):
-            await _rd("DELETE", f"/torrents/delete/{added['id']}")
-    except HTTPException:
-        pass
+    tid = (added or {}).get("torrent_id")
+    if tid:
+        await _tb_delete(tid)
     return False
 
 
@@ -1180,30 +1192,35 @@ def _next_copy() -> dict | None:
 
 
 async def _source(r: dict) -> tuple[str, int, str]:
-    """(download URL, bytes, file name) of the film's file on Real-Debrid."""
+    """(download URL, bytes, file name) of the film's file on TorBox."""
     if not r["rd_id"]:
-        raise _Refused("Lost track of its copy on Real-Debrid")
-    info = await _rd("GET", f"/torrents/info/{r['rd_id']}") or {}
-    if info.get("status") != "downloaded":
-        raise _Refused("Real-Debrid doesn't have the whole file any more")
-    files = sorted((f for f in info.get("files") or [] if f.get("selected")), key=lambda f: f.get("id") or 0)
-    links = list(info.get("links") or [])
-    want = r["src_file"]
-    idx = next((i for i, f in enumerate(files) if want and (f.get("path") or "").rsplit("/", 1)[-1] == want), None)
-    if idx is None and not want:
-        vids = [i for i, f in enumerate(files) if _VIDEO_EXT.search(f.get("path") or "")]
-        idx = max(vids, key=lambda i: files[i].get("bytes") or 0) if vids else None
-    if idx is None or not links:
-        raise _Refused("Its file isn't on Real-Debrid any more")
-    size = int(files[idx].get("bytes") or 0)
-    # Real-Debrid lists one link per selected file, in order; check the size to be sure.
-    for i in [idx] + [i for i in range(len(links)) if i != idx]:
-        if i >= len(links):
-            continue
-        u = await _rd("POST", "/unrestrict/link", data={"link": links[i]}) or {}
-        if u.get("download") and int(u.get("filesize") or 0) == size:
-            return str(u["download"]), size, (files[idx].get("path") or "").rsplit("/", 1)[-1]
-    raise _Refused("Real-Debrid wouldn't hand over the file")
+        raise _Refused("Lost track of its copy on TorBox")
+    parts = r["rd_id"].split(":", 1)
+    tid, file_id = parts[0], parts[1] if len(parts) > 1 else "0"
+    # Verify the torrent is still complete
+    info = await _tb("GET", "/api/torrents/mylist", params={"id": tid}) or {}
+    if info.get("status") not in ("completed",) and not info.get("cached"):
+        raise _Refused("TorBox doesn't have the whole file any more")
+    files = info.get("files") or []
+    # If we have a specific file_id stored, use it; otherwise pick the largest video
+    want_name = r.get("src_file") or ""
+    pick = next((f for f in files if str(f.get("id")) == file_id), None)
+    if pick is None:
+        vids = [f for f in files if _VIDEO_EXT.search(f.get("name") or "")]
+        if want_name:
+            pick = next((f for f in vids if f.get("name") == want_name), None)
+        if pick is None:
+            pick = max(vids, key=lambda f: f.get("size") or 0) if vids else (files[0] if files else None)
+    if pick is None:
+        raise _Refused("Its file isn't on TorBox any more")
+    size = int(pick.get("size") or 0)
+    fname = pick.get("name") or ""
+    url = await _tb("GET", "/api/torrents/requestdl",
+                    params={"token": TORBOX_TOKEN, "torrent_id": tid,
+                            "file_id": str(pick["id"]), "zip_link": "false"})
+    if not url or not isinstance(url, str):
+        raise _Refused("TorBox wouldn't hand over the file")
+    return url, size, fname
 
 
 def _part(imdb: str) -> Path:
@@ -1362,11 +1379,11 @@ async def copy_worker() -> None:
                 pass
 
 
-# ── Moving the films that are only on Real-Debrid ────────────────────────────
+# ── Moving the films that are only on TorBox ─────────────────────────────────
 async def migrate_existing() -> int:
-    """Queue every film that's only on Real-Debrid for a silent copy onto the server.
+    """Queue every film that's only on TorBox for a silent copy onto the server.
     Once: the flag lands in meta. Returns how many were queued."""
-    if not (MIGRATE and RD_TOKEN and local_on()):
+    if not (MIGRATE and TORBOX_TOKEN and local_on()):
         return 0
     with _conn() as db:
         if db.execute("SELECT 1 FROM meta WHERE key = 'migrated'").fetchone():
@@ -1374,27 +1391,33 @@ async def migrate_existing() -> int:
     cards = await jellyfin_movies(refresh=True)
     if not cards:
         return 0    # Jellyfin had a blip; try again next start
-    torrents = [t for t in await _rd("GET", "/torrents", params={"limit": "2500"}) or [] if isinstance(t, dict)]
+    torrents = [t for t in await _tb("GET", "/api/torrents/mylist") or [] if isinstance(t, dict)]
     queued = 0
     now = time.time()
     for c in cards:
         if not c["imdb"] or any(_is_local(v["path"]) for v in c["versions"]) or not c["path"].startswith("/zurg/"):
             continue
         names = set(_rd_dir(c["path"])) - {""}
-        tid = next((str(t["id"]) for t in torrents if t.get("filename") in names and t.get("status") == "downloaded"), "")
-        if not tid:
-            logger.warning("movies: migration: couldn't find %s on Real-Debrid", c["title"])
+        torrent = next((t for t in torrents if t.get("name") in names and t.get("status") == "completed"), None)
+        if not torrent:
+            logger.warning("movies: migration: couldn't find %s on TorBox", c["title"])
             continue
+        tid = str(torrent["id"])
+        files = torrent.get("files") or []
+        vids = [f for f in files if _VIDEO_EXT.search(f.get("name") or "")]
+        pick = max(vids, key=lambda f: f.get("size") or 0) if vids else (files[0] if files else None)
+        file_id = str(pick["id"]) if pick else "0"
+        tid_ref = f"{tid}:{file_id}"
         fname = _rd_dir(c["path"])[1]
         with _lock, _conn() as db:
             if db.execute("SELECT 1 FROM adds WHERE imdb = ?", (c["imdb"],)).fetchone():
                 db.execute("""UPDATE adds SET status='copying', migrate=1, rd_id=?, src_file=?, progress=0,
                               bytes_done=0, bytes_total=0, local_dir='', local_file='', error='', updated=?
-                              WHERE imdb=?""", (tid, fname, now, c["imdb"]))
+                              WHERE imdb=?""", (tid_ref, fname, now, c["imdb"]))
             else:
                 db.execute("""INSERT INTO adds (imdb, title, year, sub, name, status, rd_id, src_file, quality,
                               migrate, created, updated) VALUES (?,?,?,'','','copying',?,?,?,1,?,?)""",
-                           (c["imdb"], c["title"], c["year"], tid, fname, c["quality"], now, now))
+                           (c["imdb"], c["title"], c["year"], tid_ref, fname, c["quality"], now, now))
         queued += 1
         logger.info("movies: migration: queued %s", c["title"])
     with _lock, _conn() as db:
@@ -1424,34 +1447,33 @@ async def _playing(ids: set[str]) -> bool:
     return any(((s.get("NowPlayingItem") or {}).get("Id") or "") in ids for s in sessions if isinstance(s, dict))
 
 
-async def _rd_ids(versions: list[dict], rd_id: str = "") -> set[str]:
-    """The Real-Debrid torrents behind these Zurg versions (plus the one we added)."""
+async def _tb_ids(versions: list[dict], rd_id: str = "") -> set[str]:
+    """The TorBox torrents behind these Zurg versions (plus the one we added)."""
     want = {n for v in versions for n in _rd_dir(v["path"]) if n}
-    ids = {rd_id} if rd_id else set()
+    # rd_id may be "tid:file_id" — extract just the tid
+    base_tid = rd_id.split(":")[0] if rd_id else ""
+    ids = {base_tid} if base_tid else set()
     if want:
-        torrents = await _rd("GET", "/torrents", params={"limit": "2500"}) or []
-        ids |= {str(t["id"]) for t in torrents if isinstance(t, dict) and t.get("filename") in want}
+        torrents = await _tb("GET", "/api/torrents/mylist") or []
+        ids |= {str(t["id"]) for t in torrents if isinstance(t, dict) and t.get("name") in want}
     return ids
 
 
 async def _settle(r: dict, card: dict, mine: dict) -> bool:
-    """Jellyfin has the local copy: drop the Real-Debrid one(s), so only the local one is left."""
+    """Jellyfin has the local copy: drop the TorBox one(s), so only the local one is left."""
     debrid = [v for v in card["versions"] if v["path"].startswith("/zurg/")]
     if debrid and await _playing({v["id"] for v in debrid}):
-        logger.info("movies: %s is playing from Real-Debrid; deleting it there later", r["title"])
+        logger.info("movies: %s is playing from TorBox; deleting it there later", r["title"])
         return False
-    ids = await _rd_ids(debrid, r["rd_id"])
+    ids = await _tb_ids(debrid, r["rd_id"])
     for tid in ids:
-        try:
-            await _rd("DELETE", f"/torrents/delete/{tid}")
-        except HTTPException:
-            logger.info("movies: a Real-Debrid copy of %s was already gone", r["title"])
+        await _tb_delete(tid)
     now = time.time()
     with _lock, _conn() as db:
         db.executemany("INSERT OR REPLACE INTO removed (jf_id, ts) VALUES (?, ?)", [(v["id"], now) for v in debrid])
     _set(r["imdb"], status="ready", jf_id=mine["id"], progress=100, quality=card["quality"] or r["quality"], rd_id="")
     _cache.pop("jf:movies", None)
-    logger.info("movies: %s is ready from the server's disk (%d Real-Debrid copies deleted)", r["title"], len(ids))
+    logger.info("movies: %s is ready from the server's disk (%d TorBox copies deleted)", r["title"], len(ids))
     if debrid or ids:
         _spawn(_rescan_later())
     if not r["migrate"]:
@@ -1478,18 +1500,25 @@ async def tick(force: bool = False) -> int:
             continue
         if r["status"] == "downloading" and r["rd_id"]:
             try:
-                info = await _rd("GET", f"/torrents/info/{r['rd_id']}") or {}
+                tid = r["rd_id"].split(":")[0]
+                info = await _tb("GET", "/api/torrents/mylist", params={"id": tid}) or {}
             except HTTPException:
                 continue
             st = info.get("status")
-            if st == "downloaded":
-                nxt = _after_rd()
+            if st == "completed" or info.get("cached"):
+                # Refresh file_id in case it wasn't set during the initial keep
+                files = info.get("files") or []
+                vids = [f for f in files if _VIDEO_EXT.search(f.get("name") or "")]
+                pick = max(vids, key=lambda f: f.get("size") or 0) if vids else (files[0] if files else None)
+                file_id = str(pick["id"]) if pick else r["rd_id"].split(":")[1] if ":" in r["rd_id"] else "0"
+                _set(r["imdb"], rd_id=f"{tid}:{file_id}")
+                nxt = _after_tb()
                 _set(r["imdb"], status=nxt, progress=100 if nxt == "adding" else 0)
                 _wake.set()
-            elif st in ("error", "magnet_error", "virus", "dead"):
-                _set(r["imdb"], status="failed", error="Real-Debrid couldn't finish the download")
+            elif st in ("error",):
+                _set(r["imdb"], status="failed", error="TorBox couldn't finish the download")
             else:
-                _set(r["imdb"], progress=float(info.get("progress") or 0))
+                _set(r["imdb"], progress=float(info.get("download_present") or info.get("progress") or 0))
     adding = [r for r in pending() if r["status"] == "adding"]
     if not adding:
         return 0
@@ -1564,7 +1593,7 @@ async def library(sub: str = "", admin: bool = False) -> dict:
         name, by_sub = added.get(c["imdb"], ("", ""))
         movies.append({**{k: v for k, v in c.items() if k not in ("path", "versions")}, "by": name,
                        "can_remove": _removable(c) and (admin or (bool(sub) and by_sub == sub))})
-    return {"movies": movies, "adding": [_public(r) for r in rows], "can_add": bool(RD_TOKEN)}
+    return {"movies": movies, "adding": [_public(r) for r in rows], "can_add": bool(TORBOX_TOKEN)}
 
 
 def _rd_dir(path: str) -> tuple[str, str]:
@@ -1585,7 +1614,7 @@ def _rmtree(folder: str) -> bool:
 
 
 async def remove(sub: str, jf_id: str, *, admin: bool = False) -> dict:
-    """Take a film out of the library: delete its Real-Debrid copies and its folder on the
+    """Take a film out of the library: delete its TorBox copies and its folder on the
     server's disk. Returns how many copies went."""
     if not _JF_ID.match(jf_id or ""):
         raise HTTPException(404, "not found")
@@ -1599,14 +1628,11 @@ async def remove(sub: str, jf_id: str, *, admin: bool = False) -> dict:
     local = [v for v in card["versions"] if _managed(v["path"], card["imdb"])]
     if not debrid and not local:
         raise HTTPException(400, "this one is on the server's own disk, so it can't be removed here")
-    ids = await _rd_ids(debrid, row["rd_id"] if row else "") if debrid or (row and row["rd_id"]) else set()
+    ids = await _tb_ids(debrid, row["rd_id"] if row else "") if debrid or (row and row["rd_id"]) else set()
     if debrid and not ids and not local:
-        raise HTTPException(404, "couldn't find its copy on Real-Debrid")
+        raise HTTPException(404, "couldn't find its copy on TorBox")
     for tid in ids:
-        try:
-            await _rd("DELETE", f"/torrents/delete/{tid}")
-        except HTTPException:
-            logger.info("movies: a copy of %s was already gone", card["title"])
+        await _tb_delete(tid)
     folders = {_local_folder(v["path"]) for v in local}
     gone = sum([await asyncio.to_thread(_rmtree, f) for f in sorted(folders)]) if local_on() else 0
     now = time.time()
@@ -1618,7 +1644,7 @@ async def remove(sub: str, jf_id: str, *, admin: bool = False) -> dict:
     if card["imdb"]:
         _part(card["imdb"]).unlink(missing_ok=True)
     _cache.pop("jf:movies", None)
-    logger.info("movies: %s removed %s (%d Real-Debrid copies, %d folders on the server)",
+    logger.info("movies: %s removed %s (%d TorBox copies, %d folders on the server)",
                 "admin" if admin and not (row and row["sub"] == sub) else "adder", card["title"], len(ids), gone)
     _spawn(_rescan_later())
     return {"title": card["title"], "removed": len(ids) + gone}

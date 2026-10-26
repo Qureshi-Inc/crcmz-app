@@ -132,19 +132,19 @@ async def check_livekit() -> tuple[bool, str]:
     return r.status_code == 200, f"answered {r.status_code}"
 
 
-async def check_realdebrid() -> tuple[bool, str]:
-    token = _env("REAL_DEBRID_TOKEN")
+async def check_torbox() -> tuple[bool, str]:
+    token = _env("TORBOX_TOKEN")
     if not token:
-        return False, "no Real-Debrid token set"
-    r = await _get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {token}"})
+        return False, "no TorBox token set"
+    r = await _get("https://api.torbox.app/v1/api/user/me", headers={"Authorization": f"Bearer {token}"})
     if r.status_code == 401:
-        return False, "the Real-Debrid token was refused"
+        return False, "the TorBox token was refused"
     r.raise_for_status()
-    d = r.json()
-    if d.get("type") != "premium":
-        return False, "the Real-Debrid account isn't premium"
-    days = int((d.get("premium") or 0) / 86400)
-    return days >= WARN_DAYS, f"premium, {days} days left"
+    d = (r.json() or {}).get("data") or {}
+    plan = d.get("plan", 0)
+    if not plan:
+        return False, "the TorBox account doesn't have an active plan"
+    return True, f"plan {plan}, active"
 
 
 async def check_psn() -> tuple[bool, str]:
@@ -187,9 +187,9 @@ CHECKS: dict[str, tuple[str, Callable[[], Awaitable[tuple[bool, str]]]]] = {
     "extract":       ("Video link extractor", check_browser_extract),
     "whatsapp":      ("WhatsApp bridge (Baileys)", check_whatsapp),
     "tts":           ("Voice replies (TTS)", check_tts),
-    "zurg":          ("Zurg (Real-Debrid movie mount)", check_zurg),
+    "zurg":          ("Zurg (TorBox movie mount)", check_zurg),
     "livekit":       ("LiveKit (Huddle and Watch Party calls)", check_livekit),
-    "realdebrid":    ("Real-Debrid account", check_realdebrid),
+    "torbox":        ("TorBox account", check_torbox),
     "psn":           ("PlayStation sign-in (NPSSO)", check_psn),
     "zitadel":       ("Sign-in (Zitadel)", check_zitadel),
     "mattermost":    ("Mattermost", check_mattermost),
