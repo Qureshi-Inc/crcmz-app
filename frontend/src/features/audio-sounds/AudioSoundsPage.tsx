@@ -86,8 +86,8 @@ export function AudioSoundsPage() {
     _localAudio?.pause()
     const audio = new Audio(`/api/audio-sounds/${encodeURIComponent(name)}/file`)
     _localAudio = audio
-    audio.onerror = () => err(`Couldn't load ${label}`)
-    audio.play().catch(() => err("Couldn't play locally"))
+    audio.onerror = () => err(`${label}: no local preview available`)
+    audio.play().catch(() => {})
     ok(`Playing ${label} locally`)
   }
 
