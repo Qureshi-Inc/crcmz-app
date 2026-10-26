@@ -16,6 +16,7 @@ import { chatAll, chatLine, resetChat, type ChatLine } from './roomChat'
 
 export type Repeat = 'off' | 'all' | 'one'
 export type Link = 'off' | 'connecting' | 'live' | 'retrying'
+export type SleepTimer = { deadline: number; afterTrack: boolean }
 export type PlayerState = {
   mode: 'solo' | 'together'
   queue: QueueItem[]
@@ -23,6 +24,8 @@ export type PlayerState = {
   playing: boolean
   shuffle: boolean
   repeat: Repeat
+  speed: number
+  sleepTimer: SleepTimer | null
   room: Room | null
   link: Link
   /** The browser refused to start sound without a tap (autoplay policy). */
@@ -39,7 +42,7 @@ const CUTOFF_S = 5
 const CUTOFF_TRIES = 2
 const QUEUE_MAX = 500
 
-type Saved = { queue: QueueItem[]; index: number; shuffle: boolean; repeat: Repeat; position: number; order: string[] | null }
+type Saved = { queue: QueueItem[]; index: number; shuffle: boolean; repeat: Repeat; speed?: number; position: number; order: string[] | null }
 const saved = readLocal<Saved | null>(KEY, null)
 
 let state: PlayerState = {
@@ -49,6 +52,8 @@ let state: PlayerState = {
   playing: false,
   shuffle: !!saved?.shuffle,
   repeat: saved?.repeat === 'all' || saved?.repeat === 'one' ? saved.repeat : 'off',
+  speed: saved?.speed ?? 1,
+  sleepTimer: null,
   room: null,
   link: 'off',
   blocked: false,
@@ -69,10 +74,10 @@ function set(patch: Partial<PlayerState>) {
   state = { ...state, ...patch }
   listeners.forEach((l) => l())
   syncLockScreen()
-  if ('queue' in patch || 'index' in patch || 'shuffle' in patch || 'repeat' in patch) persist()
+  if ('queue' in patch || 'index' in patch || 'shuffle' in patch || 'repeat' in patch || 'speed' in patch) persist()
 }
 function persist() {
-  writeLocal(KEY, { queue: state.queue, index: state.index, shuffle: state.shuffle, repeat: state.repeat, position: soloPosition(), order: unshuffled })
+  writeLocal(KEY, { queue: state.queue, index: state.index, shuffle: state.shuffle, repeat: state.repeat, speed: state.speed, position: soloPosition(), order: unshuffled })
 }
 function soloPosition() {
   if (state.mode !== 'solo') return soloPos
@@ -95,12 +100,14 @@ export const getState = () => state
 let audio: HTMLAudioElement | null = null
 let loaded: string | null = null        // qid whose stream is in the element
 let pendingSeek: number | null = null
+let sleepInterval = 0
 
 function el(): HTMLAudioElement {
   if (audio) return audio
   // In the iOS app the app's own player plays it, so it keeps going with the phone locked.
   const a = nativeAudio() ? nativeAudioElement(onRemote) : new Audio()
   a.preload = 'auto'
+  a.playbackRate = state.speed
   a.addEventListener('timeupdate', () => { tickListen(); setClock(a.currentTime, a.duration) })
   a.addEventListener('durationchange', () => setClock(a.currentTime, a.duration))
   a.addEventListener('loadedmetadata', () => {
@@ -118,6 +125,12 @@ function el(): HTMLAudioElement {
     toast("That track wouldn't load", 'error')
   })
   window.addEventListener('pagehide', () => { persist(); finishListen(false) })
+  sleepInterval = window.setInterval(() => {
+    if (state.sleepTimer && !state.sleepTimer.afterTrack && Date.now() >= state.sleepTimer.deadline && state.playing) {
+      el().pause()
+      set({ sleepTimer: null })
+    }
+  }, 5000)
   audio = a
   return a
 }
@@ -151,6 +164,7 @@ function load(item: QueueItem, at: number) {
     loaded = item.qid
     pendingSeek = at > 0.5 ? at : null
     a.src = streamUrl(item.id)
+    a.playbackRate = state.speed
     startListen(item)
     setClock(at, item.duration)
     set({ loading: true })
@@ -237,6 +251,12 @@ function onEnded() {
     return
   }
   finishListen(true)
+  // Sleep timer: stop after this track ends.
+  if (state.sleepTimer?.afterTrack) {
+    set({ sleepTimer: null, playing: false })
+    a.pause()
+    return
+  }
   if (state.repeat === 'one') {
     const item = current()
     if (item) { startListen(item); a.currentTime = 0; void start() }
@@ -329,6 +349,27 @@ export function toggleShuffle() {
 
 export function cycleRepeat() {
   set({ repeat: state.repeat === 'off' ? 'all' : state.repeat === 'all' ? 'one' : 'off' })
+}
+
+const SPEEDS = [0.75, 1, 1.25, 1.5, 2]
+export function cycleSpeed() {
+  const idx = SPEEDS.indexOf(state.speed)
+  const next = SPEEDS[(idx + 1) % SPEEDS.length] ?? 1
+  setSpeed(next)
+}
+export function setSpeed(v: number) {
+  if (audio) audio.playbackRate = v
+  set({ speed: v })
+}
+
+export function setSleepTimer(opt: number | 'track' | null) {
+  if (opt === null) {
+    set({ sleepTimer: null })
+  } else if (opt === 'track') {
+    set({ sleepTimer: { deadline: 0, afterTrack: true } })
+  } else {
+    set({ sleepTimer: { deadline: Date.now() + opt * 60_000, afterTrack: false } })
+  }
 }
 
 // ── Controls (route to the room when together) ──────────────────────────────
@@ -438,8 +479,10 @@ export function closePlayer() {
   unload()
   unshuffled = null
   soloPos = 0
+  window.clearInterval(sleepInterval)
+  sleepInterval = 0
   // Mutate directly — calling set() would re-persist the now-empty queue, wiping the snapshot.
-  state = { ...state, queue: [], index: -1, playing: false, blocked: false, expanded: false, loading: false }
+  state = { ...state, queue: [], index: -1, playing: false, blocked: false, expanded: false, loading: false, sleepTimer: null }
   listeners.forEach((l) => l())
   syncLockScreen()
   lockScreen.release('slap')

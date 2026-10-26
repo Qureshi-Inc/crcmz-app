@@ -17,8 +17,8 @@ import {
   type Library, type QueueItem, type Source,
 } from '../../lib/slap'
 import {
-  clearUpcoming, closePlayer, current, cycleRepeat, jump, leaveTogether, move, next, prev, reloadTrack, remove, seek, setExpanded,
-  toggle, toggleShuffle, useClock, usePlayer, type PlayerState,
+  clearUpcoming, closePlayer, current, cycleRepeat, cycleSpeed, enqueue, jump, leaveTogether, move, next, prev, reloadTrack, remove, seek,
+  setExpanded, setSleepTimer, toggle, toggleShuffle, useClock, usePlayer, type PlayerState,
 } from './player'
 
 export function Art({ id, size = 96, className = 'slap-art' }: { id: string | null | undefined; size?: 96 | 300 | 600; className?: string }) {
@@ -76,6 +76,47 @@ export function MiniPlayer({ variant }: { variant: 'bar' | 'sidebar' }) {
   )
 }
 
+// ── Art colour extraction for the backdrop ──────────────────────────────────
+function avgColor(data: Uint8ClampedArray, startX: number, startY: number, w: number, h: number, imgW: number): string {
+  let r = 0, g = 0, b = 0, count = 0
+  for (let y = startY; y < startY + h; y++) {
+    for (let x = startX; x < startX + w; x++) {
+      const i = (y * imgW + x) * 4
+      r += data[i]!; g += data[i + 1]!; b += data[i + 2]!; count++
+    }
+  }
+  if (!count) return '#1a0533'
+  const hex = (n: number) => Math.round(n / count).toString(16).padStart(2, '0')
+  return `#${hex(r)}${hex(g)}${hex(b)}`
+}
+
+function useArtColors(artId: string | null | undefined): [string, string] {
+  const [colors, setColors] = useState<[string, string]>(['#1a0533', '#0d1a33'])
+  useEffect(() => {
+    if (!artId) { setColors(['#1a0533', '#0d1a33']); return }
+    const url = artUrl(artId, 96)
+    if (!url) { setColors(['#1a0533', '#0d1a33']); return }
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = 10; canvas.height = 10
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return
+        ctx.drawImage(img, 0, 0, 10, 10)
+        const data = ctx.getImageData(0, 0, 10, 10).data
+        const c1 = avgColor(data, 0, 0, 5, 5, 10)
+        const c2 = avgColor(data, 5, 5, 5, 5, 10)
+        setColors([c1, c2])
+      } catch { setColors(['#1a0533', '#0d1a33']) }
+    }
+    img.onerror = () => setColors(['#1a0533', '#0d1a33'])
+    img.src = url
+  }, [artId])
+  return colors
+}
+
 export function PlayerSheet() {
   const s = usePlayer()
   const desktop = useDesktop()
@@ -83,16 +124,17 @@ export function PlayerSheet() {
   const item = current(s)
   const [reroll, setReroll] = useState<QueueItem | null>(null)
   const [addTo, setAddTo] = useState<QueueItem | null>(null)
+  const colors = useArtColors(item?.art)
   return (
     <Dialog.Root open={s.expanded} onOpenChange={setExpanded}>
       <Dialog.Portal>
         <Dialog.Overlay className="scrim" />
         <Dialog.Content ref={desktop ? undefined : drag} className={desktop ? 'dialog player-dialog' : 'sheet sheet-player'} aria-describedby={undefined}>
-          {/* blurred art backdrop (mobile full-screen sheet only) */}
-          {!desktop && item?.art && (
+          {/* blurred + colour-sampled art backdrop (mobile full-screen sheet only) */}
+          {!desktop && (
             <div
-              className="player-backdrop"
-              style={{ backgroundImage: `url(${artUrl(item.art, 300)})` }}
+              className="player-backdrop player-backdrop-mesh"
+              style={{ '--c1': colors[0], '--c2': colors[1], ...(item?.art ? { backgroundImage: `url(${artUrl(item.art, 300)})` } : {}) } as React.CSSProperties}
               aria-hidden="true"
             />
           )}
@@ -104,6 +146,7 @@ export function PlayerSheet() {
                 {s.mode === 'together' ? 'Listen Together' : 'Now playing'}
               </Dialog.Title>
               <div className="player-head-tools">
+                {item && s.mode === 'solo' && <SleepTimerButton s={s} />}
                 {item && (
                   <Menu.Root>
                     <Menu.Trigger asChild>
@@ -111,6 +154,13 @@ export function PlayerSheet() {
                     </Menu.Trigger>
                     <Menu.Portal>
                       <Menu.Content className="menu-content" sideOffset={4} align="end">
+                        {s.mode === 'solo' && (
+                          <>
+                            <Menu.Item className="menu-item" onSelect={() => enqueue([item], true)}>Play next</Menu.Item>
+                            <Menu.Item className="menu-item" onSelect={() => enqueue([item], false)}>Add to end of queue</Menu.Item>
+                            <Menu.Separator className="menu-separator" />
+                          </>
+                        )}
                         <Menu.Item className="menu-item" onSelect={() => setAddTo(item)}>Add to playlist…</Menu.Item>
                         <Menu.Item className="menu-item" onSelect={() => shareSong(item)}>Share song</Menu.Item>
                         <Menu.Item className="menu-item" onSelect={() => setReroll(item)}>Wrong song? Find the right one</Menu.Item>
@@ -130,6 +180,49 @@ export function PlayerSheet() {
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+// ── Sleep timer button ───────────────────────────────────────────────────────
+function formatRemaining(deadline: number): string {
+  const ms = deadline - Date.now()
+  if (ms <= 0) return '0s'
+  const totalSec = Math.ceil(ms / 1000)
+  if (totalSec < 60) return `${totalSec}s`
+  return `${Math.ceil(totalSec / 60)}m`
+}
+
+function SleepTimerButton({ s }: { s: PlayerState }) {
+  useClock() // re-render each tick so countdown stays fresh
+  const armed = s.sleepTimer !== null
+  const label = armed
+    ? s.sleepTimer!.afterTrack ? 'After track' : formatRemaining(s.sleepTimer!.deadline)
+    : '🌙'
+  return (
+    <Menu.Root>
+      <Menu.Trigger asChild>
+        <button
+          type="button"
+          className="icon-btn sleep-btn"
+          aria-label={armed ? `Sleep timer: ${label}` : 'Set sleep timer'}
+          data-armed={armed || undefined}
+        >
+          {label}
+        </button>
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Content className="menu-content" sideOffset={4} align="end">
+          {armed && <Menu.Item className="menu-item" onSelect={() => setSleepTimer(null)}>Cancel timer</Menu.Item>}
+          {armed && <Menu.Separator className="menu-separator" />}
+          <Menu.Item className="menu-item" onSelect={() => setSleepTimer(15)}>15 min</Menu.Item>
+          <Menu.Item className="menu-item" onSelect={() => setSleepTimer(30)}>30 min</Menu.Item>
+          <Menu.Item className="menu-item" onSelect={() => setSleepTimer(45)}>45 min</Menu.Item>
+          <Menu.Item className="menu-item" onSelect={() => setSleepTimer(60)}>60 min</Menu.Item>
+          <Menu.Separator className="menu-separator" />
+          <Menu.Item className="menu-item" onSelect={() => setSleepTimer('track')}>After this track</Menu.Item>
+        </Menu.Content>
+      </Menu.Portal>
+    </Menu.Root>
   )
 }
 
@@ -252,7 +345,7 @@ function RerollDialog({ item, onClose }: { item: QueueItem; onClose: () => void 
               </form>
               {error && <p className="error-strip" role="alert">{error}</p>}
               {found === null ? (
-                <p className="reroll-wait" role="status"><span className="spinner" aria-hidden="true" />Searching YouTube{asked ? ` for “${asked}”` : ''}… this can take half a minute.</p>
+                <p className="reroll-wait" role="status"><span className="spinner" aria-hidden="true" />Searching YouTube{asked ? ` for "${asked}"` : ''}… this can take half a minute.</p>
               ) : found.length === 0 ? (
                 !error && <p className="dim" role="status">Nothing came back. Try other words, or paste a link.</p>
               ) : (
@@ -288,6 +381,7 @@ function PlayerBody({ s, onAdd }: { s: PlayerState; onAdd: (item: QueueItem) => 
   const item = current(s)
   const queue = s.mode === 'together' ? s.room?.queue ?? [] : s.queue
   const index = s.mode === 'together' ? s.room?.index ?? -1 : s.index
+  const speedLabel = `${s.speed}×`
   return (
     <div className="player-body">
       {s.mode === 'together' && <TogetherBanner s={s} />}
@@ -314,6 +408,19 @@ function PlayerBody({ s, onAdd }: { s: PlayerState; onAdd: (item: QueueItem) => 
             ? <button type="button" className="icon-btn repeat-btn" onClick={cycleRepeat} aria-pressed={s.repeat !== 'off'} aria-label={`Repeat: ${s.repeat}`} data-mode={s.repeat}><Icon name="repeat" />{s.repeat === 'one' && <span className="repeat-one" aria-hidden="true">1</span>}</button>
             : <span className="player-ctl-gap" />}
         </div>
+        {s.mode === 'solo' && (
+          <div className="player-controls-row2">
+            <button
+              type="button"
+              className="icon-btn speed-btn"
+              onClick={cycleSpeed}
+              aria-label={`Playback speed: ${speedLabel}`}
+              aria-pressed={s.speed !== 1}
+            >
+              {speedLabel}
+            </button>
+          </div>
+        )}
         <Seek disabled={!item} />
         {s.blocked && <button type="button" className="btn btn-primary" onClick={toggle}>Tap to listen with everyone</button>}
         {item && <TrackTalk item={item} together={s.mode === 'together'} />}
@@ -331,12 +438,22 @@ function Seek({ disabled }: { disabled: boolean }) {
   const { position, duration } = useClock()
   const [drag, setDrag] = useState<number | null>(null)
   const v = drag ?? position
+  const pct = duration ? (v / duration) * 100 : 0
   return (
-    <div className="seek">
+    <div className="seek" data-active={drag != null || undefined}>
+      {drag != null && (
+        <span
+          className="seek-tooltip"
+          style={{ left: `calc(${pct}% * (100% - 20px) / 100 + 10px)` }}
+          aria-hidden="true"
+        >
+          {fmtTime(drag)}
+        </span>
+      )}
       <input
         type="range" className="seek-range" min={0} max={Math.max(1, Math.floor(duration))} step={1} value={Math.min(v, duration || 0)}
         disabled={disabled} aria-label="Seek" aria-valuetext={`${fmtTime(v)} of ${fmtTime(duration)}`}
-        style={{ ['--pct' as string]: `${duration ? (v / duration) * 100 : 0}%` }}
+        style={{ ['--pct' as string]: `${pct}%` }}
         onChange={(e) => setDrag(Number(e.target.value))}
         onPointerUp={() => { if (drag != null) { seek(drag); setDrag(null) } }}
         onKeyUp={() => { if (drag != null) { seek(drag); setDrag(null) } }}
@@ -426,6 +543,30 @@ export function TogetherBanner({ s }: { s: PlayerState }) {
   )
 }
 
+/** Shared context menu for a queue item — play next, add to end, add to playlist, share. */
+function QueueTrackMenu({ item }: { item: QueueItem }) {
+  const [addOpen, setAddOpen] = useState(false)
+  return (
+    <>
+      <Menu.Root>
+        <Menu.Trigger asChild>
+          <button type="button" className="icon-btn" aria-label={`More for ${item.title}`}><Icon name="more" /></button>
+        </Menu.Trigger>
+        <Menu.Portal>
+          <Menu.Content className="menu-content" sideOffset={4} align="end">
+            <Menu.Item className="menu-item" onSelect={() => enqueue([item], true)}>Play next</Menu.Item>
+            <Menu.Item className="menu-item" onSelect={() => enqueue([item], false)}>Add to end of queue</Menu.Item>
+            <Menu.Separator className="menu-separator" />
+            <Menu.Item className="menu-item" onSelect={() => setAddOpen(true)}>Add to playlist…</Menu.Item>
+            <Menu.Item className="menu-item" onSelect={() => shareSong(item)}>Share song</Menu.Item>
+          </Menu.Content>
+        </Menu.Portal>
+      </Menu.Root>
+      {addOpen && <AddToPlaylist ids={[item.id]} title={item.title} open onOpenChange={(v) => { if (!v) setAddOpen(false) }} />}
+    </>
+  )
+}
+
 export function QueueList({ queue, index, together, level = 3 }: { queue: QueueItem[]; index: number; together: boolean; level?: 2 | 3 }) {
   const H = level === 2 ? 'h2' : 'h3'
   const upcoming = queue.length - index - 1
@@ -448,6 +589,7 @@ export function QueueList({ queue, index, together, level = 3 }: { queue: QueueI
               </span>
             </button>
             <span className="queue-tools">
+              {!together && <QueueTrackMenu item={q} />}
               <button type="button" className="icon-btn" onClick={() => move(q.qid, i - 1)} disabled={i === 0} aria-label={`Move ${q.title} up`}><Icon name="up" /></button>
               <button type="button" className="icon-btn" onClick={() => move(q.qid, i + 1)} disabled={i === queue.length - 1} aria-label={`Move ${q.title} down`}><Icon name="down" /></button>
               <button type="button" className="icon-btn" onClick={() => remove(q.qid)} aria-label={`Remove ${q.title}`}><Icon name="close" /></button>

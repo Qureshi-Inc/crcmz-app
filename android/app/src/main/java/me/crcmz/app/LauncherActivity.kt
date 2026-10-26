@@ -66,8 +66,13 @@ class LauncherActivity : AppCompatActivity() {
     lateinit var web: WebView
         private set
     private lateinit var refresh: SwipeRefreshLayout
-    /** The page has a sheet or dialog open (Shell's `sheet`). */
+    /** The page has a sheet or dialog open (Shell's `sheet`). Setting it immediately
+     *  disables pull-to-refresh so the gesture can't race the web message. */
     var sheetOpen = false
+        set(v) {
+            field = v
+            if (::refresh.isInitialized && !isTV) refresh.isEnabled = !v
+        }
     private lateinit var content: LinearLayout
     lateinit var root: FrameLayout
         private set
