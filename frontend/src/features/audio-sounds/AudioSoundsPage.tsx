@@ -18,6 +18,9 @@ import { useSwipeDown } from '../../lib/gestures'
 type Sound = { name: string; label: string; by?: string | null; at?: number | null; source?: string | null }
 type Board = { sounds: Sound[]; builtins: string[] }
 
+// Kept at module level so the element isn't GC'd mid-playback
+let _localAudio: HTMLAudioElement | null = null
+
 const KEY = ['audio-sounds']
 const ok = (t: string) => toast(t, 'success')
 const err = (t: string) => toast(t, 'error')
@@ -80,7 +83,10 @@ export function AudioSoundsPage() {
 
   function playLocally(name: string, label: string) {
     setLocalMenu(null)
+    _localAudio?.pause()
     const audio = new Audio(`/api/audio-sounds/${encodeURIComponent(name)}/file`)
+    _localAudio = audio
+    audio.onerror = () => err(`Couldn't load ${label}`)
     audio.play().catch(() => err("Couldn't play locally"))
     ok(`Playing ${label} locally`)
   }
