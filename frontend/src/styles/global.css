@@ -271,10 +271,26 @@ img { max-width: 100%; }
   display: none; flex-direction: column;
   border-right: 1px solid var(--border-decorative);
   padding-top: env(safe-area-inset-top);
-  overflow-y: auto;
+  overflow-y: auto; overflow-x: hidden;
+  transition: width .2s ease;
 }
-.sidebar-brand { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-3) var(--space-2); text-decoration: none; border-bottom: 1px solid var(--border-decorative); }
+.sidebar[data-collapsed] { width: 56px; }
+html[data-sidebar-collapsed] .app-main { padding-left: calc(56px + var(--gutter)); }
+
+/* Sidebar collapse toggle button */
+.sidebar-collapse-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; min-height: 36px; padding: var(--space-2);
+  background: none; border: 0; border-top: 1px solid var(--border-decorative);
+  color: var(--text-dim); cursor: pointer; flex: none;
+  transition: color .15s;
+}
+@media (hover: hover) { .sidebar-collapse-btn:hover { color: var(--text); background: rgba(255,60,200,.05); } }
+.sidebar-collapse-btn svg { width: 16px; height: 16px; }
+
+.sidebar-brand { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-3) var(--space-2); text-decoration: none; border-bottom: 1px solid var(--border-decorative); overflow: hidden; }
 .sidebar-brand .mascot { width: var(--brand-mark); height: var(--brand-mark); object-fit: contain; flex: none; }
+.sidebar[data-collapsed] .sidebar-brand .mascot { width: 32px; height: 32px; }
 /* --text-xl does not fit beside the 64 px mark in 240 px; the top-bar size does. */
 .sidebar-brand .wordmark-text { font-size: var(--text-lg); font-weight: 800; }
 .sidebar-brand .topbar-words { gap: 8px; }
@@ -285,13 +301,21 @@ img { max-width: 100%; }
   position: relative; display: flex; align-items: center; gap: var(--space-3);
   min-height: var(--c-nav-row-h); padding: 0 var(--space-4) 0 var(--space-5);
   color: var(--c-nav-text); text-decoration: none; font-weight: 600; font-size: var(--text-base);
+  white-space: nowrap;
 }
+.sidebar[data-collapsed] .nav-row { padding: 0; justify-content: center; gap: 0; }
+.nav-row-icon { position: relative; display: flex; align-items: center; justify-content: center; flex: none; }
+.sidebar[data-collapsed] .nav-row-icon { width: 56px; height: var(--c-nav-row-h); }
 .nav-row[aria-current="page"] { color: var(--c-nav-active-text); background: rgba(255, 47, 214, .07); }
 .nav-row[aria-current="page"]::before {
   content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
   background: var(--c-nav-active-mark); box-shadow: var(--glow-magenta);
 }
 .nav-row .nav-badge { margin-left: auto; }
+.nav-badge-dot {
+  position: absolute; top: 8px; right: 8px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--c-nav-active-mark);
+}
 @media (hover: hover) { .nav-row:hover { background: rgba(255, 60, 200, .07); color: var(--text); } }
 /* The ⓘ beside a page title: opens that page's section of Help. */
 .help-dot {
@@ -303,6 +327,7 @@ img { max-width: 100%; }
 .help-dot svg { width: 20px; height: 20px; }
 @media (hover: hover) { .help-dot:hover { color: var(--text); background: rgba(255, 60, 200, .1); } }
 .sidebar-account { border-top: 1px solid var(--border-decorative); padding: var(--space-2) var(--space-3); display: flex; align-items: center; gap: var(--space-2); }
+.sidebar[data-collapsed] .sidebar-account { justify-content: center; padding: var(--space-2); }
 .account-trigger {
   display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: var(--tap-min);
   background: none; border: 0; border-radius: var(--radius-md); padding: 0 var(--space-2); text-align: left; color: var(--text);
@@ -320,7 +345,7 @@ img { max-width: 100%; }
 @media (min-width: 1024px) {
   .topbar, .tabbar { display: none; }
   .sidebar { display: flex; }
-  .app-main { padding: var(--space-8) var(--gutter) var(--space-10) calc(var(--c-sidebar-w) + var(--gutter)); }
+  .app-main { padding: var(--space-8) var(--gutter) var(--space-10) calc(var(--c-sidebar-w) + var(--gutter)); transition: padding-left .2s ease; }
   .app-main[data-chat="panel"] { padding-right: calc(var(--c-chat-panel-w) + var(--gutter)); }
   .app-main[data-chat="rail"] { padding-right: calc(60px + var(--gutter)); }
 }

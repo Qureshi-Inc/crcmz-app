@@ -1,6 +1,6 @@
 // PS-0 · App shell: top bar + tab bar + More sheet below 1024 px, sidebar at and
 // above it. Owns the session probe, the shared squad store (badge) and the toast region.
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Menu from '@radix-ui/react-dropdown-menu'
@@ -32,6 +32,27 @@ import { nativeShell, onShellGo, toShell, useSheetOpen } from '../lib/nativeShel
 import { DrawerGrip, useDrawerNav } from './drawer'
 
 const MASCOT = '/footer-avatar.png'
+
+// ── Sidebar collapsed state ───────────────────────────────────────────────────
+const SIDEBAR_KEY = 'sidebar.collapsed'
+const sidebarListeners = new Set<() => void>()
+let sidebarCollapsedValue = localStorage.getItem(SIDEBAR_KEY) === 'true'
+function getSidebarCollapsed() { return sidebarCollapsedValue }
+function setSidebarCollapsed(v: boolean) {
+  sidebarCollapsedValue = v
+  localStorage.setItem(SIDEBAR_KEY, String(v))
+  document.documentElement.dataset.sidebarCollapsed = v ? '' : undefined as unknown as string
+  if (!v) delete document.documentElement.dataset.sidebarCollapsed
+  sidebarListeners.forEach((l) => l())
+}
+// Apply on boot
+if (sidebarCollapsedValue) document.documentElement.dataset.sidebarCollapsed = ''
+function useSidebarCollapsed() {
+  return useSyncExternalStore(
+    useCallback((cb) => { sidebarListeners.add(cb); return () => sidebarListeners.delete(cb) }, []),
+    getSidebarCollapsed,
+  )
+}
 
 export function Shell() {
   const desktop = useDesktop()
@@ -283,7 +304,7 @@ function AvatarFace({ name, avatar }: { name: string | null; avatar: string | nu
   return <Icon name="user" />
 }
 
-function AccountControl({ variant = 'topbar' }: { variant?: 'topbar' | 'sidebar' }) {
+function AccountControl({ variant = 'topbar' }: { variant?: 'topbar' | 'sidebar' | 'sidebar-collapsed' }) {
   const me = useMe()
   if (me.signedIn === false) {
     return <a className="btn btn-secondary signin-link" href={loginUrl()}>Sign in</a>
@@ -296,6 +317,10 @@ function AccountControl({ variant = 'topbar' }: { variant?: 'topbar' | 'sidebar'
           <button type="button" className="account-trigger" aria-label={label}>
             <span className="avatar-btn"><AvatarFace name={me.name} avatar={me.avatar} /></span>
             <span className="account-name">{me.name || 'Account'}</span>
+          </button>
+        ) : variant === 'sidebar-collapsed' ? (
+          <button type="button" className="avatar-btn" aria-label={label} title={label}>
+            <AvatarFace name={me.name} avatar={me.avatar} />
           </button>
         ) : (
           <button type="button" className="avatar-btn" aria-label={label}>
@@ -490,39 +515,71 @@ function Sidebar({ current, isAdmin, watchBar, huddleBar }: { current: DestId | 
   const badge = useLiveBadge()
   const acct = useAccount()
   const unread = useUnread(acct.data?.state === 'signed-in')
+  const collapsed = useSidebarCollapsed()
+
   const row = (id: DestId) => {
     const d = DESTS[id]
     if (d.adminOnly && !isAdmin) return null
+    const squadBadge = id === 'squad' && badge > 0
+    const notifBadge = id === 'notifications' && unread > 0
+    const badgeCount = squadBadge ? badge : notifBadge ? unread : 0
     return (
       <li key={id}>
-        <Link className="nav-row" to={d.path} aria-current={current === id ? 'page' : undefined}>
-          <Icon name={d.icon} />
-          {d.label}
-          {id === 'squad' && badge > 0 && <><span className="nav-badge" aria-hidden="true">{badge}</span><span className="sr-only">, {badge} in a game</span></>}
-          {id === 'notifications' && unread > 0 && <><span className="nav-badge" aria-hidden="true">{unread > 99 ? '99+' : unread}</span><span className="sr-only">, {unread} unread</span></>}
+        <Link
+          className="nav-row"
+          to={d.path}
+          aria-current={current === id ? 'page' : undefined}
+          title={collapsed ? d.label : undefined}
+        >
+          <span className="nav-row-icon">
+            <Icon name={d.icon} />
+            {collapsed && badgeCount > 0 && <span className="nav-badge nav-badge-dot" aria-hidden="true" />}
+          </span>
+          {!collapsed && <span className="nav-row-label">{d.label}</span>}
+          {!collapsed && badgeCount > 0 && (
+            <><span className="nav-badge" aria-hidden="true">{badgeCount > 99 ? '99+' : badgeCount}</span>
+            <span className="sr-only">, {badgeCount} {id === 'squad' ? 'in a game' : 'unread'}</span></>
+          )}
         </Link>
       </li>
     )
   }
+
   return (
-    <aside className="sidebar chrome" aria-label="Sidebar">
-      <Link to="/" className="sidebar-brand" aria-label="CRCMZ APP, go to Squad">
+    <aside className="sidebar chrome" aria-label="Sidebar" data-collapsed={collapsed ? '' : undefined}>
+      <Link
+        to="/"
+        className="sidebar-brand"
+        aria-label="CRCMZ APP, go to Squad"
+        title={collapsed ? 'CRCMZ APP' : undefined}
+      >
         <img className="mascot" src={MASCOT} alt="" width={64} height={64} decoding="async" />
-        <span className="topbar-words">
-          <span className="wordmark-wrap"><span className="wordmark-text">CRCMZ APP</span></span>
-          <span className="tagline">YES. WE HAVE ONE.</span>
-        </span>
+        {!collapsed && (
+          <span className="topbar-words">
+            <span className="wordmark-wrap"><span className="wordmark-text">CRCMZ APP</span></span>
+            <span className="tagline">YES. WE HAVE ONE.</span>
+          </span>
+        )}
       </Link>
       <nav aria-label="Primary" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
         <ul className="sidebar-group">{SIDEBAR_MAIN.map(row)}</ul>
         <div className="sidebar-spacer" />
         <ul className="sidebar-group">{SIDEBAR_FOOT.map(row)}</ul>
       </nav>
-      {(watchBar || huddleBar) && <CallBar variant="sidebar" watch={watchBar} huddle={huddleBar} />}
-      <MiniPlayer variant="sidebar" />
+      {(watchBar || huddleBar) && !collapsed && <CallBar variant="sidebar" watch={watchBar} huddle={huddleBar} />}
+      {!collapsed && <MiniPlayer variant="sidebar" />}
       <div className="sidebar-account">
-        <AccountControl variant="sidebar" />
+        <AccountControl variant={collapsed ? 'sidebar-collapsed' : 'sidebar'} />
       </div>
+      <button
+        type="button"
+        className="sidebar-collapse-btn"
+        onClick={() => setSidebarCollapsed(!collapsed)}
+        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        <Icon name={collapsed ? 'next' : 'prev'} />
+      </button>
     </aside>
   )
 }
