@@ -127,3 +127,4 @@ export const inviteMember = (body: { email: string; name: string; vip: boolean }
 
 export const MCP_URL = 'https://app.crcmz.me/mcp'
 export const MCP_CONFIG = JSON.stringify({ mcpServers: { crcmz: { type: 'http', url: MCP_URL } } }, null, 2)
+export const MCP_CLI_CMD = `claude mcp add --transport http crcmz ${MCP_URL}`

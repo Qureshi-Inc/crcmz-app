@@ -1648,6 +1648,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .acct-status { display: flex; align-items: center; gap: var(--space-3); flex-direction: row; }
 .acct-status-emoji { font-size: 28px; line-height: 1; flex: none; }
 
+.settings-subheading { font-size: var(--text-sm); font-weight: 600; color: var(--accent-text); text-transform: uppercase; letter-spacing: .06em; margin: 0 0 var(--space-2); }
 .steps-plain { margin: 0; padding-left: 1.3em; list-style: decimal; color: var(--text-dim); }
 .steps-plain li + li { margin-top: var(--space-2); }
 .steps-plain li::marker { color: var(--accent-text); font-weight: 700; }

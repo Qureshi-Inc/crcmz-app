@@ -14,7 +14,7 @@ import { OrbPosControl } from '../watch/WatchPage'
 import { ApiError, getJSON, request } from '../../lib/http'
 import { nativeShell } from '../../lib/nativeShell'
 import {
-  addPasskey, changePassword, fmtDate, fmtDateTime, getMcpToken, generateMcpToken, revokeMcpToken, MCP_CONFIG,
+  addPasskey, changePassword, fmtDate, fmtDateTime, getMcpToken, generateMcpToken, revokeMcpToken, MCP_CONFIG, MCP_CLI_CMD,
   passkeysSupported, removePasskey, revokeMcp, tokenState,
   setPrimaryPlatform, setSquadName, unlinkMattermost, unlinkSteam,
   type McpStatus, type MmStatus, type Passkey, type PsnStatus, type SteamStatus, type ProfileStatus,
@@ -617,10 +617,15 @@ function McpTab() {
   const [busy, setBusy] = useState(false)
   const [tokenBusy, setTokenBusy] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [copiedCli, setCopiedCli] = useState(false)
   const [tokenVisible, setTokenVisible] = useState(false)
 
   async function copy() {
     try { await navigator.clipboard.writeText(MCP_CONFIG); setCopied(true); window.setTimeout(() => setCopied(false), 2000) }
+    catch { toast('Copy was blocked. Select the text and copy it.', 'warning') }
+  }
+  async function copyCli() {
+    try { await navigator.clipboard.writeText(MCP_CLI_CMD); setCopiedCli(true); window.setTimeout(() => setCopiedCli(false), 2000) }
     catch { toast('Copy was blocked. Select the text and copy it.', 'warning') }
   }
   async function revoke() {
@@ -680,9 +685,21 @@ function McpTab() {
           ) : (
             <>
               <p className="dim">Not connected. Hook Claude (or any MCP client) up to the squad.</p>
+              <p className="settings-subheading">Claude Code (CLI)</p>
               <ol className="steps-plain">
-                <li>Add the config below to your MCP client (Claude Desktop: <code>claude_desktop_config.json</code>).</li>
-                <li>Restart the client. It opens a browser window by itself.</li>
+                <li>Run the command below in your terminal.</li>
+                <li>Open Claude Code and run <code>/mcp</code> to trigger auth.</li>
+                <li>Sign in with your CRCMZ account and tap <b>Allow</b>.</li>
+                <li>Come back here and tap Refresh.</li>
+              </ol>
+              <div className="code-block">
+                <pre aria-label="Claude Code CLI command" tabIndex={0}>{MCP_CLI_CMD}</pre>
+                <button type="button" className="btn btn-secondary" onClick={copyCli}>{copiedCli ? 'Copied' : 'Copy'}</button>
+              </div>
+              <p className="settings-subheading" style={{ marginTop: '1.25rem' }}>Claude Desktop</p>
+              <ol className="steps-plain">
+                <li>Add the config below to <code>claude_desktop_config.json</code>.</li>
+                <li>Restart Claude Desktop. It opens a browser window to sign in.</li>
                 <li>Sign in with your CRCMZ account and tap <b>Allow</b>.</li>
                 <li>Come back here and tap Refresh.</li>
               </ol>

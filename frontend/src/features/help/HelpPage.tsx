@@ -5,9 +5,10 @@ import { Link, useLocation, useOutletContext } from 'react-router-dom'
 import { useTitle } from '../../app/title'
 import { Icon, type IconName } from '../../components/Icon'
 
+import { MCP_CONFIG, MCP_CLI_CMD } from '../../lib/account'
+
 const MM_URL = 'https://mm.qureshi.io'
 const JF_URL = 'https://jelly.qureshi.io'
-const MCP_CONFIG = '{"mcpServers":{"crcmz":{"type":"http","url":"https://app.crcmz.me/mcp"}}}'
 
 type Section = { id: string; title: string; icon: IconName; open?: string; adminOnly?: boolean; body: ReactNode }
 
@@ -228,12 +229,21 @@ const SECTIONS: Section[] = [
   {
     id: 'mcp', title: 'Claude / MCP', icon: 'ask',
     body: (
-      <ol>
-        <li>Add this to your MCP client (Claude Desktop: <code>claude_desktop_config.json</code>): <Copyable text={MCP_CONFIG} /></li>
-        <li>Restart the client. A browser opens.</li>
-        <li>Sign in with your CRCMZ account and tap <b>Allow</b>.</li>
-        <li>Turn it off any time in <Link to="/settings/mcp">Settings → MCP</Link>.</li>
-      </ol>
+      <>
+        <p className="dim" style={{ marginTop: 0 }}>Let Claude read squad data and act for you. Connect once — it stays connected until you revoke it in <Link to="/settings/mcp">Settings → MCP</Link>.</p>
+        <p className="settings-subheading">Claude Code (CLI)</p>
+        <ol>
+          <li>Run this in your terminal: <Copyable text={MCP_CLI_CMD} /></li>
+          <li>Open Claude Code and run <code>/mcp</code> to trigger auth.</li>
+          <li>Sign in with your CRCMZ account and tap <b>Allow</b>.</li>
+        </ol>
+        <p className="settings-subheading" style={{ marginTop: '1rem' }}>Claude Desktop</p>
+        <ol>
+          <li>Add this to <code>claude_desktop_config.json</code>: <Copyable text={MCP_CONFIG} /></li>
+          <li>Restart Claude Desktop. A browser opens automatically.</li>
+          <li>Sign in with your CRCMZ account and tap <b>Allow</b>.</li>
+        </ol>
+      </>
     ),
   },
   {
