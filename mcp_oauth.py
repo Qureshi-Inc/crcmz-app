@@ -25,7 +25,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 DB_PATH            = Path("/data/mcp_user_tokens.db")
-ACCESS_TOKEN_TTL   = 3600          # 1 hour
+ACCESS_TOKEN_TTL   = 30 * 86400    # 30 days (Claude Code doesn't auto-refresh between sessions)
 REFRESH_TOKEN_TTL  = 30 * 86400    # 30 days
 AUTH_CODE_TTL      = 60            # 60 seconds
 
