@@ -2,7 +2,7 @@
 // (headset + PS5 party). Anyone can add a clip (upload, record or a link), put the
 // board in order, rename or remove clips. Clips added in Deck Manager or on the
 // stream deck show up here too: the Pi is the one library.
-import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -22,6 +22,18 @@ const KEY = ['audio-sounds']
 const ok = (t: string) => toast(t, 'success')
 const err = (t: string) => toast(t, 'error')
 const msg = (e: unknown, fallback: string) => (e instanceof ApiError ? e.detail : fallback)
+
+// Track whether sidebar is collapsed for virtual soundboard mode
+const _sbListeners = new Set<() => void>()
+function _getSC() { return document.documentElement.hasAttribute('data-sidebar-collapsed') }
+const _obs = typeof MutationObserver !== 'undefined' ? new MutationObserver(() => _sbListeners.forEach((l) => l())) : null
+_obs?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-sidebar-collapsed'] })
+function useSidebarCollapsed() {
+  return useSyncExternalStore(
+    useCallback((cb) => { _sbListeners.add(cb); return () => _sbListeners.delete(cb) }, []),
+    _getSC,
+  )
+}
 
 async function postClip(file: Blob, filename: string, label: string, source: 'upload' | 'record') {
   const fd = new FormData()
@@ -43,8 +55,15 @@ export function AudioSoundsPage() {
   const [adding, setAdding] = useState(false)
   const [playing, setPlaying] = useState<string | null>(null)
   const [order, setOrder] = useState<Sound[]>([])
+  const [virtual, setVirtual] = useState(false)
+  const sidebarCollapsed = useSidebarCollapsed()
+  // bump this to force-reload images after regenerate
+  const [imgSeeds, setImgSeeds] = useState<Record<string, number>>({})
 
   useEffect(() => { if (board.data) setOrder(board.data.sounds) }, [board.data])
+
+  // auto-enter virtual mode when sidebar collapses on soundboard
+  useEffect(() => { if (sidebarCollapsed) setVirtual(true) }, [sidebarCollapsed])
 
   async function play(name: string, label: string) {
     if (editing || playing) return
@@ -55,7 +74,7 @@ export function AudioSoundsPage() {
     } catch (e) {
       err(msg(e, 'Playback failed'))
     } finally {
-      setTimeout(() => setPlaying(null), 600)
+      setTimeout(() => setPlaying(null), 1400)
     }
   }
 
@@ -91,27 +110,51 @@ export function AudioSoundsPage() {
     }
   }
 
-  const sounds = order
-  return (
-    <div className="page sb-page">
-      <div className="sb-head">
-        <div>
-          <h1 className="page-h1" tabIndex={-1}>Soundboard<HelpLink id="sounds" /></h1>
-          <p className="meta">{editing ? 'Drag or use the arrows to reorder · tap a name to rename' : 'Tap a clip to play it through the squad Pi'}</p>
-        </div>
-        <div className="sb-actions">
-          {sounds.length > 0 && (
-            <button type="button" className="btn btn-secondary" aria-pressed={editing} onClick={() => setEditing((v) => !v)}>
-              <Icon name={editing ? 'close' : 'edit'} />{editing ? 'Done' : 'Edit'}
-            </button>
-          )}
-          <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}><Icon name="plus" />Add clip</button>
-        </div>
-      </div>
+  async function regenImage(s: Sound) {
+    try {
+      await request(`/api/audio-sounds/${encodeURIComponent(s.name)}/regenerate-image`, { method: 'POST' })
+      ok(`Regenerating image for ${s.label} — check back in ~15s`)
+      setTimeout(() => setImgSeeds((prev) => ({ ...prev, [s.name]: Date.now() })), 15_000)
+    } catch (e) {
+      err(msg(e, "Couldn't start regeneration"))
+    }
+  }
 
-      {board.isLoading && <SkeletonRows n={3} />}
-      {board.error && <ErrorStrip text="Couldn't load the soundboard" onRetry={() => void board.refetch()} />}
-      {board.data && sounds.length === 0 && (
+  const sounds = order
+  const isVirtual = virtual && !editing
+
+  return (
+    <div className={`page sb-page${isVirtual ? ' sb-page--virtual' : ''}`}>
+      {isVirtual
+        ? (
+          <div className="sb-virtual-bar">
+            <span className="sb-virtual-title">Soundboard</span>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setVirtual(false)}>Exit</button>
+          </div>
+        )
+        : (
+          <div className="sb-head">
+            <div>
+              <h1 className="page-h1" tabIndex={-1}>Soundboard<HelpLink id="sounds" /></h1>
+              <p className="meta">{editing ? 'Tap a name to rename · drag to reorder · regenerate AI image' : 'Tap a clip to play it through the squad Pi'}</p>
+            </div>
+            <div className="sb-actions">
+              <button type="button" className="btn btn-secondary btn-sm" aria-label="Virtual soundboard" title="Virtual soundboard" onClick={() => setVirtual(true)}>
+                <Icon name="grid" />
+              </button>
+              {sounds.length > 0 && (
+                <button type="button" className="btn btn-secondary" aria-pressed={editing} onClick={() => setEditing((v) => !v)}>
+                  <Icon name={editing ? 'close' : 'edit'} />{editing ? 'Done' : 'Edit'}
+                </button>
+              )}
+              <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}><Icon name="plus" />Add clip</button>
+            </div>
+          </div>
+        )}
+
+      {!isVirtual && board.isLoading && <SkeletonRows n={3} />}
+      {!isVirtual && board.error && <ErrorStrip text="Couldn't load the soundboard" onRetry={() => void board.refetch()} />}
+      {!isVirtual && board.data && sounds.length === 0 && (
         <div className="empty glass">
           <p className="empty-title">No clips yet</p>
           <p className="meta">Upload a sound, record one, or paste a MyInstants link. Everyone in the squad sees the same board.</p>
@@ -120,12 +163,13 @@ export function AudioSoundsPage() {
       )}
 
       {sounds.length > 0 && (
-        <BoardGrid sounds={sounds} editing={editing} playing={playing}
+        <BoardGrid sounds={sounds} editing={editing} playing={playing} imgSeeds={imgSeeds}
           onPlay={(s) => void play(s.name, s.label)} onReorder={(next) => void saveOrder(next)}
-          onRename={(s, l) => void rename(s, l)} onRemove={(s) => void remove(s)} />
+          onRename={(s, l) => void rename(s, l)} onRemove={(s) => void remove(s)}
+          onRegenImage={(s) => void regenImage(s)} />
       )}
 
-      {(board.data?.builtins.length ?? 0) > 0 && (
+      {!isVirtual && (board.data?.builtins.length ?? 0) > 0 && (
         <details className="sb-classics glass">
           <summary className="section-h2">Classic sounds</summary>
           <div className="sb-classic-row">
@@ -144,10 +188,11 @@ export function AudioSoundsPage() {
 }
 
 // ── Board grid (play / edit) ──────────────────────────────────────────────────
-function BoardGrid({ sounds, editing, playing, onPlay, onReorder, onRename, onRemove }: {
-  sounds: Sound[]; editing: boolean; playing: string | null
+function BoardGrid({ sounds, editing, playing, imgSeeds, onPlay, onReorder, onRename, onRemove, onRegenImage }: {
+  sounds: Sound[]; editing: boolean; playing: string | null; imgSeeds: Record<string, number>
   onPlay: (s: Sound) => void; onReorder: (next: Sound[]) => void
   onRename: (s: Sound, label: string) => void; onRemove: (s: Sound) => void
+  onRegenImage: (s: Sound) => void
 }) {
   const grid = useRef<HTMLUListElement>(null)
   const [drag, setDrag] = useState<{ name: string; list: Sound[] } | null>(null)
@@ -192,19 +237,43 @@ function BoardGrid({ sounds, editing, playing, onPlay, onReorder, onRename, onRe
         <li key={s.name} data-sound={s.name} data-dragging={drag?.name === s.name || undefined}>
           {editing
             ? <EditTile s={s} first={i === 0} last={i === list.length - 1} onUp={() => move(i, -1)} onDown={() => move(i, 1)}
-                onRename={(l) => onRename(s, l)} onRemove={() => onRemove(s)}
+                onRename={(l) => onRename(s, l)} onRemove={() => onRemove(s)} onRegenImage={() => onRegenImage(s)}
                 handle={{ onPointerDown: (e) => startDrag(e, s.name), onPointerMove: onDragMove, onPointerUp: endDrag, onPointerCancel: endDrag }} />
             : (
               <button type="button" className="sb-tile" data-playing={playing === s.name || undefined}
                 onClick={() => onPlay(s)} aria-label={`Play ${s.label}`}>
-                <span className="sb-tile-icon" aria-hidden="true"><Icon name={playing === s.name ? 'vol' : 'play'} /></span>
-                <span className="sb-tile-label">{s.label}</span>
-                {s.by && <span className="sb-tile-by">{s.by}</span>}
+                <SoundImage name={s.name} label={s.label} seed={imgSeeds[s.name]} />
+                <span className="sb-tile-body">
+                  <span className="sb-tile-label">{s.label}</span>
+                  {s.by && <span className="sb-tile-by">{s.by}</span>}
+                </span>
+                <span className="sb-tile-play" aria-hidden="true">
+                  <Icon name={playing === s.name ? 'vol' : 'play'} />
+                </span>
               </button>
             )}
         </li>
       ))}
     </ul>
+  )
+}
+
+function SoundImage({ name, label, seed }: { name: string; label: string; seed?: number }) {
+  const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const src = `/api/audio-sounds/${encodeURIComponent(name)}/image${seed ? `?v=${seed}` : ''}`
+  useEffect(() => { setLoaded(false); setFailed(false) }, [src])
+  const initials = label.slice(0, 2).toUpperCase()
+  return (
+    <span className="sb-tile-img" aria-hidden="true">
+      {!failed && (
+        <img src={src} alt="" draggable={false}
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+          style={{ opacity: loaded ? 1 : 0 }} />
+      )}
+      {(failed || !loaded) && <span className="sb-tile-initials">{initials}</span>}
+    </span>
   )
 }
 
@@ -215,9 +284,9 @@ type HandleProps = {
   onPointerCancel: () => void
 }
 
-function EditTile({ s, first, last, onUp, onDown, onRename, onRemove, handle }: {
+function EditTile({ s, first, last, onUp, onDown, onRename, onRemove, onRegenImage, handle }: {
   s: Sound; first: boolean; last: boolean; onUp: () => void; onDown: () => void
-  onRename: (label: string) => void; onRemove: () => void; handle: HandleProps
+  onRename: (label: string) => void; onRemove: () => void; onRegenImage: () => void; handle: HandleProps
 }) {
   const [label, setLabel] = useState(s.label)
   const [arm, setArm] = useState(false)
@@ -235,6 +304,7 @@ function EditTile({ s, first, last, onUp, onDown, onRename, onRemove, handle }: 
       <div className="sb-edit-tools">
         <button type="button" className="icon-btn" disabled={first} onClick={onUp} aria-label={`Move ${s.label} earlier`}><Icon name="left" /></button>
         <button type="button" className="icon-btn" disabled={last} onClick={onDown} aria-label={`Move ${s.label} later`}><Icon name="right" /></button>
+        <button type="button" className="icon-btn" title="Regenerate AI image" onClick={onRegenImage} aria-label={`Regenerate image for ${s.label}`}><Icon name="refresh" /></button>
         <button type="button" className={`icon-btn sb-del${arm ? ' sb-del--armed' : ''}`}
           onClick={() => (arm ? onRemove() : setArm(true))} aria-label={arm ? `Tap again to remove ${s.label}` : `Remove ${s.label}`}>
           <Icon name="trash" />{arm && <span>Remove?</span>}
@@ -256,11 +326,11 @@ function AddSheet({ open, onOpenChange, onAdded }: { open: boolean; onOpenChange
     setBusy(true)
     try {
       const name = await job()
-      ok(`Added ${name} to the board`)
+      ok(`Added ${name} to the board — AI image generating in background`)
       onAdded()
       onOpenChange(false)
     } catch (e) {
-      err(e instanceof Error ? e.message : 'That didn’t work')
+      err(e instanceof Error ? e.message : "That didn't work")
     } finally { setBusy(false) }
   }
 
@@ -356,7 +426,7 @@ function RecordTab({ busy, active, onClip }: { busy: boolean; active: boolean; o
       rec.current = r
       r.start(); setSecs(0); setState('recording')
     } catch {
-      err('The browser didn’t give us the microphone')
+      err("The browser didn't give us the microphone")
     }
   }
 
@@ -366,7 +436,7 @@ function RecordTab({ busy, active, onClip }: { busy: boolean; active: boolean; o
         <button type="button" className="upload-zone" disabled={busy} onClick={() => input.current?.click()}>
           <Icon name="mic" />
           <span className="upload-zone-label">{busy ? 'Adding…' : 'Record a clip'}</span>
-          <span className="upload-zone-hint">Opens your phone’s recorder</span>
+          <span className="upload-zone-hint">Opens your phone's recorder</span>
         </button>
         <input ref={input} type="file" accept="audio/*" capture hidden
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onClip(f, f.name); e.target.value = '' }} />

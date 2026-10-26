@@ -9661,6 +9661,34 @@ def api_audio_sounds_play(name: str, request: Request):
     return {"status": "playing"}
 
 
+@app.get("/api/audio-sounds/{name}/image")
+def api_audio_sounds_image(name: str, request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    if not _audio_sounds._valid_name(name):
+        raise HTTPException(status_code=400, detail="Invalid name")
+    img_path = _audio_sounds.SOUND_IMAGES_DIR / f"{name}.png"
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="Image not ready yet")
+    return Response(img_path.read_bytes(), media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.post("/api/audio-sounds/{name}/regenerate-image")
+def api_audio_sounds_regen_image(name: str, request: Request):
+    session = _get_session(request)
+    if not session:
+        raise HTTPException(status_code=401, detail="Sign in required")
+    if not _audio_sounds._valid_name(name):
+        raise HTTPException(status_code=400, detail="Invalid name")
+    b = _audio_sounds._load_board()
+    label = b.get("labels", {}).get(name) or _audio_sounds._pretty(name)
+    import threading
+    threading.Thread(target=_audio_sounds._gen_bedrock_image, args=(name, label), daemon=True).start()
+    return {"status": "generating"}
+
+
 @app.get("/api/audio-sounds/deck")
 def api_audio_sounds_deck_get(request: Request):
     session = _get_session(request)

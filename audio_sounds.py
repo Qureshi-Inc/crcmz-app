@@ -26,6 +26,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 AUDIO_DIR = Path("/data/audio-sounds")
+SOUND_IMAGES_DIR = Path("/data/sound-images")
 DECK_FILE = Path("/data/audio-deck.json")
 PROFILES_DIR = Path("/data/ragnaros-profiles")
 ICONS_DIR = Path("/data/ragnaros-icons")
@@ -91,6 +92,7 @@ def _valid_name(name: str) -> bool:
 
 def _ensure_dirs() -> None:
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    SOUND_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     ICONS_DIR.mkdir(parents=True, exist_ok=True)
     PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -140,6 +142,7 @@ def delete_sound(name: str) -> None:
         raise ValueError(f"Invalid name: {name!r}")
     (AUDIO_DIR / f"{name}.wav").unlink(missing_ok=True)
     (ICONS_DIR / f"sb_{name}.png").unlink(missing_ok=True)
+    (SOUND_IMAGES_DIR / f"{name}.png").unlink(missing_ok=True)
     try:
         _ssh(["delete_sound", name])
     except Exception as exc:
@@ -278,6 +281,8 @@ def add_sound(data: bytes, *, name: str, label: str = "", source: str = "upload"
         _gen_icon(name)
     except Exception as exc:
         logger.warning("icon gen failed for %s: %s", name, exc)
+    display_label = label.strip()[:40] or _pretty(name)
+    threading.Thread(target=_gen_bedrock_image, args=(name, display_label), daemon=True).start()
     current = [s["name"] for s in board(fresh=True)["sounds"] if s["name"] != name]
     with _board_lock:
         b = _load_board()
@@ -455,6 +460,41 @@ def _write_soundboard_yaml(deck: dict) -> None:
     tmp.write_text(content)
     tmp.replace(prof)  # atomic: ragnarosd hot-reloads on mtime and must never read half a file
     logger.info("wrote soundboard.yaml keys 0-8 (%d bytes)", len(content))
+
+
+def _gen_bedrock_image(name: str, label: str) -> None:
+    """Generate a square button image via Amazon Nova Canvas (background thread)."""
+    try:
+        import base64
+        import json as _json
+        import boto3
+        SOUND_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        prompt = (
+            f"A vibrant soundboard button icon for a sound clip called '{label}'. "
+            "Bold punchy illustration, square frame, full-bleed, no text or letters, "
+            "neon synthwave aesthetic, dark background."
+        )
+        client = boto3.client("bedrock-runtime", region_name="us-east-1")
+        body = _json.dumps({
+            "taskType": "TEXT_IMAGE",
+            "textToImageParams": {
+                "text": prompt,
+                "negativeText": "text, letters, words, watermark, blurry, low quality, distorted",
+            },
+            "imageGenerationConfig": {
+                "numberOfImages": 1, "height": 512, "width": 512, "cfgScale": 8.0,
+            },
+        })
+        resp = client.invoke_model(modelId="amazon.nova-canvas-v1:0", body=body,
+                                   contentType="application/json", accept="application/json")
+        result = _json.loads(resp["body"].read())
+        if result.get("error"):
+            raise RuntimeError(result["error"])
+        png = base64.b64decode(result["images"][0])
+        (SOUND_IMAGES_DIR / f"{name}.png").write_bytes(png)
+        logger.info("bedrock image ready for %s (%d bytes)", name, len(png))
+    except Exception as exc:
+        logger.warning("bedrock image gen failed for %s: %s", name, exc)
 
 
 def _gen_icon(name: str) -> None:
