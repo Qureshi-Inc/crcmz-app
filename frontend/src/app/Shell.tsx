@@ -578,7 +578,7 @@ function Sidebar({ current, isAdmin, watchBar, huddleBar }: { current: DestId | 
         aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       >
-        <Icon name={collapsed ? 'next' : 'prev'} />
+        <Icon name={collapsed ? 'right' : 'left'} />
       </button>
     </aside>
   )
