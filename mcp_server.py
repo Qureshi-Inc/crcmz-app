@@ -352,8 +352,12 @@ def handle(message: dict, caller: dict | None = None) -> dict | None:
         else:
             # Read tools: WhatsApp visibility follows the caller -- founder view only
             # for a founder's personal token, CRCMZ BOYZ for everything else.
-            with assistant.wa_viewer(_founder_sub(caller)):
+            with assistant.wa_viewer(_founder_sub(caller)), assistant.mcp_attachments() as extra:
                 text, ok = assistant.call_tool(name, args)
+            # Images a tool attached (stream_sample_image) ride as MCP image blocks.
+            if extra:
+                return _result(rid, {"content": [{"type": "text", "text": text}, *extra],
+                                     "isError": not ok})
 
         # A failed tool is a *result* with isError, not a JSON-RPC error: the
         # model is meant to read the message and recover, not see a dead channel.

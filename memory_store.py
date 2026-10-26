@@ -126,7 +126,8 @@ _reindex_lock    = threading.Lock()
 
 # All recognized semantic-memory source namespaces.
 _VALID_SOURCES = frozenset({"whatsapp", "psn", "facts", "docs", "coach", "app", "watchparty",
-                            "meetings", "watch", "movies", "games", "giveaways", "slap", "uploads"})
+                            "meetings", "watch", "movies", "games", "giveaways", "slap", "uploads",
+                            "streams"})
 
 # Background stats (no sensitive data)
 _stats: dict[str, Any] = {
@@ -1641,6 +1642,7 @@ _SOURCE_STORES = {
     "giveaways":  Path("/data/giveaway.db"),
     "slap":       Path("/data/slap_discover.db"),
     "uploads":    Path("/data/video_uploads.db"),
+    "streams":    Path("/data/stream_analysis.db"),
 }
 
 
@@ -2069,6 +2071,25 @@ def _src_uploads() -> list:
     return out
 
 
+def _src_streams() -> list:
+    """Muse's live-stream analysis records: roasts, what went well or badly, summaries."""
+    db = _sq("/data/stream_analysis.db")
+    if not db:
+        return []
+    out = []
+    with db:
+        for r in db.execute("SELECT * FROM analysis"):
+            parts = [f"{k.replace('_', ' ')}: {r[k]}" for k in ("good", "bad", "next_time", "note") if r[k]]
+            if r["funny_death_roast"]:
+                parts.insert(0, f"funny death roast of {r['roast_subject_name'] or 'someone'}: {r['funny_death_roast']}")
+            label = "end-of-stream summary" if r["kind"] == "summary" else "stream moment"
+            ts = r["at"] or r["created_at"]
+            out.append((f"stream:{r['id']}", f"Live {label} (session {r['session_id']}, {_day(ts)}). " + "; ".join(parts) + ".",
+                        ts, {"kind": r["kind"], "session_id": r["session_id"],
+                             "roast_subject": r["roast_subject_sub"] or ""}))
+    return out
+
+
 _SNAPSHOT_SOURCES = {
     "meetings": _src_meetings,
     "watch": _src_watch,
@@ -2077,5 +2098,6 @@ _SNAPSHOT_SOURCES = {
     "giveaways": _src_giveaways,
     "slap": _src_slap,
     "uploads": _src_uploads,
+    "streams": _src_streams,
 }
 _SOURCE_INDEXERS.update({name: (lambda st, fn=fn, name=name: _index_records(name, fn())) for name, fn in _SNAPSHOT_SOURCES.items()})

@@ -58,6 +58,7 @@ import threading as _threading
 import time as _time
 
 import tourney as _tourney
+import stream_analysis as _stream_analysis
 import webpush as _push  # init() runs with the other stores, below
 import fcm as _fcm  # Android app rings (Huddle / Watch Party); init() below too
 import crcmz_identity
@@ -7832,6 +7833,7 @@ _watchparty_events.init()
 _watch_history.init()
 _watch_diag.init()
 _tourney.init()
+_stream_analysis.init()
 # Run in a daemon thread — the embedding probe can take minutes on a busy oMLX
 # server (it sends 200 OK headers immediately but delays the body).  Semantic
 # memory is optional; the server runs in degraded mode until init completes.

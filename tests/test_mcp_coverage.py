@@ -41,6 +41,10 @@ STORES: dict[str, list[str] | None] = {
                           "whatsapp_awards", "whatsapp_response_times",
                           "person_profile"],
     "/data/clips.db": ["recent_clips", "person_profile"],
+    # Live stream analysis: the on/off switch, the proxy's samples, Muse's records.
+    "/data/stream_analysis.db": ["stream_analysis_status", "stream_sessions", "stream_samples",
+                                 "stream_sample_image", "stream_analysis_records",
+                                 "stream_analysis_summary"],
     "/data/giveaway.db": ["giveaway_status"],
     "/data/vip_invites.db": ["vip_invites_recent"],
     "/data/assistant_facts.db": ["squad_facts", "person_profile"],
