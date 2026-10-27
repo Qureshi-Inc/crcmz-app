@@ -374,7 +374,16 @@ export function attachVideo(el: HTMLVideoElement | null) {
     if (e?.code === 3 && autoRetry('decode')) return
     set({ mediaError: 'failed' })
   })
-  el.addEventListener('stalled', () => log('video.stalled', { ...mediaSnap(el), segs: recentSegs().slice(-3) }, 'warn'))
+  // 'stalled' also fires every few seconds on a paused or fully buffered player (the
+  // browser simply isn't fetching), which drowned the real signal. Only while it's playing
+  // with nothing buffered ahead; real buffering is video.waiting.
+  el.addEventListener('stalled', () => {
+    if (el.paused || el.ended) return
+    let ahead = 0
+    for (let i = 0; i < el.buffered.length; i++) if (el.buffered.start(i) <= el.currentTime + 0.5) ahead = Math.max(ahead, el.buffered.end(i) - el.currentTime)
+    if (el.readyState >= 4 || ahead > 2) return
+    log('video.stalled', { ...mediaSnap(el), ahead: r1(ahead), segs: recentSegs().slice(-3) }, 'warn')
+  })
   el.addEventListener('waiting', () => {
     if (waitLogT && Date.now() - waitLogT < 5000) return
     waitLogT = Date.now()
