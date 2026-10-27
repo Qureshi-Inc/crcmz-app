@@ -2,6 +2,7 @@
 // The worker itself is frontend/public/sw.js; the server half is webpush.py.
 import { useSyncExternalStore } from 'react'
 import { getJSON, request } from './http'
+import { nativeShell } from './nativeShell'
 
 // ── Platform ─────────────────────────────────────────────────────────────────
 export const isIOS = () =>
@@ -24,8 +25,9 @@ const emit = () => listeners.forEach((l) => l())
 const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l) } }
 
 export type InstallState = 'installed' | 'prompt' | 'ios' | 'unavailable'
+// Inside the iPhone or Android app it's installed already: no "Get the app".
 const installState = (): InstallState =>
-  installed || isStandalone() ? 'installed' : deferred ? 'prompt' : isIOS() ? 'ios' : 'unavailable'
+  installed || isStandalone() || nativeShell() ? 'installed' : deferred ? 'prompt' : isIOS() ? 'ios' : 'unavailable'
 
 export const useInstall = () => useSyncExternalStore(subscribe, installState)
 
