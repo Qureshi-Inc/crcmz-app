@@ -6592,7 +6592,8 @@ async def notifications_channels_save(request: Request):
 
 # ── Huddle API (LiveKit token + Ollama proxy) ──────────────────────────────────
 
-def _mk_livekit_token(identity: str, name: str, room: str, attributes: dict | None = None) -> str:
+def _mk_livekit_token(identity: str, name: str, room: str, attributes: dict | None = None,
+                      update_own_metadata: bool = False) -> str:
     import jwt as _pyjwt, uuid as _uuid
     now = int(_time.time())
     payload = {
@@ -6612,6 +6613,9 @@ def _mk_livekit_token(identity: str, name: str, room: str, attributes: dict | No
     }
     if attributes:
         payload["attributes"] = {str(k): str(v) for k, v in attributes.items()}
+    if update_own_metadata:
+        # The Watch Party page keeps its "socket" attribute current when the party socket reconnects.
+        payload["video"]["canUpdateOwnMetadata"] = True
     token = _pyjwt.encode(payload, LIVEKIT_API_SECRET, algorithm="HS256")
     return token if isinstance(token, str) else token.decode()
 
@@ -6674,6 +6678,24 @@ async def huddle_join_token(request: Request, room: str = "crcmz"):
     _meet.add_people(room, {identity: name})
     return JSONResponse({"token": token, "url": LIVEKIT_URL, "room": room},
                         headers={"Cache-Control": "no-store"})
+
+
+async def _livekit_participants(room: str) -> list[dict]:
+    """Everyone in a LiveKit room right now, as the server API lists them (identity, name,
+    attributes, tracks). A short admin token."""
+    import jwt as _pyjwt
+    now = int(_time.time())
+    tok = _pyjwt.encode({"iss": LIVEKIT_API_KEY, "nbf": now, "exp": now + 60,
+                         "video": {"roomAdmin": True, "room": room}}, LIVEKIT_API_SECRET, algorithm="HS256")
+    import httpx as _hx
+    base = LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://").rstrip("/")
+    async with _hx.AsyncClient(timeout=8) as c:
+        r = await c.post(f"{base}/twirp/livekit.RoomService/ListParticipants", json={"room": room},
+                         headers={"Authorization": f"Bearer {tok}"})
+    if r.status_code == 404:
+        return []
+    r.raise_for_status()
+    return list(r.json().get("participants") or [])
 
 
 async def _livekit_people(room: str) -> dict[str, str]:
@@ -7158,9 +7180,17 @@ async def share_pending_get(request: Request):
 async def watch_call_token(request: Request):
     """The Watch Party's camera call: a LiveKit room per party room (watch-<room>).
 
-    Body: {room, client}. ``client`` is this tab's Watch Party socket id; it rides along
-    as a participant attribute so the page can put each camera on the right viewer.
-    Identity is the person plus that id, so one person on two devices is two cameras.
+    Body: {room, client, deviceId?, device?, companion?}.
+      client     this page's Watch Party socket id. It rides along as attributes: "socket"
+                 (who this connection is) and "client" (whose viewer its camera lands on:
+                 itself, or a companion's TV), so the page can put each camera on the right
+                 viewer.
+      deviceId   a per-device id the page keeps. Identity is the person plus it, so it
+                 survives socket reconnects and reloads (a new identity per reconnect left
+                 ghosts and made everyone re-subscribe). Pages from before it send none:
+                 identity is then person#client, as it always was.
+      device     "tv" from the Android TV app.
+      companion  a TV's socket id: this phone is that TV's camera and mic.
     """
     viewer = await _watch_viewer(request)
     if not viewer:
@@ -7179,7 +7209,8 @@ async def watch_call_token(request: Request):
     if not client:
         return JSONResponse({"detail": "client required"}, status_code=400)
     sub = viewer["zitadelSubject"]
-    attrs = {"client": client}
+    device_id = _re.sub(r"[^A-Za-z0-9_-]", "", str((body or {}).get("deviceId") or ""))[:40]
+    attrs = {"client": client, "socket": client}
     # The Android TV app says so: a phone of the same person can then be its companion.
     if (body or {}).get("device") == "tv":
         attrs["device"] = "tv"
@@ -7189,14 +7220,20 @@ async def watch_call_token(request: Request):
     tv = _re.sub(r"[^A-Za-z0-9_-]", "", str((body or {}).get("companion") or ""))[:40]
     if tv:
         try:
-            here = await _livekit_people(f"watch-{room}")
+            here = await _livekit_participants(f"watch-{room}")
         except Exception as e:  # noqa: BLE001
             logger.warning("watch: companion check failed: %s", e)
             return JSONResponse({"detail": "couldn't reach the call"}, status_code=503)
-        if f"{sub}#{tv}" not in here or tv == client:
+        # The TV is mine if one of my connections (identity sub#…) is that viewer: its
+        # "client" attribute, or (an older page) its identity's suffix.
+        mine = [p for p in here if str(p.get("identity") or "").split("#")[0] == sub
+                and (p.get("attributes") or {}).get("companion") != "1"
+                and ((p.get("attributes") or {}).get("client") == tv or str(p.get("identity") or "") == f"{sub}#{tv}")]
+        if not mine or tv == client:
             return JSONResponse({"detail": "your TV isn't in the party"}, status_code=404)
-        attrs = {"client": tv, "companion": "1"}
-    token = _mk_livekit_token(f"{sub}#{client}", viewer["displayName"], f"watch-{room}", attrs)
+        attrs = {"client": tv, "socket": client, "companion": "1"}
+    identity = f"{sub}#{device_id or client}"
+    token = _mk_livekit_token(identity, viewer["displayName"], f"watch-{room}", attrs, update_own_metadata=True)
     return JSONResponse({"token": token, "url": LIVEKIT_URL, "room": f"watch-{room}"},
                         headers={"Cache-Control": "no-store"})
 

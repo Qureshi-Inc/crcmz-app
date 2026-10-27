@@ -16,7 +16,7 @@ import { startActivity, stopActivity } from '../../lib/activity'
 import { readLocal, writeLocal } from '../../lib/media'
 import { isMovieStream } from '../../lib/movies'
 import { isTV } from '../../lib/tv'
-import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
+import { openPip, pipElement, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
 import {
   beacon, extract, fmtTime, getConfig, isDirect, isProxy, joinRoom, loadScript, REACTIONS, setNickname,
@@ -165,7 +165,7 @@ const listeners = new Set<() => void>()
 const clockListeners = new Set<() => void>()
 function set(patch: Partial<WatchState>) {
   state = { ...state, ...patch }
-  if (patch.loud || patch.rtc) setPipStream(callPipStream(), 'watch')
+  if (patch.loud || patch.rtc) { setPipStream(callPipStream(), 'watch'); pipAttach() }
   listeners.forEach((l) => l())
 }
 const setCall = (patch: Partial<Call>) => set({ call: { ...state.call, ...patch } })
@@ -204,8 +204,10 @@ export const short = (u: string) => {
   if (isProxy(u)) { try { return `proxy:${(new URL(u, location.origin).searchParams.get('url') || '').split('?')[0]}` } catch { return 'proxy' } }
   return u.split('?')[0] ?? ''
 }
+const devRing: { type: string; data?: unknown }[] = []   // dev builds: what the call test reads (the ring is sent and cleared)
 function log(type: string, data?: unknown, level: 'debug' | 'info' | 'warn' | 'error' = 'info') {
   ring.push({ ts: Date.now(), type, level, ...(data === undefined ? {} : { data }) })
+  if (import.meta.env.DEV) { devRing.push({ type, data }); if (devRing.length > 500) devRing.shift() }
   if (ring.length > 400) ring.splice(0, ring.length - 400)
   if ((level === 'warn' || level === 'error') && !logT) logT = window.setTimeout(flushLog, 2500)
 }
@@ -222,10 +224,12 @@ const snap = () => ({
   // In the call: my mic, and everyone's mic as the call server last measured it (0..1).
   ...(lkRoom ? {
     me: { mic: !state.call.muted && state.call.on, lvl: Math.round(micLive * 100) / 100 },
-    hear: Object.entries(audioEls).map(([id, a]) => {
-      const t = (a.srcObject as MediaStream | null)?.getAudioTracks()[0]
-      return { n: nameOf(id), play: !a.paused, mute: a.muted, vol: Math.round(a.volume * 100) / 100, forMe: peerPref(id).m, tr: t ? `${t.readyState}${t.muted ? '/nodata' : ''}` : 'none' }
-    }),
+    // Per voice: what this device does with it (its <audio>) and what it receives (rx).
+    hear: Object.values(audioEls).map((a) => ({
+      n: nameOf(clientOf(a.p)), play: !a.el.paused, mute: a.el.muted, vol: Math.round(a.el.volume * 100) / 100, forMe: peerPref(clientOf(a.p)).m,
+      tr: `${a.track.mediaStreamTrack.readyState}${a.track.mediaStreamTrack.muted ? '/nodata' : ''}`,
+    })),
+    rx: rxSummary(),
     cams: { vol: state.camVol, mute: state.camMuted }, gesture: state.needGesture,
     talk: [...lkRoom.remoteParticipants.values()].map((p) => ({ n: nameOf(clientOf(p)), mic: !!p.getTrackPublication(SRC.mic) && !p.getTrackPublication(SRC.mic)!.isMuted, lvl: Math.round(((p as { audioLevel?: number }).audioLevel ?? 0) * 100) / 100 })),
   } : {}),
@@ -788,6 +792,7 @@ function bind(s: Sock) {
     set({ status: 'live', error: '' })
     startActivity('watch')
     void connectRoom()   // listen to the party's call (cameras of whoever's in it)
+    syncCallAttrs()      // already in it: say which party socket this is now
     s.emit('watch:presence:get')
     s.emit('CMD:askHost')
     // A video picked before we connected is put on once we know what the room has
@@ -1316,16 +1321,35 @@ function showRx(e: string, name: string) {
 // The party itself (the video, chat, reactions) stays on the Watch Party socket. The
 // cameras and mics are a LiveKit room, like Huddle: everyone in the party is connected
 // to it listening, so you see and hear whoever's in the call without joining; joining
-// publishes your camera. Each participant carries its party socket id as the "client"
-// attribute, which is how a camera lands on the right viewer (and kick still works).
-// The iOS app runs this same room natively (ios/), with picture in picture.
+// publishes your camera, and Talk your mic.
+//   identity   person#device: a per-device id kept in localStorage, so a reload or a
+//              socket reconnect is the same participant (not a new one, which left
+//              ghosts and made everyone re-subscribe). Attributes say who it is in the
+//              party: "socket" (this page's party socket) and "client" (whose viewer its
+//              camera lands on: itself, or a companion phone's TV). Kick still works.
+//   mic        published once, on the first Talk; Mute mutes that publication (the track
+//              stops, so Bluetooth leaves headset mode) and Talk unmutes it: the same
+//              track SID for everyone, so nobody re-subscribes and first words aren't cut.
+//   audio      one <audio> per remote audio track (LiveKit attach), keyed by track SID,
+//              made once and removed only when unsubscribed; cameras never touch it.
+//   recovery   the mic restarts when it ends, when the OS takes it, when it sends exact
+//              silence or stops sending packets; every listener checks each voice it
+//              should hear is arriving and re-subscribes it when it isn't.
+// The iOS app runs Huddle natively; the Watch Party call is this page, in the apps too.
 type Signal = { t: 'rx'; e: string }
 type LkTrack = {
-  kind: 'audio' | 'video'; source: string; isMuted: boolean; mediaStreamTrack: MediaStreamTrack
+  kind: 'audio' | 'video'; source: string; sid?: string; isMuted: boolean; mediaStreamTrack: MediaStreamTrack
+  attach(el?: HTMLMediaElement): HTMLMediaElement
+  detach(el?: HTMLMediaElement): unknown
   restartTrack?(o?: MediaTrackConstraints): Promise<unknown>
   replaceTrack?(t: MediaStreamTrack, userProvided?: boolean): Promise<unknown>
+  sender?: RTCRtpSender
+  receiver?: RTCRtpReceiver
 }
-type LkPub = { kind: 'audio' | 'video'; source: string; trackSid: string; isMuted: boolean; track?: LkTrack }
+type LkPub = {
+  kind: 'audio' | 'video'; source: string; trackSid: string; isMuted: boolean; isSubscribed?: boolean; track?: LkTrack
+  setSubscribed?(on: boolean): void
+}
 type LkParticipant = {
   identity: string; name?: string; isSpeaking: boolean; attributes?: Record<string, string>; joinedAt?: Date
   trackPublications: Map<string, LkPub>
@@ -1335,30 +1359,50 @@ type LkLocal = LkParticipant & {
   setMicrophoneEnabled(on: boolean, opts?: MediaTrackConstraints): Promise<unknown>
   setCameraEnabled(on: boolean, opts?: MediaTrackConstraints): Promise<unknown>
   unpublishTrack(t: LkTrack, stop?: boolean): Promise<unknown>
+  setAttributes?(a: Record<string, string>): Promise<void>
 }
 type LkRoom = {
   localParticipant: LkLocal
   remoteParticipants: Map<string, LkParticipant>
+  canPlaybackAudio?: boolean
   on(ev: string, fn: (...a: never[]) => void): LkRoom
   connect(url: string, token: string): Promise<void>
   disconnect(): Promise<void>
+  startAudio(): Promise<void>
+  switchActiveDevice(kind: MediaDeviceKind, id: string, exact?: boolean): Promise<boolean>
 }
-type LkNs = { Room: new (o: Record<string, unknown>) => LkRoom; RoomEvent: Record<string, string> }
+type LkNs = { Room: new (o: Record<string, unknown>) => LkRoom; RoomEvent: Record<string, string>; DisconnectReason?: Record<string, number> }
 const LK_SRC = 'https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js'
 const SRC = { cam: 'camera', mic: 'microphone' } as const
-type Peer = { p: LkParticipant; stream: MediaStream | null; key: string }
+/** A viewer in the call: who stands for them (the participant with the camera) and their camera, video only. */
+type Peer = { p: LkParticipant; stream: MediaStream | null; key: string; cam: LkTrack | null }
 
 let lkRoom: LkRoom | null = null
 let lkConnecting: Promise<LkRoom | null> | null = null
+let lkNs: LkNs | null = null
 let localStream: MediaStream | null = null
-const peers: Record<string, Peer> = {}     // by party socket id
+const peers: Record<string, Peer> = {}     // by party viewer id ("client")
+/** Left the call because this device joined it from another tab: wait for "Hear the call here". */
+let replaced = false
 
 const live = () => state.roster.map((u) => u?.id).filter((id): id is string => !!id && id !== state.clientId)
 export const nameOf = (id: string) => state.names[id] || 'Viewer'
 function signal(to: string, msg: Signal) { if (sock?.connected) sock.emit('signal', { to, msg }) }
 export const localMedia = () => localStream
 export const canCall = () => typeof navigator.mediaDevices?.getUserMedia === 'function' && typeof window.RTCPeerConnection === 'function'
+/** Whose viewer a participant is: its "client" attribute (older pages: the identity's suffix). */
 const clientOf = (p: LkParticipant) => p.attributes?.client || p.identity.split('#')[1] || p.identity
+/** The party socket a participant is, for leaving companions out of the viewer list. */
+const socketOf = (p: LkParticipant) => p.attributes?.socket || p.identity.split('#')[1] || ''
+
+/** This device's id in the call: the identity is person#device, so reconnects keep it. */
+function deviceId(): string {
+  try {
+    let id = localStorage.getItem('crcmzWatchDevice')
+    if (!id) { id = crypto.randomUUID().replace(/-/g, '').slice(0, 16); localStorage.setItem('crcmzWatchDevice', id) }
+    return id
+  } catch { return '' }
+}
 
 function audioC() {
   return { echoCancellation: true, noiseSuppression: true, autoGainControl: true, ...(state.micId ? { deviceId: { exact: state.micId } } : {}) }
@@ -1377,13 +1421,17 @@ async function enumerate() {
 async function loadLk(): Promise<LkNs | null> {
   const w = window as unknown as { LivekitClient?: LkNs }
   if (!w.LivekitClient) await loadScript(LK_SRC).catch(() => { /* offline */ })
-  return w.LivekitClient ?? null
+  lkNs = w.LivekitClient ?? null
+  return lkNs
 }
+const wait = (ms: number) => new Promise((res) => window.setTimeout(res, ms))
+const errMsg = (e: unknown) => String((e as Error)?.message || e).slice(0, 160)
 
 // The party's camera call runs here, in the page, in the phone apps too: the cameras sit
 // over the video or beside it where your settings put them (Orbs), which a native call
 // panel can't do. (Huddle is native in the apps; the Watch Party is not.)
-/** The party's call room, connected listening (once per party visit). */
+/** The party's call room, connected listening (once per party visit). A network failure
+ *  (the token fetch or the connect) is retried with backoff instead of giving up. */
 function connectRoom(): Promise<LkRoom | null> {
   if (lkRoom) return Promise.resolve(lkRoom)
   if (lkConnecting) return lkConnecting
@@ -1391,22 +1439,44 @@ function connectRoom(): Promise<LkRoom | null> {
     try {
       const ns = await loadLk()
       if (!ns || !state.active) return null
-      const t = await request<{ token: string; url: string; room: string }>('/api/watch/call/token', {
-        body: { room: state.room || 'crcmz', client: state.clientId, ...(isTV() ? { device: 'tv' } : {}), ...(state.companion ? { companion: state.companion } : {}) }, quiet401: true })
-      const r = new ns.Room({
-        adaptiveStream: false, dynacast: true, stopLocalTrackOnUnpublish: true,
-        videoCaptureDefaults: { resolution: { width: 320, height: 320, frameRate: 15 } },
-        publishDefaults: { simulcast: false, videoEncoding: { maxBitrate: CAM_BITRATE, maxFramerate: 20 } },
-      })
-      wire(r, ns)
-      await r.connect(t.url, t.token)
-      if (!state.active) { void r.disconnect(); return null }
-      lkRoom = r
-      log('call.room', { room: t.room })
-      syncPeers()
-      return r
+      for (let i = 0; ; i++) {
+        try {
+          const t = await request<{ token: string; url: string; room: string }>('/api/watch/call/token', {
+            body: {
+              room: state.room || 'crcmz', client: state.clientId, deviceId: deviceId(),
+              ...(isTV() ? { device: 'tv' } : {}), ...(state.companion ? { companion: state.companion } : {}),
+            }, quiet401: true })
+          const r = new ns.Room({
+            // Tiles are small: subscribe to the layer that fits, pause what nobody can see
+            // (the cameras attach their own <video>, see attachCam). Not in a hidden tab:
+            // picture in picture shows the call from there.
+            adaptiveStream: { pauseVideoInBackground: false }, dynacast: true, stopLocalTrackOnUnpublish: true,
+            // Off: setSinkId (the speaker picker) and iOS Safari playback are per element.
+            webAudioMix: false,
+            videoCaptureDefaults: { resolution: { width: 320, height: 320, frameRate: 15 } },
+            publishDefaults: {
+              simulcast: true, videoEncoding: { maxBitrate: CAM_BITRATE, maxFramerate: 20 },   // the top layer stays capped
+              stopMicTrackOnMute: true, dtx: true, red: true,
+            },
+          })
+          wire(r, ns)
+          await r.connect(t.url, t.token)
+          if (!state.active) { void r.disconnect(); return null }
+          lkRoom = r
+          replaced = false
+          log('call.room', { room: t.room, tries: i })
+          startRxCheck()
+          syncPeers()
+          return r
+        } catch (e) {
+          // A refusal won't change on a retry; a network blip or a 5xx might.
+          if ((e instanceof ApiError && e.status < 500) || i >= 4 || !state.active) throw e
+          log('call.room_retry', { n: i + 1, msg: errMsg(e) }, 'warn')
+          await wait(1000 * 2 ** i)
+        }
+      }
     } catch (e) {
-      log('call.room_failed', { msg: String((e as Error)?.message || e).slice(0, 160) }, 'warn')
+      log('call.room_failed', { msg: errMsg(e) }, 'warn')
       return null
     } finally {
       lkConnecting = null
@@ -1417,17 +1487,36 @@ function connectRoom(): Promise<LkRoom | null> {
 function disconnectRoom() {
   const r = lkRoom
   lkRoom = null
-  Object.keys(peers).forEach((id) => { stopAudio(id); delete peers[id] })
+  stopRxCheck()
+  Object.keys(peers).forEach((id) => { delete peers[id] })
+  Object.keys(audioEls).forEach(detachAudio)
   if (state.loud && Object.keys(state.loud).length) set({ loud: {} })
   if (r) void r.disconnect().catch(() => { /* */ })
   bumpRtc()
+}
+/** The party socket reconnected: keep this participant's "socket"/"client" attributes current. */
+function syncCallAttrs() {
+  const lp = lkRoom?.localParticipant
+  if (!lp?.setAttributes) return
+  const want = { client: state.companion || state.clientId, socket: state.clientId }
+  if (lp.attributes?.client === want.client && lp.attributes?.socket === want.socket) return
+  void lp.setAttributes({ ...(lp.attributes || {}), ...want })
+    .then(() => log('call.attrs', want)).catch((e: unknown) => log('call.attrs_failed', { msg: errMsg(e) }, 'warn'))
 }
 
 let lastSpeakers = ''
 function wire(r: LkRoom, ns: LkNs) {
   const E = ns.RoomEvent
   const on = (ev: string | undefined, fn: (...a: never[]) => void) => { if (ev) r.on(ev, fn) }
-  for (const ev of [E.TrackSubscribed, E.TrackUnsubscribed, E.TrackMuted, E.TrackUnmuted, E.TrackPublished, E.TrackUnpublished,
+  on(E.TrackSubscribed, ((track: LkTrack, pub: LkPub, p: LkParticipant) => {
+    if (track.kind === 'audio') attachAudio(track, pub, p)
+    syncPeers()
+  }) as never)
+  on(E.TrackUnsubscribed, ((track: LkTrack, pub: LkPub) => {
+    if (track.kind === 'audio') detachAudio(pub.trackSid)
+    syncPeers()
+  }) as never)
+  for (const ev of [E.TrackMuted, E.TrackUnmuted, E.TrackPublished, E.TrackUnpublished,
     E.ParticipantConnected, E.ParticipantDisconnected, E.LocalTrackPublished, E.LocalTrackUnpublished, E.ParticipantAttributesChanged]) {
     on(ev, () => syncPeers())
   }
@@ -1439,20 +1528,39 @@ function wire(r: LkRoom, ns: LkNs) {
     const who = speakers.map((sp) => (sp === r.localParticipant ? 'me' : nameOf(clientOf(sp)))).sort().join(',')
     if (who !== lastSpeakers) { lastSpeakers = who; if (who) log('call.speakers', { who }) }
   }) as never)
+  // The browser held our audio until a tap (or let it play again).
+  on(E.AudioPlaybackStatusChanged, () => {
+    const ok = r.canPlaybackAudio !== false
+    log('audio.playback', { ok })
+    if (!ok) needGesture()
+    else if (state.needGesture) set({ needGesture: false })
+  })
+  on(E.MediaDevicesChanged, () => { void devicesChanged() })
   on(E.Reconnecting, () => log('call.reconnecting', undefined, 'warn'))
   on(E.Reconnected, () => { log('call.reconnected'); syncPeers() })
-  on(E.Disconnected, () => {
+  on(E.Disconnected, ((reason?: number) => {
     if (lkRoom !== r) return
     lkRoom = null
+    stopRxCheck()
     if (state.call.on) camStop()
-    Object.keys(peers).forEach((id) => { stopAudio(id); delete peers[id] })
+    Object.keys(peers).forEach((id) => { delete peers[id] })
+    Object.keys(audioEls).forEach(detachAudio)
     bumpRtc()
+    // This device joined the call from another tab (same identity): that one has it now.
+    if (reason !== undefined && reason === ns.DisconnectReason?.DUPLICATE_IDENTITY) {
+      replaced = true
+      log('call.replaced', undefined, 'warn')
+      syncPeers()
+      return
+    }
+    log('call.disconnected', { reason })
     // Still in the party: listen again shortly (the server restarted, the network blipped).
-    if (state.active) window.setTimeout(() => { if (state.active && !lkRoom) void connectRoom() }, 3000)
-  })
+    if (state.active) window.setTimeout(() => { if (state.active && !lkRoom && !replaced) void connectRoom() }, 3000)
+  }) as never)
 }
 
-/** Rebuild who's in the call from the room: a MediaStream per person (camera + mic).
+/** Rebuild who's in the call from the room: per viewer, the participant that stands for
+ *  them and their camera (video only: voices have their own elements, see attachAudio).
  *  A TV and its companion phone are one viewer (the phone's camera carries the TV's id),
  *  so their tracks merge; the phone's own socket is hidden from the viewer list. */
 function syncPeers() {
@@ -1466,7 +1574,7 @@ function syncPeers() {
     for (const p of r.remoteParticipants.values()) {
       const id = clientOf(p)
       ;(byId[id] ||= []).push(p)
-      if (p.attributes?.companion === '1') comps.add(p.identity.split('#')[1] || '')
+      if (p.attributes?.companion === '1') comps.add(socketOf(p))
       if (p.identity.split('#')[0] === me) {
         // My other device in the party: a TV first, else any (a TV still on an older
         // page doesn't say it's a TV yet; a laptop works the same way).
@@ -1480,35 +1588,90 @@ function syncPeers() {
     }
     for (const [id, ps] of Object.entries(byId)) {
       seen.add(id)
-      const tracks = ps.flatMap((p) => [p.getTrackPublication(SRC.cam), p.getTrackPublication(SRC.mic)])
-        .map((pub) => pub?.track?.mediaStreamTrack).filter((t): t is MediaStreamTrack => !!t && t.readyState === 'live')
-      const key = tracks.map((t) => t.id).join(',')
-      const have = peers[id]
-      // A new MediaStream when the tracks change, so <video>/<audio> pick it up cleanly.
-      const stream = have && have.key === key ? have.stream : (tracks.length ? new MediaStream(tracks) : null)
       // The one with the camera stands for the viewer (a TV listening, its phone sending).
       const p = ps.find((x) => x.getTrackPublication(SRC.cam)?.track) ?? ps.find((x) => x.getTrackPublication(SRC.mic)?.track) ?? ps[0]!
-      peers[id] = { p, stream, key }
-      // Never play a person's own voice back to them: not my companion's mic on the TV
-      // (the phone sits in front of it: echo), and nothing on a companion phone (the TV
-      // plays the call).
-      if (stream?.getAudioTracks().length && id !== state.clientId && !state.companion && !(quiet && !hearHere)) playAudio(id, stream)
-      else stopAudio(id)
+      const cam = ps.map((x) => x.getTrackPublication(SRC.cam)?.track).find((t) => !!t && t.mediaStreamTrack.readyState === 'live') ?? null
+      const key = cam ? cam.mediaStreamTrack.id : ''
+      const have = peers[id]
+      // A new MediaStream only when the camera track itself changes.
+      const stream = have && have.key === key ? have.stream : (cam ? new MediaStream([cam.mediaStreamTrack]) : null)
+      peers[id] = { p, stream, key, cam }
     }
   }
-  Object.keys(peers).forEach((id) => { if (!seen.has(id)) { stopAudio(id); delete peers[id] } })
-  const cam = r?.localParticipant.getTrackPublication(SRC.cam)?.track?.mediaStreamTrack
-  localStream = state.call.on ? (cam && cam.readyState === 'live' ? streamOf(cam) : localStream && !cam ? localStream : null) : null
+  Object.keys(peers).forEach((id) => { if (!seen.has(id)) delete peers[id] })
+  const camT = r?.localParticipant.getTrackPublication(SRC.cam)?.track?.mediaStreamTrack
+  localStream = state.call.on ? (camT && camT.readyState === 'live' ? streamOf(camT) : localStream && !camT ? localStream : null) : null
   const compsKey = [...comps].sort().join(',')
   if (compsKey !== companionsKey) { companionsKey = compsKey; companions = comps; showPeople() }
-  if (quiet !== state.quiet) { log(quiet ? 'call.quiet_dupe' : 'call.unquiet'); set({ quiet }) }
+  quiet = quiet || replaced
+  if (quiet !== state.quiet) { log(quiet ? 'call.quiet_dupe' : 'call.unquiet', { replaced }); set({ quiet }) }
   if (tv !== state.myTv || tvIsTv !== state.myTvIsTv || mine !== state.hasCompanion) {
     if (mine !== state.hasCompanion) log(mine ? 'companion.joined' : 'companion.left')
     if (tv !== state.myTv) log('companion.found', { other: tv.slice(0, 8), tv: tvIsTv })
     set({ myTv: tv, myTvIsTv: tvIsTv, hasCompanion: mine })
   }
+  applyPeerAudio()       // who this device should hear may have changed (quiet, companion)
   bumpRtc()
 }
+
+/** A remote camera into its tile's <video> (LiveKit attach, so adaptive stream knows its
+ *  size and whether it's on screen). null when there's no such camera: use srcObject. */
+export function attachCam(id: string, el: HTMLVideoElement): (() => void) | null {
+  const cam = peers[id]?.cam
+  if (!cam) return null
+  cam.attach(el)
+  return () => { cam.detach(el) }
+}
+
+// ── Who hears whom: every 5 s, is each voice this device should hear arriving? ──
+// A silent speaker still sends packets (DTX comfort noise), so "no packets while that
+// mic is unmuted" means it's broken for this listener: re-subscribe it.
+type Rx = { pk: number; d: number; st: string; stalled: boolean; resubAt: number; who: string }
+const rxState: Record<string, Rx> = {}
+let rxT = 0
+function startRxCheck() { stopRxCheck(); rxT = window.setInterval(() => { void rxCheck() }, 5000) }
+function stopRxCheck() { window.clearInterval(rxT); rxT = 0; Object.keys(rxState).forEach((k) => delete rxState[k]) }
+async function rxCheck() {
+  const r = lkRoom
+  if (!r) return
+  const seen = new Set<string>()
+  for (const p of r.remoteParticipants.values()) {
+    const pub = p.getTrackPublication(SRC.mic)
+    if (!pub) continue
+    const sid = pub.trackSid
+    seen.add(sid)
+    const rs = (rxState[sid] ||= { pk: -1, d: -1, st: '', stalled: false, resubAt: 0, who: nameOf(clientOf(p)) })
+    rs.who = nameOf(clientOf(p))
+    if (pub.isMuted) { rs.st = 'muted'; rs.pk = -1; rs.d = -1; continue }
+    const tr = pub.track
+    if (!pub.isSubscribed || !tr?.receiver) { rs.st = 'unsub'; rs.pk = -1; continue }
+    let pk = -1
+    try {
+      (await tr.receiver.getStats()).forEach((s: { type?: string; kind?: string; packetsReceived?: number }) => {
+        if (s.type === 'inbound-rtp' && (s.kind === 'audio' || !s.kind)) pk = s.packetsReceived ?? -1
+      })
+    } catch { continue }
+    if (pk < 0) continue
+    const d = rs.pk < 0 || pk < rs.pk ? -1 : pk - rs.pk     // -1: a new baseline (first look, or re-subscribed)
+    rs.pk = pk; rs.d = d
+    if (d === 0) {
+      rs.st = 'stalled'
+      if (!rs.stalled) { rs.stalled = true; log('audio.rx_stalled', { who: rs.who, sid }, 'warn') }
+      if (Date.now() - rs.resubAt > 15_000 && pub.setSubscribed) {
+        rs.resubAt = Date.now()
+        log('audio.resubscribe', { who: rs.who, sid }, 'warn')
+        pub.setSubscribed(false)
+        window.setTimeout(() => { pub.setSubscribed?.(true) }, 600)
+      }
+    } else if (d > 0) {
+      rs.st = 'ok'
+      if (rs.stalled) { rs.stalled = false; log('audio.rx_recovered', { who: rs.who, sid }) }
+    }
+  }
+  Object.keys(rxState).forEach((k) => { if (!seen.has(k)) delete rxState[k] })
+}
+/** For the heartbeat: per voice, what this device receives (d = packets in the last 5 s). */
+const rxSummary = () => Object.entries(rxState).map(([sid, r]) => ({ n: r.who, s: sid.slice(-6), st: r.st, d: r.d }))
 
 // ── Companion mode ──────────────────────────────────────────────────────────
 // Watching on the TV, the same person's phone can be its camera, mic and remote: chat
@@ -1516,7 +1679,13 @@ function syncPeers() {
 // party (its socket) but plays no video, and its socket is left out of the viewer list.
 let hearHere = false
 /** "Hear the call here" on a device that went quiet for a newer one of yours. */
-export function hearCallHere() { hearHere = true; log('call.hear_here'); syncPeers() }
+export function hearCallHere() {
+  hearHere = true
+  log('call.hear_here', { replaced })
+  // This tab was bumped out of the call by another tab of this device: take it back.
+  if (replaced) { replaced = false; void connectRoom() }
+  syncPeers()
+}
 let rawRoster: RosterEntry[] = []
 let rawPresence: Presence = { count: 0, viewers: [] }
 let companions = new Set<string>()
@@ -1596,11 +1765,11 @@ export async function joinCall() {
     try {
       // Camera only. A capturing mic (even a muted one) flips the OS into voice-call
       // audio: Bluetooth drops to the headset profile and the movie sounds worse. The mic
-      // is opened only while you're unmuted.
+      // is opened on the first Talk, and released again while muted.
       await r.localParticipant.setCameraEnabled(true, { facingMode: 'user' })
     } catch (e) {
       const n = (e as { name?: string })?.name || ''
-      log('cam.error', { name: n, msg: String((e as Error)?.message || '').slice(0, 160) }, 'warn')
+      log('cam.error', { name: n, msg: errMsg(e) }, 'warn')
       if (n === 'NotFoundError' || n === 'DevicesNotFoundError' || n === 'OverconstrainedError') micOnly = true
       else {
         setCall({ note: n === 'NotAllowedError' ? 'Camera/mic blocked — allow it in your browser settings.' : n === 'NotReadableError' ? 'Camera is in use by another app.' : 'Could not start the camera.' })
@@ -1618,8 +1787,10 @@ export async function joinCall() {
 }
 function camStop() {
   log('cam.off')
+  pipDetach()
   stopPip('watch')
   micGen++
+  stopMicWatch()
   const lp = lkRoom?.localParticipant
   setCall({ on: false, muted: true, camOff: false, micOnly: false })
   if (lp) {
@@ -1636,16 +1807,18 @@ export const leaveCall = () => { if (state.call.on) camStop() }
 function endCall() { if (state.call.on) camStop() }
 
 let micGen = 0
-/** Open the mic and send it. Returns false if the mic couldn't be opened. */
+/** Talk: publish the mic the first time, unmute that same publication after (LiveKit
+ *  re-acquires the device it released on mute). Returns false if the mic couldn't open. */
 async function micOpen(): Promise<boolean> {
   const lp = lkRoom?.localParticipant
   if (!state.call.on || !lp) return false
   const gen = ++micGen
+  const before = lp.getTrackPublication(SRC.mic)?.trackSid
   try {
     await lp.setMicrophoneEnabled(true, audioC())
   } catch (e) {
     const n = (e as { name?: string })?.name
-    log('mic.error', { name: n, msg: String((e as Error)?.message || '').slice(0, 160) }, 'warn')
+    log('mic.error', { name: n, msg: errMsg(e) }, 'warn')
     setCall({ note: n === 'NotAllowedError' ? 'Mic blocked — allow it in your browser settings.' : n === 'NotFoundError' ? 'No mic found.' : 'Could not access the mic.' })
     return false
   }
@@ -1653,79 +1826,172 @@ async function micOpen(): Promise<boolean> {
   if (gen !== micGen || !state.call.on) { micClose(); return false }
   void enumerate()
   setCall({ note: '' })
-  watchMic(lp.getTrackPublication(SRC.mic)?.track?.mediaStreamTrack)
+  const pub = lp.getTrackPublication(SRC.mic)
+  log('mic.published', { sid: pub?.trackSid, first: !before, same: !!before && before === pub?.trackSid })
+  watchMic(pub?.track)
   return true
 }
+/** Mute: the publication stays (same SID, nobody re-subscribes); its track stops, so the
+ *  device is released and Bluetooth leaves headset (HFP) mode. */
+function micClose() {
+  micGen++
+  stopMicWatch()
+  const lp = lkRoom?.localParticipant
+  if (lp?.getTrackPublication(SRC.mic)) void lp.setMicrophoneEnabled(false).catch((e: unknown) => log('mic.mute_failed', { msg: errMsg(e) }, 'warn'))
+}
 
-// ── Mic diagnostics: is anything actually coming out of this mic? ──────────────
-// Some devices hand out a mic that only ever records silence (a TV remote's mic is
-// usually kept for the voice assistant). Log what the mic is, then measure its level
-// for half a minute (mic.level every 5 s), and keep a live level for the TV's meter.
-let micProbe: { ctx: AudioContext; an: AnalyserNode; buf: Float32Array<ArrayBuffer>; t: number; until: number; peak: number; sum: number; n: number } | null = null
+// ── The mic while you talk: what it is, how loud, and is it really sending? ──────
+// Logged on open (mic.open), its level for half a minute (mic.level), and a live level for
+// the TV's meter. Restarted (mic.restart) on signals that don't depend on anyone talking:
+// the track ended, the OS took it (muted for 3 s), exact digital silence for 3 s (a real
+// mic always has a noise floor), or no packets sent for 5 s. Some devices only ever give
+// silence (a TV remote's mic is kept for the voice assistant): after 10 s with nothing at
+// all, one hint.
+type MicWatch = { t: MediaStreamTrack; lt: LkTrack; ctx: AudioContext | null; probeT: number; statsT: number; muteT: number; off: () => void }
+let mw: MicWatch | null = null
 let micLive = 0
 export const micLevel = () => micLive
-function watchMic(t: MediaStreamTrack | undefined) {
-  stopMicProbe()
-  if (!t) { log('mic.open', { track: false }, 'warn'); return }
+/** Per Talk (reset on unmute): what the recovery has done already, so it never loops. */
+let micTalk = { since: 0, heard: false, silentRestarted: false, hinted: false }
+let micRestartAt = 0
+function watchMic(lt: LkTrack | undefined) {
+  stopMicWatch()
+  const t = lt?.mediaStreamTrack
+  if (!lt || !t) { log('mic.open', { track: false }, 'warn'); return }
   const st = t.getSettings?.() ?? {}
   log('mic.open', {
     label: t.label.slice(0, 80), ready: t.readyState, muted: t.muted, enabled: t.enabled,
     rate: st.sampleRate, ch: st.channelCount, ec: st.echoCancellation, agc: st.autoGainControl, ns: st.noiseSuppression,
     mics: state.mics.map((m) => m.label.slice(0, 40)),
   })
-  t.addEventListener('mute', () => log('mic.track_muted', { label: t.label.slice(0, 60) }, 'warn'))
-  t.addEventListener('unmute', () => log('mic.track_unmuted'))
-  t.addEventListener('ended', () => log('mic.track_ended', undefined, 'warn'))
+  const w: MicWatch = { t, lt, ctx: null, probeT: 0, statsT: 0, muteT: 0, off: () => { /* */ } }
+  const onEnded = () => { log('mic.track_ended', { label: t.label.slice(0, 60) }, 'warn'); void restartMic('ended') }
+  const onMute = () => {
+    log('mic.track_muted', { label: t.label.slice(0, 60) }, 'warn')
+    window.clearTimeout(w.muteT)
+    w.muteT = window.setTimeout(() => { if (t.muted) void restartMic('os_mute') }, 3000)
+  }
+  const onUnmute = () => { log('mic.track_unmuted'); window.clearTimeout(w.muteT) }
+  t.addEventListener('ended', onEnded)
+  t.addEventListener('mute', onMute)
+  t.addEventListener('unmute', onUnmute)
+  w.off = () => { t.removeEventListener('ended', onEnded); t.removeEventListener('mute', onMute); t.removeEventListener('unmute', onUnmute) }
+  // Sending? packetsSent must keep climbing while unmuted (DTX sends even in silence).
+  let lastSent = -1
+  w.statsT = window.setInterval(() => {
+    const snd = lt.sender
+    if (!snd || state.call.muted) return
+    void snd.getStats().then((rep) => {
+      let sent = -1
+      rep.forEach((s: { type?: string; packetsSent?: number }) => { if (s.type === 'outbound-rtp') sent = s.packetsSent ?? -1 })
+      if (sent < 0) return
+      if (lastSent >= 0 && sent === lastSent) { log('mic.tx_stalled', { sent }, 'warn'); void restartMic('tx_stalled') }
+      lastSent = sent
+    }).catch(() => { /* */ })
+  }, 5000)
+  // Level: the TV's meter, mic.level for the first 30 s, exact silence, the 10 s hint.
   try {
     const C = window.AudioContext || window.webkitAudioContext
-    if (!C) return
-    const ctx = new C()
-    const an = ctx.createAnalyser()
-    an.fftSize = 1024
-    ctx.createMediaStreamSource(new MediaStream([t])).connect(an)
-    void ctx.resume().catch(() => { /* */ })
-    const p = { ctx, an, buf: new Float32Array(an.fftSize), t: 0, until: Date.now() + 30_000, peak: 0, sum: 0, n: 0 }
-    micProbe = p
-    let lastLog = Date.now()
-    p.t = window.setInterval(() => {
-      an.getFloatTimeDomainData(p.buf)
-      let sq = 0
-      for (const x of p.buf) sq += x * x
-      const rms = Math.sqrt(sq / p.buf.length)
-      micLive = Math.min(1, rms * 8)
-      p.peak = Math.max(p.peak, rms); p.sum += rms; p.n++
-      if (Date.now() - lastLog >= 5000 && Date.now() < p.until) {
-        log('mic.level', { peak: Math.round(p.peak * 1000) / 1000, avg: Math.round((p.sum / p.n) * 1000) / 1000, ctx: ctx.state, ready: t.readyState, muted: t.muted })
-        lastLog = Date.now(); p.peak = 0; p.sum = 0; p.n = 0
-      }
-    }, 100)
+    if (C) {
+      const ctx = new C()
+      const an = ctx.createAnalyser()
+      an.fftSize = 1024
+      ctx.createMediaStreamSource(new MediaStream([t])).connect(an)
+      void ctx.resume().catch(() => { /* */ })
+      w.ctx = ctx
+      const buf = new Float32Array(an.fftSize)
+      const until = Date.now() + 30_000
+      let lastLog = Date.now(), peak = 0, sum = 0, n = 0, zeroMs = 0
+      w.probeT = window.setInterval(() => {
+        an.getFloatTimeDomainData(buf)
+        let sq = 0, max = 0
+        for (const x of buf) { sq += x * x; const a = Math.abs(x); if (a > max) max = a }
+        const rms = Math.sqrt(sq / buf.length)
+        micLive = Math.min(1, rms * 8)
+        peak = Math.max(peak, rms); sum += rms; n++
+        if (max > 0) { micTalk.heard = true; zeroMs = 0 } else zeroMs += 100
+        if (zeroMs >= 3000 && ctx.state === 'running' && !state.call.muted && !micTalk.silentRestarted) {
+          micTalk.silentRestarted = true
+          zeroMs = 0
+          log('mic.digital_silence', { label: t.label.slice(0, 60) }, 'warn')
+          void restartMic('digital_silence')
+        }
+        if (!micTalk.heard && !micTalk.hinted && micTalk.since && Date.now() - micTalk.since > 10_000 && !state.call.muted) {
+          micTalk.hinted = true
+          log('mic.silent', { label: t.label.slice(0, 60) }, 'warn')
+          toast("We can't hear your mic. Check it isn't muted on the device, or pick another mic in ⚙ Settings.", 'warning')
+        }
+        if (Date.now() - lastLog >= 5000 && Date.now() < until) {
+          log('mic.level', { peak: Math.round(peak * 1000) / 1000, avg: Math.round((sum / n) * 1000) / 1000, ctx: ctx.state, ready: t.readyState, muted: t.muted })
+          lastLog = Date.now(); peak = 0; sum = 0; n = 0
+        }
+      }, 100)
+    }
   } catch (e) {
-    log('mic.probe_failed', { msg: String((e as Error)?.message || e).slice(0, 120) }, 'warn')
+    log('mic.probe_failed', { msg: errMsg(e) }, 'warn')
   }
+  mw = w
 }
-function stopMicProbe() {
+function stopMicWatch() {
   micLive = 0
-  if (!micProbe) return
-  window.clearInterval(micProbe.t)
-  void micProbe.ctx.close().catch(() => { /* */ })
-  micProbe = null
+  const w = mw
+  mw = null
+  if (!w) return
+  w.off()
+  window.clearInterval(w.probeT)
+  window.clearInterval(w.statsT)
+  window.clearTimeout(w.muteT)
+  void w.ctx?.close().catch(() => { /* */ })
 }
-/** Stop the mic entirely (unpublish and stop the track), so the OS leaves voice-call mode. */
-function micClose() {
-  micGen++
-  stopMicProbe()
+/** Get the mic going again in place (same publication), at most once every 5 s. */
+async function restartMic(reason: string) {
   const lp = lkRoom?.localParticipant
-  const t = lp?.getTrackPublication(SRC.mic)?.track
-  if (lp && t) void lp.unpublishTrack(t, true).catch(() => { /* */ })
+  if (!state.call.on || state.call.muted || !lp) return
+  if (Date.now() - micRestartAt < 5000) return
+  micRestartAt = Date.now()
+  const pub = lp.getTrackPublication(SRC.mic)
+  const lt = pub?.track
+  try {
+    if (lt?.restartTrack) await lt.restartTrack(audioC())
+    else { await lp.setMicrophoneEnabled(false); await lp.setMicrophoneEnabled(true, audioC()) }
+    log('mic.restart', { reason, ok: true, sid: pub?.trackSid, same: lp.getTrackPublication(SRC.mic)?.trackSid === pub?.trackSid })
+  } catch (e) {
+    const n = (e as { name?: string })?.name
+    log('mic.restart', { reason, ok: false, name: n, msg: errMsg(e) }, 'warn')
+    // The chosen mic is gone: go back to the default one.
+    if ((n === 'NotFoundError' || n === 'OverconstrainedError') && state.micId) { set({ micId: '' }); micRestartAt = 0; void restartMic('fallback_default'); return }
+  }
+  if (!state.call.muted) watchMic(lp.getTrackPublication(SRC.mic)?.track)
 }
+/** A device came or went. The mic in use vanished: back to the default, and say which. */
+async function devicesChanged() {
+  await enumerate()
+  log('mic.devices', { mics: state.mics.length })
+  if (!state.micId || state.mics.some((m) => m.id === state.micId)) return
+  set({ micId: '' })
+  log('mic.device_gone', undefined, 'warn')
+  const r = lkRoom
+  if (!r || !state.call.on) return
+  try { await r.switchActiveDevice('audioinput', 'default') } catch { /* */ }
+  if (state.call.muted) return
+  const label = r.localParticipant.getTrackPublication(SRC.mic)?.track?.mediaStreamTrack.label
+  toast(`Your mic changed: now using ${label || 'the default mic'}`, 'info')
+  watchMic(r.localParticipant.getTrackPublication(SRC.mic)?.track)
+}
+/** Pick a mic: switch the published track's device in place (no new track). */
 export function setMic(id: string) {
   set({ micId: id })
-  if (state.call.on && !state.call.muted) { micClose(); void micOpen() }
+  log('mic.switch', { muted: state.call.muted })
+  const r = lkRoom
+  if (!r || !state.call.on) return
+  void r.switchActiveDevice('audioinput', id)
+    .then(() => { if (!state.call.muted) watchMic(r.localParticipant.getTrackPublication(SRC.mic)?.track) })
+    .catch((e: unknown) => log('mic.switch_failed', { msg: errMsg(e) }, 'warn'))
 }
 export function setSpeaker(id: string) { set({ speakerId: id }); applySink() }
 function applySink() {
   type Sinkable = HTMLMediaElement & { setSinkId?: (id: string) => Promise<void> }
-  const els: Sinkable[] = [...Object.values(audioEls), ...(video ? [video] : [])]
+  const els: Sinkable[] = [...Object.values(audioEls).map((a) => a.el), ...(video ? [video] : [])]
   els.forEach((el) => { el.setSinkId?.(state.speakerId).catch(() => { /* */ }) })
 }
 
@@ -1733,6 +1999,7 @@ export async function toggleMute() {
   if (!state.call.on || !lkRoom) return
   if (!state.call.muted) { log('mic.mute'); micClose(); setCall({ muted: true }); return }
   log('mic.unmute', { micOnly: state.call.micOnly })
+  micTalk = { since: Date.now(), heard: false, silentRestarted: false, hinted: false }
   setCall({ muted: false })
   const others = muteOtherCalls('watch')
   if (others.length) toast(`Muted your ${others.join(' and ')} mic while you're talking in Watch Party`, 'info')
@@ -1787,34 +2054,56 @@ export function peerView(id: string): PeerView {
   return { stream: pr?.stream ?? null, video, badge: inCall && pr?.stream ? '📷' : '', connected: !!pr, inCall }
 }
 
-// ── Peer audio: hidden <audio> elements, one per peer ───────────────────────
-const audioEls: Record<string, HTMLAudioElement> = {}
+// ── Peer audio: one <audio> per remote audio track, keyed by its SID ────────────
+// Made once when the track is subscribed (LiveKit attach) and removed only when it's
+// unsubscribed. Mute, volume and "don't play this one" are properties of the element, so
+// nothing about a peer's camera, a mute or a companion ever swaps what it's playing.
+type PeerAudio = { el: HTMLMediaElement; track: LkTrack; p: LkParticipant; tries: number }
+const audioEls: Record<string, PeerAudio> = {}
 let audioBox: HTMLDivElement | null = null
-function playAudio(id: string, stream: MediaStream) {
+function attachAudio(track: LkTrack, pub: LkPub, p: LkParticipant) {
+  const sid = pub.trackSid
+  if (audioEls[sid]?.track === track) return
+  if (audioEls[sid]) detachAudio(sid)
   if (!audioBox) { audioBox = document.createElement('div'); audioBox.hidden = true; audioBox.dataset.wpAudio = ''; document.body.appendChild(audioBox) }
-  let a = audioEls[id]
-  if (!a) { a = document.createElement('audio'); a.autoplay = true; audioEls[id] = a; audioBox.appendChild(a) }
-  if (a.srcObject !== stream) {
-    a.srcObject = stream
-    const at = stream.getAudioTracks()[0]
-    log('audio.peer', { who: nameOf(id), tracks: stream.getAudioTracks().length, muted: at?.muted, ready: at?.readyState })
-  }
+  const el = track.attach()
+  el.autoplay = true
+  audioBox.appendChild(el)
+  audioEls[sid] = { el, track, p, tries: 0 }
+  log('audio.peer', { who: nameOf(clientOf(p)), sid, muted: track.mediaStreamTrack.muted })
   applyPeerAudio()
   if (state.speakerId) applySink()
-  a.play().catch((e: unknown) => {
+  playAudio(sid)
+}
+/** play(), retried on AbortError (a load interrupted it: try again shortly, up to 3 times);
+ *  NotAllowedError (no tap yet) goes to the tap-to-enable path. */
+function playAudio(sid: string) {
+  const a = audioEls[sid]
+  if (!a) return
+  a.el.play().then(() => {
+    if (a.tries) log('audio.retry_ok', { who: nameOf(clientOf(a.p)), tries: a.tries })
+    a.tries = 0
+  }).catch((e: unknown) => {
     const n = (e as { name?: string })?.name
-    log('audio.play_failed', { who: nameOf(id), name: n }, 'warn')
+    if (audioEls[sid] !== a) return
+    if (n === 'AbortError' && a.tries < 3) {
+      a.tries++
+      log('audio.retry', { who: nameOf(clientOf(a.p)), n: a.tries }, 'warn')
+      window.setTimeout(() => playAudio(sid), 250 * 2 ** (a.tries - 1))
+      return
+    }
+    log('audio.play_failed', { who: nameOf(clientOf(a.p)), name: n, tries: a.tries }, 'warn')
     if (n === 'NotAllowedError') needGesture()
   })
 }
-function stopAudio(id: string) {
-  const a = audioEls[id]
+function detachAudio(sid: string) {
+  const a = audioEls[sid]
   if (!a) return
-  a.srcObject = null
-  a.remove()
-  delete audioEls[id]
+  try { a.track.detach(a.el) } catch { /* */ }
+  a.el.remove()
+  delete audioEls[sid]
 }
-/** Browsers refuse to start audio without a tap; take the next one anywhere. */
+/** Browsers refuse to start audio without a tap; take the next one anywhere (a key, for a TV remote). */
 function needGesture() {
   if (state.needGesture) return
   log('audio.need_gesture', undefined, 'warn')
@@ -1823,7 +2112,8 @@ function needGesture() {
     window.removeEventListener('pointerdown', go, true)
     window.removeEventListener('keydown', go, true)
     set({ needGesture: false })
-    Object.values(audioEls).forEach((a) => { a.play().catch(() => { /* */ }) })
+    void lkRoom?.startAudio().then(() => log('audio.started')).catch((e: unknown) => log('audio.start_failed', { msg: errMsg(e) }, 'warn'))
+    Object.keys(audioEls).forEach((sid) => { const a = audioEls[sid]; if (a) { a.tries = 0; playAudio(sid) } })
   }
   window.addEventListener('pointerdown', go, true)
   window.addEventListener('keydown', go, true)
@@ -1845,11 +2135,16 @@ export function setPeerPref(id: string, patch: Partial<{ v: number; m: boolean }
   set({ prefs: all })
   applyPeerAudio()
 }
+/** Should this device play a viewer's voice? Never a person's own voice back to them: not
+ *  my companion phone's mic on my TV (it sits in front of it: echo), nothing on a companion
+ *  phone (the TV plays the call), and not on the older of my two devices (quiet). */
+const hearsOf = (id: string) => id !== state.clientId && !state.companion && !(state.quiet && !hearHere)
 function applyPeerAudio() {
-  for (const [id, a] of Object.entries(audioEls)) {
+  for (const a of Object.values(audioEls)) {
+    const id = clientOf(a.p)
     const pr = peerPref(id)
-    a.muted = state.camMuted || pr.m
-    try { a.volume = Math.max(0, Math.min(1, state.camVol * pr.v)) } catch { /* iOS */ }
+    a.el.muted = !hearsOf(id) || state.camMuted || pr.m
+    try { a.el.volume = Math.max(0, Math.min(1, state.camVol * pr.v)) } catch { /* iOS */ }
   }
 }
 export function setCamVol(v: number) {
@@ -1881,12 +2176,30 @@ const lockHandlers: lockScreen.Handlers = {
 // The movie floats when there's a video file playing; otherwise the call does, showing
 // whoever's talking (the last one who did, so it doesn't flicker between people).
 let lastTalker = ''
-function callPipStream(): MediaStream | null {
+function pipPeer(): string {
   const withVideo = Object.keys(peers).filter((id) => peerView(id).video)
   const talking = withVideo.find((id) => state.loud[id])
   if (talking) lastTalker = talking
-  const pick = withVideo.includes(lastTalker) ? lastTalker : withVideo[0]
+  return (withVideo.includes(lastTalker) ? lastTalker : withVideo[0]) ?? ''
+}
+function callPipStream(): MediaStream | null {
+  const pick = pipPeer()
   return pick ? streamOf(peers[pick]?.stream?.getVideoTracks().find((t) => t.readyState === 'live')) : null
+}
+// With adaptive stream LiveKit only sends a camera an attached, visible element shows, so
+// the floating window's <video> is attached too (LiveKit counts a PiP element as visible).
+let pipTrack: LkTrack | null = null
+function pipAttach() {
+  const el = pipElement('watch')
+  const want = el ? peers[pipPeer()]?.cam ?? null : null
+  if (pipTrack && pipTrack !== want && el) { try { pipTrack.detach(el) } catch { /* */ } }
+  if (want && want !== pipTrack && el) want.attach(el)
+  pipTrack = want
+}
+function pipDetach() {
+  const el = pipElement('watch')
+  if (pipTrack && el) { try { pipTrack.detach(el) } catch { /* */ } }
+  pipTrack = null
 }
 const movieFloats = () => state.kind === 'file' && !!video && state.playing && !!document.pictureInPictureEnabled
 /** Pop out: the movie, or the call, in a floating window. */
@@ -1897,7 +2210,9 @@ export async function popOut(): Promise<boolean> {
       return true
     } catch { return false }
   }
-  return openPip(callPipStream(), 'watch')
+  const ok = await openPip(callPipStream(), 'watch')
+  if (ok) pipAttach()
+  return ok
 }
 export const canPopOut = (s: WatchState) => pipSupported() && ((s.kind === 'file' && s.playing) || (s.call.on && Object.keys(peers).some((id) => peerView(id).video)))
 
@@ -1919,4 +2234,20 @@ function lockSpec(): lockScreen.Spec {
 
 function syncLockScreen() {
   if (lockScreen.holds('watch')) lockScreen.update('watch', lockSpec())
+}
+
+// Dev builds only: the multi-client call test drives the call and reads what each page
+// hears from here. Not in production builds.
+if (import.meta.env.DEV) {
+  (window as unknown as Record<string, unknown>).__watchDebug = {
+    snap: () => snap(), state: () => state, joinCall, toggleMute, leaveCall,
+    identity: () => lkRoom?.localParticipant.identity ?? '',
+    micSid: () => lkRoom?.localParticipant.getTrackPublication(SRC.mic)?.trackSid ?? '',
+    remote: () => [...(lkRoom?.remoteParticipants.values() ?? [])].map((p) => ({ id: p.identity, client: clientOf(p), mic: p.getTrackPublication(SRC.mic)?.trackSid ?? '', muted: !!p.getTrackPublication(SRC.mic)?.isMuted })),
+    logs: (n = 80) => devRing.slice(-n).map((e) => `${e.type} ${JSON.stringify(e.data ?? '')}`.slice(0, 160)),
+    txStats: async () => { const r = await mw?.lt.sender?.getStats(); const out: unknown[] = []; r?.forEach((x: { type?: string; packetsSent?: number }) => { if (x.type === 'outbound-rtp') out.push(x.packetsSent) }); return out },
+    // Break things on purpose: the mic stops sending (still unmuted), or its track ends.
+    breakMic: () => mw?.lt.sender?.replaceTrack(null),
+    endMic: () => { const t = mw?.t; t?.stop(); t?.dispatchEvent(new Event('ended')) },
+  }
 }

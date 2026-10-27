@@ -275,7 +275,13 @@ def http_tests():
             assert body["room"] == "watch-crcmz" and body["url"].startswith("wss://")
             claims = pyjwt.decode(body["token"], "s" * 32, algorithms=["HS256"])
             assert claims["sub"] == "zit-user-1#Sock_Id-1x" and claims["video"]["room"] == "watch-crcmz"
-            assert claims["attributes"] == {"client": "Sock_Id-1x"} and claims["video"]["canPublish"]
+            assert claims["attributes"] == {"client": "Sock_Id-1x", "socket": "Sock_Id-1x"} and claims["video"]["canPublish"]
+            assert claims["video"]["canUpdateOwnMetadata"]
+            # With a device id the identity is the person and the device, so a reconnect
+            # (a new socket id) keeps it; the socket id is an attribute.
+            r = client.post("/api/watch/call/token", json={"room": "crcmz", "client": "s2", "deviceId": "dev-1"}, headers=HDR)
+            claims = pyjwt.decode(r.json()["token"], "s" * 32, algorithms=["HS256"])
+            assert claims["sub"] == "zit-user-1#dev-1" and claims["attributes"] == {"client": "s2", "socket": "s2"}
             assert client.post("/api/watch/call/token", json={"room": "crcmz"}, headers=HDR).status_code == 400
             assert client.post("/api/watch/call/token", json={"room": "not-a-room", "client": "a"}, headers=HDR).status_code == 400
         finally:
@@ -284,34 +290,41 @@ def http_tests():
 
     def t_call_token_companion_only_for_your_own_tv():
         import jwt as pyjwt
-        key, secret, people = server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET, server._livekit_people
+        key, secret, parts = server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET, server._livekit_participants
         server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET = "lk-key", "s" * 32
-        here = {"zit-user-1#tv1": "Zed Name", "someone-else#tv2": "Other"}
+        here = [{"identity": "zit-user-1#tv1", "attributes": {"client": "tv1", "device": "tv"}},   # an older page: identity is person#socket
+                {"identity": "zit-user-1#devTV", "attributes": {"client": "tv3", "socket": "tv3", "device": "tv"}},  # a new one: person#device
+                {"identity": "someone-else#tv2", "attributes": {"client": "tv2"}}]
 
-        async def fake_people(room):
+        async def fake_parts(room):
             assert room == "watch-crcmz"
             return here
-        server._livekit_people = fake_people
+        server._livekit_participants = fake_parts
         client.cookies.set(COOKIE, session_cookie(name="Zed Name"))
         try:
             tok = lambda b: client.post("/api/watch/call/token", json={"room": "crcmz", **b}, headers=HDR)
             # The TV says it's a TV.
             claims = pyjwt.decode(tok({"client": "tv1", "device": "tv"}).json()["token"], "s" * 32, algorithms=["HS256"])
-            assert claims["attributes"] == {"client": "tv1", "device": "tv"}
+            assert claims["attributes"] == {"client": "tv1", "socket": "tv1", "device": "tv"}
             # My phone as my TV's companion: its camera carries the TV's id.
             r = tok({"client": "ph1", "companion": "tv1"})
             assert r.status_code == 200, r.text
             claims = pyjwt.decode(r.json()["token"], "s" * 32, algorithms=["HS256"])
             assert claims["sub"] == "zit-user-1#ph1"
-            assert claims["attributes"] == {"client": "tv1", "companion": "1"}
+            assert claims["attributes"] == {"client": "tv1", "socket": "ph1", "companion": "1"}
+            # A TV found by its "client" attribute (identity person#device), the phone by its device too.
+            r = tok({"client": "ph2", "deviceId": "devPhone", "companion": "tv3"})
+            claims = pyjwt.decode(r.json()["token"], "s" * 32, algorithms=["HS256"])
+            assert r.status_code == 200 and claims["sub"] == "zit-user-1#devPhone"
+            assert claims["attributes"] == {"client": "tv3", "socket": "ph2", "companion": "1"}
             # Someone else's TV, a TV that isn't there, or myself: no.
             assert tok({"client": "ph1", "companion": "tv2"}).status_code == 404
             assert tok({"client": "ph1", "companion": "gone"}).status_code == 404
-            here["zit-user-1#ph1"] = "Zed Name"
+            here.append({"identity": "zit-user-1#ph1", "attributes": {"client": "ph1"}})
             assert tok({"client": "ph1", "companion": "ph1"}).status_code == 404
         finally:
             client.cookies.clear()
-            server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET, server._livekit_people = key, secret, people
+            server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET, server._livekit_participants = key, secret, parts
 
     def t_join_issues_ticket():
         import jwt as pyjwt

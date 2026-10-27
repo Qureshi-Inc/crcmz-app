@@ -46,6 +46,9 @@ export function inPip(): boolean {
 }
 
 /** Point the floating window at this stream (only the call that opened it). */
+/** The floating window's <video>, if it's open for this call (Watch attaches its LiveKit track to it). */
+export const pipElement = (who: PipOwner): HTMLVideoElement | null => (owner === who ? el : null)
+
 export function setPipStream(stream: MediaStream | null, who: PipOwner) {
   if (who !== owner || stream === current) return
   current = stream

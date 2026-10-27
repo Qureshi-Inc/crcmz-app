@@ -8,7 +8,7 @@ import { Icon } from '../../components/Icon'
 import { ConfirmDialog } from '../clips/ClipSheet'
 import { CAN_VOL, initials, tint } from '../../lib/watch'
 import {
-  flipCam, fsRoot, joinCall, kick, leaveCall, localMedia, nameOf, peerPref, peerView, setPeerPref, toggleMute, toggleVideo, useWatch, type WatchState,
+  attachCam, flipCam, fsRoot, joinCall, kick, leaveCall, localMedia, nameOf, peerPref, peerView, setPeerPref, toggleMute, toggleVideo, useWatch, type WatchState,
 } from './session'
 
 export type Tile = { id: string; me: boolean; name: string; stream: MediaStream | null; video: boolean; badge: string; mod: boolean }
@@ -60,9 +60,14 @@ export function Face({ t, s, mirror }: { t: Tile; s: WatchState; mirror?: boolea
   useEffect(() => {
     const v = ref.current
     if (!v) return
+    // Someone else's camera: LiveKit attaches it (adaptive stream sends the size this tile
+    // needs, and nothing while it's off screen). Your own camera: its stream directly.
+    const own = t.me && s.call.on
+    const off = own ? null : attachCam(t.id, v)
+    if (off) return off
     if (v.srcObject !== t.stream) v.srcObject = t.stream
     if (t.stream) v.play().catch(() => { /* muted autoplay is allowed; ignore the odd refusal */ })
-  }, [t.stream, s.rtc])
+  }, [t.stream, t.id, t.me, s.call.on, s.rtc])
   // The camera's real shape (landscape, portrait, square), so an enlarged tile can
   // match it instead of cropping into a fixed box. 'resize' fires on rotate / flip.
   const [ar, setAr] = useState(1)
