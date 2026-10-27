@@ -11,7 +11,7 @@ import {
   flipCam, fsRoot, joinCall, kick, leaveCall, localMedia, nameOf, peerPref, peerView, setPeerPref, toggleMute, toggleVideo, useWatch, type WatchState,
 } from './session'
 
-type Tile = { id: string; me: boolean; name: string; stream: MediaStream | null; video: boolean; badge: string; mod: boolean }
+export type Tile = { id: string; me: boolean; name: string; stream: MediaStream | null; video: boolean; badge: string; mod: boolean }
 
 export function useTiles(s: WatchState): Tile[] {
   const me: Tile[] = s.call.on
@@ -51,7 +51,7 @@ export function Orbs({ variant }: { variant: 'strip' | 'side' | 'top' | 'bottom'
   )
 }
 
-function Face({ t, s, mirror }: { t: Tile; s: WatchState; mirror?: boolean }) {
+export function Face({ t, s, mirror }: { t: Tile; s: WatchState; mirror?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null)
   useEffect(() => {
     const v = ref.current

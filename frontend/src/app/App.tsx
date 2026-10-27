@@ -2,6 +2,7 @@ import { Component, lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ApiError } from '../lib/http'
+import { isTV } from '../lib/tv'
 import { Shell } from './Shell'
 import { SquadPage } from '../features/squad/SquadPage'
 import { ClipsPage } from '../features/clips/ClipsPage'
@@ -28,6 +29,8 @@ import { AudioSoundsPage } from '../features/audio-sounds/AudioSoundsPage'
 
 // assistant-ui and the markdown renderer are ~140 kB gzipped, so only Ask AI pays for them.
 const AskPage = lazy(() => import('../features/ask/AskPage').then((m) => ({ default: m.AskPage })))
+// The Android TV app gets only the Watch Party, built for a remote; phones never load it.
+const TvApp = lazy(() => import('../features/tv/TvApp').then((m) => ({ default: m.TvApp })))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -47,6 +50,7 @@ export function App() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter basename="/app">
+          {isTV() ? <Suspense fallback={null}><TvApp /></Suspense> : (
           <Routes>
             <Route element={<Shell />}>
               <Route index element={<SquadPage />} />
@@ -81,6 +85,7 @@ export function App() {
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
+          )}
         </BrowserRouter>
       </QueryClientProvider>
     </ErrorBoundary>

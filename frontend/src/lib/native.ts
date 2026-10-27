@@ -7,6 +7,7 @@
 // the router reads it.
 import { request } from './http'
 import { currentSubscription } from './pwa'
+import { setTV } from './tv'
 
 const KEY = 'crcmz.native'
 
@@ -22,6 +23,10 @@ export function takeNativeLaunch() {
   url.searchParams.delete('crcmz_fcm')
   history.replaceState(history.state, '', url.pathname + url.search + url.hash)
   if (app === 'ios') { localStorage.setItem(KEY, 'ios'); return }
+  // The Android app on a TV: only the Watch Party, built for a remote (lib/tv.ts). No
+  // push there: a TV doesn't ring.
+  if (app === 'android-tv') { setTV(true); return }
+  if (app === 'web') { setTV(false); return }
   // The native Android app (2.x): a web view like the iOS app, so every alert is FCM.
   if (app === 'android-app') {
     localStorage.setItem(KEY, 'android-app')

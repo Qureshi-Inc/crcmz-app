@@ -366,7 +366,7 @@ function VolRow({ label, muted, value, onMute, onVol }: { label: string; muted: 
 // ── Floating reactions ──────────────────────────────────────────────────────
 type Floater = RxEvent & { id: number; x: number }
 let floaterId = 0
-function RxLayer() {
+export function RxLayer() {
   const reduced = useReducedMotion()
   const [list, setList] = useState<Floater[]>([])
   const [burst, setBurst] = useState<{ e: string; id: number; n: number } | null>(null)
@@ -410,7 +410,7 @@ function RxLayer() {
 }
 
 /** In fullscreen the chat panel is out of view, so new lines float over the video for a few seconds. */
-function FsChat() {
+export function FsChat() {
   const [lines, setLines] = useState<(ChatMsg & { k: number })[]>([])
   useEffect(() => onChat((m) => {
     if (m.cmd && m.cmd !== 'host') return
