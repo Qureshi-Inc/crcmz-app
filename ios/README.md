@@ -28,3 +28,12 @@ Pages, sign-in, calls and the party are the website, so a site deploy updates th
 `build.sh` needs the App Store Connect API key and the signing keychain on the build Mac.
 Bump `CURRENT_PROJECT_VERSION` in project.yml for every upload. Where the keys live and how
 builds reach testers is in the private operations handbook, not here.
+
+## Screenshots (simulator, Debug build)
+
+    xcrun simctl launch booted me.crcmz.app -crcmzScreenshotSession <session> -crcmzScreenshotPath /app/slap
+
+`-crcmzScreenshotSession` signs the web view in with a session cookie (mint a short-lived
+one on the server; never commit it) and skips push, ring and Live Activity tokens, so the
+simulator never registers against that account. `-crcmzWidgetDemo` lays the widgets out
+with sample data. The README's pictures are in `docs/screenshots/` (iPhone 17 Pro Max).

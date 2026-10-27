@@ -65,6 +65,17 @@ Live status of every part of CRCMZ: **[status.crcmz.me](https://status.crcmz.me)
 
 ---
 
+## Screenshots
+
+The iPhone app (iPhone 17 Pro Max).
+
+<table>
+<tr><td align="center"><img src="docs/screenshots/squad.png" width="200" alt="Squad: who's on"><br><sub>Squad: who's on</sub></td><td align="center"><img src="docs/screenshots/slap-discover.png" width="200" alt="Slap: Discover"><br><sub>Slap: Discover</sub></td><td align="center"><img src="docs/screenshots/slap-library.png" width="200" alt="Slap: the library"><br><sub>Slap: the library</sub></td><td align="center"><img src="docs/screenshots/watch.png" width="200" alt="Watch"><br><sub>Watch</sub></td></tr>
+<tr><td align="center"><img src="docs/screenshots/movie.png" width="200" alt="A film, ready for the party"><br><sub>A film, ready for the party</sub></td><td align="center"><img src="docs/screenshots/tournaments.png" width="200" alt="Tournaments"><br><sub>Tournaments</sub></td><td align="center"><img src="docs/screenshots/clips.png" width="200" alt="Clips and reels"><br><sub>Clips and reels</sub></td><td align="center"><img src="docs/screenshots/widgets.png" width="200" alt="Widgets and Live Activities"><br><sub>Widgets and Live Activities</sub></td></tr>
+</table>
+
+---
+
 ## Phone apps
 
 Both phone apps are web views around `app.crcmz.me/app` with native parts where the web
