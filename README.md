@@ -2,7 +2,7 @@
 
 <h1 align="center">CRCMZ App</h1>
 
-<p align="center"><b>The squad platform for Professional Goopers</b> — one place for who's on, clips, music, movie nights, tournaments and calls.</p>
+<p align="center"><b>Command Ready Clan Management Zone.</b> The squad platform for Professional Goopers — one place for who's on, clips, music, movie nights, tournaments and calls.</p>
 
 <p align="center">
   <a href="https://app.crcmz.me/app"><img alt="app.crcmz.me" src="https://img.shields.io/badge/app.crcmz.me-open-ff2fd6?style=for-the-badge"></a>
