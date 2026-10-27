@@ -4,7 +4,7 @@
 //   OK            play / pause, and bring up the controls
 //   ← →           back / forward 10 s (presses add up, then it seeks once)
 //   ↑ ↓           the controls; then the arrows move between them
-//   Back          close a panel, hide the controls, then ask before leaving
+//   Back          close a panel, hide the controls, then back to the app (it remembers where)
 //   ⏯ ⏪ ⏩        play/pause, ±30 s, any time
 // The controls: the seek bar, then play and skip, subtitles, reactions, chat, camera, mic
 // and ⚙ settings (everything about the cameras, sound, subtitles and the party).
@@ -15,7 +15,8 @@ import { toast } from '../../components/toast'
 import { readLocal, writeLocal } from '../../lib/media'
 import { loginUrl } from '../../lib/session'
 import { fmtTime, REACTIONS } from '../../lib/watch'
-import { exitGuarded, focusEl, focusFirst, useBackGuard } from '../../lib/tv'
+import { exitGuarded, focusEl, focusFirst, useBackGuard, useBackHandler } from '../../lib/tv'
+import { saveResume } from './resume'
 import { Face, useTiles } from '../watch/Orbs'
 import { FsChat, RxLayer } from '../watch/Stage'
 import {
@@ -67,7 +68,7 @@ function useScrub() {
   return { target, by }
 }
 
-type Panel = '' | 'rx' | 'chat' | 'cc' | 'settings' | 'leave'
+type Panel = '' | 'rx' | 'chat' | 'cc' | 'settings'
 
 export function TvPlayer() {
   const s = useWatch()
@@ -86,7 +87,7 @@ export function TvPlayer() {
   // The party runs while the player is open: joining, the room's video, the call (listening).
   useEffect(() => {
     start()
-    return () => { if (getWatch().active) leave() }
+    return () => { const st = getWatch(); if (st.active) { saveResume(st.video, time()); leave() } }
   }, [])
 
   const card = statusCard(s)
@@ -125,15 +126,23 @@ export function TvPlayer() {
     setPanelState(p)
     if (!p) window.setTimeout(() => { focusEl(document.getElementById(opener.current) ?? document.getElementById('tvp-play')); armHide() }, 30)
   }
-  const exit = () => { leave(); exitGuarded(() => navigate('/tv', { replace: true })) }
+  /** Back out to the app: remember where you were, and if you were watching alone, pause
+   *  the room there (so it's waiting when you come back). The party goes on for anyone else. */
+  const exit = () => {
+    const st = getWatch()
+    saveResume(st.video, time())
+    if (st.playing && st.presence.count <= 1) togglePlay()
+    window.setTimeout(() => { leave(); exitGuarded(() => navigate('/tv', { replace: true })) }, st.playing && st.presence.count <= 1 ? 200 : 0)
+  }
 
+  // Back: close a panel, then hide the controls, then leave the player for the app.
   const onBack = () => {
     const { panel: p, shown: sh } = live.current
-    if (p === 'leave') { setPanel(''); return }
     if (p) { setPanel(''); return }
     if (sh && getWatch().playing) { hide(); return }
-    setPanel('leave')
+    exit()
   }
+  useBackHandler(true, onBack)
   useBackGuard(true, onBack)
 
   // The remote, before the focus mover sees it (capture phase).
@@ -188,19 +197,7 @@ export function TvPlayer() {
       {panel === 'rx' && <RxPanel online={s.status === 'live'} />}
       {panel === 'chat' && <ChatPanel s={s} />}
       {panel === 'cc' && <CcPanel s={s} onDone={() => setPanel('')} />}
-      {panel === 'settings' && <SettingsPanel s={s} prefs={prefs} setPrefs={setPrefs} dev={dev} onLeave={() => setPanel('leave')} />}
-      {panel === 'leave' && (
-        <div className="tv-scrim">
-          <div className="tv-dialog" role="dialog" aria-modal="true" aria-label="Leave the watch party?" data-tv-trap>
-            <h2 className="tv-dialog-h">Leave the watch party?</h2>
-            <p>The movie keeps going for everyone else. You can join again from the home screen.</p>
-            <div className="tv-dialog-acts">
-              <AutoFocus><button type="button" className="tv-btn tv-btn-primary" onClick={() => setPanel('')}>Keep watching</button></AutoFocus>
-              <button type="button" className="tv-btn" onClick={exit}><Icon name="leave" />Leave</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {panel === 'settings' && <SettingsPanel s={s} prefs={prefs} setPrefs={setPrefs} dev={dev} onLeave={exit} />}
     </div>
   )
 }

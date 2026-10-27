@@ -12,11 +12,12 @@ import { newerBuild } from '../../components/UpdateStrip'
 import { ApiError } from '../../lib/http'
 import { getNow } from '../../lib/movies'
 import { redirectToLogin } from '../../lib/session'
-import { focusFirst, useSpatialNav } from '../../lib/tv'
+import { focusFirst, runBack, useBackHandler, useSpatialNav } from '../../lib/tv'
 import { watchTogether } from '../watch/session'
 import { TvHome } from './TvHome'
 import { TvMovie } from './TvMovie'
 import { TvPlayer } from './TvPlayer'
+import { resumeOf } from './resume'
 
 export function TvApp() {
   useSpatialNav()
@@ -28,6 +29,19 @@ export function TvApp() {
   const onPlay = loc.pathname === '/tv/play'
   useSignInProbe()
   useAutoUpdate(onPlay)
+  // The remote's Back (Android app 2.0.16+): the newest screen that wants it, else a
+  // movie's page goes home; on the home screen it's the app's (leave to the TV's home).
+  const navigate = useNavigate()
+  const path = useRef(loc.pathname)
+  path.current = loc.pathname
+  useEffect(() => {
+    window.__crcmzBack = () => {
+      if (runBack()) return true
+      if (path.current !== '/tv') { navigate('/tv', { replace: true }); return true }
+      return false
+    }
+    return () => { delete window.__crcmzBack }
+  }, [navigate])
   return (
     <div className="tv">
       <Routes>
@@ -80,7 +94,7 @@ export function useTvPlay() {
   const navigate = useNavigate()
   const now = useNowTv().data
   const [ask, setAsk] = useState<{ url: string; title: string; at: number } | null>(null)
-  const go = (url: string, title: string, at = 0) => { watchTogether(url, title, at); navigate('/tv/play') }
+  const go = (url: string, title: string, at = 0) => { watchTogether(url, title, at || resumeOf(url)); navigate('/tv/play') }
   const play = (url: string, title: string, at = 0) => {
     if (now && now.watching > 0 && now.video && now.video !== url) setAsk({ url, title, at })
     else go(url, title, at)
@@ -102,6 +116,7 @@ export function useTvPlay() {
 /** A centred dialog that holds the remote's focus until it closes. */
 export function TvDialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
   const [el, setEl] = useState<HTMLDivElement | null>(null)
+  useBackHandler(true, onClose)
   useEffect(() => {
     if (!el) return
     const back = document.activeElement as HTMLElement | null

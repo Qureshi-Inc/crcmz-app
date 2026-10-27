@@ -114,6 +114,8 @@ export type WatchState = {
   hasCompanion: boolean
   /** The room's play state, for a companion's remote (it has no video of its own). */
   roomPlaying: boolean
+  /** You're in the party on a newer device too, so this one plays no call audio. */
+  quiet: boolean
 }
 export type SubTrack = { index: number; label: string; lang: string; text: boolean; forced: boolean }
 export type Clock = { t: number; dur: number; buf: number; live: boolean }
@@ -153,7 +155,7 @@ let state: WatchState = {
   prefs: readLocal<Record<string, { v: number; m: boolean }>>(PREFS_KEY, {}),
   fs: false, subs: [], sub: null, ytCc: false, extracting: false, extractUntil: 0, title: '', needGesture: false, histTick: 0,
   mics: [], speakers: [], micId: '', speakerId: '', orbPos: readOrbPos(),
-  companion: '', myTv: '', myTvIsTv: false, hasCompanion: false, roomPlaying: false,
+  companion: '', myTv: '', myTvIsTv: false, hasCompanion: false, roomPlaying: false, quiet: false,
 }
 let clock: Clock = { t: 0, dur: NaN, buf: 0, live: false }
 const listeners = new Set<() => void>()
@@ -505,7 +507,7 @@ function mount(url: string) {
   lastResume = null
   set({ video: url, kind: '', ytFresh: false, playing: false, unblock: '', mediaError: '', subs: [], sub: null, ytCc: false })
   // A companion is the camera, mic and remote of a TV that plays the movie: no video here.
-  if (state.companion) { void movieTitle(url); return }
+  if (state.companion || companionPending > Date.now()) { void movieTitle(url); return }
   void loadSubs(url)
   titleVideoChanged()
   void movieTitle(url)
@@ -1317,7 +1319,7 @@ type LkTrack = {
 }
 type LkPub = { kind: 'audio' | 'video'; source: string; trackSid: string; isMuted: boolean; track?: LkTrack }
 type LkParticipant = {
-  identity: string; name?: string; isSpeaking: boolean; attributes?: Record<string, string>
+  identity: string; name?: string; isSpeaking: boolean; attributes?: Record<string, string>; joinedAt?: Date
   trackPublications: Map<string, LkPub>
   getTrackPublication(source: string): LkPub | undefined
 }
@@ -1449,7 +1451,7 @@ function syncPeers() {
   const r = lkRoom
   const seen = new Set<string>()
   const comps = new Set<string>()
-  let tv = '', tvIsTv = false, mine = false
+  let tv = '', tvIsTv = false, mine = false, quiet = false
   if (r) {
     const me = r.localParticipant.identity.split('#')[0]
     const byId: Record<string, LkParticipant[]> = {}
@@ -1462,6 +1464,10 @@ function syncPeers() {
         // page doesn't say it's a TV yet; a laptop works the same way).
         if (p.attributes?.companion !== '1' && id !== state.clientId && (!tv || p.attributes?.device === 'tv')) { tv = id; tvIsTv = p.attributes?.device === 'tv' }
         if (p.attributes?.companion === '1' && id === state.clientId) mine = true
+        // The same person on two ordinary devices (two tabs, a phone and a laptop): only
+        // the newest plays the call, or they hear everyone twice, out of step.
+        const mj = r.localParticipant.joinedAt?.getTime() ?? 0, pj = p.joinedAt?.getTime() ?? 0
+        if (!isTV() && !state.companion && p.attributes?.companion !== '1' && p.attributes?.device !== 'tv' && pj > mj) quiet = true
       }
     }
     for (const [id, ps] of Object.entries(byId)) {
@@ -1478,7 +1484,7 @@ function syncPeers() {
       // Never play a person's own voice back to them: not my companion's mic on the TV
       // (the phone sits in front of it: echo), and nothing on a companion phone (the TV
       // plays the call).
-      if (stream?.getAudioTracks().length && id !== state.clientId && !state.companion) playAudio(id, stream)
+      if (stream?.getAudioTracks().length && id !== state.clientId && !state.companion && !(quiet && !hearHere)) playAudio(id, stream)
       else stopAudio(id)
     }
   }
@@ -1487,6 +1493,7 @@ function syncPeers() {
   localStream = state.call.on ? (cam && cam.readyState === 'live' ? streamOf(cam) : localStream && !cam ? localStream : null) : null
   const compsKey = [...comps].sort().join(',')
   if (compsKey !== companionsKey) { companionsKey = compsKey; companions = comps; showPeople() }
+  if (quiet !== state.quiet) { log(quiet ? 'call.quiet_dupe' : 'call.unquiet'); set({ quiet }) }
   if (tv !== state.myTv || tvIsTv !== state.myTvIsTv || mine !== state.hasCompanion) {
     if (mine !== state.hasCompanion) log(mine ? 'companion.joined' : 'companion.left')
     if (tv !== state.myTv) log('companion.found', { other: tv.slice(0, 8), tv: tvIsTv })
@@ -1499,6 +1506,9 @@ function syncPeers() {
 // Watching on the TV, the same person's phone can be its camera, mic and remote: chat
 // and reactions from the phone, play/pause/skip for the room. The phone stays in the
 // party (its socket) but plays no video, and its socket is left out of the viewer list.
+let hearHere = false
+/** "Hear the call here" on a device that went quiet for a newer one of yours. */
+export function hearCallHere() { hearHere = true; log('call.hear_here'); syncPeers() }
 let rawRoster: RosterEntry[] = []
 let rawPresence: Presence = { count: 0, viewers: [] }
 let companions = new Set<string>()
@@ -1516,8 +1526,20 @@ let roomAt = { t: 0, at: 0 }
 export function roomTime(): number {
   return roomAt.t + (state.roomPlaying && roomAt.at ? (Date.now() - roomAt.at) / 1000 : 0)
 }
+/** Coming from "Use as companion": hold the movie back while we look for the TV (12 s),
+ *  so the phone never starts playing it. No TV by then: play it here as usual. */
+let companionPending = 0
+export function expectCompanion() {
+  companionPending = Date.now() + 12_000
+  window.setTimeout(() => {
+    if (!companionPending || Date.now() < companionPending) return
+    companionPending = 0
+    if (!state.companion) { log('companion.no_tv', undefined, 'warn'); mount(state.video) }
+  }, 12_500)
+}
 export async function startCompanion() {
   const tv = state.myTv
+  companionPending = 0
   if (!tv || state.companion) return
   log('companion.start', { tv: tv.slice(0, 8) })
   set({ companion: tv })
@@ -1539,6 +1561,12 @@ export async function stopCompanion() {
   if (at > 5) pendingTS = at
   mount(state.video)
   if (sock?.connected) sock.emit('CMD:askHost')
+}
+/** On the go: the movie (and the call) on this phone instead; the camera stays on if it was. */
+export async function watchHere() {
+  const cam = state.call.on && !state.call.camOff
+  await stopCompanion()
+  if (cam) await joinCall()
 }
 /** The companion's remote: play/pause and skip for the whole room. */
 export function companionPlay() { if (sock?.connected) sock.emit(state.roomPlaying ? 'CMD:pause' : 'CMD:play') }

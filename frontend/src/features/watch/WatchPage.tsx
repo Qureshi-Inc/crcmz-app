@@ -18,7 +18,7 @@ import { Stage, usePlayerKeys } from './Stage'
 export { OrbPosControl } from './Settings'
 import {
   attachLayout, canCall, canPopOut, clearVideo, popOut, exitFs, joinCall, leave, rejoin, setTitle, setVideo, start, useWatch, videoLabel, type WatchState,
-  companionPlay, companionSkip, flipCam, roomTime, startCompanion, stopCompanion, toggleMute, toggleVideo,
+  companionPlay, companionSkip, expectCompanion, flipCam, hearCallHere, roomTime, startCompanion, toggleMute, toggleVideo, watchHere,
 } from './session'
 import { fmtTime } from '../../lib/watch'
 import { sharedLink } from '../share/SharePage'
@@ -38,6 +38,7 @@ export function WatchPage({ visible }: { visible: boolean }) {
   useEffect(() => {
     if (!visible || !new URLSearchParams(loc.search).has('companion')) return
     wantComp.current = true
+    expectCompanion()
     nav({ pathname: loc.pathname, search: '' }, { replace: true })
   }, [visible, loc.search]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -67,6 +68,12 @@ export function WatchPage({ visible }: { visible: boolean }) {
       </div>
       <StatusBanner s={s} />
       {s.myTv && !s.companion && s.status === 'live' && <CompanionOffer s={s} />}
+      {s.quiet && !s.companion && (
+        <div className="banner" role="status">
+          <span style={{ fontWeight: 700 }}>You're in the party on another device too, so this one stays quiet.</span>
+          <button type="button" className="btn btn-secondary" onClick={hearCallHere}>Hear the call here</button>
+        </div>
+      )}
       <div className="wp-layout">
         {s.companion && <Companion s={s} />}
         {/* Hidden, not unmounted, in companion mode: the page keeps one <video> for good. */}
@@ -305,7 +312,8 @@ function Companion({ s }: { s: WatchState }) {
         </div>
         {c.note && <p className="meta" role="status">{c.note}</p>}
         <p className="meta">Your camera shows up as you, on the TV and for everyone. Stay muted unless you're talking: the TV's sound reaches your phone's mic.</p>
-        <button type="button" className="btn btn-ghost" onClick={() => void stopCompanion()}><Icon name="close" />Stop companion mode</button>
+        <button type="button" className="btn btn-secondary" onClick={() => void watchHere()}><Icon name="watch" />Watch on this phone</button>
+        <p className="meta">Leaving the TV? The movie and the call carry on here; your camera stays on.</p>
       </section>
     </div>
   )

@@ -217,6 +217,13 @@ class LauncherActivity : AppCompatActivity() {
                 when {
                     fullscreen != null -> fullscreenDone?.onCustomViewHidden()
                     calls.back() -> Unit
+                    // On a TV the page decides first (close a panel, hide the player's
+                    // controls, leave the player): window.__crcmzBack() returns true when it
+                    // handled Back. Web history alone can't: entries a page adds without a
+                    // tap are skipped by goBack(), which dropped people on the TV's home.
+                    isTV -> web.evaluateJavascript("!!(window.__crcmzBack && window.__crcmzBack())") { handled ->
+                        if (handled != "true") { if (web.canGoBack()) web.goBack() else moveTaskToBack(true) }
+                    }
                     web.canGoBack() -> web.goBack()
                     else -> moveTaskToBack(true)
                 }

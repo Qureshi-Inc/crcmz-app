@@ -125,6 +125,31 @@ export function useSpatialNav() {
 }
 
 // ── Back ──────────────────────────────────────────────────────────────────────
+// The Android app (2.0.16+) asks the page first: window.__crcmzBack() → true when the
+// page handled Back. Screens that want Back (a dialog, the player) put a handler on this
+// stack; the newest one gets it. TvApp answers the rest (a movie's page → home).
+const backStack: { fn: () => void }[] = []
+export function useBackHandler(enabled: boolean, onBack: () => void) {
+  const ref = useRef(onBack)
+  ref.current = onBack
+  useEffect(() => {
+    if (!enabled) return
+    const h = { fn: () => ref.current() }
+    backStack.push(h)
+    return () => { const i = backStack.indexOf(h); if (i >= 0) backStack.splice(i, 1) }
+  }, [enabled])
+}
+/** The newest Back handler, if any: true when one took it. */
+export function runBack(): boolean {
+  const h = backStack[backStack.length - 1]
+  if (!h) return false
+  h.fn()
+  return true
+}
+declare global { interface Window { __crcmzBack?: () => boolean } }
+
+// Older apps (2.0.15) only go back in the web view's history, so the player also keeps
+// a history guard entry (below) and handles Back when it's popped.
 // The remote's Back is the web view going back (LauncherActivity: web.goBack()). The
 // player wants Back for itself (close a panel, hide the controls, ask before leaving),
 // so while it's open it keeps one guard entry on top of its own history entry and gets a
@@ -140,7 +165,7 @@ export function useBackGuard(enabled: boolean, onBack: () => void) {
     const pop = () => {
       if (exiting) return
       history.pushState({ ...history.state, tvGuard: 1 }, '')   // re-arm, then handle it
-      ref.current()
+      if (!runBack()) ref.current()
     }
     window.addEventListener('popstate', pop)
     return () => window.removeEventListener('popstate', pop)
