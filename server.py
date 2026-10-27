@@ -6990,7 +6990,24 @@ async def watch_call_token(request: Request):
     if not client:
         return JSONResponse({"detail": "client required"}, status_code=400)
     sub = viewer["zitadelSubject"]
-    token = _mk_livekit_token(f"{sub}#{client}", viewer["displayName"], f"watch-{room}", {"client": client})
+    attrs = {"client": client}
+    # The Android TV app says so: a phone of the same person can then be its companion.
+    if (body or {}).get("device") == "tv":
+        attrs["device"] = "tv"
+    # Companion mode: this phone is the camera and mic of the same person's TV. Its camera
+    # lands on the TV's viewer (attribute client = the TV's id), so only a TV that is this
+    # very person, in this call right now, can be named.
+    tv = _re.sub(r"[^A-Za-z0-9_-]", "", str((body or {}).get("companion") or ""))[:40]
+    if tv:
+        try:
+            here = await _livekit_people(f"watch-{room}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("watch: companion check failed: %s", e)
+            return JSONResponse({"detail": "couldn't reach the call"}, status_code=503)
+        if f"{sub}#{tv}" not in here or tv == client:
+            return JSONResponse({"detail": "your TV isn't in the party"}, status_code=404)
+        attrs = {"client": tv, "companion": "1"}
+    token = _mk_livekit_token(f"{sub}#{client}", viewer["displayName"], f"watch-{room}", attrs)
     return JSONResponse({"token": token, "url": LIVEKIT_URL, "room": f"watch-{room}"},
                         headers={"Cache-Control": "no-store"})
 

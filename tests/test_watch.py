@@ -282,6 +282,37 @@ def http_tests():
             client.cookies.clear()
             server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET = key, secret
 
+    def t_call_token_companion_only_for_your_own_tv():
+        import jwt as pyjwt
+        key, secret, people = server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET, server._livekit_people
+        server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET = "lk-key", "s" * 32
+        here = {"zit-user-1#tv1": "Zed Name", "someone-else#tv2": "Other"}
+
+        async def fake_people(room):
+            assert room == "watch-crcmz"
+            return here
+        server._livekit_people = fake_people
+        client.cookies.set(COOKIE, session_cookie(name="Zed Name"))
+        try:
+            tok = lambda b: client.post("/api/watch/call/token", json={"room": "crcmz", **b}, headers=HDR)
+            # The TV says it's a TV.
+            claims = pyjwt.decode(tok({"client": "tv1", "device": "tv"}).json()["token"], "s" * 32, algorithms=["HS256"])
+            assert claims["attributes"] == {"client": "tv1", "device": "tv"}
+            # My phone as my TV's companion: its camera carries the TV's id.
+            r = tok({"client": "ph1", "companion": "tv1"})
+            assert r.status_code == 200, r.text
+            claims = pyjwt.decode(r.json()["token"], "s" * 32, algorithms=["HS256"])
+            assert claims["sub"] == "zit-user-1#ph1"
+            assert claims["attributes"] == {"client": "tv1", "companion": "1"}
+            # Someone else's TV, a TV that isn't there, or myself: no.
+            assert tok({"client": "ph1", "companion": "tv2"}).status_code == 404
+            assert tok({"client": "ph1", "companion": "gone"}).status_code == 404
+            here["zit-user-1#ph1"] = "Zed Name"
+            assert tok({"client": "ph1", "companion": "ph1"}).status_code == 404
+        finally:
+            client.cookies.clear()
+            server.LIVEKIT_API_KEY, server.LIVEKIT_API_SECRET, server._livekit_people = key, secret, people
+
     def t_join_issues_ticket():
         import jwt as pyjwt
         client.cookies.set(COOKIE, session_cookie(name="Zed Name"))

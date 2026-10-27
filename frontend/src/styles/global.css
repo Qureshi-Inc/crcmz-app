@@ -3293,3 +3293,19 @@ html[data-watchbar] .room-chat-fab { bottom: calc(var(--c-tabbar-h) + (var(--cal
 
 /* btn-sm variant */
 .btn.btn-sm { min-height: 32px; padding: 0 var(--space-3); font-size: var(--text-sm); }
+
+/* ── Watch Party · companion mode (the phone is the TV's camera, mic and remote) ── */
+.wp-comp-offer { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-4) var(--space-5); margin-bottom: var(--space-4); border-color: rgba(34, 230, 255, .35); flex-wrap: wrap; }
+.wp-comp-icon { font-size: 28px; line-height: 1; }
+.wp-comp-text { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 2px; }
+.wp-comp-h { font-weight: 800; }
+.wp-comp { display: flex; flex-direction: column; gap: var(--space-4); }
+.wp-comp-remote { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); padding: var(--space-6) var(--space-5); text-align: center; }
+.wp-comp-title { margin: 0; }
+.wp-comp-pad { display: flex; align-items: center; gap: var(--space-5); margin-top: var(--space-3); }
+.wp-comp-btn { width: 56px; height: 56px; }
+.wp-comp-btn svg { width: 26px; height: 26px; }
+.wp-comp-play { width: 76px; height: 76px; background: var(--accent-solid); color: var(--accent-on-solid); }
+.wp-comp-play svg { width: 34px; height: 34px; }
+.wp-comp-call { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4) var(--space-5); }
+.wp-comp-call .wp-orbs-strip { min-height: 72px; }

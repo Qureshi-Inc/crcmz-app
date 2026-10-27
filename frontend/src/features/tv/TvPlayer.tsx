@@ -270,7 +270,7 @@ function Cams({ s }: { s: WatchState }) {
   return (
     <ul className="tvp-cams" aria-label="Cameras">
       {tiles.map((t) => (
-        <li key={t.id} className="tvp-cam" data-loud={!!s.loud[t.me ? 'me' : t.id]}>
+        <li key={t.id} className="tvp-cam" data-loud={!!(t.me ? s.loud.me || s.loud[t.id] : s.loud[t.id])}>
           <Face t={t} s={s} mirror={t.me && s.call.facing === 'user'} />
           <span className="tvp-cam-name">{t.me ? 'You' : t.name}<span aria-hidden="true">{t.badge}</span></span>
         </li>
@@ -305,6 +305,7 @@ function Chrome({ s, dev, scrub, panel, setPanel }: { s: WatchState; dev: Dev; s
           <p className="tvp-sub">
             <span className="tv-dot" aria-hidden="true" />{s.presence.count || 1} watching{names.length ? ` · ${names.slice(0, 6).join(', ')}${names.length > 6 ? ` +${names.length - 6}` : ''}` : ''}
           </p>
+          {s.hasCompanion && <p className="tvp-sub">📱 Your phone is this TV's camera and mic</p>}
         </div>
         {s.call.note && <p className="tvp-note" role="status">{s.call.note}</p>}
       </div>
@@ -319,11 +320,13 @@ function Chrome({ s, dev, scrub, panel, setPanel }: { s: WatchState; dev: Dev; s
           {hasCc && <Ctl id="tvp-cc" icon="cc" label={ccOn ? 'Subtitles on' : 'Subtitles'} pressed={ccOn} onClick={() => (s.kind === 'yt' ? setSubtitle(s.ytCc ? null : 0) : toggle('cc', 'tvp-cc'))} />}
           <Ctl id="tvp-rx" icon="smile" label="React" pressed={panel === 'rx'} onClick={() => toggle('rx', 'tvp-rx')} />
           <Ctl id="tvp-chat" icon="chat" label="Chat" pressed={panel === 'chat'} onClick={() => toggle('chat', 'tvp-chat')} />
+          {!s.hasCompanion && <>
           <Ctl id="tvp-cam" icon={s.call.on && !s.call.camOff && !s.call.micOnly ? 'cam' : 'camOff'} label={camLabel}
             pressed={s.call.on && !s.call.camOff && !s.call.micOnly} disabled={s.call.busy || (s.call.on && (s.call.micOnly || !dev.cam))}
             onClick={() => (s.call.on ? toggleVideo() : void joinCall())} />
           <Ctl id="tvp-mic" icon={s.call.on && !s.call.muted ? 'mic' : 'micOff'} label={micLabel} pressed={s.call.on && !s.call.muted}
             disabled={!dev.mic || s.call.busy} onClick={() => void mic()} level={s.call.on && !s.call.muted ? <MicMeter /> : null} />
+          </>}
           <Ctl id="tvp-set" icon="settings" label="Settings" pressed={panel === 'settings'} onClick={() => toggle('settings', 'tvp-set')} />
         </div>
       </div>
@@ -484,7 +487,10 @@ function SettingsPanel({ s, prefs, setPrefs, dev, onLeave }: { s: WatchState; pr
         <Choice<Prefs['size']> label="Size" value={prefs.size} options={[{ v: 's', label: 'Small' }, { v: 'm', label: 'Medium' }, { v: 'l', label: 'Large' }]} onChange={(v) => setPrefs({ size: v })} disabled={!prefs.cams} />
 
         <h3 className="tvs-h">This TV in the call</h3>
-        {!dev.cam && !dev.mic
+        <p className="tv-meta tvs-note">{s.hasCompanion
+          ? '📱 Your phone is this TV\'s camera and mic. Stop companion mode on the phone to undo it.'
+          : 'Use your phone as the camera and mic: open Watch Party in the CRCMZ app on your phone and press Use as companion.'}</p>
+        {s.hasCompanion ? null : !dev.cam && !dev.mic
           ? <p className="tv-meta tvs-note">This TV has no camera or mic. You still see and hear everyone who's on camera.</p>
           : <>
             {dev.cam && <Action label={!c.on ? 'Join with camera' : c.camOff ? 'Turn camera on' : 'Turn camera off'} icon="cam" disabled={c.busy || (c.on && c.micOnly)} onClick={() => (c.on ? toggleVideo() : void joinCall())} />}

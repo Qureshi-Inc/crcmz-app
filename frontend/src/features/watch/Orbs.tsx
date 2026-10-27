@@ -14,9 +14,13 @@ import {
 export type Tile = { id: string; me: boolean; name: string; stream: MediaStream | null; video: boolean; badge: string; mod: boolean }
 
 export function useTiles(s: WatchState): Tile[] {
+  // On a TV with a companion phone, "you" is the phone's camera (it carries this TV's id).
+  const phone = !s.call.on && s.hasCompanion ? peerView(s.clientId) : null
   const me: Tile[] = s.call.on
     ? [{ id: s.clientId, me: true, name: s.myName || 'You', stream: localMedia(), video: !s.call.camOff && !s.call.micOnly, badge: s.call.muted ? '🔇' : '🎤', mod: s.isMod }]
-    : []
+    : phone && (phone.stream || phone.inCall)
+      ? [{ id: s.clientId, me: true, name: s.myName || 'You', stream: phone.stream, video: phone.video, badge: phone.badge, mod: s.isMod }]
+      : []
   const peers = s.roster
     .filter((r) => r.id && r.id !== s.clientId)
     .map((r) => ({ r, v: peerView(r.id) }))

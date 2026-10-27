@@ -15,6 +15,7 @@ import { ApiError, request } from '../../lib/http'
 import { startActivity, stopActivity } from '../../lib/activity'
 import { readLocal, writeLocal } from '../../lib/media'
 import { isMovieStream } from '../../lib/movies'
+import { isTV } from '../../lib/tv'
 import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
 import {
@@ -102,6 +103,15 @@ export type WatchState = {
   micId: string
   speakerId: string
   orbPos: OrbPos
+  /** Companion mode (on a phone): the id of this person's TV this phone is the camera,
+   *  mic and remote of; '' when off. */
+  companion: string
+  /** This person's TV, in the party right now ('' if none): the phone can be its companion. */
+  myTv: string
+  /** On the TV: a phone is its companion right now. */
+  hasCompanion: boolean
+  /** The room's play state, for a companion's remote (it has no video of its own). */
+  roomPlaying: boolean
 }
 export type SubTrack = { index: number; label: string; lang: string; text: boolean; forced: boolean }
 export type Clock = { t: number; dur: number; buf: number; live: boolean }
@@ -141,6 +151,7 @@ let state: WatchState = {
   prefs: readLocal<Record<string, { v: number; m: boolean }>>(PREFS_KEY, {}),
   fs: false, subs: [], sub: null, ytCc: false, extracting: false, extractUntil: 0, title: '', needGesture: false, histTick: 0,
   mics: [], speakers: [], micId: '', speakerId: '', orbPos: readOrbPos(),
+  companion: '', myTv: '', hasCompanion: false, roomPlaying: false,
 }
 let clock: Clock = { t: 0, dur: NaN, buf: 0, live: false }
 const listeners = new Set<() => void>()
@@ -491,6 +502,8 @@ function mount(url: string) {
   pausedAt = 0
   lastResume = null
   set({ video: url, kind: '', ytFresh: false, playing: false, unblock: '', mediaError: '', subs: [], sub: null, ytCc: false })
+  // A companion is the camera, mic and remote of a TV that plays the movie: no video here.
+  if (state.companion) { void movieTitle(url); return }
   void loadSubs(url)
   titleVideoChanged()
   void movieTitle(url)
@@ -784,6 +797,7 @@ function bind(s: Sock) {
     lastHost = state.video ? { url: state.video, t: time(), paused: !isPlaying(), at: Date.now() } : null
     log('sock.disconnect', { reason: String(reason || ''), ...snap() }, 'warn')
     // The call is its own LiveKit room, so it carries on; the roster comes back on reconnect.
+    rawRoster = []
     set({ roster: [] })
     if (kicked) { dropSock(); return }
     retry('')
@@ -795,18 +809,20 @@ function bind(s: Sock) {
     endCall()
     set({ status: 'kicked' })
   })
-  s.on('watch:presence', (d: Presence) => set({ presence: { count: Number(d?.count) || 0, viewers: Array.isArray(d?.viewers) ? d.viewers : [] } }))
+  s.on('watch:presence', (d: Presence) => { rawPresence = { count: Number(d?.count) || 0, viewers: Array.isArray(d?.viewers) ? d.viewers : [] }; showPeople() })
   // nameMap only supplies names; it is never pruned. `roster` is the live list.
   s.on('REC:nameMap', (m: Record<string, string>) => set({ names: m || {} }))
-  s.on('roster', (arr: RosterEntry[]) => { set({ roster: Array.isArray(arr) ? arr : [] }); reconcilePeers() })
+  s.on('roster', (arr: RosterEntry[]) => { rawRoster = Array.isArray(arr) ? arr : []; showPeople(); reconcilePeers() })
   s.on('signal', (d: { from?: string; msg?: { t?: string; e?: string } }) => onSignal(d?.from, d?.msg))
   s.on('REC:host', (h: { video?: string; videoTS?: number; paused?: boolean }) => {
     h = h || {}
     log('rec.host', { video: short(h.video || ''), prev: short(state.video), ts: Number(h.videoTS) || 0, paused: !!h.paused, first: awaitHost }, !h.video && state.video ? 'warn' : 'info')
+    roomAt = { t: Number(h.videoTS) || 0, at: Date.now() }
+    set({ roomPlaying: !!h.video && !h.paused })
     applyHost(h)
   })
-  s.on('REC:play', (url: string) => { log('rec.play', { t: time() }); if (url && url !== state.video) mount(url); remote(play) })
-  s.on('REC:pause', () => { log('rec.pause', { t: time() }); remote(pause) })
+  s.on('REC:play', (url: string) => { log('rec.play', { t: time() }); set({ roomPlaying: true }); roomAt.at = Date.now(); if (url && url !== state.video) mount(url); remote(play) })
+  s.on('REC:pause', () => { log('rec.pause', { t: time() }); set({ roomPlaying: false }); roomAt.t = roomTime(); roomAt.at = Date.now(); remote(pause) })
   s.on('REC:seek', (ts: number) => {
     const to = Number(ts)
     log('rec.seek', { to, t: time() })
@@ -825,6 +841,9 @@ function bind(s: Sock) {
   // Small drift: play 4% faster or slower until back in step (no seek, nothing reloads).
   // Big drift (> 8 s, a rejoin or a long stall): seek.
   s.on('REC:tsMap', (map: Record<string, number>) => {
+    // Where the room is (everyone else's median), for a companion's remote.
+    const all = Object.entries(map || {}).filter(([id]) => id !== state.clientId).map(([, t]) => Number(t)).filter((t) => Number.isFinite(t) && t >= 0).sort((a, b) => a - b)
+    if (all.length) roomAt = { t: all[Math.floor(all.length / 2)]!, at: Date.now() }
     if (!map || applying || Date.now() < settleUntil || video?.seeking) return
     const cur = time()
     if (cur === null) return
@@ -871,7 +890,8 @@ export function leave() {
   mount('')
   lockScreen.release('watch')
   exitFs()
-  set({ status: 'idle', roster: [], presence: { count: 0, viewers: [] }, chat: [], error: '' })
+  rawRoster = []; rawPresence = { count: 0, viewers: [] }
+  set({ status: 'idle', roster: [], presence: { count: 0, viewers: [] }, chat: [], error: '', companion: '', myTv: '', hasCompanion: false })
 }
 export function rejoin() {
   kicked = false
@@ -1360,7 +1380,7 @@ function connectRoom(): Promise<LkRoom | null> {
       const ns = await loadLk()
       if (!ns || !state.active) return null
       const t = await request<{ token: string; url: string; room: string }>('/api/watch/call/token', {
-        body: { room: state.room || 'crcmz', client: state.clientId }, quiet401: true })
+        body: { room: state.room || 'crcmz', client: state.clientId, ...(isTV() ? { device: 'tv' } : {}), ...(state.companion ? { companion: state.companion } : {}) }, quiet401: true })
       const r = new ns.Room({
         adaptiveStream: false, dynacast: true, stopLocalTrackOnUnpublish: true,
         videoCaptureDefaults: { resolution: { width: 320, height: 320, frameRate: 15 } },
@@ -1420,29 +1440,108 @@ function wire(r: LkRoom, ns: LkNs) {
   })
 }
 
-/** Rebuild who's in the call from the room: a MediaStream per person (camera + mic). */
+/** Rebuild who's in the call from the room: a MediaStream per person (camera + mic).
+ *  A TV and its companion phone are one viewer (the phone's camera carries the TV's id),
+ *  so their tracks merge; the phone's own socket is hidden from the viewer list. */
 function syncPeers() {
   const r = lkRoom
   const seen = new Set<string>()
+  const comps = new Set<string>()
+  let tv = '', mine = false
   if (r) {
+    const me = r.localParticipant.identity.split('#')[0]
+    const byId: Record<string, LkParticipant[]> = {}
     for (const p of r.remoteParticipants.values()) {
       const id = clientOf(p)
+      ;(byId[id] ||= []).push(p)
+      if (p.attributes?.companion === '1') comps.add(p.identity.split('#')[1] || '')
+      if (p.identity.split('#')[0] === me) {
+        if (p.attributes?.device === 'tv' && p.attributes?.companion !== '1') tv = id
+        if (p.attributes?.companion === '1' && id === state.clientId) mine = true
+      }
+    }
+    for (const [id, ps] of Object.entries(byId)) {
       seen.add(id)
-      const tracks = [p.getTrackPublication(SRC.cam), p.getTrackPublication(SRC.mic)]
+      const tracks = ps.flatMap((p) => [p.getTrackPublication(SRC.cam), p.getTrackPublication(SRC.mic)])
         .map((pub) => pub?.track?.mediaStreamTrack).filter((t): t is MediaStreamTrack => !!t && t.readyState === 'live')
       const key = tracks.map((t) => t.id).join(',')
       const have = peers[id]
       // A new MediaStream when the tracks change, so <video>/<audio> pick it up cleanly.
       const stream = have && have.key === key ? have.stream : (tracks.length ? new MediaStream(tracks) : null)
+      // The one with the camera stands for the viewer (a TV listening, its phone sending).
+      const p = ps.find((x) => x.getTrackPublication(SRC.cam)?.track) ?? ps.find((x) => x.getTrackPublication(SRC.mic)?.track) ?? ps[0]!
       peers[id] = { p, stream, key }
-      if (stream?.getAudioTracks().length) playAudio(id, stream)
+      // Never play a person's own voice back to them: not my companion's mic on the TV
+      // (the phone sits in front of it: echo), and nothing on a companion phone (the TV
+      // plays the call).
+      if (stream?.getAudioTracks().length && id !== state.clientId && !state.companion) playAudio(id, stream)
       else stopAudio(id)
     }
   }
   Object.keys(peers).forEach((id) => { if (!seen.has(id)) { stopAudio(id); delete peers[id] } })
   const cam = r?.localParticipant.getTrackPublication(SRC.cam)?.track?.mediaStreamTrack
   localStream = state.call.on ? (cam && cam.readyState === 'live' ? streamOf(cam) : localStream && !cam ? localStream : null) : null
+  const compsKey = [...comps].sort().join(',')
+  if (compsKey !== companionsKey) { companionsKey = compsKey; companions = comps; showPeople() }
+  if (tv !== state.myTv || mine !== state.hasCompanion) {
+    if (mine !== state.hasCompanion) log(mine ? 'companion.joined' : 'companion.left')
+    set({ myTv: tv, hasCompanion: mine })
+  }
   bumpRtc()
+}
+
+// ── Companion mode ──────────────────────────────────────────────────────────
+// Watching on the TV, the same person's phone can be its camera, mic and remote: chat
+// and reactions from the phone, play/pause/skip for the room. The phone stays in the
+// party (its socket) but plays no video, and its socket is left out of the viewer list.
+let rawRoster: RosterEntry[] = []
+let rawPresence: Presence = { count: 0, viewers: [] }
+let companions = new Set<string>()
+let companionsKey = ''
+function showPeople() {
+  const keep = (id: string) => !companions.has(id)
+  const viewers = rawPresence.viewers.filter((v) => keep(v.id))
+  set({
+    roster: rawRoster.filter((u) => keep(u.id)),
+    presence: { count: Math.max(viewers.length, rawPresence.count - (rawPresence.viewers.length - viewers.length)), viewers },
+  })
+}
+/** The room's position right now, as everyone else reports it (a companion has no video). */
+let roomAt = { t: 0, at: 0 }
+export function roomTime(): number {
+  return roomAt.t + (state.roomPlaying && roomAt.at ? (Date.now() - roomAt.at) / 1000 : 0)
+}
+export async function startCompanion() {
+  const tv = state.myTv
+  if (!tv || state.companion) return
+  log('companion.start', { tv: tv.slice(0, 8) })
+  set({ companion: tv })
+  mount(state.video)             // drops this phone's own copy of the movie
+  disconnectRoom()
+  await connectRoom()            // back into the call as the TV's camera and mic
+  if (!lkRoom) { set({ companion: '' }); toast("Couldn't connect to your TV's call", 'error'); void connectRoom(); return }
+  await joinCall()
+}
+export async function stopCompanion() {
+  if (!state.companion) return
+  log('companion.stop')
+  endCall()
+  set({ companion: '' })
+  disconnectRoom()
+  void connectRoom()
+  // And the movie again, where the room is.
+  const at = roomTime()
+  if (at > 5) pendingTS = at
+  mount(state.video)
+  if (sock?.connected) sock.emit('CMD:askHost')
+}
+/** The companion's remote: play/pause and skip for the whole room. */
+export function companionPlay() { if (sock?.connected) sock.emit(state.roomPlaying ? 'CMD:pause' : 'CMD:play') }
+export function companionSkip(by: number) {
+  if (!sock?.connected) return
+  const to = Math.max(0, roomTime() + by)
+  roomAt = { t: to, at: Date.now() }
+  sock.emit('CMD:seek', to)
 }
 
 export async function joinCall() {

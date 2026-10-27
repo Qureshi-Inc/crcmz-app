@@ -18,7 +18,9 @@ import { Stage, usePlayerKeys } from './Stage'
 export { OrbPosControl } from './Settings'
 import {
   attachLayout, canCall, canPopOut, clearVideo, popOut, exitFs, joinCall, leave, rejoin, setTitle, setVideo, start, useWatch, videoLabel, type WatchState,
+  companionPlay, companionSkip, flipCam, roomTime, startCompanion, stopCompanion, toggleMute, toggleVideo,
 } from './session'
+import { fmtTime } from '../../lib/watch'
 import { sharedLink } from '../share/SharePage'
 import { HelpLink } from '../../components/HelpLink'
 
@@ -50,8 +52,11 @@ export function WatchPage({ visible }: { visible: boolean }) {
         )}
       </div>
       <StatusBanner s={s} />
+      {s.myTv && !s.companion && s.status === 'live' && <CompanionOffer s={s} />}
       <div className="wp-layout">
-        <div className="wp-main">
+        {s.companion && <Companion s={s} />}
+        {/* Hidden, not unmounted, in companion mode: the page keeps one <video> for good. */}
+        <div className="wp-main" hidden={!!s.companion}>
           <div className="wp-screen" ref={attachLayout} data-fs={s.fs} data-orbs={s.orbPos}>
             {pos === 'top' && <Orbs variant="strip" />}
             <Stage over={over} rxOpen={rxOpen} setRxOpen={setRxOpen} slot={desktop ? null : slot} />
@@ -227,5 +232,65 @@ function CallRow({ s }: { s: WatchState }) {
       {!c.on && live && !canCall() && <p className="meta">This browser can't share a camera.</p>}
       <p className="meta">Camera, mic, reactions and <Icon name="settings" className="nav-icon wp-inline-icon" /> settings (camera position, name, rally) are in the player.</p>
     </section>
+  )
+}
+
+// ── Companion mode: this phone is the camera, mic and remote of your TV ─────────
+function CompanionOffer({ s }: { s: WatchState }) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <section className="glass wp-comp-offer" aria-label="Companion mode">
+      <span className="wp-comp-icon" aria-hidden="true">📺</span>
+      <span className="wp-comp-text">
+        <span className="wp-comp-h">You're watching on your TV</span>
+        <span className="meta">Use this phone as the TV's camera and mic, and its remote. The movie stays on the TV.</span>
+      </span>
+      <button type="button" className="btn btn-primary" disabled={busy || s.call.busy}
+        onClick={() => { setBusy(true); void startCompanion().finally(() => setBusy(false)) }}>
+        <Icon name="cam" />{busy ? 'Connecting…' : 'Use as companion'}
+      </button>
+    </section>
+  )
+}
+
+function Companion({ s }: { s: WatchState }) {
+  const [t, setT] = useState(roomTime())
+  useEffect(() => { const iv = window.setInterval(() => setT(roomTime()), 500); return () => window.clearInterval(iv) }, [])
+  const c = s.call
+  const label = videoLabel()
+  return (
+    <div className="wp-main wp-comp">
+      <section className="glass wp-comp-remote" aria-label="Your TV">
+        <p className="disc-kicker">Companion mode · the movie plays on your TV</p>
+        <h2 className="section-h2 wp-comp-title">{label || (s.video ? 'Watch Party' : 'Nothing playing yet')}</h2>
+        {s.video && <p className="meta num">{s.roomPlaying ? 'Playing' : 'Paused'} · {fmtTime(t)}</p>}
+        <div className="wp-comp-pad" role="group" aria-label="Remote">
+          <button type="button" className="wp-ctl wp-comp-btn" aria-label="Back 10 seconds" disabled={!s.video} onClick={() => companionSkip(-10)}><Icon name="back10" /></button>
+          <button type="button" className="wp-ctl wp-comp-btn wp-comp-play" aria-label={s.roomPlaying ? 'Pause for everyone' : 'Play for everyone'} disabled={!s.video} onClick={companionPlay}>
+            <Icon name={s.roomPlaying ? 'pause' : 'play'} />
+          </button>
+          <button type="button" className="wp-ctl wp-comp-btn" aria-label="Forward 10 seconds" disabled={!s.video} onClick={() => companionSkip(10)}><Icon name="fwd10" /></button>
+        </div>
+      </section>
+      <section className="glass wp-comp-call" aria-label="Your camera and mic">
+        <Orbs variant="strip" />
+        <div className="wp-action-row">
+          {!c.on ? (
+            <button type="button" className="btn btn-primary" disabled={c.busy} onClick={() => void joinCall()}><Icon name="cam" />{c.busy ? 'Starting…' : 'Turn on camera'}</button>
+          ) : (
+            <>
+              <button type="button" className={`btn ${c.muted ? 'btn-primary' : 'btn-secondary'}`} onClick={() => void toggleMute()}>
+                <Icon name={c.muted ? 'mic' : 'micOff'} />{c.muted ? 'Talk' : 'Mute'}
+              </button>
+              {!c.micOnly && <button type="button" className="btn btn-secondary" onClick={toggleVideo}><Icon name={c.camOff ? 'cam' : 'camOff'} />{c.camOff ? 'Camera on' : 'Camera off'}</button>}
+              {!c.micOnly && <button type="button" className="btn btn-secondary" onClick={() => void flipCam()}><Icon name="flip" />Flip</button>}
+            </>
+          )}
+        </div>
+        {c.note && <p className="meta" role="status">{c.note}</p>}
+        <p className="meta">Your camera shows up as you, on the TV and for everyone. Stay muted unless you're talking: the TV's sound reaches your phone's mic.</p>
+        <button type="button" className="btn btn-ghost" onClick={() => void stopCompanion()}><Icon name="close" />Stop companion mode</button>
+      </section>
+    </div>
   )
 }
