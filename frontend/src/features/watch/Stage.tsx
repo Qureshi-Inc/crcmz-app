@@ -7,6 +7,7 @@ import { createPortal, flushSync } from 'react-dom'
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react'
 import { Icon, type IconName } from '../../components/Icon'
 import { useReducedMotion } from '../../lib/media'
+import { shellVideo } from '../../lib/nativeShell'
 import { CAN_VOL, fmtTime, REACTIONS } from '../../lib/watch'
 import {
   attachVideo, attachYt, clearVideo, retryMedia, forceSync, fsRoot, setSubtitle, getWatch, joinCall, leaveCall, nameOf as nameMap, onChat, onReaction, react, sendChat, setCamVol, setPlayerVol,
@@ -34,6 +35,9 @@ export function Stage({ over, rxOpen, setRxOpen, slot }: { over?: ReactNode; rxO
   useEffect(() => () => window.clearTimeout(hideT.current), [])
   // Re-arm the hide timer whenever playback starts.
   useEffect(() => { if (s.playing) poke() }, [s.playing])
+  // A film on the stage: the Android app floats it in picture in picture when you leave.
+  const film = !!s.video && (s.kind === 'file' || s.kind === 'yt') && !s.mediaError && !s.companion
+  useEffect(() => { shellVideo(film); return () => shellVideo(false) }, [film])
   const focusHeld = useRef(false)
   const holdOn = () => setHold((n) => n + 1)
   const holdOff = () => { setHold((n) => Math.max(0, n - 1)); poke() }

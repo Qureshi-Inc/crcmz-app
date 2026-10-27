@@ -80,7 +80,10 @@ class LauncherActivity : AppCompatActivity() {
     private lateinit var calls: CallOverlay
     private var loaded = false
     private var pendingUrl: String? = null
-    private var watchPartyActive = false
+    /** The page says a Watch Party video is on screen (Shell: the tabs message's `video`). */
+    var partyVideo = false
+        set(v) { if (field != v) { field = v; updatePip() } }
+    private var videoPip = false
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private var pendingPermission: PermissionRequest? = null
     private var fullscreen: View? = null
@@ -521,55 +524,51 @@ class LauncherActivity : AppCompatActivity() {
         if (isTV) web.post { web.requestFocus() }
     }
 
-    // MARK: Picture in picture (a call or Watch Party on screen when you leave the app)
+    // MARK: Picture in picture
+    // Only for something worth floating: a Watch Party video (the film alone, 16:9, the page
+    // strips everything else) or a call (the native call overlay's featured tile). Leaving
+    // the app anywhere else just leaves it.
 
-    /** Called by Shell when the active tab changes: drives Watch Party PiP eligibility. */
-    fun onTabChanged(tabId: String) {
-        watchPartyActive = tabId == "watch"
-        updatePip()
-    }
+    private fun pipVideo() = partyVideo
+    private fun pipCall() = NativeCall.wantsPip() && !partyVideo
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        val inCall = NativeCall.wantsPip()
-        val inWatch = watchPartyActive
-        if (Build.VERSION.SDK_INT in 26..30 && (inCall || inWatch)) {
-            enterPip(landscape = inWatch && !inCall)
-        }
+        if (Build.VERSION.SDK_INT in 26..30 && (pipVideo() || pipCall())) enterPip()
     }
 
-    fun pipParams(landscape: Boolean = false): PictureInPictureParams? {
+    fun pipParams(): PictureInPictureParams? {
         if (Build.VERSION.SDK_INT < 26) return null
-        val ratio = if (landscape) Rational(16, 9) else Rational(9, 16)
+        val ratio = if (pipVideo()) Rational(16, 9) else Rational(9, 16)
         val b = PictureInPictureParams.Builder().setAspectRatio(ratio)
-        if (Build.VERSION.SDK_INT >= 31) {
-            val wantsPip = NativeCall.wantsPip() || watchPartyActive
-            b.setAutoEnterEnabled(wantsPip).setSeamlessResizeEnabled(true)
-        }
+        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(pipVideo() || pipCall()).setSeamlessResizeEnabled(true)
         return b.build()
     }
 
-    /** Called when the call starts, stops or changes size: Android 12+ floats it by itself. */
+    /** Called when the call or the party's video starts, stops or changes: Android 12+ floats it by itself. */
     fun updatePip() {
-        if (Build.VERSION.SDK_INT >= 26)
-            pipParams(landscape = watchPartyActive && !NativeCall.wantsPip())
-                ?.let { runCatching { setPictureInPictureParams(it) } }
+        if (Build.VERSION.SDK_INT >= 26) pipParams()?.let { runCatching { setPictureInPictureParams(it) } }
     }
 
-    fun enterPip(landscape: Boolean = false) {
-        if (Build.VERSION.SDK_INT >= 26) pipParams(landscape)?.let { runCatching { enterPictureInPictureMode(it) } }
+    fun enterPip() {
+        if (Build.VERSION.SDK_INT >= 26) pipParams()?.let { runCatching { enterPictureInPictureMode(it) } }
     }
 
     override fun onPictureInPictureModeChanged(inPip: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(inPip, newConfig)
-        if (watchPartyActive && !NativeCall.wantsPip()) {
-            // Watch Party PiP: keep the WebView visible so the video plays in the PiP window.
+        if (inPip) videoPip = pipVideo()
+        if (videoPip) {
+            // The film alone: no tab bar, no call overlay, and the page shows only the video.
             content.visibility = View.VISIBLE
+            shell.pip(inPip)
+            calls.videoPip(inPip)
+            js("document.documentElement.toggleAttribute('data-native-pip', $inPip)")
         } else {
-            // Huddle call PiP: hide content — the native call overlay fills the window.
+            // A call: the native call overlay fills the window.
             content.visibility = if (inPip) View.INVISIBLE else View.VISIBLE
             calls.pip(inPip)
         }
+        if (!inPip) videoPip = false
     }
 
     override fun onDestroy() {

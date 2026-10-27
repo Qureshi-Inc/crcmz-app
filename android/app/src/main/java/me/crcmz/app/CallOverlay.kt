@@ -120,6 +120,13 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
         render()
     }
 
+    /** Picture in picture with the party's video: the call keeps going, out of sight. */
+    private var hiddenForVideo = false
+    fun videoPip(on: Boolean) {
+        hiddenForVideo = on
+        render()
+    }
+
     private var layoutKey = ""
     private var controlsKey = ""
 
@@ -127,8 +134,8 @@ class CallOverlay(private val app: LauncherActivity, private val root: FrameLayo
         val r = NativeCall.room
         if (r !== holderRoom) { holders.values.forEach { it.release() }; holders = mutableMapOf(); holderRoom = r; layoutKey = "" }
         val mode = NativeCall.mode
-        full.visibility = if (mode == NativeCall.Mode.FULL && !inPip) View.VISIBLE else View.GONE
-        panel.visibility = if (mode == NativeCall.Mode.PANEL && !inPip) View.VISIBLE else View.GONE
+        full.visibility = if (mode == NativeCall.Mode.FULL && !inPip && !hiddenForVideo) View.VISIBLE else View.GONE
+        panel.visibility = if (mode == NativeCall.Mode.PANEL && !inPip && !hiddenForVideo) View.VISIBLE else View.GONE
         pipBox.visibility = if (inPip && NativeCall.kind != null) View.VISIBLE else View.GONE
         if (r == null || NativeCall.kind == null) {
             listOf(grid, panelTiles, pipBox).forEach { it.removeAllViews() }

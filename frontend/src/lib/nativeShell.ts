@@ -25,11 +25,26 @@ function watchLock(fn: () => void) {
 export const useSheetOpen = () => useSyncExternalStore(watchLock, locked)
 
 let last = ''
+let shown: ShellState | null = null
+let video = false
 export function toShell(m: ShellState) {
+  shown = m
+  send()
+}
+/** A Watch Party video is on screen: the Android app floats just that in picture in
+ *  picture when you leave the app (and nothing at all elsewhere). Rides on the tabs message. */
+export function shellVideo(on: boolean) {
+  if (on === video) return
+  video = on
+  send()
+}
+function send() {
+  if (!shown) return
+  const m = { type: 'tabs', ...shown, video }
   const s = JSON.stringify(m)
   if (s === last) return
   last = s
-  handler()?.postMessage({ type: 'tabs', ...m })
+  handler()?.postMessage(m)
 }
 
 declare global {

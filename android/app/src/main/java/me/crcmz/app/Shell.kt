@@ -64,7 +64,7 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
         return ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(on, off))
     }
 
-    /** From the page: {tabs, more, active, badge, hidden, sheet}. */
+    /** From the page: {tabs, more, active, badge, hidden, sheet, video}. */
     fun update(m: JSONObject) {
         app.sheetOpen = m.optBoolean("sheet", false)
         fun items(key: String) = (0 until (m.optJSONArray(key)?.length() ?: 0)).mapNotNull { i ->
@@ -87,7 +87,7 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
             } else bar.removeBadge(i)
         }
         val active = m.optString("active").takeIf { !m.isNull("active") }
-        app.onTabChanged(active ?: "")
+        app.partyVideo = m.optBoolean("video", false)
         val sel = tabs.indexOfFirst { it.id == active }.takeIf { it >= 0 }
             ?: if (more.any { it.id == active }) MORE else null
         // A bottom bar always has one tab lit; a page outside the bar (Notifications…) lights More.
@@ -108,8 +108,12 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
         apply()
     }
 
+    /** Picture in picture with the party's video: no bar in the little window. */
+    private var inPip = false
+    fun pip(on: Boolean) { inPip = on; apply() }
+
     private fun apply() {
-        val show = onAppPage && !hidden && !keyboard && tabs.isNotEmpty() && !forceHidden
+        val show = onAppPage && !hidden && !keyboard && tabs.isNotEmpty() && !forceHidden && !inPip
         if (show != (bar.visibility == View.VISIBLE)) app.setBarVisible(show)
     }
 

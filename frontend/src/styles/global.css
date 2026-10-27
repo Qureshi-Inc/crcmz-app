@@ -1877,6 +1877,17 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .wp-video, .wp-yt, .wp-yt iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .wp-video { object-fit: contain; background: #000; }
 .wp-video[hidden], .wp-yt[hidden] { display: none; }
+/* The Android app's picture in picture (LauncherActivity): the film alone, filling the
+   little window. Everything else steps out of sight; the call and music keep going. */
+html[data-native-pip], html[data-native-pip] body { background: #000; overflow: hidden; }
+html[data-native-pip] body * { visibility: hidden; }
+html[data-native-pip] .wp-video:not([hidden]), html[data-native-pip] .wp-yt:not([hidden]),
+html[data-native-pip] .wp-yt:not([hidden]) * {
+  visibility: visible;
+}
+html[data-native-pip] .wp-video:not([hidden]), html[data-native-pip] .wp-yt:not([hidden]) {
+  position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 2147483647; background: #000;
+}
 .wp-tap { position: absolute; inset: 0; z-index: 1; touch-action: manipulation; }
 .wp-tap[data-pass="true"] { pointer-events: none; }
 .wp-empty, .wp-stage-msg {
