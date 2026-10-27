@@ -152,7 +152,10 @@ let state: WatchState = {
   video: '', kind: '', ytFresh: false, playing: false, unblock: '', mediaError: '',
   chat: [], call: { on: false, muted: true, micOnly: false, camOff: false, facing: 'user', busy: false, note: '' },
   rtc: 0, loud: {}, playerVol: 1, playerMuted: false, camVol: 1, camMuted: false,
-  prefs: readLocal<Record<string, { v: number; m: boolean }>>(PREFS_KEY, {}),
+  // "Mute for me" lasts this visit only: kept forever (by name) it silenced people for
+  // weeks after one stray tap. Volumes are kept.
+  prefs: Object.fromEntries(Object.entries(readLocal<Record<string, { v: number; m: boolean }>>(PREFS_KEY, {}))
+    .filter(([, p]) => p && Number.isFinite(p.v) && p.v !== 1).map(([k, p]) => [k, { v: p.v, m: false }])),
   fs: false, subs: [], sub: null, ytCc: false, extracting: false, extractUntil: 0, title: '', needGesture: false, histTick: 0,
   mics: [], speakers: [], micId: '', speakerId: '', orbPos: readOrbPos(),
   companion: '', myTv: '', myTvIsTv: false, hasCompanion: false, roomPlaying: false, quiet: false,
@@ -219,6 +222,11 @@ const snap = () => ({
   // In the call: my mic, and everyone's mic as the call server last measured it (0..1).
   ...(lkRoom ? {
     me: { mic: !state.call.muted && state.call.on, lvl: Math.round(micLive * 100) / 100 },
+    hear: Object.entries(audioEls).map(([id, a]) => {
+      const t = (a.srcObject as MediaStream | null)?.getAudioTracks()[0]
+      return { n: nameOf(id), play: !a.paused, mute: a.muted, vol: Math.round(a.volume * 100) / 100, forMe: peerPref(id).m, tr: t ? `${t.readyState}${t.muted ? '/nodata' : ''}` : 'none' }
+    }),
+    cams: { vol: state.camVol, mute: state.camMuted }, gesture: state.needGesture,
     talk: [...lkRoom.remoteParticipants.values()].map((p) => ({ n: nameOf(clientOf(p)), mic: !!p.getTrackPublication(SRC.mic) && !p.getTrackPublication(SRC.mic)!.isMuted, lvl: Math.round(((p as { audioLevel?: number }).audioLevel ?? 0) * 100) / 100 })),
   } : {}),
 })
@@ -1809,6 +1817,7 @@ function stopAudio(id: string) {
 /** Browsers refuse to start audio without a tap; take the next one anywhere. */
 function needGesture() {
   if (state.needGesture) return
+  log('audio.need_gesture', undefined, 'warn')
   set({ needGesture: true })
   const go = () => {
     window.removeEventListener('pointerdown', go, true)
@@ -1831,7 +1840,8 @@ export function setPeerPref(id: string, patch: Partial<{ v: number; m: boolean }
   const cur = { ...peerPref(id), ...patch }
   const all = { ...state.prefs }
   if (cur.v === 1 && !cur.m) delete all[k]; else all[k] = cur
-  writeLocal(PREFS_KEY, all)
+  writeLocal(PREFS_KEY, Object.fromEntries(Object.entries(all).filter(([, p]) => p.v !== 1).map(([kk, p]) => [kk, { v: p.v, m: false }])))
+  log('peer.pref', { who: nameOf(id), v: cur.v, m: cur.m })
   set({ prefs: all })
   applyPeerAudio()
 }
@@ -1850,6 +1860,7 @@ export function setCamVol(v: number) {
 export function toggleCamsMute() {
   if (!state.camMuted && state.camVol === 0) set({ camVol: 1 })
   else set({ camMuted: !state.camMuted })
+  log('cams.mute', { mute: state.camMuted, vol: state.camVol })
   applyPeerAudio()
 }
 
