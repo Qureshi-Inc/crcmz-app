@@ -49,9 +49,11 @@ object NativeAudio {
     private var artFor: String? = null
     private var art: ByteArray? = null
     private var announcedReady = false
+    private var app: Context? = null
 
     /** The player, shared with PlaybackService's media session. */
     fun player(ctx: Context): ExoPlayer = exo ?: run {
+        app = ctx.applicationContext
         // The stream and the art need the signed-in page's session cookie.
         val http = DefaultHttpDataSource.Factory().setUserAgent("CRCMZ-Android/${BuildConfig.VERSION_NAME}")
         val withCookies = ResolvingDataSource.Factory(http) { spec ->
@@ -85,19 +87,49 @@ object NativeAudio {
         override fun isCommandAvailable(command: Int) =
             command == Player.COMMAND_SEEK_TO_NEXT || command == Player.COMMAND_SEEK_TO_PREVIOUS || super.isCommandAvailable(command)
 
-        private fun goNext() {
-            // Solo: go now, even with the page asleep. Together: the room decides.
-            val p = exo ?: return
-            if (!together && p.mediaItemCount > 1) p.seekToNextMediaItem()
-            remote("nexttrack")
-        }
-
-        private fun goPrevious() {
-            val p = exo ?: return
-            if (p.currentPosition > 3000) p.seekTo(0)
-            remote("previoustrack")
-        }
     }
+
+    private fun goNext() {
+        // Solo: go now, even with the page asleep. Together: the room decides.
+        val p = exo ?: return
+        if (!together && p.mediaItemCount > 1) p.seekToNextMediaItem()
+        remote("nexttrack")
+    }
+
+    private fun goPrevious() {
+        val p = exo ?: return
+        if (p.currentPosition > 3000) p.seekTo(0)
+        remote("previoustrack")
+    }
+
+    // MARK: The Slap widget (Widgets.kt)
+
+    class Now(val title: String, val artist: String, val art: ByteArray?, val playing: Boolean)
+
+    /** What's loaded right now, or null (nothing, or the app was started fresh). A copy taken
+     *  on the main thread: the widget draws on any thread, and the player is main-only. */
+    @Volatile internal var snapshot: Now? = null   // internal: the debug build's widget screenshots set it
+    fun now(): Now? = snapshot
+
+    private fun snap() {
+        val p = exo
+        snapshot = if (p == null || p.mediaItemCount == 0 || url == null) null
+        else Now(meta.title?.toString() ?: "Slap", meta.artist?.toString() ?: "", art, p.playWhenReady)
+    }
+
+    /** The widget's buttons. false: nothing to control here (the widget opens the app instead). */
+    fun control(action: String): Boolean {
+        val p = exo ?: return false
+        if (p.mediaItemCount == 0 || url == null) return false
+        when (action) {
+            "toggle" -> if (p.playWhenReady) { p.pause(); remote("pause") } else { p.play(); remote("play") }
+            "next" -> goNext()
+            "prev" -> goPrevious()
+        }
+        return true
+    }
+
+    private fun widget() { snap(); app?.let { SlapWidget.update(it) } }
 
     fun start(app: LauncherActivity) {
         player(app)
@@ -113,7 +145,7 @@ object NativeAudio {
         val p = exo ?: return
         when (m.optString("type")) {
             "src" -> m.optString("url").takeIf { ours(it) }?.let { load(it) }
-            "stop" -> { p.stop(); p.clearMediaItems(); url = null; nextUrl = null; meta = MediaMetadata.EMPTY }
+            "stop" -> { p.stop(); p.clearMediaItems(); url = null; nextUrl = null; meta = MediaMetadata.EMPTY; widget() }
             "play" -> p.play()
             "pause" -> p.pause()
             "seek" -> { p.seekTo((m.optDouble("time", 0.0) * 1000).toLong()); send("seeked") }
@@ -153,6 +185,8 @@ object NativeAudio {
             if (p.mediaItemCount > 0 && p.currentMediaItem?.mediaId == url) {
                 p.replaceMediaItem(p.currentMediaItemIndex, item(url!!))
             }
+            app?.let { SlapWidget.remember(it, meta.title?.toString() ?: "", meta.artist?.toString() ?: "", art) }
+            widget()
         }
         if (next != nextUrl) {
             nextUrl = next
@@ -175,6 +209,8 @@ object NativeAudio {
             meta = meta.buildUpon().setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER).build()
             val p = exo ?: return@post
             if (p.mediaItemCount > 0 && p.currentMediaItem?.mediaId == url) p.replaceMediaItem(p.currentMediaItemIndex, item(url!!))
+            app?.let { SlapWidget.remember(it, meta.title?.toString() ?: "", meta.artist?.toString() ?: "", bytes) }
+            widget()
         }
     }
 
@@ -195,6 +231,7 @@ object NativeAudio {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             val p = exo ?: return
             if (isPlaying) send("playing") else if (!p.playWhenReady) send("pause")
+            widget()
         }
 
         override fun onMediaItemTransition(item: MediaItem?, reason: Int) {

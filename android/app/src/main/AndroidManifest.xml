@@ -108,14 +108,15 @@
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_live_info" />
         </receiver>
-        <receiver android:name=".MoviesWidget" android:exported="true" android:label="New movies">
+        <receiver android:name=".MoviesWidget" android:exported="true" android:label="Movies">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_movies_info" />
         </receiver>
-        <receiver android:name=".AddMovieWidget" android:exported="true" android:label="@string/widget_add_label">
+        <receiver android:name=".SlapWidget" android:exported="true" android:label="@string/widget_slap_label">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
-            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_add_info" />
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_slap_info" />
         </receiver>
+        <receiver android:name=".SlapWidget$Control" android:exported="false" />
 
         <service android:name=".MessagingService" android:exported="false">
             <intent-filter>

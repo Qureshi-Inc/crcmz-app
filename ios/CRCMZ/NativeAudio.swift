@@ -2,12 +2,14 @@ import AVFoundation
 import MediaPlayer
 import UIKit
 import WebKit
+import WidgetKit
 
 /// Slap's music, played by the app (frontend/src/lib/nativeAudio.ts, message handler
 /// "crcmzAudio"). The page keeps the queue, shuffle, Listen Together and the play counts;
 /// the app plays the track, keeps going with the phone locked (it's told the next track
 /// and moves on by itself when one ends), and runs the lock screen, Control Center and
-/// CarPlay's Now Playing. Events go back to the page through window.__crcmzAudio.
+/// CarPlay's Now Playing, and the Slap widget (SlapNow.swift). Events go back to the page
+/// through window.__crcmzAudio.
 @MainActor
 final class NativeAudio: NSObject {
     static let shared = NativeAudio()
@@ -24,6 +26,7 @@ final class NativeAudio: NSObject {
     private var statusObs: NSKeyValueObservation?
     private var controlObs: NSKeyValueObservation?
     private var endObs: NSObjectProtocol?
+    private var widgetState: SlapNow?
 
     func start(web: WKWebView) {
         self.web = web
@@ -44,6 +47,9 @@ final class NativeAudio: NSObject {
             MainActor.assumeIsolated { if ended && resume { self?.player.play() } }
         }
         remoteCommands()
+        // A fresh start has nothing loaded, whatever the widget last saw.
+        if var last = SlapNow.read(), last.loaded { last.loaded = false; last.playing = false; last.write(); reloadWidget() }
+        SlapControl.handler = { [weak self] action in self?.widgetControl(action) ?? false }
     }
 
     // MARK: From the page
@@ -98,6 +104,7 @@ final class NativeAudio: NSObject {
         info = [:]
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         MPNowPlayingInfoCenter.default().playbackState = .stopped
+        publishWidget()
     }
 
     private func seek(_ t: Double, tellPage: Bool) {
@@ -123,6 +130,7 @@ final class NativeAudio: NSObject {
             fetchArt(a)
         }
         publishTime()
+        publishWidget()
     }
 
     // MARK: Moving on by itself
@@ -235,6 +243,44 @@ final class NativeAudio: NSObject {
         @unknown default: break
         }
         publishTime()
+        publishWidget()
+    }
+
+    // MARK: The Slap widget
+
+    /// The widget's buttons; false when there's nothing loaded to control.
+    private func widgetControl(_ action: String) -> Bool {
+        guard player.currentItem != nil else { return false }
+        switch action {
+        case "toggle":
+            if player.timeControlStatus == .paused { activate(); player.play(); remote("play") }
+            else { player.pause(); remote("pause") }
+        case "next":
+            if !together, let n = nextURL, n != url { replace(with: n, play: true) }
+            remote("nexttrack")
+        case "prev":
+            if player.currentTime().seconds > 3 { seek(0, tellPage: false) }
+            remote("previoustrack")
+        default: return false
+        }
+        return true
+    }
+
+    private func publishWidget() {
+        let loaded = player.currentItem != nil && !info.isEmpty
+        var now = SlapNow(title: info[MPMediaItemPropertyTitle] as? String ?? "", artist: info[MPMediaItemPropertyArtist] as? String ?? "",
+                          art: artFor?.absoluteString ?? "", playing: loaded && player.timeControlStatus != .paused, loaded: loaded)
+        if !loaded, let last = widgetState ?? SlapNow.read() {   // keep the last song to show
+            now.title = last.title; now.artist = last.artist; now.art = last.art
+        }
+        guard now != widgetState, !now.title.isEmpty else { return }
+        widgetState = now
+        now.write()
+        reloadWidget()
+    }
+
+    private func reloadWidget() {
+        WidgetCenter.shared.reloadTimelines(ofKind: SlapNow.widgetKind)
     }
 
     private func tick() {

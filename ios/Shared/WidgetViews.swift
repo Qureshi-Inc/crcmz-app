@@ -19,6 +19,15 @@ enum Brand {
 struct WidgetSummary: Decodable {
     var live: [LiveItem]
     var movies: [MovieItem]
+    var resume: [MovieItem]? = nil   // "continue": films you're partway through
+
+    enum CodingKeys: String, CodingKey { case live, movies, resume = "continue" }
+
+    /// What the Movies widget shows: Continue watching first, then the newest films.
+    var movieList: [MovieItem] {
+        var seen = Set<String>()
+        return ((resume ?? []) + movies).filter { seen.insert($0.title).inserted }
+    }
 }
 
 struct LiveItem: Decodable, Identifiable {
@@ -41,15 +50,19 @@ struct MovieItem: Decodable, Identifiable {
     var poster: String?
     var imdb: String?
     var url: String
+    var progress: Double? = nil   // Continue watching: how far you got
+    var left: String? = nil       // "75 min left"
     var id: String { (imdb ?? "") + title }
 }
 
 /// What a widget shows: the summary, the posters already downloaded (a widget can't load
-/// images itself), or why there's nothing.
+/// images itself), or why there's nothing. The Slap widget: what's playing and its cover.
 struct WidgetData {
     var summary: WidgetSummary?
     var posters: [String: Data] = [:]
     var signedOut = false
+    var slap: SlapNow? = nil
+    var slapArt: Data? = nil
 }
 
 // MARK: - The Live Activity (lock screen and banner)
@@ -178,7 +191,7 @@ struct LiveRow: View {
     }
 }
 
-// MARK: - New in the library
+// MARK: - Movies: Continue watching, then the newest
 
 struct NewMoviesView: View {
     let data: WidgetData
@@ -188,10 +201,11 @@ struct NewMoviesView: View {
         if data.signedOut {
             SignedOut()
         } else {
-            let movies = Array((data.summary?.movies ?? []).prefix(rows * 4))
+            let movies = Array((data.summary?.movieList ?? []).prefix(rows * 4))
+            let resuming = !(data.summary?.resume ?? []).isEmpty
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Header(text: "New in the library", count: 0)
+                    Header(text: resuming ? "Continue watching" : "New in the library", count: 0)
                     Spacer()
                     Link(destination: AppLink.url("/app/watch?add=1")) {
                         Image(systemName: "plus.circle.fill").font(.title3).foregroundStyle(Brand.magenta)
@@ -233,22 +247,136 @@ struct PosterTile: View {
             }
             .frame(maxWidth: .infinity)
             .aspectRatio(2 / 3, contentMode: .fit)
+            .overlay(alignment: .bottom) {
+                if let p = movie.progress, p > 0 {
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(Color.black.opacity(0.55))
+                            Rectangle().fill(Brand.magenta).frame(width: g.size.width * min(1, p))
+                        }
+                    }
+                    .frame(height: 3)
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: 7))
-            Text(movie.title).font(.caption2.weight(.semibold)).foregroundStyle(Brand.text).lineLimit(1)
+            Text(movie.left ?? movie.title).font(.caption2.weight(.semibold)).foregroundStyle(Brand.text).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)   // four equal tiles, whatever the titles
     }
 }
 
-// MARK: - Add a movie
+// MARK: - Slap: what's playing
 
-struct AddMovieView: View {
+struct SlapView: View {
+    let data: WidgetData
+    let small: Bool
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: "film.stack").font(.title2).foregroundStyle(Brand.cyan)
-            Spacer(minLength: 0)
-            Text("Add a movie").font(.headline).foregroundStyle(Brand.text)
-            Text("Search and put it in the library for the next party").font(.caption).foregroundStyle(Brand.dim).lineLimit(3)
+        let now = data.slap
+        let loaded = now?.loaded ?? false
+        let playing = now?.playing ?? false
+        if small {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .top) {
+                    Cover(art: data.slapArt, size: 46)
+                    Spacer(minLength: 0)
+                    PlayButton(loaded: loaded, playing: playing, size: 34)
+                }
+                Spacer(minLength: 4)
+                Text(heading(now)).font(.caption2.weight(.heavy)).tracking(1.1).foregroundStyle(Brand.cyan)
+                Text(now?.title ?? "Shuffle the library").font(.subheadline.weight(.bold)).foregroundStyle(Brand.text).lineLimit(1)
+                Text(now?.artist ?? "Slap").font(.caption).foregroundStyle(Brand.dim).lineLimit(1)
+            }
+        } else {
+            HStack(spacing: 14) {
+                Cover(art: data.slapArt, size: 92)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(heading(now)).font(.caption2.weight(.heavy)).tracking(1.1).foregroundStyle(Brand.cyan)
+                    Text(now?.title ?? "Shuffle the library").font(.headline).foregroundStyle(Brand.text).lineLimit(1)
+                    Text(now?.artist ?? "Tap play to start Slap").font(.caption).foregroundStyle(Brand.dim).lineLimit(1)
+                    Spacer(minLength: 4)
+                    HStack(spacing: 18) {
+                        if loaded { Control(action: "prev", symbol: "backward.fill") }
+                        PlayButton(loaded: loaded, playing: playing, size: 40)
+                        if loaded { Control(action: "next", symbol: "forward.fill") }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func heading(_ now: SlapNow?) -> String {
+        guard let now else { return "SLAP" }
+        return now.loaded ? (now.playing ? "NOW PLAYING" : "PAUSED") : "LAST PLAYED"
+    }
+}
+
+private struct Cover: View {
+    let art: Data?
+    let size: CGFloat
+    var body: some View {
+        Group {
+            if let art, let ui = UIImage(data: art) {
+                Image(uiImage: ui).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                ZStack { Brand.panel; Image(systemName: "music.note").font(.title2).foregroundStyle(Brand.magenta) }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+/// Play / pause. Something loaded: it drives the app's player in place (iOS 17+). Nothing
+/// loaded: starting music needs the page (it keeps the queue), so it opens Slap to carry on.
+private struct PlayButton: View {
+    let loaded: Bool
+    let playing: Bool
+    let size: CGFloat
+    var body: some View {
+        let face = Image(systemName: playing ? "pause.fill" : "play.fill")
+            .font(.system(size: size * 0.4, weight: .bold)).foregroundStyle(.white)
+            .frame(width: size, height: size).background(Circle().fill(Brand.magenta))
+        if loaded, #available(iOS 17.0, *) {
+            Button(intent: SlapControlIntent("toggle")) { face }.buttonStyle(.plain)
+        } else {
+            Link(destination: AppLink.url(loaded ? "/app/slap" : "/app/slap?play=1")) { face }
+        }
+    }
+}
+
+private struct Control: View {
+    let action: String
+    let symbol: String
+    var body: some View {
+        let face = Image(systemName: symbol).font(.system(size: 17, weight: .bold)).foregroundStyle(Brand.text)
+        if #available(iOS 17.0, *) {
+            Button(intent: SlapControlIntent(action)) { face }.buttonStyle(.plain)
+        } else {
+            Link(destination: AppLink.url("/app/slap")) { face }
+        }
+    }
+}
+
+// MARK: - Live now on the lock screen
+
+struct LiveNowAccessory: View {
+    let data: WidgetData
+    var body: some View {
+        if let it = data.summary?.live.first {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(LiveKind.emoji(it.kind)) \(LiveKind.label(it.kind))").font(.caption2.weight(.bold))
+                Text(it.title).font(.headline).lineLimit(1)
+                Text(it.subtitle).font(.caption2).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("CRCMZ").font(.caption2.weight(.bold))
+                Text(data.signedOut ? "Open CRCMZ to sign in" : "Nothing live").font(.headline).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

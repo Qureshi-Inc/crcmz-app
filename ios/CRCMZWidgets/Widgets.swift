@@ -10,7 +10,7 @@ struct CRCMZWidgets: WidgetBundle {
     var body: some Widget {
         LiveNowWidget()
         NewMoviesWidget()
-        AddMovieWidget()
+        SlapWidget()
         CRCMZLiveActivity()
     }
 }
@@ -109,7 +109,7 @@ struct LiveNowWidget: Widget {
         }
         .configurationDisplayName("Live now")
         .description("A Watch Party, Huddle, Listen Together or tournament going on right now.")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies([.systemSmall, .systemMedium, .accessoryRectangular])
     }
 }
 
@@ -117,9 +117,12 @@ struct LiveNowWidgetView: View {
     @Environment(\.widgetFamily) var family
     let entry: SummaryEntry
     var body: some View {
-        LiveNowView(data: entry.data, large: family != .systemSmall)
-            .widgetURL(AppLink.url(entry.data.summary?.live.first?.url ?? "/app/watch"))
-            .brandBackground()
+        Group {
+            if family == .accessoryRectangular { LiveNowAccessory(data: entry.data) }
+            else { LiveNowView(data: entry.data, large: family != .systemSmall) }
+        }
+        .widgetURL(AppLink.url(entry.data.summary?.live.first?.url ?? "/app/watch"))
+        .brandBackground(accessory: family == .accessoryRectangular)
     }
 }
 
@@ -128,8 +131,8 @@ struct NewMoviesWidget: Widget {
         StaticConfiguration(kind: "me.crcmz.new-movies", provider: SummaryProvider(posters: true)) { e in
             NewMoviesWidgetView(entry: e)
         }
-        .configurationDisplayName("New in the library")
-        .description("The newest movies in the squad's library. Tap one to watch it together.")
+        .configurationDisplayName("Movies")
+        .description("Pick up where you left off, and the newest movies in the squad's library.")
         .supportedFamilies([.systemMedium, .systemLarge])
     }
 }
@@ -144,50 +147,48 @@ struct NewMoviesWidgetView: View {
     }
 }
 
-struct AddMovieWidget: Widget {
+struct SlapEntry: TimelineEntry {
+    let date: Date
+    let data: WidgetData
+}
+
+/// The Slap widget's data comes from the app (SlapNow, written on every change, which also
+/// reloads this); only the cover is fetched here, as you.
+struct SlapProvider: TimelineProvider {
+    func placeholder(in context: Context) -> SlapEntry {
+        SlapEntry(date: .now, data: WidgetData(slap: SlapNow(title: "Digits", artist: "Young Thug", art: "", playing: true, loaded: true)))
+    }
+    func getSnapshot(in context: Context, completion: @escaping (SlapEntry) -> Void) {
+        if context.isPreview { completion(placeholder(in: context)); return }
+        Task { completion(await entry()) }
+    }
+    func getTimeline(in context: Context, completion: @escaping (Timeline<SlapEntry>) -> Void) {
+        Task { completion(Timeline(entries: [await entry()], policy: .never)) }
+    }
+    private func entry() async -> SlapEntry {
+        let now = SlapNow.read()
+        return SlapEntry(date: .now, data: WidgetData(slap: now, slapArt: await Fetch.cover(now?.art ?? "")))
+    }
+}
+
+struct SlapWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "me.crcmz.add-movie", provider: StaticProvider()) { _ in
-            AddMovieWidgetView()
+        StaticConfiguration(kind: SlapNow.widgetKind, provider: SlapProvider()) { e in
+            SlapWidgetView(entry: e)
         }
-        .configurationDisplayName("Add a movie")
-        .description("Jump straight into the movie search.")
-        .supportedFamilies([.systemSmall, .accessoryCircular, .accessoryRectangular])
+        .configurationDisplayName("Slap")
+        .description("What's playing, with play, pause and skip. Nothing on? Tap play to carry on.")
+        .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
 
-struct AddMovieWidgetView: View {
+struct SlapWidgetView: View {
     @Environment(\.widgetFamily) var family
+    let entry: SlapEntry
     var body: some View {
-        Group {
-            switch family {
-            case .accessoryCircular:
-                ZStack {
-                    AccessoryWidgetBackground()
-                    Image(systemName: "film.stack").font(.title3)
-                }
-            case .accessoryRectangular:
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle.fill")
-                    VStack(alignment: .leading) {
-                        Text("Add a movie").font(.headline)
-                        Text("CRCMZ library").font(.caption)
-                    }
-                }
-            default:
-                AddMovieView()
-            }
-        }
-        .widgetURL(AppLink.url("/app/watch?add=1"))
-        .brandBackground(accessory: family == .accessoryCircular || family == .accessoryRectangular)
-    }
-}
-
-struct StaticEntry: TimelineEntry { let date: Date }
-struct StaticProvider: TimelineProvider {
-    func placeholder(in context: Context) -> StaticEntry { StaticEntry(date: .now) }
-    func getSnapshot(in context: Context, completion: @escaping (StaticEntry) -> Void) { completion(StaticEntry(date: .now)) }
-    func getTimeline(in context: Context, completion: @escaping (Timeline<StaticEntry>) -> Void) {
-        completion(Timeline(entries: [StaticEntry(date: .now)], policy: .never))
+        SlapView(data: entry.data, small: family == .systemSmall)
+            .widgetURL(AppLink.url("/app/slap"))
+            .brandBackground()
     }
 }
 
@@ -220,8 +221,19 @@ enum Fetch {
         if code == 401 { return WidgetData(signedOut: true) }
         guard code == 200, let s = try? JSONDecoder().decode(WidgetSummary.self, from: body) else { return WidgetData() }
         var out = WidgetData(summary: s)
-        if posters { out.posters = await thumbs(Array(s.movies.prefix(8))) }
+        if posters { out.posters = await thumbs(Array(s.movieList.prefix(8))) }
         return out
+    }
+
+    /// Slap's cover, small. It's on app.crcmz.me behind the sign-in, so it goes as you.
+    static func cover(_ s: String) async -> Data? {
+        guard let u = URL(string: s), u.host == base.host, let session = SharedSession.read() else { return nil }
+        var rq = URLRequest(url: u)
+        rq.timeoutInterval = 10
+        rq.setValue("psn_session=\(session)", forHTTPHeaderField: "Cookie")
+        guard let (d, _) = try? await URLSession.shared.data(for: rq), let img = UIImage(data: d) else { return nil }
+        let size = CGSize(width: 240, height: 240 * img.size.height / max(1, img.size.width))
+        return UIGraphicsImageRenderer(size: size).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }.jpegData(compressionQuality: 0.8)
     }
 
     /// Posters, small: a widget has a few MB of memory, and full posters would blow it.

@@ -105,7 +105,10 @@ struct WidgetGallery: View {
         movies: [MovieItem(title: "Dune: Part Two", year: "2024", poster: nil, imdb: "a", url: "/app/watch"),
                  MovieItem(title: "Interstellar", year: "2014", poster: nil, imdb: "b", url: "/app/watch"),
                  MovieItem(title: "The Dark Knight", year: "2008", poster: nil, imdb: "c", url: "/app/watch"),
-                 MovieItem(title: "The Matrix", year: "1999", poster: nil, imdb: "d", url: "/app/watch")]))
+                 MovieItem(title: "The Matrix", year: "1999", poster: nil, imdb: "d", url: "/app/watch")],
+        resume: [MovieItem(title: "Oppenheimer", year: "2023", poster: nil, imdb: "e", url: "/app/watch", progress: 0.35, left: "117 min left")]))
+    let playing = WidgetData(slap: SlapNow(title: "Digits", artist: "Young Thug", art: "", playing: true, loaded: true))
+    let idle = WidgetData(slap: SlapNow(title: "Money Trees", artist: "Kendrick Lamar", art: "", playing: false, loaded: false))
     let state = CRCMZLiveAttributes.ContentState(
         title: "Dune: Part Two", subtitle: "4 watching · moiz, Moose, Noor +1", count: 4, names: [],
         started: Date().timeIntervalSince1970 - 4200, progress: 0.42, progressLabel: "70 of 166 min", paused: false, url: "/app/watch/party")
@@ -113,13 +116,16 @@ struct WidgetGallery: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                tile(SlapView(data: playing, small: false), w: 338, h: 158)
+                tile(SlapView(data: idle, small: false), w: 338, h: 158)
                 LiveCard(kind: "watch", state: state).background(Brand.ink).clipShape(RoundedRectangle(cornerRadius: 22))
                 HStack(spacing: 16) {
                     tile(LiveNowView(data: data, large: false), w: 158, h: 158)
-                    tile(AddMovieView(), w: 158, h: 158)
+                    tile(SlapView(data: playing, small: true), w: 158, h: 158)
                 }
                 tile(LiveNowView(data: data, large: true), w: 338, h: 158)
                 tile(NewMoviesView(data: data, rows: 1), w: 338, h: 158)
+                tile(LiveNowAccessory(data: data).foregroundStyle(.white), w: 170, h: 72)
                 tile(LiveNowView(data: WidgetData(signedOut: true), large: false), w: 158, h: 158)
             }
             .padding()

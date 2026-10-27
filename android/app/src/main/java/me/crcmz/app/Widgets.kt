@@ -20,11 +20,12 @@ import java.util.concurrent.Executors
 /**
  * Home-screen widgets, fed by /api/widgets/summary (server.py) with the web view's own
  * sign-in cookie:
- *   Live now             what's on (Watch Party, Huddle, Listen Together, a tournament)
- *   New in the library   the newest films, each opens its page
- *   Add a movie          straight into the movie search
+ *   Live now   what's on (Watch Party, Huddle, Listen Together, a tournament)
+ *   Movies     Continue watching (resumes for the party), then the newest films
+ *   Slap       what's playing, with play / pause, previous and next (SlapWidget)
  * Refreshed when a widget asks (every 30 min), when a live update arrives, and when the
- * app comes to the front. Signed out: they say so and open the app.
+ * app comes to the front; Slap whenever the player changes. Signed out: they say so and
+ * open the app.
  */
 object WidgetData {
     private val pool = Executors.newSingleThreadExecutor()
@@ -67,7 +68,7 @@ object WidgetData {
         for ((cls, draw) in listOf<Pair<Class<*>, (Context) -> RemoteViews>>(
             LiveNowWidget::class.java to ::liveViews,
             MoviesWidget::class.java to ::movieViews,
-            AddMovieWidget::class.java to ::addViews,
+            SlapWidget::class.java to { c: Context -> SlapWidget.views(c) },
         )) {
             val ids = m.getAppWidgetIds(ComponentName(ctx, cls))
             if (ids.isNotEmpty()) {
@@ -124,40 +125,60 @@ object WidgetData {
     }
 
     private val posters = listOf(
-        arrayOf(R.id.mv_cell1, R.id.mv_img1, R.id.mv_title1), arrayOf(R.id.mv_cell2, R.id.mv_img2, R.id.mv_title2),
-        arrayOf(R.id.mv_cell3, R.id.mv_img3, R.id.mv_title3), arrayOf(R.id.mv_cell4, R.id.mv_img4, R.id.mv_title4),
+        arrayOf(R.id.mv_cell1, R.id.mv_img1, R.id.mv_title1, R.id.mv_bar1), arrayOf(R.id.mv_cell2, R.id.mv_img2, R.id.mv_title2, R.id.mv_bar2),
+        arrayOf(R.id.mv_cell3, R.id.mv_img3, R.id.mv_title3, R.id.mv_bar3), arrayOf(R.id.mv_cell4, R.id.mv_img4, R.id.mv_title4, R.id.mv_bar4),
     )
+
+    /** Films you're partway through first (with how far), then the newest in the library. */
+    private fun movieList(ctx: Context): List<JSONObject> {
+        val c = cached(ctx) ?: return emptyList()
+        val out = mutableListOf<JSONObject>()
+        val seen = mutableSetOf<String>()
+        for (key in listOf("continue", "movies")) {
+            val a = c.optJSONArray(key) ?: continue
+            for (i in 0 until a.length()) {
+                val m = a.getJSONObject(i)
+                if (seen.add(m.optString("title"))) out.add(m)
+            }
+        }
+        return out
+    }
 
     fun movieViews(ctx: Context): RemoteViews {
         val v = RemoteViews(ctx.packageName, R.layout.widget_movies)
+        val resuming = (cached(ctx)?.optJSONArray("continue")?.length() ?: 0) > 0
+        v.setTextViewText(R.id.mv_head, ctx.getString(if (resuming) R.string.widget_continue_head else R.string.widget_movies_head))
         v.setOnClickPendingIntent(R.id.mv_head, open(ctx, "/app/watch", 9200))
         v.setOnClickPendingIntent(R.id.mv_add, open(ctx, "/app/watch?add=1", 9201))
-        val movies = cached(ctx)?.optJSONArray("movies") ?: JSONArray()
+        val movies = movieList(ctx)
         posters.forEachIndexed { i, cell ->
-            if (i >= movies.length()) { v.setViewVisibility(cell[0], View.INVISIBLE); return@forEachIndexed }
-            val m = movies.getJSONObject(i)
+            if (i >= movies.size) { v.setViewVisibility(cell[0], View.INVISIBLE); return@forEachIndexed }
+            val m = movies[i]
             v.setViewVisibility(cell[0], View.VISIBLE)
-            v.setTextViewText(cell[2], m.optString("title"))
+            v.setTextViewText(cell[2], m.optString("left").ifBlank { m.optString("title") })
             poster(ctx, m.optString("poster"))?.let { b -> v.setImageViewBitmap(cell[1], b) } ?: v.setImageViewResource(cell[1], R.drawable.widget_poster_blank)
+            val p = m.optDouble("progress", -1.0)
+            if (p > 0) { v.setViewVisibility(cell[3], View.VISIBLE); v.setProgressBar(cell[3], 1000, (p * 1000).toInt(), false) }
+            else v.setViewVisibility(cell[3], View.GONE)
             v.setOnClickPendingIntent(cell[0], open(ctx, m.optString("url", "/app/watch"), 9210 + i))
         }
-        v.setViewVisibility(R.id.mv_empty, if (movies.length() == 0) View.VISIBLE else View.GONE)
+        v.setViewVisibility(R.id.mv_empty, if (movies.isEmpty()) View.VISIBLE else View.GONE)
         v.setTextViewText(R.id.mv_empty, ctx.getString(if (isSignedOut(ctx)) R.string.widget_signed_out else R.string.widget_no_movies))
         return v
     }
 
-    fun addViews(ctx: Context): RemoteViews =
-        RemoteViews(ctx.packageName, R.layout.widget_add).apply { setOnClickPendingIntent(R.id.add_root, open(ctx, "/app/watch?add=1", 9300)) }
-
     // Posters: small, decoded once, kept in memory (a widget update can't hold much).
     private val posterCache = object : android.util.LruCache<String, Bitmap>(12) {}
-    private fun poster(ctx: Context, url: String): Bitmap? {
-        if (url.isBlank()) return null
+    private fun poster(ctx: Context, path: String): Bitmap? {
+        if (path.isBlank()) return null
+        // Signed links from the server load by themselves; an older relative one needs the cookie.
+        val url = if (path.startsWith("/")) LauncherActivity.ORIGIN + path else path
         posterCache.get(url)?.let { return it }
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return null   // drawn again off the main thread
         return try {
             val c = URL(url).openConnection() as HttpURLConnection
             c.connectTimeout = 8000; c.readTimeout = 10_000
+            if (path.startsWith("/")) CookieManager.getInstance().getCookie(LauncherActivity.ORIGIN)?.let { c.setRequestProperty("Cookie", it) }
             val bytes = c.inputStream.use { it.readBytes() }
             c.disconnect()
             val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -182,4 +203,80 @@ abstract class CrcmzWidget : AppWidgetProvider() {
 
 class LiveNowWidget : CrcmzWidget()
 class MoviesWidget : CrcmzWidget()
-class AddMovieWidget : CrcmzWidget()
+
+/**
+ * Slap's player on the home screen. Playing (or paused) in the app: the song, its art and
+ * the buttons drive NativeAudio, same as the lock screen. Nothing loaded (or the app was
+ * closed): the last song, and play opens Slap to carry on (/app/slap?play=1).
+ */
+class SlapWidget : AppWidgetProvider() {
+    override fun onUpdate(ctx: Context, m: AppWidgetManager, ids: IntArray) = update(ctx)
+
+    /** The buttons, while something's loaded. */
+    class Control : android.content.BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            NativeAudio.control(intent.getStringExtra("action") ?: return)
+            update(ctx)   // nothing loaded any more (the app was closed): show Resume
+        }
+    }
+
+    companion object {
+        private const val LAST = "slap_widget_last"
+
+        fun update(ctx: Context) {
+            val m = AppWidgetManager.getInstance(ctx)
+            val ids = m.getAppWidgetIds(ComponentName(ctx, SlapWidget::class.java))
+            if (ids.isNotEmpty()) { val v = views(ctx); ids.forEach { m.updateAppWidget(it, v) } }
+        }
+
+        /** The song now, so the widget can show it after the app's gone. */
+        fun remember(ctx: Context, title: String, artist: String, art: ByteArray?) {
+            if (title.isBlank()) return
+            Push.prefs(ctx).edit().putString(LAST, JSONObject().put("title", title).put("artist", artist).toString()).apply()
+            art?.let { runCatching { java.io.File(ctx.filesDir, "slap_widget_art").writeBytes(it) } }
+        }
+
+        private fun control(ctx: Context, action: String, code: Int): PendingIntent = PendingIntent.getBroadcast(
+            ctx, code, Intent(ctx, Control::class.java).putExtra("action", action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        private fun artBitmap(bytes: ByteArray?): Bitmap? = bytes?.let {
+            val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(it, 0, it.size, o)
+            var s = 1
+            while (o.outWidth / (s * 2) >= 160) s *= 2
+            BitmapFactory.decodeByteArray(it, 0, it.size, BitmapFactory.Options().apply { inSampleSize = s })
+        }
+
+        fun views(ctx: Context): RemoteViews {
+            val v = RemoteViews(ctx.packageName, R.layout.widget_slap)
+            val now = NativeAudio.now()
+            v.setOnClickPendingIntent(R.id.slap_root, WidgetData.open(ctx, "/app/slap", 9400))
+            if (now != null) {
+                v.setTextViewText(R.id.slap_head, ctx.getString(if (now.playing) R.string.widget_slap_playing else R.string.widget_slap_paused))
+                v.setTextViewText(R.id.slap_title, now.title)
+                v.setTextViewText(R.id.slap_artist, now.artist)
+                artBitmap(now.art)?.let { v.setImageViewBitmap(R.id.slap_art, it) } ?: v.setImageViewResource(R.id.slap_art, R.drawable.widget_poster_blank)
+                v.setImageViewResource(R.id.slap_play, if (now.playing) R.drawable.ic_pause else R.drawable.ic_play)
+                v.setOnClickPendingIntent(R.id.slap_play, control(ctx, "toggle", 9401))
+                v.setOnClickPendingIntent(R.id.slap_next, control(ctx, "next", 9402))
+                v.setOnClickPendingIntent(R.id.slap_prev, control(ctx, "prev", 9403))
+                v.setViewVisibility(R.id.slap_prev, View.VISIBLE)
+                v.setViewVisibility(R.id.slap_next, View.VISIBLE)
+            } else {
+                val last = Push.prefs(ctx).getString(LAST, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
+                v.setTextViewText(R.id.slap_head, ctx.getString(if (last != null) R.string.widget_slap_last else R.string.widget_slap_head))
+                v.setTextViewText(R.id.slap_title, last?.optString("title") ?: ctx.getString(R.string.widget_slap_idle))
+                v.setTextViewText(R.id.slap_artist, last?.optString("artist") ?: ctx.getString(R.string.widget_slap_idle_sub))
+                val art = if (last != null) runCatching { java.io.File(ctx.filesDir, "slap_widget_art").readBytes() }.getOrNull() else null
+                artBitmap(art)?.let { v.setImageViewBitmap(R.id.slap_art, it) } ?: v.setImageViewResource(R.id.slap_art, R.drawable.widget_poster_blank)
+                v.setImageViewResource(R.id.slap_play, R.drawable.ic_play)
+                // Starting music needs the page (it keeps the queue): open Slap and carry on.
+                v.setOnClickPendingIntent(R.id.slap_play, WidgetData.open(ctx, "/app/slap?play=1", 9404))
+                v.setViewVisibility(R.id.slap_prev, View.GONE)
+                v.setViewVisibility(R.id.slap_next, View.GONE)
+            }
+            return v
+        }
+    }
+}

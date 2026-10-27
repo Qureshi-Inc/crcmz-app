@@ -19,7 +19,8 @@ class DebugLiveReceiver : BroadcastReceiver() {
     }
 }
 
-/** The three widgets, drawn with sample data, for screenshots (debug builds only). */
+/** The three widgets, drawn with sample data, for screenshots (debug builds only). Slap is
+ *  drawn twice: playing, then with nothing loaded (the last song and Resume). */
 class DebugWidgetsActivity : Activity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -30,7 +31,16 @@ class DebugWidgetsActivity : Activity() {
             col.addView(view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, h).apply { bottomMargin = 40 })
         }
         add(WidgetData.liveViews(this), 525)
-        Thread { WidgetData.movieViews(this).let { v -> runOnUiThread { add(v, 640); add(WidgetData.addViews(this), 300) } } }.start()
+        Thread {
+            val cover = runCatching { java.net.URL("https://images.metahub.space/poster/small/tt0133093/img").readBytes() }.getOrNull()
+            val movies = WidgetData.movieViews(this)
+            NativeAudio.snapshot = NativeAudio.Now("Digits", "Young Thug", cover, true)
+            val playing = SlapWidget.views(this)
+            NativeAudio.snapshot = null
+            SlapWidget.remember(this, "Money Trees", "Kendrick Lamar", cover)
+            val idle = SlapWidget.views(this)
+            runOnUiThread { add(movies, 640); add(playing, 360); add(idle, 360) }
+        }.start()
         setContentView(ScrollView(this).apply { addView(col) })
     }
     companion object {
@@ -38,6 +48,8 @@ class DebugWidgetsActivity : Activity() {
           {"key":"watch:crcmz","kind":"watch","title":"Dune: Part Two","subtitle":"4 watching · moiz, Moose, Noor +1","progress":0.42,"progressLabel":"70 of 166 min","url":"/app/watch/party"},
           {"key":"slap:together","kind":"slap","title":"Digits · Young Thug","subtitle":"3 listening · ASamad89, mutasif, moiz","progress":0.6,"progressLabel":"1:52 / 3:07","url":"/app/slap?join=together"},
           {"key":"tourney:t1","kind":"tourney","title":"FC 27 Cup","subtitle":"8 players · 5 of 12 matches played","progress":0.41,"progressLabel":"Match 6 of 12","url":"/app/tourney/t1"}],
+          "continue":[
+          {"title":"Oppenheimer","poster":"https://images.metahub.space/poster/medium/tt15398776/img","url":"/app/watch?resume=x","progress":0.35,"left":"117 min left"}],
           "movies":[
           {"title":"Dune: Part Two","poster":"https://images.metahub.space/poster/medium/tt15239678/img","url":"/app/watch?m=tt15239678"},
           {"title":"Interstellar","poster":"https://images.metahub.space/poster/medium/tt0816692/img","url":"/app/watch?m=tt0816692"},

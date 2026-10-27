@@ -30,9 +30,20 @@
     <string name="widget_nothing_live">Nothing live right now. Tap to start a party.</string>
     <string name="widget_signed_out">Open CRCMZ to sign in.</string>
     <string name="widget_movies_head">NEW IN THE LIBRARY</string>
+    <string name="widget_continue_head">CONTINUE WATCHING</string>
     <string name="widget_no_movies">No movies yet. Tap + to add one.</string>
     <string name="widget_add_label">Add a movie</string>
+    <string name="widget_slap_label">Slap</string>
+    <string name="widget_slap_head">SLAP</string>
+    <string name="widget_slap_playing">NOW PLAYING</string>
+    <string name="widget_slap_paused">PAUSED</string>
+    <string name="widget_slap_last">LAST PLAYED</string>
+    <string name="widget_slap_idle">Shuffle the library</string>
+    <string name="widget_slap_idle_sub">Tap play to start Slap</string>
+    <string name="widget_slap_play">Play or pause</string>
+    <string name="widget_slap_prev">Previous</string>
+    <string name="widget_slap_next">Next</string>
     <string name="widget_live_desc">What the squad is doing right now: Watch Party, Huddle, Listen Together, tournaments</string>
-    <string name="widget_movies_desc">The newest movies in the library</string>
-    <string name="widget_add_desc">Find a movie and add it to the library</string>
+    <string name="widget_movies_desc">Continue watching, then the newest movies in the library</string>
+    <string name="widget_slap_desc">Slap: what\'s playing, with play, pause and skip</string>
 </resources>
