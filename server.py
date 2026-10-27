@@ -783,7 +783,7 @@ def _portal_page(error: str = "", ok: str = "", known_mm: str = "") -> str:
 
 import hashlib as _hashlib, base64 as _base64, secrets as _secrets
 import hmac as _hmac, ipaddress as _ipaddress, html as _html
-from urllib.parse import quote as _quote, urlencode as _urlencode
+from urllib.parse import quote as _quote, unquote as _unquote, urlencode as _urlencode
 from itsdangerous import URLSafeTimedSerializer as _USTS, BadSignature, SignatureExpired
 
 ZITADEL_ISSUER        = os.environ.get("ZITADEL_ISSUER", "https://auth.crcmz.me")
@@ -834,6 +834,10 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # Public key material only — WatchParty fetches this to verify
                # Watch Tickets. Never contains a private key.
                "/api/watch/jwks.json",
+               # Library posters for the home-screen widgets, which load images without
+               # the app's cookie: the handler checks a signed link for that one film
+               # (the id is a query param so this stays an exact path).
+               "/api/widgets/poster",
                # The WhatsApp bridge is a machine, not a person: it has no
                # session cookie and authenticates with WA_INGEST_SECRET, which
                # the endpoint itself requires. Without this the auth gate 401s
@@ -6934,24 +6938,90 @@ async def live_ios_token(request: Request):
     return JSONResponse({"ok": True})
 
 
+_WIDGET_POSTER = _re.compile(r"^/api/watch/movies/poster/([0-9a-f]{32})$")
+_WIDGET_POSTER_AGE = 14 * 86400
+
+
+def _widget_signer() -> _USTS:
+    return _USTS(_EFFECTIVE_SESSION_SECRET, salt="widget-poster")
+
+
+def _widget_poster(path: str) -> str:
+    """A poster a widget can load by itself: widgets fetch images without the app's cookie,
+    so library posters get a signed link (one film's poster, nothing else). Outside
+    artwork is already a full URL."""
+    m = _WIDGET_POSTER.match(path or "")
+    if m:
+        return f"https://{_PUBLIC_HOST}/api/widgets/poster?id={m.group(1)}&t={_widget_signer().dumps(m.group(1))}"
+    return path if (path or "").startswith("https://") else ""
+
+
+@app.get("/api/widgets/poster")
+async def widgets_poster(id: str = "", t: str = ""):
+    """A library poster for a widget, by the signed link /api/widgets/summary hands out."""
+    try:
+        ok = _widget_signer().loads(t, max_age=_WIDGET_POSTER_AGE) == id
+    except (BadSignature, SignatureExpired):
+        ok = False
+    jf_id = id
+    if not ok or not _re.fullmatch(r"[0-9a-f]{32}", jf_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    r = await _slap._jf("GET", f"/Items/{jf_id}/Images/Primary", params={"maxWidth": "300", "quality": "80"})
+    if r.status_code != 200:
+        return JSONResponse({"error": "no poster"}, status_code=404)
+    return Response(r.content, media_type=r.headers.get("content-type", "image/jpeg"),
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
+def _widget_continue(sub: str) -> list[dict]:
+    """Library films you started and didn't finish, newest first (the Watch home's row)."""
+    out = []
+    for it in _watch_history.list_history(user_id=sub, limit=12, include_finished=False):
+        mine = next((v for v in it["viewers"] if v["user_id"] == sub), None)
+        url = it["url"]
+        if not mine or mine["finished"] or (mine["position"] or 0) <= 60 or not url.startswith("/api/watch/movies/stream/"):
+            continue
+        dur = float(it.get("duration") or 0)
+        pos = float(mine["position"] or 0)
+        left = max(0, round((dur - pos) / 60)) if dur else 0
+        out.append({"title": it.get("title") or "", "year": str(it.get("year") or ""), "poster": it.get("poster") or "",
+                    "url": "/app/watch?resume=" + _quote(url, safe=""),
+                    "progress": round(min(1.0, pos / dur), 3) if dur else 0.0,
+                    "left": f"{left} min left" if left else ""})
+    return out[:8]
+
+
 @app.get("/api/widgets/summary")
 async def widgets_summary(request: Request):
-    """Everything the home-screen widgets show (iOS and Android): what's live right now and
-    the newest films in the library."""
+    """Everything the home-screen widgets show (iOS and Android): what's live right now,
+    the films you're partway through, and the newest films in the library."""
     s = _get_session(request)
     if not s:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     live_now = [{k: it.get(k) for k in ("key", "kind", "title", "subtitle", "count", "progress", "progressLabel", "paused", "url", "started")}
                 for it in _live.current()]
+    for it in live_now:
+        it["subtitle"] = it.get("subtitle") or ""
+        it["title"] = it.get("title") or ""
+        it["url"] = it.get("url") or "/app"
     movies: list[dict] = []
+    resume: list[dict] = []
     try:
         lib = await _movies.library(s["sub"])
         rows = sorted(lib.get("movies") or [], key=lambda m: str(m.get("added") or ""), reverse=True)[:8]
-        movies = [{"title": m.get("title") or "", "year": m.get("year") or "", "poster": m.get("poster") or "",
+        movies = [{"title": m.get("title") or "", "year": m.get("year") or "", "poster": _widget_poster(m.get("poster") or ""),
                    "imdb": m.get("imdb") or "", "url": f"/app/watch?m={m['imdb']}" if m.get("imdb") else "/app/watch"} for m in rows]
     except Exception as e:  # noqa: BLE001
         logger.info("widgets: library unavailable: %s", e)
-    return JSONResponse({"live": live_now, "movies": movies, "at": int(_time.time())}, headers={"Cache-Control": "no-store"})
+    try:
+        resume = await asyncio.to_thread(_widget_continue, s["sub"])
+        posters = await _movies.stream_posters([_unquote(r["url"].split("=", 1)[1]) for r in resume if not r["poster"]])
+        for r in resume:
+            r["poster"] = _widget_poster(r["poster"] or posters.get(_unquote(r["url"].split("=", 1)[1]), ""))
+    except Exception as e:  # noqa: BLE001
+        logger.info("widgets: no continue watching: %s", e)
+    return JSONResponse({"live": live_now, "movies": movies, "continue": resume, "at": int(_time.time())},
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/huddle/live")

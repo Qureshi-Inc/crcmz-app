@@ -433,6 +433,61 @@ def http_tests():
         finally:
             client.cookies.clear()
 
+    def t_widget_posters_are_signed_links():
+        # Widgets load images without the app's cookie: library posters get a signed link.
+        jf = "a" * 32
+        url = server._widget_poster(f"/api/watch/movies/poster/{jf}")
+        assert url.startswith(f"https://app.crcmz.me/api/widgets/poster?id={jf}&t="), url
+        assert server._widget_poster("https://image.tmdb.org/x.jpg") == "https://image.tmdb.org/x.jpg"
+        assert server._widget_poster("/api/elsewhere") == ""
+        token = url.split("t=", 1)[1]
+        real = server._slap._jf
+        calls = []
+
+        async def fake_jf(method, path, **kw):
+            calls.append(path)
+            return type("R", (), {"status_code": 200, "content": b"img", "headers": {"content-type": "image/jpeg"}})()
+        server._slap._jf = fake_jf
+        try:
+            assert client.get(f"/api/widgets/poster?id={jf}&t={token}").content == b"img"
+            assert client.get(f"/api/widgets/poster?id={'b' * 32}&t={token}").status_code == 404   # one film's poster only
+            assert client.get(f"/api/widgets/poster?id={jf}&t=forged").status_code == 404
+            assert client.get(f"/api/widgets/poster?id={jf}").status_code == 404
+            assert calls == [f"/Items/{jf}/Images/Primary"], calls
+        finally:
+            server._slap._jf = real
+
+    def t_widget_summary_has_continue_watching():
+        assert client.get("/api/widgets/summary").status_code == 401
+        real_hist, real_lib, real_posters = server._watch_history.list_history, server._movies.library, server._movies.stream_posters
+        stream = "/api/watch/movies/stream/" + "c" * 32 + "/master.m3u8"
+        server._watch_history.list_history = lambda **kw: [
+            {"url": stream, "title": "Dune", "year": 2021, "poster": "", "duration": 6000,
+             "viewers": [{"user_id": "zit-user-1", "position": 1500, "finished": False}]},
+            {"url": "https://youtu.be/x", "title": "Clip", "duration": 100,
+             "viewers": [{"user_id": "zit-user-1", "position": 80, "finished": False}]},
+        ]
+
+        async def lib(sub):
+            return {"movies": [{"title": "Heat", "year": "1995", "imdb": "tt1", "poster": "/api/watch/movies/poster/" + "d" * 32, "added": "2026"}]}
+
+        async def posters(urls):
+            return {u: "/api/watch/movies/poster/" + "c" * 32 for u in urls}
+        server._movies.library, server._movies.stream_posters = lib, posters
+        client.cookies.set(COOKIE, session_cookie())
+        try:
+            body = client.get("/api/widgets/summary").json()
+            assert [m["title"] for m in body["movies"]] == ["Heat"]
+            assert body["movies"][0]["poster"].startswith("https://app.crcmz.me/api/widgets/poster?id=" + "d" * 32)
+            [c] = body["continue"]                      # the YouTube clip isn't a library film
+            assert c["title"] == "Dune" and c["progress"] == 0.25 and c["left"] == "75 min left", c
+            assert c["url"] == "/app/watch?resume=%2Fapi%2Fwatch%2Fmovies%2Fstream%2F" + "c" * 32 + "%2Fmaster.m3u8", c["url"]
+            assert c["poster"].startswith("https://app.crcmz.me/api/widgets/poster?id=" + "c" * 32)
+            assert all(isinstance(it["subtitle"], str) for it in body["live"])
+        finally:
+            server._watch_history.list_history, server._movies.library, server._movies.stream_posters = real_hist, real_lib, real_posters
+            client.cookies.clear()
+
     for name, fn in list(locals().items()):
         if name.startswith("t_") and callable(fn):
             check("http/" + name[2:], fn)

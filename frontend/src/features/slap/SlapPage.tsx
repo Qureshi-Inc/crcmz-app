@@ -14,7 +14,7 @@ import { Discover } from './Discover'
 import { Listen } from './Listen'
 import { Stats } from './Stats'
 import { Together } from './Together'
-import { joinTogether, playList, usePlayer } from './player'
+import { current, getState, joinTogether, playList, toggle, usePlayer } from './player'
 import { HelpLink } from '../../components/HelpLink'
 
 type Tab = 'discover' | 'listen' | 'together' | 'stats'
@@ -69,6 +69,17 @@ export function SlapPage() {
     playList([t])
     setParams((p) => { const n = new URLSearchParams(p); n.delete('song'); return n }, { replace: true })
   }, [songId, lib.data, setParams])
+
+  // ?play=1 (the Slap widget's Resume): carry on with your queue, or shuffle the library.
+  const resumed = useRef(false)
+  useEffect(() => {
+    if (!params.has('play') || resumed.current) return
+    if (!current() && !lib.data) return
+    resumed.current = true
+    if (current()) { if (!getState().playing) toggle() }
+    else if (lib.data?.tracks.length) playList(lib.data.tracks, 0, { shuffle: true })
+    setParams((p) => { const n = new URLSearchParams(p); n.delete('play'); return n }, { replace: true })
+  }, [params, lib.data, setParams])
 
   function setTab(t: string) {
     setParams((p) => {

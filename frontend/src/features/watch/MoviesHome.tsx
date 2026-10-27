@@ -59,6 +59,18 @@ function Movies() {
     return () => window.clearTimeout(t)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const party = usePartyPlay()
+  // The Movies widget's Continue watching opens /watch?resume=<stream url>: play it for
+  // the party from where you left off, as the row here does.
+  useEffect(() => {
+    const url = params.get('resume')
+    if (!url) return
+    patch({ resume: null }, true)
+    if (!isMovieStream(url)) return
+    void listHistory({ mine: true }).then((h) => {
+      const it = h.items.find((x) => x.url === url)
+      party.play(url, it?.title ?? '', it ? resumeAt(it) : 0)
+    }).catch(() => party.play(url, ''))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="page mv-home">
