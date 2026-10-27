@@ -244,6 +244,8 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
         shell.pageChanged(webView.url)
         flushTokens()
         SharedSession.save(from: webView.configuration.websiteDataStore.httpCookieStore)
+        // Live Activity tokens that waited for a session go now (the copy above is async).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { LiveActivities.flush() }
         #if DEBUG
         // Simulator check of the native bar without signing in: -crcmzShellDemo YES.
         if UserDefaults.standard.bool(forKey: "crcmzShellDemo") {

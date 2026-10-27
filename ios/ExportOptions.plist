@@ -12,6 +12,7 @@
 		<key>me.crcmz.app</key><string>CRCMZ App Store</string>
 		<key>me.crcmz.app.share</key><string>CRCMZ Share App Store</string>
 		<key>me.crcmz.app.broadcast</key><string>CRCMZ Broadcast App Store</string>
+		<key>me.crcmz.app.widgets</key><string>CRCMZ Widgets App Store</string>
 	</dict>
 	<key>uploadSymbols</key><true/>
 	<key>manageAppVersionAndBuildNumber</key><false/>

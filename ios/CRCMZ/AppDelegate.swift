@@ -1,4 +1,5 @@
 import AVFoundation
+import SwiftUI
 import UIKit
 
 /// The CRCMZ iOS app: app.crcmz.me/app full screen (WebController), plus what a web page
@@ -15,9 +16,23 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         window = UIWindow(frame: UIScreen.main.bounds)
         window?.rootViewController = web
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-crcmzWidgetDemo") {
+            window?.rootViewController = UIHostingController(rootView: WidgetGallery())
+        }
+        #endif
         window?.makeKeyAndVisible()
         Push.shared.start(web: web)
         Calls.shared.start(web: web)
+        LiveActivities.start()
+        return true
+    }
+
+    /// A widget or a Live Activity: crcmz://open?path=/app/… opens that page.
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        guard url.scheme == "crcmz" else { return false }
+        let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "path" })?.value
+        web.open(path: path ?? "/app")
         return true
     }
 

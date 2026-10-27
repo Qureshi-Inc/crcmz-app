@@ -20,18 +20,19 @@ settings:
     CODE_SIGN_IDENTITY: Apple Distribution
     PROVISIONING_PROFILE_SPECIFIER: CRCMZ App Store
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "16"
+    CURRENT_PROJECT_VERSION: "17"
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
   CRCMZ:
     type: application
     platform: iOS
-    sources: [CRCMZ]
+    sources: [CRCMZ, Shared]
     dependencies:
       - package: LiveKit
       - target: CRCMZShare
       - target: CRCMZBroadcast
+      - target: CRCMZWidgets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.crcmz.app
@@ -82,5 +83,27 @@ targets:
         PRODUCT_NAME: CRCMZBroadcast
         INFOPLIST_FILE: CRCMZBroadcast/Info.plist
         CODE_SIGN_ENTITLEMENTS: CRCMZBroadcast/CRCMZBroadcast.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
+
+  # Widgets (Live now, New in the library, Add a movie) and the Live Activity's looks.
+  # Reads the app's session from the keychain group the share extension uses.
+  CRCMZWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - CRCMZWidgets
+      - Shared
+      - path: CRCMZShare/SharedSession.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.crcmz.app.widgets
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: Apple Distribution
+        "CODE_SIGN_IDENTITY[sdk=iphoneos*]": Apple Distribution
+        PROVISIONING_PROFILE_SPECIFIER: CRCMZ Widgets App Store
+        PRODUCT_NAME: CRCMZWidgets
+        INFOPLIST_FILE: CRCMZWidgets/Info.plist
+        CODE_SIGN_ENTITLEMENTS: CRCMZWidgets/CRCMZWidgets.entitlements
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES
