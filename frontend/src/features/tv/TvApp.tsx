@@ -4,10 +4,11 @@
 // The party engine is the phone's (features/watch/session.ts); only the screens differ.
 // Phones never load this (App.tsx lazy-loads it when lib/tv.ts says we're on a TV).
 import '../../styles/tv.css'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Toaster } from '../../components/toast'
+import { newerBuild } from '../../components/UpdateStrip'
 import { ApiError } from '../../lib/http'
 import { getNow } from '../../lib/movies'
 import { redirectToLogin } from '../../lib/session'
@@ -26,6 +27,7 @@ export function TvApp() {
   const loc = useLocation()
   const onPlay = loc.pathname === '/tv/play'
   useSignInProbe()
+  useAutoUpdate(onPlay)
   return (
     <div className="tv">
       <Routes>
@@ -38,6 +40,29 @@ export function TvApp() {
       <Toaster />
     </div>
   )
+}
+
+/** A TV keeps one page loaded for days, so it never sees a deploy. Check when the app comes
+ *  back to the front and every 10 minutes, and reload onto the new build by itself, but
+ *  never in the middle of a movie: then it waits until you're back on the home screen. */
+function useAutoUpdate(onPlay: boolean) {
+  const pending = useRef(false)
+  const playing = useRef(onPlay)
+  playing.current = onPlay
+  useEffect(() => { if (!onPlay && pending.current) location.reload() }, [onPlay])
+  useEffect(() => {
+    let last = 0
+    const check = async () => {
+      if (document.hidden || pending.current || Date.now() - last < 60_000) return
+      last = Date.now()
+      if (!(await newerBuild())) return
+      pending.current = true
+      if (!playing.current) location.reload()
+    }
+    const iv = window.setInterval(check, 10 * 60_000)
+    document.addEventListener('visibilitychange', check)
+    return () => { window.clearInterval(iv); document.removeEventListener('visibilitychange', check) }
+  }, [])
 }
 
 /** Signed out (the cookie expired on the TV): off to sign in, and back here after. */

@@ -106,8 +106,10 @@ export type WatchState = {
   /** Companion mode (on a phone): the id of this person's TV this phone is the camera,
    *  mic and remote of; '' when off. */
   companion: string
-  /** This person's TV, in the party right now ('' if none): the phone can be its companion. */
+  /** This person's TV (or other device), in the party right now ('' if none): the phone can be its companion. */
   myTv: string
+  /** …and it says it's a TV. */
+  myTvIsTv: boolean
   /** On the TV: a phone is its companion right now. */
   hasCompanion: boolean
   /** The room's play state, for a companion's remote (it has no video of its own). */
@@ -151,7 +153,7 @@ let state: WatchState = {
   prefs: readLocal<Record<string, { v: number; m: boolean }>>(PREFS_KEY, {}),
   fs: false, subs: [], sub: null, ytCc: false, extracting: false, extractUntil: 0, title: '', needGesture: false, histTick: 0,
   mics: [], speakers: [], micId: '', speakerId: '', orbPos: readOrbPos(),
-  companion: '', myTv: '', hasCompanion: false, roomPlaying: false,
+  companion: '', myTv: '', myTvIsTv: false, hasCompanion: false, roomPlaying: false,
 }
 let clock: Clock = { t: 0, dur: NaN, buf: 0, live: false }
 const listeners = new Set<() => void>()
@@ -891,7 +893,7 @@ export function leave() {
   lockScreen.release('watch')
   exitFs()
   rawRoster = []; rawPresence = { count: 0, viewers: [] }
-  set({ status: 'idle', roster: [], presence: { count: 0, viewers: [] }, chat: [], error: '', companion: '', myTv: '', hasCompanion: false })
+  set({ status: 'idle', roster: [], presence: { count: 0, viewers: [] }, chat: [], error: '', companion: '', myTv: '', myTvIsTv: false, hasCompanion: false })
 }
 export function rejoin() {
   kicked = false
@@ -1447,7 +1449,7 @@ function syncPeers() {
   const r = lkRoom
   const seen = new Set<string>()
   const comps = new Set<string>()
-  let tv = '', mine = false
+  let tv = '', tvIsTv = false, mine = false
   if (r) {
     const me = r.localParticipant.identity.split('#')[0]
     const byId: Record<string, LkParticipant[]> = {}
@@ -1456,7 +1458,9 @@ function syncPeers() {
       ;(byId[id] ||= []).push(p)
       if (p.attributes?.companion === '1') comps.add(p.identity.split('#')[1] || '')
       if (p.identity.split('#')[0] === me) {
-        if (p.attributes?.device === 'tv' && p.attributes?.companion !== '1') tv = id
+        // My other device in the party: a TV first, else any (a TV still on an older
+        // page doesn't say it's a TV yet; a laptop works the same way).
+        if (p.attributes?.companion !== '1' && id !== state.clientId && (!tv || p.attributes?.device === 'tv')) { tv = id; tvIsTv = p.attributes?.device === 'tv' }
         if (p.attributes?.companion === '1' && id === state.clientId) mine = true
       }
     }
@@ -1483,9 +1487,10 @@ function syncPeers() {
   localStream = state.call.on ? (cam && cam.readyState === 'live' ? streamOf(cam) : localStream && !cam ? localStream : null) : null
   const compsKey = [...comps].sort().join(',')
   if (compsKey !== companionsKey) { companionsKey = compsKey; companions = comps; showPeople() }
-  if (tv !== state.myTv || mine !== state.hasCompanion) {
+  if (tv !== state.myTv || tvIsTv !== state.myTvIsTv || mine !== state.hasCompanion) {
     if (mine !== state.hasCompanion) log(mine ? 'companion.joined' : 'companion.left')
-    set({ myTv: tv, hasCompanion: mine })
+    if (tv !== state.myTv) log('companion.found', { other: tv.slice(0, 8), tv: tvIsTv })
+    set({ myTv: tv, myTvIsTv: tvIsTv, hasCompanion: mine })
   }
   bumpRtc()
 }

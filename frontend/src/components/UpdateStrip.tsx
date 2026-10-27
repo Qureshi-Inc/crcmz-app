@@ -10,6 +10,17 @@ function loaded(): string | null {
   return s?.src.match(BUNDLE)?.[0] ?? null
 }
 
+/** True when the site has a newer build than this page (false on a dev server or offline). */
+export async function newerBuild(): Promise<boolean> {
+  const mine = loaded()
+  if (!mine) return false
+  try {
+    const html = await (await fetch('/app/', { cache: 'no-store', credentials: 'same-origin' })).text()
+    const live = html.match(BUNDLE)?.[0]
+    return !!live && live !== mine
+  } catch { return false }
+}
+
 export function UpdateStrip() {
   const [ready, setReady] = useState(false)
   useEffect(() => {

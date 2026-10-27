@@ -240,10 +240,12 @@ function CompanionOffer({ s }: { s: WatchState }) {
   const [busy, setBusy] = useState(false)
   return (
     <section className="glass wp-comp-offer" aria-label="Companion mode">
-      <span className="wp-comp-icon" aria-hidden="true">📺</span>
+      <span className="wp-comp-icon" aria-hidden="true">{s.myTvIsTv ? '📺' : '🖥️'}</span>
       <span className="wp-comp-text">
-        <span className="wp-comp-h">You're watching on your TV</span>
-        <span className="meta">Use this phone as the TV's camera and mic, and its remote. The movie stays on the TV.</span>
+        <span className="wp-comp-h">{s.myTvIsTv ? "You're watching on your TV" : "You're in the party on another device too"}</span>
+        <span className="meta">{s.myTvIsTv
+          ? "Use this phone as the TV's camera and mic, and its remote. The movie stays on the TV."
+          : 'Use this phone as its camera and mic, and its remote. The movie stays on the other screen.'}</span>
       </span>
       <button type="button" className="btn btn-primary" disabled={busy || s.call.busy}
         onClick={() => { setBusy(true); void startCompanion().finally(() => setBusy(false)) }}>
@@ -261,7 +263,7 @@ function Companion({ s }: { s: WatchState }) {
   return (
     <div className="wp-main wp-comp">
       <section className="glass wp-comp-remote" aria-label="Your TV">
-        <p className="disc-kicker">Companion mode · the movie plays on your TV</p>
+        <p className="disc-kicker">Companion mode · the movie plays on your {s.myTvIsTv ? 'TV' : 'other screen'}</p>
         <h2 className="section-h2 wp-comp-title">{label || (s.video ? 'Watch Party' : 'Nothing playing yet')}</h2>
         {s.video && <p className="meta num">{s.roomPlaying ? 'Playing' : 'Paused'} · {fmtTime(t)}</p>}
         <div className="wp-comp-pad" role="group" aria-label="Remote">
