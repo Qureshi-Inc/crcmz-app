@@ -14,6 +14,7 @@ import { muteOtherCalls, registerCall } from '../../lib/calls'
 import { ApiError, request } from '../../lib/http'
 import { startActivity, stopActivity } from '../../lib/activity'
 import { readLocal, writeLocal } from '../../lib/media'
+import { isMovieStream } from '../../lib/movies'
 import { openPip, pipSupported, setPipStream, stopPip, streamOf } from '../../lib/pip'
 import * as lockScreen from '../../lib/mediaSession'
 import {
@@ -198,7 +199,14 @@ function flushLog() {
     if (!r || r.status === 429 || r.status >= 500) ring.unshift(...events.slice(-200))
   })
 }
-const snap = () => ({ status: state.status, video: short(state.video), kind: state.kind, t: time(), playing: isPlaying(), call: state.call.on, peers: Object.keys(peers).length })
+const snap = () => ({
+  status: state.status, video: short(state.video), kind: state.kind, t: time(), playing: isPlaying(), call: state.call.on, peers: Object.keys(peers).length,
+  // In the call: my mic, and everyone's mic as the call server last measured it (0..1).
+  ...(lkRoom ? {
+    me: { mic: !state.call.muted && state.call.on, lvl: Math.round(micLive * 100) / 100 },
+    talk: [...lkRoom.remoteParticipants.values()].map((p) => ({ n: nameOf(clientOf(p)), mic: !!p.getTrackPublication(SRC.mic) && !p.getTrackPublication(SRC.mic)!.isMuted, lvl: Math.round(((p as { audioLevel?: number }).audioLevel ?? 0) * 100) / 100 })),
+  } : {}),
+})
 function logError(msg: string) {
   const k = msg.slice(0, 80)
   errSeen[k] = (errSeen[k] || 0) + 1
@@ -334,6 +342,9 @@ export function attachVideo(el: HTMLVideoElement | null) {
       resumed: lastResume ? { ...lastResume, ago: Math.round((Date.now() - lastResume.at) / 1000), at: undefined } : null,
       segs: recentSegs(),
     }, 'error')
+    // A decode error on a library film is almost always a transcode that restarted under
+    // us: pick it up again on a fresh one, once, before showing anyone an error.
+    if (e?.code === 3 && autoRetry('decode')) return
     set({ mediaError: 'failed' })
   })
   el.addEventListener('stalled', () => log('video.stalled', { ...mediaSnap(el), segs: recentSegs().slice(-3) }, 'warn'))
@@ -503,15 +514,25 @@ function seekOnMeta() {
   pendingTS = 0
   v.addEventListener('loadedmetadata', () => { v.currentTime = t }, { once: true })
 }
+// A library film is one transcode per viewer on the server. Retrying asks for a fresh one
+// (/stream/<id>~<gen>/…): the old one may be half gone (Jellyfin stops an idle transcode,
+// e.g. after a long pause, and a restarted one's chunks don't line up with what's
+// buffered: "Parsed buffers not in DTS sequence").
+let streamGen = 0
+const srcFor = (url: string) => (streamGen && isMovieStream(url) ? url.replace(/(\/stream\/[0-9a-f]{32})\//, `$1~${streamGen}/`) : url)
+const streamId = (url: string) => /\/stream\/([0-9a-f]{32})\//.exec(url)?.[1] ?? ''
+let autoRetryAt = 0
+
 function mountHls(url: string) {
   const v = video
   if (!v) return
+  const src = srcFor(url)
   const which = (e: typeof engine) => { engine = e; log('video.engine', { engine: e, ua: uaKind(), resumeAt: pendingTS ? r1(pendingTS) : 0 }) }
-  if (v.canPlayType('application/vnd.apple.mpegurl')) { which('native'); v.src = url; seekOnMeta(); return }
+  if (v.canPlayType('application/vnd.apple.mpegurl')) { which('native'); v.src = src; seekOnMeta(); return }
   loadScript('https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js').then(() => {
     const H = window.Hls
     if (state.video !== url) return
-    if (!H || !H.isSupported()) { which('native'); v.src = url; return }
+    if (!H || !H.isSupported()) { which('native'); v.src = src; return }
     which('hls.js')
     const h = new H()
     hls = h
@@ -528,12 +549,12 @@ function mountHls(url: string) {
           ...(d.fatal ? { segs: recentSegs() } : {}),
         }, d.fatal ? 'error' : 'warn')
       }
-      if (d.fatal) set({ mediaError: 'failed' })
+      if (d.fatal && !(d.type === 'mediaError' && autoRetry('hls.' + d.details))) set({ mediaError: 'failed' })
     })
-    h.loadSource(url)
+    h.loadSource(src)
     h.attachMedia(v)
     if (pendingTS) { const t = pendingTS; pendingTS = 0; h.once(H.Events.MANIFEST_PARSED, () => { v.currentTime = t }) }
-  }).catch(() => { which('native'); v.src = url })
+  }).catch(() => { which('native'); v.src = src })
 }
 function mountYt(id: string) {
   const box = ytBox
@@ -924,13 +945,22 @@ export function watchTogether(url: string, title: string, resumeAt = 0) {
   pendingHost = url
 }
 export function clearVideo() { set({ error: '' }); sock?.emit('CMD:host', '') }
+/** Once per 20 s: retry a library film by itself instead of showing the error. */
+function autoRetry(why: string): boolean {
+  if (!isMovieStream(state.video) || Date.now() - autoRetryAt < 20_000) return false
+  autoRetryAt = Date.now()
+  log('video.autoretry', { why, t: r1(time() ?? 0) }, 'warn')
+  retryMedia()
+  return true
+}
 /** Reload this viewer's stream without touching the room. Fixes transient Jellyfin errors. */
 export function retryMedia() {
   const url = state.video
   if (!url) return
   const ts = time()
   if (ts !== null && ts > 5) pendingTS = ts
-  log('video.retry', { video: short(url), ts })
+  streamGen = Date.now() % 1_000_000_000
+  log('video.retry', { video: short(url), ts, gen: streamGen })
   mount(url)
 }
 
@@ -1003,7 +1033,7 @@ function reloadStream(burn: number | null) {
   burned = burn
   const at = v.currentTime
   const wasPlaying = !v.paused
-  const src = burn === null ? state.video : `${state.video}?burn=${burn}`
+  const src = burn === null ? srcFor(state.video) : `${srcFor(state.video)}?burn=${burn}`
   const resume = () => { v.currentTime = at; if (wasPlaying) void v.play().catch(() => {}) }
   if (hls) {
     hls.once(window.Hls!.Events.MANIFEST_PARSED, resume)
@@ -1141,11 +1171,36 @@ function _startIntervals() {
   _tickIv  = window.setInterval(tick, 250)
   _flushIv = window.setInterval(() => { flushLog() }, 10_000)
   _heartIv = window.setInterval(() => { log('heartbeat', snap(), 'debug') }, 30_000)
+  _keepIv = window.setInterval(keepTranscode, 20_000)
+  _stallIv = window.setInterval(stallWatch, 1000)
+}
+let _stallIv = 0
+// Playing (not paused) a library film, and the picture hasn't moved for 15 s: the stream
+// is stuck without ever raising an error (a stalled transcode). Pick it up on a fresh one.
+let progress = { t: -1, at: 0 }
+function stallWatch() {
+  const v = video
+  if (!state.active || state.kind !== 'file' || !v || v.paused || v.ended || !isMovieStream(state.video) || state.mediaError) { progress = { t: -1, at: 0 }; return }
+  if (Math.abs(v.currentTime - progress.t) > 0.2) { progress = { t: v.currentTime, at: Date.now() }; return }
+  if (Date.now() - progress.at < 15_000) return
+  log('video.stuck', { ...mediaSnap(v), segs: recentSegs().slice(-3) }, 'warn')
+  progress = { t: -1, at: 0 }
+  if (!autoRetry('stall')) set({ mediaError: 'failed' })
+}
+let _keepIv = 0
+/** Paused on a library film: tell the server we're still here, so Jellyfin keeps this
+ *  viewer's transcode instead of stopping it (a restarted one breaks the stream). */
+function keepTranscode() {
+  if (!state.active || state.kind !== 'file' || !video?.paused || !isMovieStream(state.video)) return
+  void request('/api/watch/movies/keepalive', { body: { id: streamId(state.video), gen: streamGen }, quiet401: true })
+    .catch((e: unknown) => log('stream.keepalive_failed', { msg: String((e as Error)?.message || e).slice(0, 120) }, 'warn'))
 }
 function _stopIntervals() {
   window.clearInterval(_tickIv);  _tickIv  = 0
   window.clearInterval(_flushIv); _flushIv = 0
   window.clearInterval(_heartIv); _heartIv = 0
+  window.clearInterval(_keepIv); _keepIv = 0
+  window.clearInterval(_stallIv); _stallIv = 0
 }
 window.addEventListener('pagehide', () => { if (!state.active) return; if (wasPlaying) postHistory(); log('pagehide', snap()); flushLog(); if (state.call.on) camStop() })
 document.addEventListener('visibilitychange', () => {
@@ -1336,6 +1391,7 @@ function disconnectRoom() {
   bumpRtc()
 }
 
+let lastSpeakers = ''
 function wire(r: LkRoom, ns: LkNs) {
   const E = ns.RoomEvent
   const on = (ev: string | undefined, fn: (...a: never[]) => void) => { if (ev) r.on(ev, fn) }
@@ -1347,6 +1403,9 @@ function wire(r: LkRoom, ns: LkNs) {
     const loud: Record<string, boolean> = {}
     for (const sp of speakers) loud[sp === r.localParticipant ? 'me' : clientOf(sp)] = true
     set({ loud })
+    // Who the call server hears talking (it decides from the levels each mic sends).
+    const who = speakers.map((sp) => (sp === r.localParticipant ? 'me' : nameOf(clientOf(sp)))).sort().join(',')
+    if (who !== lastSpeakers) { lastSpeakers = who; if (who) log('call.speakers', { who }) }
   }) as never)
   on(E.Reconnecting, () => log('call.reconnecting', undefined, 'warn'))
   on(E.Reconnected, () => { log('call.reconnected'); syncPeers() })
@@ -1446,6 +1505,7 @@ async function micOpen(): Promise<boolean> {
     await lp.setMicrophoneEnabled(true, audioC())
   } catch (e) {
     const n = (e as { name?: string })?.name
+    log('mic.error', { name: n, msg: String((e as Error)?.message || '').slice(0, 160) }, 'warn')
     setCall({ note: n === 'NotAllowedError' ? 'Mic blocked — allow it in your browser settings.' : n === 'NotFoundError' ? 'No mic found.' : 'Could not access the mic.' })
     return false
   }
@@ -1453,11 +1513,67 @@ async function micOpen(): Promise<boolean> {
   if (gen !== micGen || !state.call.on) { micClose(); return false }
   void enumerate()
   setCall({ note: '' })
+  watchMic(lp.getTrackPublication(SRC.mic)?.track?.mediaStreamTrack)
   return true
+}
+
+// ── Mic diagnostics: is anything actually coming out of this mic? ──────────────
+// Some devices hand out a mic that only ever records silence (a TV remote's mic is
+// usually kept for the voice assistant). Log what the mic is, then measure its level
+// for half a minute (mic.level every 5 s), and keep a live level for the TV's meter.
+let micProbe: { ctx: AudioContext; an: AnalyserNode; buf: Float32Array<ArrayBuffer>; t: number; until: number; peak: number; sum: number; n: number } | null = null
+let micLive = 0
+export const micLevel = () => micLive
+function watchMic(t: MediaStreamTrack | undefined) {
+  stopMicProbe()
+  if (!t) { log('mic.open', { track: false }, 'warn'); return }
+  const st = t.getSettings?.() ?? {}
+  log('mic.open', {
+    label: t.label.slice(0, 80), ready: t.readyState, muted: t.muted, enabled: t.enabled,
+    rate: st.sampleRate, ch: st.channelCount, ec: st.echoCancellation, agc: st.autoGainControl, ns: st.noiseSuppression,
+    mics: state.mics.map((m) => m.label.slice(0, 40)),
+  })
+  t.addEventListener('mute', () => log('mic.track_muted', { label: t.label.slice(0, 60) }, 'warn'))
+  t.addEventListener('unmute', () => log('mic.track_unmuted'))
+  t.addEventListener('ended', () => log('mic.track_ended', undefined, 'warn'))
+  try {
+    const C = window.AudioContext || window.webkitAudioContext
+    if (!C) return
+    const ctx = new C()
+    const an = ctx.createAnalyser()
+    an.fftSize = 1024
+    ctx.createMediaStreamSource(new MediaStream([t])).connect(an)
+    void ctx.resume().catch(() => { /* */ })
+    const p = { ctx, an, buf: new Float32Array(an.fftSize), t: 0, until: Date.now() + 30_000, peak: 0, sum: 0, n: 0 }
+    micProbe = p
+    let lastLog = Date.now()
+    p.t = window.setInterval(() => {
+      an.getFloatTimeDomainData(p.buf)
+      let sq = 0
+      for (const x of p.buf) sq += x * x
+      const rms = Math.sqrt(sq / p.buf.length)
+      micLive = Math.min(1, rms * 8)
+      p.peak = Math.max(p.peak, rms); p.sum += rms; p.n++
+      if (Date.now() - lastLog >= 5000 && Date.now() < p.until) {
+        log('mic.level', { peak: Math.round(p.peak * 1000) / 1000, avg: Math.round((p.sum / p.n) * 1000) / 1000, ctx: ctx.state, ready: t.readyState, muted: t.muted })
+        lastLog = Date.now(); p.peak = 0; p.sum = 0; p.n = 0
+      }
+    }, 100)
+  } catch (e) {
+    log('mic.probe_failed', { msg: String((e as Error)?.message || e).slice(0, 120) }, 'warn')
+  }
+}
+function stopMicProbe() {
+  micLive = 0
+  if (!micProbe) return
+  window.clearInterval(micProbe.t)
+  void micProbe.ctx.close().catch(() => { /* */ })
+  micProbe = null
 }
 /** Stop the mic entirely (unpublish and stop the track), so the OS leaves voice-call mode. */
 function micClose() {
   micGen++
+  stopMicProbe()
   const lp = lkRoom?.localParticipant
   const t = lp?.getTrackPublication(SRC.mic)?.track
   if (lp && t) void lp.unpublishTrack(t, true).catch(() => { /* */ })
@@ -1475,7 +1591,8 @@ function applySink() {
 
 export async function toggleMute() {
   if (!state.call.on || !lkRoom) return
-  if (!state.call.muted) { micClose(); setCall({ muted: true }); return }
+  if (!state.call.muted) { log('mic.mute'); micClose(); setCall({ muted: true }); return }
+  log('mic.unmute', { micOnly: state.call.micOnly })
   setCall({ muted: false })
   const others = muteOtherCalls('watch')
   if (others.length) toast(`Muted your ${others.join(' and ')} mic while you're talking in Watch Party`, 'info')
@@ -1537,10 +1654,18 @@ function playAudio(id: string, stream: MediaStream) {
   if (!audioBox) { audioBox = document.createElement('div'); audioBox.hidden = true; audioBox.dataset.wpAudio = ''; document.body.appendChild(audioBox) }
   let a = audioEls[id]
   if (!a) { a = document.createElement('audio'); a.autoplay = true; audioEls[id] = a; audioBox.appendChild(a) }
-  if (a.srcObject !== stream) a.srcObject = stream
+  if (a.srcObject !== stream) {
+    a.srcObject = stream
+    const at = stream.getAudioTracks()[0]
+    log('audio.peer', { who: nameOf(id), tracks: stream.getAudioTracks().length, muted: at?.muted, ready: at?.readyState })
+  }
   applyPeerAudio()
   if (state.speakerId) applySink()
-  a.play().catch((e: unknown) => { if ((e as { name?: string })?.name === 'NotAllowedError') needGesture() })
+  a.play().catch((e: unknown) => {
+    const n = (e as { name?: string })?.name
+    log('audio.play_failed', { who: nameOf(id), name: n }, 'warn')
+    if (n === 'NotAllowedError') needGesture()
+  })
 }
 function stopAudio(id: string) {
   const a = audioEls[id]

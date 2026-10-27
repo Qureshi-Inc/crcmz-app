@@ -21,7 +21,7 @@ import { FsChat, RxLayer } from '../watch/Stage'
 import {
   attachVideo, attachYt, forceSync, getWatch, joinCall, leave, leaveCall, nameOf, rally, react, rejoin, retryMedia, sendChat, setCamVol, setMic,
   setPlayerVol, setSubtitle, start, time, toggleCamsMute, toggleMute, togglePlay, togglePlayerMute, toggleVideo, unblock, userSeek,
-  useWatch, useWatchClock, videoLabel, type WatchState,
+  micLevel, useWatch, useWatchClock, videoLabel, type WatchState,
 } from '../watch/session'
 
 // ── Settings that belong to this TV ──────────────────────────────────────────
@@ -323,7 +323,7 @@ function Chrome({ s, dev, scrub, panel, setPanel }: { s: WatchState; dev: Dev; s
             pressed={s.call.on && !s.call.camOff && !s.call.micOnly} disabled={s.call.busy || (s.call.on && (s.call.micOnly || !dev.cam))}
             onClick={() => (s.call.on ? toggleVideo() : void joinCall())} />
           <Ctl id="tvp-mic" icon={s.call.on && !s.call.muted ? 'mic' : 'micOff'} label={micLabel} pressed={s.call.on && !s.call.muted}
-            disabled={!dev.mic || s.call.busy} onClick={() => void mic()} />
+            disabled={!dev.mic || s.call.busy} onClick={() => void mic()} level={s.call.on && !s.call.muted ? <MicMeter /> : null} />
           <Ctl id="tvp-set" icon="settings" label="Settings" pressed={panel === 'settings'} onClick={() => toggle('settings', 'tvp-set')} />
         </div>
       </div>
@@ -331,15 +331,24 @@ function Chrome({ s, dev, scrub, panel, setPanel }: { s: WatchState; dev: Dev; s
   )
 }
 
-function Ctl({ icon, label, onClick, pressed, big, disabled, id }: {
-  icon: IconName; label: string; onClick: () => void; pressed?: boolean; big?: boolean; disabled?: boolean; id?: string
+function Ctl({ icon, label, onClick, pressed, big, disabled, id, level }: {
+  icon: IconName; label: string; onClick: () => void; pressed?: boolean; big?: boolean; disabled?: boolean; id?: string; level?: ReactNode
 }) {
   return (
     <button type="button" id={id} className={`tvp-ctl${big ? ' tvp-ctl-big' : ''}`} aria-label={label} aria-pressed={pressed} disabled={disabled} onClick={onClick}>
+      {level}
       <Icon name={icon} />
       <span className="tvp-ctl-label" aria-hidden="true">{label}</span>
     </button>
   )
+}
+
+/** How loud this TV's mic is right now: a ring round the Mic button that grows when you talk.
+ *  Flat while you're talking means the TV is sending silence. */
+function MicMeter() {
+  const [lvl, setLvl] = useState(0)
+  useEffect(() => { const t = window.setInterval(() => setLvl(micLevel()), 120); return () => window.clearInterval(t) }, [])
+  return <span className="tvp-meter" aria-hidden="true" style={{ ['--lvl' as string]: lvl.toFixed(2) }} />
 }
 
 /** The seek bar. Focus it and ← → scrub (10 s a press, adding up); OK plays/pauses. */
@@ -553,6 +562,7 @@ function StreamInfo({ s }: { s: WatchState }) {
       <div><dt>Buffered ahead</dt><dd>{s.kind === 'file' ? `${Math.round(ahead)} s` : '—'}</dd></div>
       <div><dt>Dropped frames</dt><dd>{q.total ? `${q.dropped} of ${q.total}` : '—'}</dd></div>
       <div><dt>Party</dt><dd>{s.status}{s.presence.count ? ` · ${s.presence.count} here` : ''}</dd></div>
+      {s.call.on && <div><dt>Mic</dt><dd>{s.call.muted ? 'muted' : 'on'}{s.mics[0] ? ` · ${s.mics.find((m) => m.id === s.micId)?.label || s.mics[0].label}` : ''}</dd></div>}
     </dl>
   )
 }

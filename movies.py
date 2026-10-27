@@ -1713,11 +1713,24 @@ def stream_url(jf_id: str) -> str:
     return f"{STREAM_PREFIX}{jf_id}/master.m3u8"
 
 
-def _session_ids(sub: str, jf_id: str) -> tuple[str, str]:
-    """Per viewer, per film: their own transcode, so one person seeking doesn't stall the rest."""
+def _session_ids(sub: str, jf_id: str, gen: str = "") -> tuple[str, str]:
+    """Per viewer, per film: their own transcode, so one person seeking doesn't stall the rest.
+    `gen` (the player's Retry) asks for a brand-new one: the old one may have been stopped
+    and restarted under the player, and its chunks no longer line up."""
     device = "crcmz-" + hashlib.sha256(f"dev:{sub}".encode()).hexdigest()[:20]
-    play = hashlib.sha256(f"play:{sub}:{jf_id}:{int(time.time() // 21600)}".encode()).hexdigest()[:32]
+    play = hashlib.sha256(f"play:{sub}:{jf_id}:{int(time.time() // 21600)}{':' + gen if gen else ''}".encode()).hexdigest()[:32]
     return device, play
+
+
+_STREAM_KEY = re.compile(r"^([0-9a-f]{32})(?:~(\d{1,10}))?$")
+
+
+def stream_key(key: str) -> tuple[str, str]:
+    """`<jellyfin id>` or `<jellyfin id>~<gen>` (a retried stream) → (id, gen). 404 on anything else."""
+    m = _STREAM_KEY.match(key or "")
+    if not m:
+        raise HTTPException(404, "not found")
+    return m.group(1), m.group(2) or ""
 
 
 _TRANSCODE = {"VideoCodec": "h264", "AudioCodec": "aac", "VideoBitrate": "10000000", "AudioBitrate": "192000",
@@ -1750,11 +1763,11 @@ async def subtitles(jf_id: str) -> list[dict]:
     return out
 
 
-def hls_request(sub: str, jf_id: str, path: str, query: str) -> tuple[str, dict]:
+def hls_request(sub: str, jf_id: str, path: str, query: str, gen: str = "") -> tuple[str, dict]:
     """The Jellyfin path and params for one HLS request from a viewer. Raises 404 on anything else."""
     if not _JF_ID.match(jf_id or "") or not _HLS_PATH.match(path or ""):
         raise HTTPException(404, "not found")
-    device, play = _session_ids(sub, jf_id)
+    device, play = _session_ids(sub, jf_id, gen)
     if path == "master.m3u8":
         params = {"MediaSourceId": jf_id, **_TRANSCODE}
         # A viewer who picked image subtitles (Blu-ray PGS) gets them drawn into their own
@@ -1956,10 +1969,25 @@ def build_router(get_session, is_admin) -> APIRouter:
             raise HTTPException(502, "those subtitles won't load right now")
         return Response(r.content, media_type="text/vtt", headers={"Cache-Control": "private, max-age=86400"})
 
-    @router.get("/stream/{jf_id}/{path:path}")
-    async def stream(jf_id: str, path: str, request: Request):
+    @router.post("/keepalive")
+    async def keepalive(request: Request):
+        """A paused viewer's player, every 20 s: keep their transcode. Jellyfin stops one
+        nobody has asked for a chunk of in a minute, and the one it starts on resume
+        doesn't line up with what the player has buffered (the movie errors out)."""
         sub = caller_sub(request)
-        jf_path, params = hls_request(sub, jf_id, path, request.url.query)
+        body = await request.json()
+        jf_id, gen = stream_key(f"{body.get('id') or ''}{'~' + str(body['gen']) if body.get('gen') else ''}")
+        _, play = _session_ids(sub, jf_id, gen)
+        r = await slap._jf("POST", "/Sessions/Playing/Ping", params={"playSessionId": play})
+        if r.status_code >= 400:
+            logger.warning("movies: keepalive for film=%s play=%s answered %s", jf_id[:8], play[:8], r.status_code)
+        return {"ok": r.status_code < 400}
+
+    @router.get("/stream/{key}/{path:path}")
+    async def stream(key: str, path: str, request: Request):
+        sub = caller_sub(request)
+        jf_id, gen = stream_key(key)
+        jf_path, params = hls_request(sub, jf_id, path, request.url.query, gen)
         _streamed[jf_id] = time.time()   # so the migration never pulls a copy out from under a party
         # One line per playlist / segment, so a film that stops playing can be lined up
         # with the viewer's watch_diag timeline: who (sub), which transcode (play), how it went.
@@ -2004,8 +2032,10 @@ def build_router(get_session, is_admin) -> APIRouter:
                     "movies.seg %s %s st=%s bytes=%d%s first=%dms total=%dms%s", seg, who, r.status_code, n,
                     f"/{want}" if want else "", first_ms, ms, " CUT" if cut else " EMPTY" if n == 0 else "")
 
+        # Not cached: a chunk belongs to one run of one transcode, and a cached one from an
+        # earlier run is exactly what broke Retry (it doesn't line up with the new run's).
         return StreamingResponse(body_logged(), media_type="video/mp2t", background=BackgroundTask(r.aclose),
-                                 headers={"Cache-Control": "private, max-age=3600"})
+                                 headers={"Cache-Control": "no-store"})
 
     return router
 

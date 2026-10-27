@@ -212,6 +212,8 @@ html[data-tv] body { overflow: hidden; background: #000; cursor: none; }
 .tvp-ctl:disabled { opacity: .35; }
 .tvp-ctl-label { position: absolute; top: calc(100% + .45rem); left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: .75rem; font-weight: 800; color: #fff; text-shadow: 0 1px 3px #000; opacity: 0; transition: opacity .15s; pointer-events: none; }
 .tvp-ctl:focus .tvp-ctl-label { opacity: 1; }
+/* The Mic button's level ring: grows with this TV's mic level (green). */
+.tvp-meter { position: absolute; inset: -.3rem; border-radius: 50%; border: .2rem solid #2fd27a; opacity: calc(.25 + var(--lvl) * .75); transform: scale(calc(1 + var(--lvl) * .35)); transition: transform .1s linear, opacity .1s linear; pointer-events: none; }
 .tvp-unblock { position: absolute; z-index: 8; left: 50%; top: 50%; transform: translate(-50%, -50%); }
 .tvp-unblock:focus { transform: translate(-50%, -50%) scale(1.07); }
 
