@@ -25,6 +25,8 @@ export const getConfig = (signal?: AbortSignal) => request<WatchConfig>('/api/wa
 export const joinRoom = (roomId: string) => request<Ticket>('/api/watch/join', { body: { roomId } })
 export const extract = (url: string) => request<{ url: string; title?: string; kind?: string }>('/api/watch/extract', { body: { url }, timeoutMs: 60_000 })
 export const setNickname = (nickname: string) => request<{ nickname: string; name: string }>('/api/watch/nickname', { body: { nickname } })
+/** Is another of my devices (a TV first) in the party right now? (companion mode) */
+export const getCompanion = (signal?: AbortSignal) => request<{ other: boolean; tv: boolean }>('/api/watch/companion', { signal, quiet401: true })
 export const rally = (message: string) => request<{ status: string }>('/api/watch/rally', { body: { message } })
 export const listHistory = (q: { room: string } | { mine: true }, signal?: AbortSignal) =>
   request<{ items: HistItem[] }>(`/api/watch/history?limit=24&${'mine' in q ? 'mine=1' : `room=${encodeURIComponent(q.room)}`}`, { signal })

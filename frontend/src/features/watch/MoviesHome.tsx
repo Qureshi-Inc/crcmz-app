@@ -11,7 +11,7 @@ import { useTitle } from '../../app/title'
 import { HelpLink } from '../../components/HelpLink'
 import { Icon } from '../../components/Icon'
 import { ErrorStrip, SkeletonRows } from '../../components/states'
-import { fmtTime, listHistory, type HistItem } from '../../lib/watch'
+import { fmtTime, getCompanion, listHistory, type HistItem } from '../../lib/watch'
 import {
   getCatalog, getHome, getLibrary, inFlight, isMovieStream, measured, searchMovies, stateText,
   type Adding, type ListKind, type Movie, type Result, type Row,
@@ -96,6 +96,20 @@ function useLibraryLink() {
 function PartyBanner() {
   const now = useNow().data
   const live = !!now && now.watching > 0
+  // Watching on the TV: offer this phone as its camera, mic and remote (companion mode).
+  const comp = useQuery({ queryKey: ['watch', 'companion'], queryFn: ({ signal }) => getCompanion(signal), enabled: live, refetchInterval: 15_000 }).data
+  if (live && comp?.other) {
+    return (
+      <section className="glass mv-party wp-comp-offer" data-live="true" aria-label="Companion mode">
+        <span className="wp-comp-icon" aria-hidden="true">{comp.tv ? '📺' : '🖥️'}</span>
+        <span className="mv-party-text">
+          <span className="mv-party-h">{comp.tv ? "You're watching on your TV" : "You're in the party on another device"}</span>
+          <span className="meta">Use this phone as its camera and mic, and its remote. The movie stays on the {comp.tv ? 'TV' : 'other screen'}.</span>
+        </span>
+        <Link className="btn btn-primary" to="/watch/party?companion=1"><Icon name="cam" />Use as companion</Link>
+      </section>
+    )
+  }
   return (
     <section className="glass mv-party" data-live={live} aria-label="Watch party">
       {live ? (

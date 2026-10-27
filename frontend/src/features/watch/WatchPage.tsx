@@ -31,6 +31,20 @@ export function WatchPage({ visible }: { visible: boolean }) {
   const moviesOff = useMoviesOff()
   const [slot, setSlot] = useState<HTMLDivElement | null>(null)
   useEffect(() => { if (visible) start() }, [visible])
+  // From the Watch home's "Use as companion": start it as soon as the party finds the TV.
+  const loc = useLocation()
+  const nav = useNavigate()
+  const wantComp = useRef(false)
+  useEffect(() => {
+    if (!visible || !new URLSearchParams(loc.search).has('companion')) return
+    wantComp.current = true
+    nav({ pathname: loc.pathname, search: '' }, { replace: true })
+  }, [visible, loc.search]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!wantComp.current || s.status !== 'live' || !s.myTv || s.companion) return
+    wantComp.current = false
+    void startCompanion()
+  }, [s.status, s.myTv, s.companion])
   // Fullscreen belongs to this page; navigating away ends it.
   useEffect(() => { if (!visible) exitFs() }, [visible])
   usePlayerKeys(visible, setRxOpen)

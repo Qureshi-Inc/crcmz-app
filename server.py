@@ -7012,6 +7012,35 @@ async def watch_call_token(request: Request):
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/watch/companion")
+async def watch_companion(request: Request, room: str = "crcmz"):
+    """Is another of my devices (a TV first) in the party's call right now? The Watch
+    home asks, so a phone can offer companion mode before it has joined the party."""
+    viewer = await _watch_viewer(request)
+    if not viewer:
+        return JSONResponse({"detail": "authentication required"}, status_code=401)
+    room = watch_mod.canonical_room(room) or "crcmz"
+    if not LIVEKIT_API_KEY or not watch_mod.is_allowed_room(room):
+        return JSONResponse({"other": False, "tv": False})
+    import jwt as _pyjwt, httpx as _hx
+    now = int(_time.time())
+    tok = _pyjwt.encode({"iss": LIVEKIT_API_KEY, "nbf": now, "exp": now + 60, "video": {"roomAdmin": True, "room": f"watch-{room}"}},
+                        LIVEKIT_API_SECRET, algorithm="HS256")
+    base = LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://").rstrip("/")
+    try:
+        async with _hx.AsyncClient(timeout=8) as c:
+            r = await c.post(f"{base}/twirp/livekit.RoomService/ListParticipants", json={"room": f"watch-{room}"},
+                             headers={"Authorization": f"Bearer {tok}"})
+        people = (r.json().get("participants") or []) if r.status_code == 200 else []
+    except Exception as e:  # noqa: BLE001
+        logger.info("watch: companion lookup failed: %s", e)
+        people = []
+    mine = [p for p in people if str(p.get("identity") or "").split("#")[0] == viewer["zitadelSubject"]
+            and (p.get("attributes") or {}).get("companion") != "1"]
+    return JSONResponse({"other": bool(mine), "tv": any((p.get("attributes") or {}).get("device") == "tv" for p in mine)},
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/ring/people")
 async def ring_people(request: Request):
     """The ring list: the squad by name, and whether a ring reaches them."""
