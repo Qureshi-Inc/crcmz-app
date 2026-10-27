@@ -1961,24 +1961,50 @@ def build_router(get_session, is_admin) -> APIRouter:
         sub = caller_sub(request)
         jf_path, params = hls_request(sub, jf_id, path, request.url.query)
         _streamed[jf_id] = time.time()   # so the migration never pulls a copy out from under a party
+        # One line per playlist / segment, so a film that stops playing can be lined up
+        # with the viewer's watch_diag timeline: who (sub), which transcode (play), how it went.
+        t0 = time.monotonic()
+        who = f"film={jf_id[:8]} sub={sub[-6:]} play={params.get('PlaySessionId', '')[:8]}"
         if path.endswith(".m3u8"):
             r = await slap._jf("GET", jf_path, params=params)
             if r.status_code >= 400:
-                logger.warning("movies: jellyfin playlist %s answered %s", path, r.status_code)
+                logger.warning("movies: jellyfin playlist %s answered %s %s: %s", path, r.status_code, who, r.text[:200])
                 raise HTTPException(502, "the movie won't play right now")
+            logger.info("movies.hls %s %s st=%s ms=%d", path, who, r.status_code, (time.monotonic() - t0) * 1000)
             return Response(r.content, media_type="application/vnd.apple.mpegurl", headers={"Cache-Control": "no-store"})
+        seg = path.rsplit("/", 1)[-1]
         req = slap._client.build_request("GET", jf_path, params=params, headers=slap._jf_headers(),
                                          timeout=httpx.Timeout(20.0, read=180.0))
         try:
             r = await slap._client.send(req, stream=True)
         except httpx.HTTPError as e:
-            logger.warning("movies: jellyfin segment failed: %s", e)
+            logger.warning("movies: jellyfin segment %s failed %s after %dms: %r", seg, who, (time.monotonic() - t0) * 1000, e)
             raise HTTPException(502, "the movie won't play right now")
         if r.status_code >= 400:
+            body = (await r.aread())[:200]
             await r.aclose()
-            logger.warning("movies: jellyfin segment %s answered %s", path, r.status_code)
+            logger.warning("movies: jellyfin segment %s answered %s %s: %r", seg, r.status_code, who, body)
             raise HTTPException(502, "the movie won't play right now")
-        return StreamingResponse(r.aiter_bytes(), media_type="video/mp2t", background=BackgroundTask(r.aclose),
+        first_ms = (time.monotonic() - t0) * 1000
+        want = int(r.headers.get("content-length") or 0)
+
+        async def body_logged():
+            # Logged when the segment ends, however it ends: "cut" means the viewer (or the
+            # network) dropped it before Jellyfin finished sending it.
+            n, done = 0, False
+            try:
+                async for chunk in r.aiter_bytes():
+                    n += len(chunk)
+                    yield chunk
+                done = True
+            finally:
+                ms = (time.monotonic() - t0) * 1000
+                cut = not done or (want and n < want)
+                (logger.warning if cut or n == 0 else logger.info)(
+                    "movies.seg %s %s st=%s bytes=%d%s first=%dms total=%dms%s", seg, who, r.status_code, n,
+                    f"/{want}" if want else "", first_ms, ms, " CUT" if cut else " EMPTY" if n == 0 else "")
+
+        return StreamingResponse(body_logged(), media_type="video/mp2t", background=BackgroundTask(r.aclose),
                                  headers={"Cache-Control": "private, max-age=3600"})
 
     return router

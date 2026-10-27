@@ -38,7 +38,8 @@ type YtPlayer = {
   loadModule?: (m: string) => void; unloadModule?: (m: string) => void; setOption?: (m: string, k: string, v: unknown) => void
 }
 type YtNs = { Player: new (el: HTMLElement, o: Record<string, unknown>) => YtPlayer; PlayerState: { PLAYING: number; PAUSED: number } }
-type HlsInst = { loadSource(u: string): void; attachMedia(v: HTMLVideoElement): void; destroy(): void; on(e: string, f: (ev: unknown, d: { fatal?: boolean; type?: string; details?: string }) => void): void; once(e: string, f: () => void): void }
+type HlsErr = { fatal?: boolean; type?: string; details?: string; reason?: string; frag?: { sn?: number | string; start?: number }; response?: { code?: number }; error?: { message?: string } }
+type HlsInst = { loadSource(u: string): void; attachMedia(v: HTMLVideoElement): void; destroy(): void; on(e: string, f: (ev: unknown, d: HlsErr) => void): void; once(e: string, f: () => void): void }
 type HlsNs = { new (): HlsInst; isSupported(): boolean; Events: { ERROR: string; MANIFEST_PARSED: string } }
 declare global {
   interface Window { io?: IoFn; YT?: YtNs; Hls?: HlsNs; onYouTubeIframeAPIReady?: () => void; webkitAudioContext?: typeof AudioContext }
@@ -204,6 +205,47 @@ function logError(msg: string) {
   if (errSeen[k]! <= 3) log('js.error', { msg: msg.slice(0, 200) }, 'error')
 }
 
+// ── Playback diagnostics: why a film stops playing (often after a pause) ───
+// Native HLS (Safari, Android) reports only an error code, so record what led up to it:
+// the engine, how long it sat paused, what's buffered, and the last segment fetches,
+// including whether the browser served them from its cache.
+let engine: '' | 'native' | 'hls.js' | 'direct' = ''
+let pausedAt = 0
+let lastResume: { pausedFor: number; t: number | null; at: number } | null = null
+let waitLogT = 0
+const segRing: { seg: string; ms: number; kb: number; cached: boolean; st?: number; at: number }[] = []
+const r1 = (n: number) => (Number.isFinite(n) ? Math.round(n * 10) / 10 : null)
+function ranges(r?: TimeRanges): string {
+  const out: string[] = []
+  if (r) for (let i = 0; i < r.length && i < 6; i++) out.push(`${r.start(i).toFixed(1)}-${r.end(i).toFixed(1)}`)
+  return out.join(',')
+}
+function mediaSnap(el: HTMLVideoElement) {
+  return {
+    t: r1(el.currentTime), dur: r1(el.duration), rs: el.readyState, ns: el.networkState, buf: ranges(el.buffered), engine,
+    pausedFor: pausedAt ? Math.round((Date.now() - pausedAt) / 1000) : 0,
+  }
+}
+try {
+  new PerformanceObserver((list) => {
+    for (const e of list.getEntries() as (PerformanceResourceTiming & { responseStatus?: number })[]) {
+      if (!e.name.includes('/api/watch/movies/stream/')) continue
+      segRing.push({
+        seg: (e.name.split('?')[0] || '').split('/').pop() || '', ms: Math.round(e.duration), kb: Math.round(e.transferSize / 1024),
+        cached: e.transferSize === 0 && e.decodedBodySize > 0, st: e.responseStatus, at: Date.now(),
+      })
+      if (segRing.length > 8) segRing.shift()
+    }
+  }).observe({ type: 'resource' })
+} catch { /* no Resource Timing: the error still logs everything else */ }
+const recentSegs = () => segRing.map((s) => ({ ...s, ago: Math.round((Date.now() - s.at) / 1000), at: undefined }))
+const uaKind = () => {
+  const ua = navigator.userAgent
+  if (/Android/.test(ua)) return /; wv\)/.test(ua) ? 'android-webview' : 'android-browser'
+  if (/iPhone|iPad/.test(ua)) return /Safari\//.test(ua) ? 'ios-safari' : 'ios-webview'
+  return /Firefox\//.test(ua) ? 'firefox' : /Edg\//.test(ua) ? 'edge' : /Chrome\//.test(ua) ? 'chrome' : /Safari\//.test(ua) ? 'safari' : 'other'
+}
+
 // ── Media handles (the page hands these over once; the page stays mounted) ──
 let video: HTMLVideoElement | null = null
 let ytBox: HTMLElement | null = null
@@ -268,17 +310,38 @@ export function attachVideo(el: HTMLVideoElement | null) {
   el.volume = state.playerVol
   el.muted = state.playerMuted
   el.addEventListener('play', () => { syncPlaying(); if (echo()) sock?.emit('CMD:play') })
-  el.addEventListener('pause', () => { syncPlaying(); if (echo() && !document.hidden) sock?.emit('CMD:pause') })
+  el.addEventListener('pause', () => {
+    syncPlaying(); if (echo() && !document.hidden) sock?.emit('CMD:pause')
+    if (!pausedAt && el.getAttribute('src')) pausedAt = Date.now()
+  })
   el.addEventListener('ended', syncPlaying)
-  el.addEventListener('playing', () => { syncPlaying(); if (state.unblock) set({ unblock: '' }) })
+  el.addEventListener('playing', () => {
+    syncPlaying(); if (state.unblock) set({ unblock: '' })
+    if (pausedAt) {
+      const pausedFor = Math.round((Date.now() - pausedAt) / 1000)
+      pausedAt = 0
+      lastResume = { pausedFor, t: r1(el.currentTime), at: Date.now() }
+      if (pausedFor >= 15) log('video.resume', { pausedFor, t: lastResume.t, buf: ranges(el.buffered), engine })
+    }
+  })
   // Seeks reach the room from userSeek only: a 'seeked' echo also fired for the room's own
   // seeks once a slow stream seek outlasted the echo window, and pulled everyone back.
   el.addEventListener('error', () => {
     if (!el.getAttribute('src')) return
-    log('video.error', { code: el.error?.code, video: short(state.video) }, 'error')
+    const e = el.error
+    log('video.error', {
+      code: e?.code, msg: (e?.message || '').slice(0, 300), video: short(state.video), ...mediaSnap(el), ua: uaKind(),
+      resumed: lastResume ? { ...lastResume, ago: Math.round((Date.now() - lastResume.at) / 1000), at: undefined } : null,
+      segs: recentSegs(),
+    }, 'error')
     set({ mediaError: 'failed' })
   })
-  el.addEventListener('stalled', () => log('video.stalled', { t: el.currentTime }, 'warn'))
+  el.addEventListener('stalled', () => log('video.stalled', { ...mediaSnap(el), segs: recentSegs().slice(-3) }, 'warn'))
+  el.addEventListener('waiting', () => {
+    if (waitLogT && Date.now() - waitLogT < 5000) return
+    waitLogT = Date.now()
+    log('video.waiting', mediaSnap(el))
+  })
   el.addEventListener('webkitbeginfullscreen', () => {
     // iPhone Safari has no element fullscreen; back out of the native player and
     // fill the viewport with the stage + cams instead.
@@ -413,6 +476,9 @@ function mount(url: string) {
   ytState = -1
   nudging = 1
   burned = null
+  engine = ''
+  pausedAt = 0
+  lastResume = null
   set({ video: url, kind: '', ytFresh: false, playing: false, unblock: '', mediaError: '', subs: [], sub: null, ytCc: false })
   void loadSubs(url)
   titleVideoChanged()
@@ -424,6 +490,7 @@ function mount(url: string) {
   if (/\.m3u8/i.test(url)) { set({ kind: 'file' }); mountHls(url); return }
   if (isProxy(url) || /^https?:\/\//i.test(url)) {
     set({ kind: 'file' })
+    engine = 'direct'
     video.src = url
     seekOnMeta()
     return
@@ -439,21 +506,34 @@ function seekOnMeta() {
 function mountHls(url: string) {
   const v = video
   if (!v) return
-  if (v.canPlayType('application/vnd.apple.mpegurl')) { v.src = url; seekOnMeta(); return }
+  const which = (e: typeof engine) => { engine = e; log('video.engine', { engine: e, ua: uaKind(), resumeAt: pendingTS ? r1(pendingTS) : 0 }) }
+  if (v.canPlayType('application/vnd.apple.mpegurl')) { which('native'); v.src = url; seekOnMeta(); return }
   loadScript('https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js').then(() => {
     const H = window.Hls
     if (state.video !== url) return
-    if (!H || !H.isSupported()) { v.src = url; return }
+    if (!H || !H.isSupported()) { which('native'); v.src = url; return }
+    which('hls.js')
     const h = new H()
     hls = h
+    const seen: Record<string, number> = {}
     h.on(H.Events.ERROR, (_ev, d) => {
-      if (d && (d.fatal || d.details === 'bufferStalledError')) log('hls.error', { type: d.type, details: d.details, fatal: !!d.fatal }, d.fatal ? 'error' : 'warn')
-      if (d?.fatal) set({ mediaError: 'failed' })
+      if (!d) return
+      // Every fatal one, and the first few of each non-fatal kind (they repeat in bursts).
+      const k = `${d.details}`
+      seen[k] = (seen[k] || 0) + 1
+      if (d.fatal || seen[k]! <= 3) {
+        log('hls.error', {
+          type: d.type, details: d.details, fatal: !!d.fatal, n: seen[k], reason: d.reason, err: d.error?.message?.slice(0, 200),
+          sn: d.frag?.sn, fragAt: d.frag?.start != null ? r1(d.frag.start) : undefined, http: d.response?.code, ...mediaSnap(v),
+          ...(d.fatal ? { segs: recentSegs() } : {}),
+        }, d.fatal ? 'error' : 'warn')
+      }
+      if (d.fatal) set({ mediaError: 'failed' })
     })
     h.loadSource(url)
     h.attachMedia(v)
     if (pendingTS) { const t = pendingTS; pendingTS = 0; h.once(H.Events.MANIFEST_PARSED, () => { v.currentTime = t }) }
-  }).catch(() => { v.src = url })
+  }).catch(() => { which('native'); v.src = url })
 }
 function mountYt(id: string) {
   const box = ytBox
