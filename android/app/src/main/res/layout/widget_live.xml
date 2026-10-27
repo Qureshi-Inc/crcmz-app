@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
+    android:background="@drawable/widget_bg" android:padding="12dp">
+    <TextView android:id="@+id/live_head" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="@string/widget_live_head" android:textColor="#FFFF2FD6" android:textSize="12sp" android:textStyle="bold"
+        android:letterSpacing="0.1" android:paddingBottom="4dp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+        <LinearLayout android:id="@+id/live_row1" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical" android:paddingTop="3dp" android:paddingBottom="3dp" android:visibility="gone">
+            <ImageView android:id="@+id/live_icon1" android:layout_width="26dp" android:layout_height="26dp" android:padding="5dp"
+                android:background="@drawable/widget_poster_blank" android:tint="#FF22E6FF" android:contentDescription="@null" />
+            <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="10dp">
+                <TextView android:id="@+id/live_title1" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textColor="#FFF3ECFF" android:textSize="13sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+                <TextView android:id="@+id/live_sub1" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textColor="#FF9D8FC4" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+                <ProgressBar android:id="@+id/live_bar1" style="@android:style/Widget.ProgressBar.Horizontal" android:layout_width="match_parent"
+                    android:layout_height="3dp" android:layout_marginTop="3dp" android:max="1000" android:progressTint="#FFFF2FD6" android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:id="@+id/live_row2" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical" android:paddingTop="3dp" android:paddingBottom="3dp" android:visibility="gone">
+            <ImageView android:id="@+id/live_icon2" android:layout_width="26dp" android:layout_height="26dp" android:padding="5dp"
+                android:background="@drawable/widget_poster_blank" android:tint="#FF22E6FF" android:contentDescription="@null" />
+            <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="10dp">
+                <TextView android:id="@+id/live_title2" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textColor="#FFF3ECFF" android:textSize="13sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+                <TextView android:id="@+id/live_sub2" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textColor="#FF9D8FC4" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+                <ProgressBar android:id="@+id/live_bar2" style="@android:style/Widget.ProgressBar.Horizontal" android:layout_width="match_parent"
+                    android:layout_height="3dp" android:layout_marginTop="3dp" android:max="1000" android:progressTint="#FFFF2FD6" android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:id="@+id/live_row3" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical" android:paddingTop="3dp" android:paddingBottom="3dp" android:visibility="gone">
+            <ImageView android:id="@+id/live_icon3" android:layout_width="26dp" android:layout_height="26dp" android:padding="5dp"
+                android:background="@drawable/widget_poster_blank" android:tint="#FF22E6FF" android:contentDescription="@null" />
+            <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="10dp">
+                <TextView android:id="@+id/live_title3" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textColor="#FFF3ECFF" android:textSize="13sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+                <TextView android:id="@+id/live_sub3" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textColor="#FF9D8FC4" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+                <ProgressBar android:id="@+id/live_bar3" style="@android:style/Widget.ProgressBar.Horizontal" android:layout_width="match_parent"
+                    android:layout_height="3dp" android:layout_marginTop="3dp" android:max="1000" android:progressTint="#FFFF2FD6" android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+    <TextView android:id="@+id/live_empty" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:gravity="center" android:text="@string/widget_nothing_live" android:textColor="#FF9D8FC4" android:textSize="13sp" />
+</LinearLayout>

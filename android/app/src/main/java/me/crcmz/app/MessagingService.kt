@@ -26,6 +26,9 @@ class MessagingService : FirebaseMessagingService() {
             "ring" -> Ringer.ring(this, d)
             "ring_cancel" -> d["tag"]?.let { Ringer.cancel(this, it) }
             "alert" -> alert(this, d)
+            // A Watch Party, Huddle, Listen Together or tournament going on (live.py): the
+            // ongoing notification, and the Live now widget straight away.
+            "live" -> { LiveUpdates.handle(this, d); WidgetData.refresh(this) }
         }
     }
 

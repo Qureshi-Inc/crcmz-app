@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
+    android:background="@drawable/widget_bg" android:padding="12dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:id="@+id/mv_head" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:text="@string/widget_movies_head" android:textColor="#FFFF2FD6" android:textSize="12sp" android:textStyle="bold" android:letterSpacing="0.1" />
+        <ImageView android:id="@+id/mv_add" android:layout_width="30dp" android:layout_height="30dp" android:padding="6dp"
+            android:src="@drawable/ic_plus" android:background="@drawable/widget_poster_blank" android:contentDescription="@string/widget_add_label" />
+    </LinearLayout>
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="8dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="horizontal">
+        <LinearLayout android:id="@+id/mv_cell1" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+            android:orientation="vertical" android:paddingStart="3dp" android:paddingEnd="3dp">
+            <ImageView android:id="@+id/mv_img1" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+                android:scaleType="centerCrop" android:src="@drawable/widget_poster_blank" android:contentDescription="@null" />
+            <TextView android:id="@+id/mv_title1" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingTop="4dp" android:textColor="#FFF3ECFF" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/mv_cell2" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+            android:orientation="vertical" android:paddingStart="3dp" android:paddingEnd="3dp">
+            <ImageView android:id="@+id/mv_img2" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+                android:scaleType="centerCrop" android:src="@drawable/widget_poster_blank" android:contentDescription="@null" />
+            <TextView android:id="@+id/mv_title2" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingTop="4dp" android:textColor="#FFF3ECFF" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/mv_cell3" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+            android:orientation="vertical" android:paddingStart="3dp" android:paddingEnd="3dp">
+            <ImageView android:id="@+id/mv_img3" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+                android:scaleType="centerCrop" android:src="@drawable/widget_poster_blank" android:contentDescription="@null" />
+            <TextView android:id="@+id/mv_title3" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingTop="4dp" android:textColor="#FFF3ECFF" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/mv_cell4" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+            android:orientation="vertical" android:paddingStart="3dp" android:paddingEnd="3dp">
+            <ImageView android:id="@+id/mv_img4" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+                android:scaleType="centerCrop" android:src="@drawable/widget_poster_blank" android:contentDescription="@null" />
+            <TextView android:id="@+id/mv_title4" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingTop="4dp" android:textColor="#FFF3ECFF" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        </LinearLayout>
+        <TextView android:id="@+id/mv_empty" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center"
+            android:textColor="#FF9D8FC4" android:textSize="13sp" android:visibility="gone" />
+    </FrameLayout>
+</LinearLayout>

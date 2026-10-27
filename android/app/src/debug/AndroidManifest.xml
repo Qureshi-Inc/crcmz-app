@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: hooks to try Live updates and the widgets on an emulator. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver android:name=".DebugLiveReceiver" android:exported="true">
+            <intent-filter><action android:name="me.crcmz.app.DEBUG_LIVE" /></intent-filter>
+        </receiver>
+        <activity android:name=".DebugWidgetsActivity" android:exported="true" />
+    </application>
+</manifest>

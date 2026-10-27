@@ -19,6 +19,8 @@
     <!-- Slap with the screen off (PlaybackService). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Live updates (Android 16): promoted to the lock screen and a status-bar chip. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <!-- TV: app runs on Android TV / Fire TV without a touchscreen. -->
@@ -100,6 +102,20 @@
             android:theme="@style/Ring" />
 
         <receiver android:name=".DeclineReceiver" android:exported="false" />
+        <receiver android:name=".LiveUpdates$HideReceiver" android:exported="false" />
+        <!-- Home-screen widgets (Widgets.kt) -->
+        <receiver android:name=".LiveNowWidget" android:exported="true" android:label="Live now">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_live_info" />
+        </receiver>
+        <receiver android:name=".MoviesWidget" android:exported="true" android:label="New movies">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_movies_info" />
+        </receiver>
+        <receiver android:name=".AddMovieWidget" android:exported="true" android:label="@string/widget_add_label">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_add_info" />
+        </receiver>
 
         <service android:name=".MessagingService" android:exported="false">
             <intent-filter>

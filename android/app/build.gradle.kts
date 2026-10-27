@@ -12,14 +12,14 @@ val keyPass = File(keyDir, "keystore.pass").takeIf { it.exists() }?.readText()?.
 
 android {
     namespace = "me.crcmz.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "me.crcmz.app"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 19
-        versionName = "2.0.16"
+        targetSdk = 36
+        versionCode = 20
+        versionName = "2.0.17"
         // Phones only: LiveKit's native libraries for emulator chips would double the APK.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }

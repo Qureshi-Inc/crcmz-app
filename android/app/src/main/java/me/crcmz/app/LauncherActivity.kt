@@ -449,6 +449,8 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Home-screen widgets: fresh whenever the app comes to the front (sign-in may have changed).
+        if (!isTV) WidgetData.refresh(this)
         if (inSettings) {
             inSettings = false
             setup()
