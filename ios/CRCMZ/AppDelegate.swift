@@ -22,6 +22,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         #endif
         window?.makeKeyAndVisible()
+        #if DEBUG
+        // Screenshots signed in as someone (WebController): no push, ring or Live Activity
+        // tokens from the simulator reach their account.
+        if WebController.screenshotSession != nil { return true }
+        #endif
         Push.shared.start(web: web)
         Calls.shared.start(web: web)
         LiveActivities.start()

@@ -9,6 +9,9 @@ import WebKit
 /// (frontend/src/lib/native.ts → /api/push/native).
 final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     static let origin = "https://app.crcmz.me"
+    #if DEBUG
+    static let screenshotSession = UserDefaults.standard.string(forKey: "crcmzScreenshotSession")
+    #endif
     /// Pages that belong in the app: the app itself and the sign-in pages.
     private static let hosts: Set<String> = ["app.crcmz.me", "auth.crcmz.me"]
 
@@ -93,7 +96,24 @@ final class WebController: UIViewController, WKNavigationDelegate, WKUIDelegate,
         NativeCall.shared.onEnded = { [weak self] kind in
             self?.webView.evaluateJavaScript("window.__crcmzCallEnded && window.__crcmzCallEnded('\(kind.rawValue)')")
         }
+        #if DEBUG
+        // Simulator screenshots signed in: -crcmzScreenshotSession <a short-lived session cookie>
+        // (ios/README.md). Debug builds only.
+        if let value = Self.screenshotSession,
+           let cookie = HTTPCookie(properties: [.domain: "app.crcmz.me", .path: "/", .name: "psn_session", .value: value,
+                                                .secure: "TRUE", .expires: Date().addingTimeInterval(3600)]) {
+            // -crcmzScreenshotPath /app/slap: start on that page.
+            let path = UserDefaults.standard.string(forKey: "crcmzScreenshotPath") ?? "/app"
+            let start = Self.origin + path + (path.contains("?") ? "&" : "?") + "crcmz_app=ios"
+            webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { [weak self] in
+                self?.webView.load(URLRequest(url: URL(string: start)!))
+            }
+        } else {
+            webView.load(URLRequest(url: URL(string: Self.origin + "/app?crcmz_app=ios")!))
+        }
+        #else
         webView.load(URLRequest(url: URL(string: Self.origin + "/app?crcmz_app=ios")!))
+        #endif
 
         // Auto-PiP: when the user presses Home / switches apps while a Watch Party
         // video is playing, ask the <video> element to enter Picture-in-Picture.
