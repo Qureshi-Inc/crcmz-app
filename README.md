@@ -2,7 +2,7 @@
 
 <h1 align="center">CRCMZ App</h1>
 
-<p align="center"><b>The squad platform for Professional Goopers</b> — one place for who's on, clips, music, movie nights and calls.</p>
+<p align="center"><b>The squad platform for Professional Goopers</b> — one place for who's on, clips, music, movie nights, tournaments and calls.</p>
 
 <p align="center">
   <a href="https://app.crcmz.me/app"><img alt="app.crcmz.me" src="https://img.shields.io/badge/app.crcmz.me-open-ff2fd6?style=for-the-badge"></a>
@@ -19,6 +19,7 @@
 | 🌐 **Web** | **[app.crcmz.me/app](https://app.crcmz.me/app)** | Sign in with your CRCMZ account. On a phone, *Add to Home Screen* works too. |
 | 🤖 **Android** | **[Latest release](https://github.com/Qureshi-Inc/crcmz-app/releases/latest)** | Download the `.apk`, open it, allow "install unknown apps", sign in. |
 | 🍎 **iPhone** | **TestFlight** (invite only) | See below. |
+| 📺 **Android TV** | **[Latest release](https://github.com/Qureshi-Inc/crcmz-app/releases/latest)** | The same `.apk` as Android. On a TV it opens straight into the Watch Party. |
 
 ### iPhone (TestFlight)
 
@@ -39,6 +40,7 @@ Live status of every part of CRCMZ: **[status.crcmz.me](https://status.crcmz.me)
 |---|---|
 | Web app (`app.crcmz.me`) | 🟢 Live |
 | Android app | 🟢 Released on [GitHub Releases](https://github.com/Qureshi-Inc/crcmz-app/releases) |
+| Android TV | 🟡 New: the Android app in TV mode |
 | iPhone app | 🟡 Beta on TestFlight (invite only) |
 | MCP server | 🟢 Live |
 
@@ -50,13 +52,16 @@ Live status of every part of CRCMZ: **[status.crcmz.me](https://status.crcmz.me)
 |---|---|
 | Squad | Who's online and in what game, ranks, hype meter, the Chat Board |
 | Clips | PSN clips in one place: reels, the Studio editor, the monthly montage |
-| Slap | The squad's own music library: daily New finds, charts, thumbs, Listen Together; share a song from Spotify or Apple Music and it's added |
-| Watch | A movie library and the Watch Party: video in sync for everyone, with a camera call |
+| Slap | The squad's own music library: daily New finds, charts, thumbs, Listen Together with room chat, playback speed and a sleep timer; share a song from Spotify or Apple Music and it's added |
+| Watch | A movie library and the Watch Party: video in sync for everyone, with a camera call, reactions and chat. Companion mode makes your phone the TV's camera, mic and remote |
+| Tournaments | EA FC, Call of Duty (including Cutthroat and Warzone), Rocket League, NBA 2K, Madden and fighting games. Knockout, double elimination, league, groups + knockout and lobby series, with best-of and series-of-series matches. Post a result screenshot in the PSN group and the bracket, scores, map and player stats fill themselves in; leaderboards and WhatsApp announcements follow |
+| Soundboard | The squad's shared clips: add by upload, recording or link, play them on your phone or through the squad Pi, and put them on the stream deck |
 | Huddle | Voice and video calls with picture in picture, a live transcript, an AI helper and meeting notes |
-| Ask AI | An assistant that knows the squad's data and remembers it, in the app, WhatsApp and PSN |
+| Ask AI | An assistant that knows the squad's data and remembers it, in the app, WhatsApp and PSN: clips, tournaments, the gun meta (MW4, Warzone, BO6), the trip hub and more |
+| Live Activities and widgets | What's on right now (Watch Party, Huddle, Listen Together, a tournament) on the lock screen, the Dynamic Island and Android Live Updates, plus home-screen widgets: Live now, New in the library and Add a movie |
 | Notifications | Web Push and native alerts on Android and iPhone; Huddle and Watch Party rings like a call |
 | Giveaway | Entries, countdown and the draw |
-| MCP server | Plug your own AI into the squad: every assistant tool over MCP |
+| MCP server | Plug your own AI into the squad: every assistant tool over MCP, with a personal token from **Settings → MCP** |
 
 ---
 
@@ -64,7 +69,9 @@ Live status of every part of CRCMZ: **[status.crcmz.me](https://status.crcmz.me)
 
 Both phone apps are web views around `app.crcmz.me/app` with native parts where the web
 can't keep up: the tab bar, calls with picture in picture, the music player (lock screen,
-CarPlay / Android Auto), notifications and call rings, and Share → CRCMZ. A website update
+CarPlay / Android Auto), notifications and call rings, Live Activities / Live Updates,
+home-screen widgets and Share → CRCMZ. On Android TV the same app shows only the Watch
+Party, built for a remote. A website update
 reaches both apps; only native changes need a new build. See `ios/README.md` and
 `android/README.md`.
 
