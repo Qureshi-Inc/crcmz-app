@@ -110,6 +110,31 @@ def send(device: str, payload: dict, *, voip: bool = False, collapse: str = "", 
     return r.status_code, reason
 
 
+def send_live(device: str, payload: dict, *, priority: int = 10) -> tuple[int, str]:
+    """One Live Activity push (live.py): start with a push-to-start token, update / end with
+    the activity's own token. Its own topic and push type."""
+    headers = {
+        "authorization": f"bearer {_token()}",
+        "apns-topic": TOPIC + ".push-type.liveactivity",
+        "apns-push-type": "liveactivity",
+        "apns-priority": str(priority),
+        "apns-expiration": str(int(time.time()) + 600),
+    }
+    try:
+        r = _http().post(f"{HOST}/3/device/{device}", headers=headers, json=payload)
+    except Exception:  # noqa: BLE001
+        logger.exception("apns: live activity send failed")
+        return 0, ""
+    reason = ""
+    if r.status_code >= 400:
+        try:
+            reason = (r.json() or {}).get("reason", "")
+        except ValueError:
+            reason = r.text[:200]
+        logger.info("apns: live %s %s", r.status_code, reason)
+    return r.status_code, reason
+
+
 def _gone(status: int, reason: str) -> bool:
     """The app was deleted or the token belongs to another environment: forget the phone."""
     return status == 410 or reason in ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic")

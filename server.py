@@ -6743,6 +6743,195 @@ async def sessions_active(request: Request):
     return JSONResponse({"sessions": sessions}, headers={"Cache-Control": "no-store"})
 
 
+# ── Live Activities / Live Updates (live.py) ────────────────────────────────
+import live as _live
+
+
+async def _livekit_rooms_people() -> dict[str, list[dict]]:
+    """Every call room with its participants (identity, name, attributes)."""
+    import jwt as _pyjwt, httpx as _hx
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        return {}
+    rooms = await _livekit_list_rooms()
+    base = LIVEKIT_URL.replace("wss://", "https://").replace("ws://", "http://").rstrip("/")
+    out: dict[str, list[dict]] = {}
+    async with _hx.AsyncClient(timeout=8) as c:
+        for r in rooms:
+            name = str(r.get("name") or "")
+            if not name or not int(r.get("numParticipants") or 0):
+                continue
+            now = int(_time.time())
+            tok = _pyjwt.encode({"iss": LIVEKIT_API_KEY, "nbf": now, "exp": now + 60, "video": {"roomAdmin": True, "room": name}},
+                                LIVEKIT_API_SECRET, algorithm="HS256")
+            resp = await c.post(f"{base}/twirp/livekit.RoomService/ListParticipants", json={"room": name},
+                                headers={"Authorization": f"Bearer {tok}"})
+            if resp.status_code == 200:
+                out[name] = resp.json().get("participants") or []
+    return out
+
+
+def _people(parts: list[dict]) -> list[str]:
+    """Distinct people (a TV and its companion phone are one), by name."""
+    seen: dict[str, str] = {}
+    for p in parts:
+        sub = str(p.get("identity") or "").split("#")[0]
+        if sub and sub not in seen:
+            seen[sub] = str(p.get("name") or "Someone")
+    return list(seen.values())
+
+
+def _names_line(names: list[str]) -> str:
+    return ", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else "")
+
+
+async def _live_items() -> list[dict]:
+    """This moment's live sessions, for live.tick() and the widgets."""
+    items: list[dict] = []
+    try:
+        rooms = await _livekit_rooms_people()
+    except Exception as e:  # noqa: BLE001
+        logger.info("live: call server unreachable: %s", e)
+        rooms = {}
+    for name, parts in rooms.items():
+        people = _people(parts)
+        if not people:
+            continue
+        if name.startswith("watch-"):
+            room = name[len("watch-"):]
+            now = _movies.now_playing(room)
+            title = now.get("title") or ("Something's on" if now.get("video") else "Picking what to watch")
+            dur = await asyncio.to_thread(_watch_history.duration_of, now["video"]) if now.get("video") else 0
+            pos = float(now.get("position") or 0)
+            items.append({"key": f"watch:{room}", "kind": "watch", "title": title,
+                          "subtitle": f"{len(people)} watching · {_names_line(people)}" + (" · paused" if now.get("paused") else ""),
+                          "count": len(people), "names": people, "paused": bool(now.get("paused")),
+                          "progress": round(min(1.0, pos / dur), 3) if dur > 60 else -1,
+                          "progressLabel": f"{int(pos // 60)} of {int(dur // 60)} min" if dur > 60 else "",
+                          "url": "/app/watch/party", "poster": now.get("poster") or ""})
+        else:
+            items.append({"key": f"huddle:{name}", "kind": "huddle", "title": "Huddle" if name == "crcmz" else f"Huddle · {name}",
+                          "subtitle": f"{len(people)} in the call · {_names_line(people)}", "count": len(people),
+                          "names": people, "progress": -1, "url": f"/app/huddle?room={name}"})
+    try:
+        t = _slap.together_status()
+    except Exception:  # noqa: BLE001
+        t = {}
+    if t.get("active") and t.get("listeners"):
+        now_song = t.get("now") or {}
+        listeners = list(t["listeners"])
+        song = " · ".join(x for x in (now_song.get("title"), now_song.get("artist")) if x) or "Listen Together"
+        dur = 0.0
+        try:
+            q = _slap.ROOM.snapshot()
+            cur = q["queue"][q["index"]] if 0 <= q["index"] < len(q["queue"]) else {}
+            dur = float(cur.get("duration") or 0)
+        except Exception:  # noqa: BLE001
+            pass
+        pos = float(t.get("position_seconds") or 0)
+        items.append({"key": "slap:together", "kind": "slap", "title": song,
+                      "subtitle": f"{len(listeners)} listening · {_names_line(listeners)}" + ("" if t.get("playing") else " · paused"),
+                      "count": len(listeners), "names": listeners, "paused": not t.get("playing"),
+                      "progress": round(min(1.0, pos / dur), 3) if dur > 0 else -1,
+                      "progressLabel": f"{int(pos // 60)}:{int(pos % 60):02d} / {int(dur // 60)}:{int(dur % 60):02d}" if dur > 0 else "",
+                      "url": "/app/slap?join=together"})
+    try:
+        tourneys = await asyncio.to_thread(_tourney.list_tournaments, "active")
+    except Exception:  # noqa: BLE001
+        tourneys = []
+    for tt in tourneys:
+        pr = tt.get("progress") or {}
+        played, total = int(pr.get("played") or 0), int(pr.get("total") or 0)
+        items.append({"key": f"tourney:{tt['id']}", "kind": "tourney", "title": str(tt.get("name") or "Tournament"),
+                      "subtitle": f"{tt.get('entrant_count') or 0} players · {played} of {total} matches played" if total else "Under way",
+                      "count": int(tt.get("entrant_count") or 0), "names": [],
+                      "progress": round(played / total, 3) if total else -1,
+                      "progressLabel": f"Match {min(played + 1, total)} of {total}" if total else "",
+                      "segments": [1] * total if 0 < total <= 40 else [],
+                      "url": f"/app/tourney/{tt['id']}"})
+    return items
+
+
+async def _live_loop() -> None:
+    while True:
+        try:
+            items = await _live_items()
+            await asyncio.to_thread(_live.tick, items)
+        except Exception:  # noqa: BLE001
+            logger.exception("live: tick failed")
+        await asyncio.sleep(_live.LOOP_S)
+
+
+@app.on_event("startup")
+async def _start_live_loop():
+    asyncio.create_task(_live_loop())
+
+
+@app.get("/api/live/prefs")
+async def live_prefs_get(request: Request):
+    s = _get_session(request)
+    if not s:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    return JSONResponse({"prefs": _live.get_prefs(s["sub"]),
+                         "kinds": [{"id": k, "label": _live.KIND_LABELS[k]} for k in _live.KINDS]},
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/live/prefs")
+async def live_prefs_set(request: Request):
+    s = _get_session(request)
+    if not s:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    try:
+        b = await request.json()
+    except Exception:  # noqa: BLE001
+        b = {}
+    prefs = await asyncio.to_thread(_live.save_prefs, s["sub"], b if isinstance(b, dict) else {})
+    return JSONResponse({"prefs": prefs})
+
+
+@app.post("/api/live/ios")
+async def live_ios_token(request: Request):
+    """The iPhone app hands over Live Activity tokens: {start: token} (push-to-start) or
+    {key, token} (one running activity's) or {key, token, ended: true}."""
+    s = _get_session(request)
+    if not s:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    try:
+        b = await request.json()
+    except Exception:  # noqa: BLE001
+        b = {}
+    b = b if isinstance(b, dict) else {}
+    if b.get("start"):
+        await asyncio.to_thread(_live.register_ios_start, s["sub"], str(b["start"]))
+    elif b.get("token") and b.get("ended"):
+        await asyncio.to_thread(_live.forget_ios_activity, str(b["token"]))
+    elif b.get("token") and b.get("key"):
+        await asyncio.to_thread(_live.register_ios_activity, s["sub"], str(b["key"]), str(b["token"]))
+    else:
+        return JSONResponse({"error": "start, or key and token"}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/widgets/summary")
+async def widgets_summary(request: Request):
+    """Everything the home-screen widgets show (iOS and Android): what's live right now and
+    the newest films in the library."""
+    s = _get_session(request)
+    if not s:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    live_now = [{k: it.get(k) for k in ("key", "kind", "title", "subtitle", "count", "progress", "progressLabel", "paused", "url", "started")}
+                for it in _live.current()]
+    movies: list[dict] = []
+    try:
+        lib = await _movies.library(s["sub"])
+        rows = sorted(lib.get("movies") or [], key=lambda m: str(m.get("added") or ""), reverse=True)[:8]
+        movies = [{"title": m.get("title") or "", "year": m.get("year") or "", "poster": m.get("poster") or "",
+                   "imdb": m.get("imdb") or "", "url": f"/app/watch?m={m['imdb']}" if m.get("imdb") else "/app/watch"} for m in rows]
+    except Exception as e:  # noqa: BLE001
+        logger.info("widgets: library unavailable: %s", e)
+    return JSONResponse({"live": live_now, "movies": movies, "at": int(_time.time())}, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/huddle/live")
 async def huddle_live(request: Request, room: str = "crcmz"):
     """Are you still in this Huddle? The phone apps run the call natively, so it outlives a

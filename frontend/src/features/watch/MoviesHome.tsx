@@ -51,6 +51,13 @@ function Movies() {
   const open = (id: string) => patch({ m: id })
 
   useLibraryLink()
+  // The "Add a movie" widget opens /watch?add=1: straight into the search.
+  useEffect(() => {
+    if (!params.has('add')) return
+    patch({ add: null }, true)
+    const t = window.setTimeout(() => document.getElementById('mv-q')?.focus(), 300)
+    return () => window.clearTimeout(t)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const party = usePartyPlay()
 
   return (

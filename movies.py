@@ -474,8 +474,16 @@ def set_rooms(rooms: list) -> None:
         rid = str((rm or {}).get("roomId") or "").strip("/")
         if not rid:
             continue
+        prev = _rooms.get(rid) or {}
+        ts = rm.get("videoTS")
         r = {"video": str(rm.get("video") or ""), "paused": bool(rm.get("paused")),
              "watching": int(rm.get("participantCount") or 0), "at": now}
+        # Where the film is: the room's last stamped position, run on by the clock while it
+        # plays (the stamp only moves on a play, pause or seek). For the lock-screen bar.
+        if isinstance(ts, (int, float)) and r["video"] == prev.get("video") and ts == prev.get("ts"):
+            r["ts"], r["ts_at"] = ts, prev.get("ts_at", now)
+        else:
+            r["ts"], r["ts_at"] = (float(ts) if isinstance(ts, (int, float)) else 0.0), now
         _rooms[rid] = r
         if not (r["video"] and not r["paused"] and r["watching"] > 0):
             continue
@@ -532,8 +540,10 @@ def now_playing(room: str) -> dict:
             info = watch_history.item_info(url) or {}
         except Exception:  # noqa: BLE001
             info = {}
+    pos = float(r.get("ts") or 0) + (0 if r["paused"] else max(0.0, time.time() - float(r.get("ts_at") or time.time())))
     return {"room": room, "watching": r["watching"], "video": url, "paused": r["paused"],
-            "title": info.get("title") or "", "poster": info.get("poster") or "", "id": m.group(1) if m else None}
+            "title": info.get("title") or "", "poster": info.get("poster") or "", "id": m.group(1) if m else None,
+            "position": round(pos, 1)}
 
 
 async def _torrentio(imdb: str) -> list[dict]:

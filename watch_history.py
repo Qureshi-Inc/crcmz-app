@@ -282,6 +282,13 @@ def item_info(url: str) -> dict | None:
     return {"title": it.get("title") or "", "year": it.get("year") or "", "poster": it.get("poster") or ""}
 
 
+def duration_of(url: str) -> float:
+    """A video's length, as players reported it (0 when nobody has)."""
+    with _lock, _conn() as db:
+        row = db.execute("SELECT MAX(duration) AS d FROM watch_progress WHERE url = ?", (url,)).fetchone()
+    return float(row["d"] or 0) if row else 0.0
+
+
 def list_history(*, room: str | None = None, user_id: str | None = None,
                  limit: int = 20, include_finished: bool = True) -> list[dict]:
     """Videos, most recently watched first, each with who watched and where

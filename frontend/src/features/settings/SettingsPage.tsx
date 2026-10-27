@@ -776,6 +776,7 @@ function AppTab() {
       <TabBarCard />
       <InstallCard />
       <NotificationsCard />
+      <LiveActivitiesCard />
       {!nativeShell() && <ClassicCard />}
     </>
   )
@@ -879,6 +880,56 @@ function InstallCard() {
       ) : (
         <p className="dim">Open app.crcmz.me in Chrome on Android or Safari on iPhone to install it. On a computer, use Chrome or Edge's install button in the address bar.</p>
       )}
+    </section>
+  )
+}
+
+/** Live Activities (iPhone lock screen / Dynamic Island) and Live Updates (Android): a
+ *  Watch Party, Huddle, Listen Together or tournament going on, live on the lock screen.
+ *  Off until you turn it on; then per kind. Only the phone apps can show them. */
+function LiveActivitiesCard() {
+  const qc = useQueryClient()
+  const q = useQuery({ queryKey: ['live', 'prefs'], queryFn: () => getJSON<{ prefs: Record<string, boolean>; kinds: { id: string; label: string }[] }>('/api/live/prefs') })
+  const app = (() => { try { return localStorage.getItem('crcmz.native') || '' } catch { return '' } })()
+  const inApp = app === 'ios' || app === 'android-app'
+  async function set(id: string, value: boolean) {
+    qc.setQueryData(['live', 'prefs'], (d: typeof q.data) => (d ? { ...d, prefs: { ...d.prefs, [id]: value } } : d))
+    try {
+      await request('/api/live/prefs', { body: { [id]: value } })
+    } catch {
+      toast("Couldn't save that", 'error')
+      void qc.invalidateQueries({ queryKey: ['live', 'prefs'] })
+    }
+  }
+  const on = !!q.data?.prefs.on
+  return (
+    <section className="glass settings-card" aria-labelledby="st-live-h">
+      <div className="settings-card-head">
+        <h2 className="section-h2" id="st-live-h">{app === 'ios' ? 'Live Activities' : app === 'android-app' ? 'Live updates' : 'Live Activities'}</h2>
+        {q.data && (
+          <button type="button" className={on ? 'btn btn-secondary' : 'btn btn-primary'} onClick={() => void set('on', !on)}>
+            {on ? 'Turn off' : 'Turn on'}
+          </button>
+        )}
+      </div>
+      <p className="dim">
+        When the squad is in a Watch Party, a Huddle, Slap's Listen Together or a tournament, it shows live on your lock screen
+        {app === 'ios' ? ' and in the Dynamic Island' : app === 'android-app' ? ' and as a chip in the status bar' : ''}: what's on, who's there and how far along it is. Tap it to jump in.
+      </p>
+      {!inApp && <p className="settings-note" role="note">These show in the CRCMZ app on iPhone and Android. Turn them on here and they appear on every phone you use the app on.</p>}
+      {q.isPending ? <SkeletonRows n={2} />
+        : q.isError ? <ErrorStrip text="Couldn't load your live choices" onRetry={() => q.refetch()} />
+        : on && (
+          <fieldset className="push-cats" style={{ border: 0, margin: 0, padding: 0 }}>
+            <legend className="meta" style={{ padding: 0, marginBottom: 'var(--space-2)' }}>Show me</legend>
+            {q.data.kinds.map((k) => (
+              <label key={k.id} className="check-row">
+                <input type="checkbox" checked={q.data.prefs[k.id] !== false} onChange={(e) => { void set(k.id, e.target.checked) }} />
+                {k.label}
+              </label>
+            ))}
+          </fieldset>
+        )}
     </section>
   )
 }
