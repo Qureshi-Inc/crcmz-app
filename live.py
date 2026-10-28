@@ -163,7 +163,7 @@ def _save(items: dict[str, dict]) -> None:
 
 
 def _matters(a: dict, b: dict) -> bool:
-    keys = ("title", "subtitle", "count", "names", "paused", "progressLabel")
+    keys = ("title", "subtitle", "count", "names", "paused", "progressLabel", "poster")
     return any(a.get(k) != b.get(k) for k in keys)
 
 
@@ -262,7 +262,11 @@ def _android(event: str, it: dict, subs: set[str]) -> None:
     data = {"type": "live", "event": event, "key": it["key"], "kind": it["kind"], "title": s["title"], "body": s["subtitle"],
             "count": str(s["count"]), "names": ", ".join(s["names"]), "started": str(int(s["started"] * 1000)),
             "progress": f"{s['progress']:.4f}", "progressLabel": s["progressLabel"], "paused": "1" if s["paused"] else "0",
-            "url": s["url"], "segments": json.dumps(it.get("segments") or [])}
+            "url": s["url"], "segments": json.dumps(it.get("segments") or []),
+            # A Watch Party's own numbers (seconds), so the phone writes "23:00 / 1:53:00" and
+            # "1h 30m left" itself; and the film's poster (a signed link) for the artwork.
+            "elapsed": str(int(it.get("elapsed") or 0)), "duration": str(int(it.get("duration") or 0)),
+            "poster": str(it.get("poster") or "")}
     for r in rows:
         status, err = fcm._send_one(creds, r["token"], data)
         if fcm._gone(status, err):

@@ -26,6 +26,10 @@
     <!-- Live updates (LiveUpdates.kt) and home-screen widgets (Widgets.kt) -->
     <string name="live_channel">Live: parties, huddles, Listen Together, tournaments</string>
     <string name="live_hide">Hide</string>
+    <string name="live_join_party">Join party</string>
+    <string name="live_watch_party">Watch party</string>
+    <string name="live_live">LIVE</string>
+    <string name="live_paused">Paused</string>
     <string name="widget_live_head">LIVE NOW</string>
     <string name="widget_nothing_live">Nothing live right now. Tap to start a party.</string>
     <string name="widget_signed_out">Open CRCMZ to sign in.</string>

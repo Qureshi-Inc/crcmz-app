@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Watch Party notification's expanded body where it can't be a Live Update
+     (LiveUpdates.watch, DecoratedCustomViewStyle): the system draws the header, icon and
+     actions around it; the text uses the system's notification styles, so it follows
+     light and dark. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+    <TextView android:id="@+id/nw_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textAppearance="@style/TextAppearance.Compat.Notification.Title" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/nw_line1" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="2dp" android:textAppearance="@style/TextAppearance.Compat.Notification" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/nw_line2" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:textAppearance="@style/TextAppearance.Compat.Notification" android:maxLines="1" android:ellipsize="end" />
+    <ProgressBar android:id="@+id/nw_bar" style="@android:style/Widget.ProgressBar.Horizontal"
+        android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="10dp" android:max="1000"
+        android:progressTint="@color/accent" android:progressBackgroundTint="@color/accent_track" />
+</LinearLayout>

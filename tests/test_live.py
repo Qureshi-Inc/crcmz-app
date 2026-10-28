@@ -78,6 +78,11 @@ d = pushed[0][1]
 assert d["type"] == "live" and d["event"] == "update" and d["key"] == "watch:crcmz" and d["kind"] == "watch"
 assert all(isinstance(v, str) for v in d.values()), d       # FCM data values are strings
 assert d["started"] == "1000000" and d["progress"] == "0.1000" and json.loads(d["segments"]) == [1, 1, 1]
+assert d["elapsed"] == "0" and d["duration"] == "0" and d["poster"] == ""   # absent: zero, never missing
+pushed.clear()
+live._android("update", {**item, "elapsed": 1380.4, "duration": 6780, "poster": "https://app.crcmz.me/api/widgets/poster?id=a&t=b"}, {"a"})
+d = pushed[0][1]
+assert d["elapsed"] == "1380" and d["duration"] == "6780" and d["poster"].startswith("https://"), d   # the phone writes 23:00 / 1:53:00
 
 apns_calls = []
 fake_apns = types.SimpleNamespace(configured=lambda: True,

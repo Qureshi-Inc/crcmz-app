@@ -713,7 +713,10 @@ export async function boot() {
     return
   }
   if (!state.active) return
-  set({ cfg, room: cfg.defaultRoom || 'crcmz', myName: cfg.viewer?.name || '', isMod: !!cfg.viewer?.mod })
+  // /watch/party?room=<id> (a Live Update's Join party): that party, if it's one of ours.
+  const linked = new URLSearchParams(location.search).get('room') || ''
+  const room = linked && cfg.rooms?.includes(linked) ? linked : cfg.defaultRoom || 'crcmz'
+  set({ cfg, room, myName: cfg.viewer?.name || '', isMod: !!cfg.viewer?.mod })
   try {
     await loadScript(`${cfg.origin || ''}${cfg.socketPath || '/socket.io'}/socket.io.js`)
   } catch {

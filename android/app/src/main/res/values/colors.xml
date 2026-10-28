@@ -12,4 +12,6 @@
     <color name="sheet">#0E0A1C</color>
     <color name="accent_soft">#B099FF</color>
     <color name="tile">#1A1530</color>
+    <!-- A progress bar's track: the accent, faint. -->
+    <color name="accent_track">#40A855F7</color>
 </resources>

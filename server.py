@@ -6843,7 +6843,8 @@ async def _live_items() -> list[dict]:
                       "count": count, "names": people, "paused": bool(now.get("paused")),
                       "progress": round(min(1.0, pos / dur), 3) if dur > 60 else -1,
                       "progressLabel": f"{int(pos // 60)} of {int(dur // 60)} min" if dur > 60 else "",
-                      "url": "/app/watch/party", "poster": now.get("poster") or ""})
+                      "elapsed": round(min(pos, dur) if dur > 60 else pos), "duration": round(dur) if dur > 60 else 0,
+                      "url": f"/app/watch/party?room={_quote(room, safe='')}", "poster": _widget_poster(now.get("poster") or "")})
     for name, parts in rooms.items():
         people = _people(parts)
         if not people or name.startswith("watch-"):
