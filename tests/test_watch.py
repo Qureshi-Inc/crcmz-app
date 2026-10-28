@@ -433,6 +433,13 @@ def http_tests():
         finally:
             client.cookies.clear()
 
+    def t_livekit_head_count_reads_its_real_field():
+        # LiveKit's room list says num_participants: reading only the camelCase name
+        # made every call look empty, so no Watch Party or Huddle was ever live.
+        assert server._lk_count({"name": "watch-crcmz", "num_participants": 4}) == 4
+        assert server._lk_count({"numParticipants": 2}) == 2
+        assert server._lk_count({"name": "x"}) == 0
+
     def t_widget_posters_are_signed_links():
         # Widgets load images without the app's cookie: library posters get a signed link.
         jf = "a" * 32

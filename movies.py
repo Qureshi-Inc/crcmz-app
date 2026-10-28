@@ -527,6 +527,12 @@ def announce_party(room: str, video: str, watching: int, to_channel: bool = True
                      f"Join: {PUBLIC_URL}/app/watch/party")
 
 
+def party_rooms() -> list[str]:
+    """Rooms with someone in the party right now (as of the last minute's room list)."""
+    now = time.time()
+    return [rid for rid, r in _rooms.items() if r.get("watching") and now - r["at"] <= 60]
+
+
 def now_playing(room: str) -> dict:
     r = _rooms.get(room) or {}
     if not r or time.time() - r["at"] > 60:

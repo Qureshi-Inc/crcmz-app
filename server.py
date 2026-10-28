@@ -6751,7 +6751,7 @@ async def sessions_active(request: Request):
     sessions = []
     for r in rooms:
         name = str(r.get("name") or "")
-        count = int(r.get("numParticipants") or 0)
+        count = _lk_count(r)
         if not name or count == 0:
             continue
         if name.startswith("watch-"):
@@ -6773,6 +6773,12 @@ async def sessions_active(request: Request):
 import live as _live
 
 
+def _lk_count(room: dict) -> int:
+    """A LiveKit room's head count. Its JSON says num_participants (older code read the
+    camelCase name, which never comes, so every call looked empty)."""
+    return int(room.get("num_participants") or room.get("numParticipants") or 0)
+
+
 async def _livekit_rooms_people() -> dict[str, list[dict]]:
     """Every call room with its participants (identity, name, attributes)."""
     import jwt as _pyjwt, httpx as _hx
@@ -6784,7 +6790,7 @@ async def _livekit_rooms_people() -> dict[str, list[dict]]:
     async with _hx.AsyncClient(timeout=8) as c:
         for r in rooms:
             name = str(r.get("name") or "")
-            if not name or not int(r.get("numParticipants") or 0):
+            if not name or not _lk_count(r):
                 continue
             now = int(_time.time())
             tok = _pyjwt.encode({"iss": LIVEKIT_API_KEY, "nbf": now, "exp": now + 60, "video": {"roomAdmin": True, "room": name}},
@@ -6818,22 +6824,30 @@ async def _live_items() -> list[dict]:
     except Exception as e:  # noqa: BLE001
         logger.info("live: call server unreachable: %s", e)
         rooms = {}
+    # A Watch Party is live while anyone's in the party, call or no call: the Watch Party
+    # server's head count, with names from the call when there is one.
+    parties = {name[len("watch-"):]: _people(parts) for name, parts in rooms.items() if name.startswith("watch-")}
+    for room in _movies.party_rooms():
+        parties.setdefault(room, [])
+    for room, people in parties.items():
+        now = _movies.now_playing(room)
+        count = max(int(now.get("watching") or 0), len(people))
+        if not count:
+            continue
+        title = now.get("title") or ("Something's on" if now.get("video") else "Picking what to watch")
+        dur = await asyncio.to_thread(_watch_history.duration_of, now["video"]) if now.get("video") else 0
+        pos = float(now.get("position") or 0)
+        who = f"{count} watching" + (f" · {_names_line(people)}" if people else "")
+        items.append({"key": f"watch:{room}", "kind": "watch", "title": title,
+                      "subtitle": who + (" · paused" if now.get("paused") else ""),
+                      "count": count, "names": people, "paused": bool(now.get("paused")),
+                      "progress": round(min(1.0, pos / dur), 3) if dur > 60 else -1,
+                      "progressLabel": f"{int(pos // 60)} of {int(dur // 60)} min" if dur > 60 else "",
+                      "url": "/app/watch/party", "poster": now.get("poster") or ""})
     for name, parts in rooms.items():
         people = _people(parts)
-        if not people:
+        if not people or name.startswith("watch-"):
             continue
-        if name.startswith("watch-"):
-            room = name[len("watch-"):]
-            now = _movies.now_playing(room)
-            title = now.get("title") or ("Something's on" if now.get("video") else "Picking what to watch")
-            dur = await asyncio.to_thread(_watch_history.duration_of, now["video"]) if now.get("video") else 0
-            pos = float(now.get("position") or 0)
-            items.append({"key": f"watch:{room}", "kind": "watch", "title": title,
-                          "subtitle": f"{len(people)} watching · {_names_line(people)}" + (" · paused" if now.get("paused") else ""),
-                          "count": len(people), "names": people, "paused": bool(now.get("paused")),
-                          "progress": round(min(1.0, pos / dur), 3) if dur > 60 else -1,
-                          "progressLabel": f"{int(pos // 60)} of {int(dur // 60)} min" if dur > 60 else "",
-                          "url": "/app/watch/party", "poster": now.get("poster") or ""})
         else:
             items.append({"key": f"huddle:{name}", "kind": "huddle", "title": "Huddle" if name == "crcmz" else f"Huddle · {name}",
                           "subtitle": f"{len(people)} in the call · {_names_line(people)}", "count": len(people),

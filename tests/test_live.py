@@ -34,6 +34,17 @@ sent.clear()
 live.tick([{**w, "progress": 0.2, "count": 4, "subtitle": "4 watching"}])   # someone joined: at once, urgent
 assert sent == [("update", "watch:crcmz", True)], sent
 assert live.current()[0]["started"] == started         # the start time sticks
+# Switching it on mid-party shows what's already on, at once, to just that person.
+started_for = []
+real_start = live._start_for
+live._start_for = lambda sub, it: started_for.append((sub, it["key"]))
+live.save_prefs("late", {"on": True})
+assert started_for == [("late", "watch:crcmz")], started_for
+started_for.clear()
+live.save_prefs("late", {"on": True})                  # already on: nothing again
+assert started_for == [], started_for
+live._start_for = real_start
+
 sent.clear()
 live.tick([])
 assert sent == [("end", "watch:crcmz", True)] and live.current() == [], sent

@@ -70,6 +70,7 @@ def get_prefs(sub: str) -> dict:
 
 def save_prefs(sub: str, changes: dict) -> dict:
     p = get_prefs(sub)
+    before = dict(p)
     for k, v in (changes or {}).items():
         if k == "on" or k in KINDS:
             p[k] = bool(v)
@@ -77,9 +78,13 @@ def save_prefs(sub: str, changes: dict) -> dict:
         db.execute("INSERT INTO prefs(sub, json) VALUES (?,?) ON CONFLICT(sub) DO UPDATE SET json=excluded.json",
                    (sub, json.dumps(p)))
     # Switched something off: take what's showing for it off this person's phones now.
+    # Switched it on: show what's already going on, rather than waiting for its next change.
+    _load()
     for key, item in _last.items():
         if not wants(p, item["kind"]):
             _end_for(sub, key, item)
+        elif not wants(before, item["kind"]):
+            _start_for(sub, item)
     return p
 
 
@@ -240,6 +245,10 @@ def _deliver_now(event: str, it: dict, subs: set[str], urgent: bool = True) -> N
 
 def _end_for(sub: str, key: str, it: dict) -> None:
     threading.Thread(target=_deliver_now, args=("end", it, {sub}), name="live-push", daemon=True).start()
+
+
+def _start_for(sub: str, it: dict) -> None:
+    threading.Thread(target=_deliver_now, args=("start", it, {sub}), name="live-push", daemon=True).start()
 
 
 def _android(event: str, it: dict, subs: set[str]) -> None:
