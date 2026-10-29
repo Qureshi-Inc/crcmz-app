@@ -3,6 +3,7 @@ package me.crcmz.app
 import android.content.ComponentName
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -50,10 +51,13 @@ object NativeAudio {
     private var art: ByteArray? = null
     private var announcedReady = false
     private var app: Context? = null
+    private var audioManager: AudioManager? = null
+    private var preCallVolume = 1f  // restored after duck
 
     /** The player, shared with PlaybackService's media session. */
     fun player(ctx: Context): ExoPlayer = exo ?: run {
         app = ctx.applicationContext
+        audioManager = ctx.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         // The stream and the art need the signed-in page's session cookie.
         val http = DefaultHttpDataSource.Factory().setUserAgent("CRCMZ-Android/${BuildConfig.VERSION_NAME}")
         val withCookies = ResolvingDataSource.Factory(http) { spec ->
@@ -62,7 +66,9 @@ object NativeAudio {
         }
         ExoPlayer.Builder(ctx.applicationContext)
             .setMediaSourceFactory(DefaultMediaSourceFactory(withCookies))
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
+            // handleAudioFocus=false: we manage focus manually so we can play through
+            // WhatsApp calls while still yielding to other media apps (YouTube etc.).
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), false)
             .setHandleAudioBecomingNoisy(true)   // headphones out: pause
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build().also { p ->
@@ -131,6 +137,43 @@ object NativeAudio {
 
     private fun widget() { snap(); app?.let { SlapWidget.update(it) } }
 
+    // --- Audio focus (manual) ---
+    // ExoPlayer's built-in focus handling blocks playback whenever a call holds
+    // AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE (WhatsApp, phone calls). By managing
+    // focus ourselves we can detect that case and play anyway, while still
+    // yielding to other media apps (YouTube etc.) through normal AUDIOFOCUS_LOSS.
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        val p = exo ?: return@OnAudioFocusChangeListener
+        when (change) {
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                p.volume = preCallVolume
+                if (p.playWhenReady) p.play()
+            }
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                p.pause(); remote("pause")
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                if (p.isPlaying) { p.pause(); remote("pause") }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                preCallVolume = p.volume; p.volume = 0.3f
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun requestFocus(): Boolean {
+        val am = audioManager ?: return true
+        val result = am.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+        if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) return true
+        // Focus denied — if a call is active, play anyway (user intentionally opened Slap during a call).
+        val mode = am.mode
+        return mode == AudioManager.MODE_IN_COMMUNICATION || mode == AudioManager.MODE_IN_CALL
+    }
+
+    @Suppress("DEPRECATION")
+    private fun abandonFocus() { audioManager?.abandonAudioFocus(focusListener) }
+
     fun start(app: LauncherActivity) {
         player(app)
         // Binding a controller starts PlaybackService, which owns the media notification.
@@ -144,9 +187,9 @@ object NativeAudio {
     fun handle(m: JSONObject) {
         val p = exo ?: return
         when (m.optString("type")) {
-            "src" -> m.optString("url").takeIf { ours(it) }?.let { load(it) }
-            "stop" -> { p.stop(); p.clearMediaItems(); url = null; nextUrl = null; meta = MediaMetadata.EMPTY; widget() }
-            "play" -> p.play()
+            "src" -> m.optString("url").takeIf { ours(it) }?.let { if (requestFocus()) load(it) }
+            "stop" -> { p.stop(); p.clearMediaItems(); url = null; nextUrl = null; meta = MediaMetadata.EMPTY; abandonFocus(); widget() }
+            "play" -> { if (requestFocus()) p.play() }
             "pause" -> p.pause()
             "seek" -> { p.seekTo((m.optDouble("time", 0.0) * 1000).toLong()); send("seeked") }
             "meta" -> meta(m)
