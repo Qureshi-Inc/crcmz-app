@@ -20,6 +20,7 @@
 				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key><integer>1</integer>
 				<key>NSExtensionActivationSupportsText</key><true/>
 				<key>NSExtensionActivationSupportsMovieWithMaxCount</key><integer>1</integer>
+				<key>NSExtensionActivationSupportsImageWithMaxCount</key><integer>30</integer>
 			</dict>
 		</dict>
 		<key>NSExtensionPointIdentifier</key><string>com.apple.share-services</string>

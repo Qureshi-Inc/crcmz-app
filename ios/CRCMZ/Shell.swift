@@ -122,6 +122,7 @@ final class Shell: NSObject, UITabBarDelegate {
         case "settings": return "gearshape.fill"
         case "help": return "questionmark.circle"
         case "admin": return "lock.shield"
+        case "trip", "trips": return "suitcase.fill"
         default: return "circle"
         }
     }

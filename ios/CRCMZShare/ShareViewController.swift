@@ -9,7 +9,10 @@ import UniformTypeIdentifiers
 ///   a trailer      the one that asks: add its film, or play the trailer
 ///   a video        ready in the Watch Party the next time the app opens
 /// A video from Photos goes to Clips' Send a video (the same upload, caption and queue as
-/// the app). Everything is sent as you: the app's session, from SharedSession.
+/// the app). Photos (up to 30) are receipts for a trip's Split: they go to the server's
+/// inbox (POST /api/trips/inbox) and the app opens /app/trips/receipts?inbox=<id> the next
+/// time it's opened, where you pick the trip and check the amounts. Everything is sent as
+/// you: the app's session, from SharedSession.
 final class ShareViewController: UIViewController {
     private let model = ShareModel()
 
@@ -60,6 +63,35 @@ private enum API {
         }
         return out
     }
+
+    /// One multipart POST: each file as `field` (JPEG).
+    static func upload(_ path: String, field: String, files: [Data], timeout: TimeInterval = 180) async throws -> [String: Any] {
+        guard let session = SharedSession.read() else {
+            throw Failure(message: "Open the CRCMZ app and sign in once, then share again.", status: 401)
+        }
+        let boundary = "crcmz-\(UUID().uuidString)"
+        var body = Data()
+        for (i, f) in files.enumerated() {
+            body.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(field)\"; filename=\"receipt-\(i + 1).jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+            body.append(f)
+            body.append("\r\n".data(using: .utf8)!)
+        }
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        var rq = URLRequest(url: URL(string: path, relativeTo: base)!)
+        rq.httpMethod = "POST"
+        rq.timeoutInterval = timeout
+        rq.setValue("https://app.crcmz.me", forHTTPHeaderField: "Origin")
+        rq.setValue("psn_session=\(session)", forHTTPHeaderField: "Cookie")
+        rq.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        let (data, resp) = try await URLSession.shared.upload(for: rq, from: body)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let out = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        guard (200..<300).contains(code) else {
+            if code == 401 { throw Failure(message: "Open the CRCMZ app and sign in again, then share again.", status: 401) }
+            throw Failure(message: (out["detail"] as? String) ?? (out["error"] as? String) ?? "That didn't work.", status: code)
+        }
+        return out
+    }
 }
 
 // MARK: - What the card shows
@@ -76,6 +108,7 @@ final class ShareModel: ObservableObject {
         case songAdded(name: String, job: String?, downloading: Bool)
         case clip(file: URL, name: String)
         case uploading(Double)
+        case working(String)
         case message(title: String, detail: String, undo: (() -> Void)?)
     }
     @Published var phase: Phase = .looking
@@ -85,7 +118,17 @@ final class ShareModel: ObservableObject {
 
     func start(_ items: [NSExtensionItem]) async {
         var text = items.compactMap { $0.attributedContentText?.string }.joined(separator: " ")
-        for p in items.flatMap({ $0.attachments ?? [] }) {
+        // Photos and nothing else (no link, no video): receipts for a trip.
+        let attachments = items.flatMap { $0.attachments ?? [] }
+        let photos = attachments.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) && !$0.hasItemConformingToTypeIdentifier(UTType.movie.identifier)
+        }
+        if !photos.isEmpty && !attachments.contains(where: { $0.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+            || $0.hasItemConformingToTypeIdentifier(UTType.movie.identifier) }) {
+            await sendReceipts(Array(photos.prefix(30)))
+            return
+        }
+        for p in attachments {
             if p.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
                 if let url = await movieFile(p) { phase = .clip(file: url, name: url.lastPathComponent); return }
             } else if p.hasItemConformingToTypeIdentifier(UTType.url.identifier),
@@ -139,6 +182,55 @@ final class ShareModel: ObservableObject {
                 cont.resume(returning: (try? FileManager.default.copyItem(at: url, to: dest)) != nil ? dest : nil)
             }
         }
+    }
+
+    // MARK: Receipts
+
+    /// Photos to the trips inbox, then the app opens the page that adds them to a Split.
+    func sendReceipts(_ ps: [NSItemProvider]) async {
+        let n = ps.count
+        var files: [Data] = []
+        for (i, p) in ps.enumerated() {
+            phase = .working(n == 1 ? "Getting the receipt ready…" : "Getting receipt \(i + 1) of \(n) ready…")
+            if let d = await receiptJPEG(p) { files.append(d) }
+        }
+        guard !files.isEmpty else {
+            phase = .message(title: "Those photos couldn't be opened", detail: "Try sharing them again, or add them from the app.", undo: nil)
+            return
+        }
+        phase = .working(files.count == 1 ? "Sending the receipt…" : "Sending \(files.count) receipts…")
+        do {
+            let r = try await API.upload("/api/trips/inbox", field: "files", files: files)
+            guard let inbox = r["inbox"].map({ "\($0)" }), !inbox.isEmpty else {
+                throw API.Failure(message: "CRCMZ didn't take them. Try again.", status: 0)
+            }
+            let link = "https://app.crcmz.me/app/trips/receipts?inbox=\(inbox.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? inbox)"
+            _ = try? await API.call("/api/share/pending", method: "POST", json: ["url": link])
+            let got = (r["count"] as? Int) ?? files.count
+            let skipped = n - got
+            phase = .message(title: got == 1 ? "Receipt sent ✓" : "\(got) receipts sent ✓",
+                             detail: "Open CRCMZ to pick the trip and add them to its Split."
+                                + (skipped > 0 ? " \(skipped) couldn't be opened." : ""), undo: nil)
+        } catch let e as API.Failure {
+            phase = .message(title: "Couldn't send them", detail: e.message, undo: nil)
+        } catch {
+            phase = .message(title: "The upload stopped", detail: "Check your connection and share them again.", undo: nil)
+        }
+    }
+
+    /// A photo as a JPEG no bigger than 1600 px: a receipt doesn't need more to be read.
+    private func receiptJPEG(_ p: NSItemProvider) async -> Data? {
+        let raw: Data? = await withCheckedContinuation { cont in
+            _ = p.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in cont.resume(returning: data) }
+        }
+        guard let raw, let img = UIImage(data: raw) else { return nil }
+        let longest = max(img.size.width, img.size.height)
+        let scale = min(1, 1600 / max(1, longest))
+        let size = CGSize(width: (img.size.width * scale).rounded(), height: (img.size.height * scale).rounded())
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 1
+        let out = UIGraphicsImageRenderer(size: size, format: fmt).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
+        return out.jpegData(compressionQuality: 0.82)
     }
 
     // MARK: Songs
@@ -369,6 +461,9 @@ private struct ShareCard: View {
             Button("Cancel") { model.close() }.foregroundStyle(.secondary)
         case let .uploading(p):
             ProgressView(value: p) { Text("Sending to Clips…") }.tint(violet)
+            Text("Keep this open until it's sent.").font(.caption).foregroundStyle(.secondary)
+        case let .working(what):
+            ProgressView(what).tint(.white)
             Text("Keep this open until it's sent.").font(.caption).foregroundStyle(.secondary)
         case let .message(title, detail, undo):
             Text(title).font(.headline).multilineTextAlignment(.center)

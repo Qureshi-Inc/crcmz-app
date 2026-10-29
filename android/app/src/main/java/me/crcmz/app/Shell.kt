@@ -179,6 +179,7 @@ class Shell(private val app: LauncherActivity, private val go: (String) -> Unit)
             "help" -> R.drawable.ic_info
             "admin" -> R.drawable.ic_admin
             "getapp" -> R.drawable.ic_download
+            "trip", "trips" -> R.drawable.ic_trip
             else -> R.drawable.ic_more
         }
     }

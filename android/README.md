@@ -31,7 +31,7 @@ A site deploy updates every page; rebuild only for changes in this folder.
   `crcmz.me/.well-known/assetlinks.json` (repo `crcmz-coming-soon`) and
   `app.crcmz.me/.well-known/assetlinks.json` (server.py) list this app's signing key
   with `get_login_creds`.
-- Share → CRCMZ: a shared link opens `/app/share` (a song goes to Slap, a film to Movies, a video to the Watch Party); a video from Photos opens Clips' Send a video. Shortcuts
+- Share → CRCMZ: a shared link opens `/app/share` (a song goes to Slap, a film to Movies, a video to the Watch Party); a video from Photos opens Clips' Send a video; one or more photos (up to 30) are receipts: `/app/trips/receipts?shared=<t1>,<t2>` (each served by `SharedFiles` at `/__crcmz/shared/<token>`) picks the trip, reads them and adds them to its Split. Shortcuts
   (long-press the icon): Watch Party, Movies, Slap, Huddle, Clips.
 - Live updates (`LiveUpdates.kt`, server `live.py`): a Watch Party, Huddle, Listen
   Together or tournament as an ongoing notification. The Watch Party uses the standard
