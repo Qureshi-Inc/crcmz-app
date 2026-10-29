@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trips: a suitcase (Material "luggage" shape), same fill style as the other tab icons. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M9,2h6c0.6,0 1,0.4 1,1v3h2c1.1,0 2,0.9 2,2v11c0,1.1 -0.9,2 -2,2h-1v1h-2v-1H9v1H7v-1H6c-1.1,0 -2,-0.9 -2,-2V8c0,-1.1 0.9,-2 2,-2h2V3C8,2.4 8.4,2 9,2zM10,4v2h4V4H10zM8,9v9h1.5V9H8zM14.5,9v9H16V9H14.5z" />
+</vector>

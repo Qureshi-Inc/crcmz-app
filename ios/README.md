@@ -6,6 +6,10 @@ a web page can't do on an iPhone:
 - **Notifications** through APNs (`apns.py`): the web view gets no Web Push.
 - **Rings**: Huddle / Watch Party / Rally on the system call screen (CallKit), woken by a
   VoIP push (PushKit). Answer opens the page; the system call then ends.
+- **Share → CRCMZ** (`CRCMZShare`): links (songs, films, videos), a video from Photos (Clips),
+  and photos as receipts: up to 30, shrunk to ≤1600 px JPEGs, sent to `POST /api/trips/inbox`;
+  the extension can't open the app, so it leaves `/app/trips/receipts?inbox=<id>` with
+  `/api/share/pending` and the app opens it on its next open (15 minutes).
 - **Links**: app.crcmz.me/app links open the app (applinks), and passkeys made on
   app.crcmz.me work (webcredentials). Both read `/.well-known/apple-app-site-association`.
 

@@ -381,6 +381,18 @@ class LauncherActivity : AppCompatActivity() {
                        else i.getParcelableExtra(Intent.EXTRA_STREAM)) ?: return null
             return SharedFiles.offer(this, uri, i.type.orEmpty())
         }
+        // Photos (one or many) from the gallery: receipts for a trip's Split.
+        if (i.type.orEmpty().startsWith("image/") && (i.action == Intent.ACTION_SEND || i.action == Intent.ACTION_SEND_MULTIPLE)) {
+            @Suppress("DEPRECATION")
+            val uris: List<Uri> = if (i.action == Intent.ACTION_SEND_MULTIPLE) {
+                (if (android.os.Build.VERSION.SDK_INT >= 33) i.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                 else i.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)).orEmpty()
+            } else {
+                listOfNotNull(if (android.os.Build.VERSION.SDK_INT >= 33) i.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                              else i.getParcelableExtra(Intent.EXTRA_STREAM))
+            }
+            return SharedFiles.offerReceipts(this, uris, i.type.orEmpty())
+        }
         if (i.action == Intent.ACTION_SEND && i.type == "text/plain") {
             val text = i.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
             val link = Regex("https?://\\S+").find(text)?.value.orEmpty()
