@@ -298,7 +298,8 @@ def fx(src: str, dst: str) -> float:
         return hit[0]
     import httpx
     try:
-        r = httpx.get("https://api.frankfurter.app/latest", params={"from": src, "to": dst}, timeout=10)
+        # It redirects (to api.frankfurter.dev); httpx only follows when told to.
+        r = httpx.get("https://api.frankfurter.app/latest", params={"from": src, "to": dst}, timeout=10, follow_redirects=True)
         rate = float(r.json()["rates"][dst])
         _fx_cache[(src, dst)] = (rate, _now())
         return rate
