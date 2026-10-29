@@ -3225,17 +3225,7 @@ def _summary_speaker(row: dict, cache: dict) -> str:
         import crcmz_identity
         person = crcmz_identity.identify_sender_name(raw)
         if person:
-            label = (person.get("display_name")
-                     or person.get("username") or raw).strip()
-            # Zitadel display names are often the username twice ("asamad89
-            # asamad89") because first and last name were both set to it. Reads badly
-            # in a summary, so collapse repeated words, keeping order.
-            seen, words = set(), []
-            for w in label.split():
-                if w.casefold() not in seen:
-                    seen.add(w.casefold())
-                    words.append(w)
-            cache[raw] = " ".join(words) or raw
+            cache[raw] = crcmz_identity.preferred_name(person) or raw
             return cache[raw]
     except Exception as e:  # noqa: BLE001
         logger.warning("summarize: identity lookup failed for %r: %s", raw, e)
@@ -4073,7 +4063,7 @@ def _upload_member(request: Request) -> tuple[str, str, str]:
         person = crcmz_identity.by_zitadel_id().get(sub) or {}
         psn_id = person.get("psn_id") or ""
         if not psn_id and person.get("steam_id"):
-            steam_name = (person.get("display_name") or person.get("steam_id") or "").strip()
+            steam_name = (crcmz_identity.preferred_name(person) or person.get("steam_id") or "").strip()
     except Exception as e:  # noqa: BLE001 - fall back to the portal link below
         logger.warning("video upload: identity lookup failed: %s", e)
     if not psn_id:
@@ -6802,14 +6792,19 @@ async def _livekit_rooms_people() -> dict[str, list[dict]]:
     return out
 
 
-def _people(parts: list[dict]) -> list[str]:
-    """Distinct people (a TV and its companion phone are one), by name."""
+def _people_by_sub(parts: list[dict]) -> dict[str, str]:
+    """Distinct people (a TV and its companion phone are one): Zitadel id -> name."""
     seen: dict[str, str] = {}
     for p in parts:
         sub = str(p.get("identity") or "").split("#")[0]
         if sub and sub not in seen:
             seen[sub] = str(p.get("name") or "Someone")
-    return list(seen.values())
+    return seen
+
+
+def _people(parts: list[dict]) -> list[str]:
+    """Distinct people (a TV and its companion phone are one), by name."""
+    return list(_people_by_sub(parts).values())
 
 
 def _names_line(names: list[str]) -> str:
@@ -6826,11 +6821,14 @@ async def _live_items() -> list[dict]:
         rooms = {}
     # A Watch Party is live while anyone's in the party, call or no call: the Watch Party
     # server's head count, with names from the call when there is one.
-    parties = {name[len("watch-"):]: _people(parts) for name, parts in rooms.items() if name.startswith("watch-")}
-    for room in _movies.party_rooms():
-        parties.setdefault(room, [])
-    for room, people in parties.items():
-        now = _movies.now_playing(room)
+    parties = {name[len("watch-"):]: _people_by_sub(parts) for name, parts in rooms.items() if name.startswith("watch-")}
+    # Rooms with a party on, and (while the Watch Party server can't be reached) the ones
+    # that had one: those show as reconnecting, not live, until it's back or they time out.
+    for room in _movies.live_rooms():
+        parties.setdefault(room, {})
+    for room, by_sub in parties.items():
+        now = _movies.party_now(room)
+        people = list(by_sub.values())
         count = max(int(now.get("watching") or 0), len(people))
         if not count:
             continue
@@ -6838,12 +6836,18 @@ async def _live_items() -> list[dict]:
         dur = await asyncio.to_thread(_watch_history.duration_of, now["video"]) if now.get("video") else 0
         pos = float(now.get("position") or 0)
         who = f"{count} watching" + (f" · {_names_line(people)}" if people else "")
+        status = "stale" if now.get("stale") else "paused" if now.get("paused") else "playing"
         items.append({"key": f"watch:{room}", "kind": "watch", "title": title,
                       "subtitle": who + (" · paused" if now.get("paused") else ""),
                       "count": count, "names": people, "paused": bool(now.get("paused")),
                       "progress": round(min(1.0, pos / dur), 3) if dur > 60 else -1,
                       "progressLabel": f"{int(pos // 60)} of {int(dur // 60)} min" if dur > 60 else "",
+                      # Where the film is now (elapsed, as of pos_at) for the phones' own clocks,
+                      # and the party's last play / pause / seek stamp: a new stamp is a seek.
                       "elapsed": round(min(pos, dur) if dur > 60 else pos), "duration": round(dur) if dur > 60 else 0,
+                      "pos_at": time.time(), "anchor_pos": float(now.get("anchor_pos") or 0),
+                      "anchor_at": float(now.get("anchor_at") or 0), "rate": 1.0, "status": status,
+                      "subs": sorted(by_sub),   # who's in the party's call: their phones say "Open party"
                       "url": f"/app/watch/party?room={_quote(room, safe='')}", "poster": _widget_poster(now.get("poster") or "")})
     for name, parts in rooms.items():
         people = _people(parts)
@@ -6933,7 +6937,10 @@ async def live_prefs_set(request: Request):
 @app.post("/api/live/ios")
 async def live_ios_token(request: Request):
     """The iPhone app hands over Live Activity tokens: {start: token} (push-to-start) or
-    {key, token} (one running activity's) or {key, token, ended: true}."""
+    {key, token} (one running activity's) or {key, token, ended: true}; and (build 20+)
+    {hide: session} (Hide: not again this session), {enabled: bool, start?: token} (Live
+    Activities on or off for the app), {key, token, ended: true, session, dismissed: true}
+    (swiped away: like Hide)."""
     s = _get_session(request)
     if not s:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
@@ -6942,10 +6949,16 @@ async def live_ios_token(request: Request):
     except Exception:  # noqa: BLE001
         b = {}
     b = b if isinstance(b, dict) else {}
-    if b.get("start"):
+    if b.get("hide"):
+        await asyncio.to_thread(_live.hide, s["sub"], str(b["hide"]))
+    elif "enabled" in b:
+        await asyncio.to_thread(_live.set_ios_enabled, s["sub"], bool(b["enabled"]), str(b.get("start") or ""))
+    elif b.get("start"):
         await asyncio.to_thread(_live.register_ios_start, s["sub"], str(b["start"]))
     elif b.get("token") and b.get("ended"):
         await asyncio.to_thread(_live.forget_ios_activity, str(b["token"]))
+        if b.get("dismissed") and b.get("session"):
+            await asyncio.to_thread(_live.hide, s["sub"], str(b["session"]))
     elif b.get("token") and b.get("key"):
         await asyncio.to_thread(_live.register_ios_activity, s["sub"], str(b["key"]), str(b["token"]))
     else:

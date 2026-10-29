@@ -102,11 +102,11 @@ SYSTEM_PROMPT = (
     "When you DO state a number, name, date or quote about the squad it must "
     "come from a tool — never invent one. But you do not need a tool to be "
     "funny.\n"
-    "NAMES ARE LITERAL. A username a tool gives you (themoosecompany, asamad89, "
-    "moiiz41510) is the answer -- quote it exactly. Never translate one into "
-    "somebody's real name or nickname, and never guess which member a username "
-    "belongs to: the Slapshare, PSN and WhatsApp names do not line up, and "
-    "guessing turns a true number into a lie about the wrong person.\n"
+    "NAMES: tools return a person's preferred name in the `name` field — use that "
+    "name. When a raw handle appears in results or memories (a PSN id, Slap login, "
+    "WA display name), translate it using the SQUAD NAMES block in your context if "
+    "it is listed there. If it is NOT in that block, quote it as-is — never guess "
+    "who it belongs to.\n"
     "If a tool comes back with an error or empty, SAY THAT (\"PSN ain't talking "
     "to me right now\"). Never turn a broken tool into a fact — \"nobody is "
     "online\" and \"I cannot see who is online\" are different answers.\n"
@@ -1377,7 +1377,7 @@ def _person_profile(who: str, range: str = "all_time", group: str = "") -> dict:
     return {
         "found": True,
         "identity": {
-            "name": person["display_name"] or person["username"],
+            "name": ident.preferred_name(person),
             "username": person["username"],
             # No email: this answers anyone in a group chat or with an MCP token.
             "psn_id": person["psn_id"],
@@ -4796,11 +4796,57 @@ def _text_streamer(emit: Callable[[dict], None] | None, enabled: bool):
     return on_text, state
 
 
+def _identity_roster_block() -> str:
+    """preferred name → all platform aliases, injected into the system prompt.
+
+    Lets the AI translate a raw PSN/WA/Slap handle that appears in memory_search
+    results or tool output back to the person's preferred name without guessing.
+    Built fresh each call so a squad_name change takes effect within the cache TTL.
+    """
+    try:
+        import crcmz_identity
+        roster = [p for p in crcmz_identity.people() if not p.get("is_bot")]
+        if not roster:
+            return ""
+        lines: list[str] = []
+        for p in roster:
+            name = crcmz_identity.preferred_name(p)
+            if not name:
+                continue
+            handles: list[str] = []
+            if p.get("psn_id"):
+                handles.append(f"PSN {p['psn_id']}")
+            if p.get("mm_username"):
+                handles.append(f"MM @{p['mm_username']}")
+            for wa in (p.get("wa_names") or []):
+                if wa.casefold() != name.casefold():
+                    handles.append(f"WA '{wa}'")
+            if p.get("username") and p["username"].casefold() != name.casefold():
+                handles.append(f"login {p['username']}")
+            dn = p.get("display_name") or ""
+            if dn and dn.casefold() != name.casefold():
+                handles.append(f"full name {dn}")
+            if handles:
+                lines.append(f"- {name}: {', '.join(handles)}")
+        if not lines:
+            return ""
+        return (
+            "\n\n=== SQUAD NAMES — map any handle in tool results or memories to "
+            "the preferred name on the left ===\n"
+            + "\n".join(lines)
+            + "\n=== END SQUAD NAMES ===\n"
+        )
+    except Exception:
+        return ""
+
+
 def asker_block(person: dict | None) -> str:
     """Who this chat belongs to, for the system prompt. Everyone in the squad has their
     own Ask AI thread, so every user message in it is from this one person."""
     p = person or {}
-    names = [p.get("display_name"), p.get("mm_username"), p.get("psn_id"), *(p.get("wa_names") or [])]
+    # preferred_name is the squad_name they chose, or first name — always use it first.
+    _pref = p.get("preferred_name") or (p.get("display_name") or "").split()[0] or p.get("username") or ""
+    names = [_pref, p.get("mm_username"), p.get("psn_id"), *(p.get("wa_names") or [])]
     seen: list[str] = []
     for n in names:
         n = str(n or "").strip()
@@ -4903,11 +4949,12 @@ def _ask(question: str, history: list[dict] | None = None,
     except Exception as e:  # noqa: BLE001
         logger.warning("assistant: could not load member jids: %s", e)
 
+    roster_block = _identity_roster_block()
     messages: list[dict] = [
         {"role": "system",
          "content": SYSTEM_PROMPT.format(
              today=datetime.now().strftime("%A %Y-%m-%d"),
-             style=_persona(), facts=facts_block + members_block
+             style=_persona(), facts=facts_block + roster_block + members_block
              + (asker_block(asker) if asker is not None else ""))},
     ]
     # Prior turns, trimmed: only user/assistant text, last 3 exchanges.

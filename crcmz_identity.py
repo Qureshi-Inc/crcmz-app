@@ -101,11 +101,28 @@ BOT_ID = "crcmz-bot"
 BOT_NAME = "CRCMZ Bot"
 
 
+def preferred_name(person: dict) -> str:
+    """The one name to use when referring to this person in AI-generated content.
+
+    Priority: squad_name the person chose in Settings → first word of their
+    Zitadel displayName (first name only) → login username. Never returns a
+    PSN id or WhatsApp handle as a fallback — those are platform handles, not
+    human names.
+    """
+    if person.get("squad_name"):
+        return person["squad_name"]
+    dn = (person.get("display_name") or "").strip()
+    if dn:
+        return dn.split()[0]
+    return (person.get("username") or "").strip()
+
+
 def bot_person() -> dict:
     """Person-shaped record for the bot itself, so callers need no special case."""
     return {
         "zitadel_id": BOT_ID,
         "display_name": BOT_NAME,
+        "preferred_name": BOT_NAME,
         "username": BOT_ID,
         "email": "",
         "state": "",
@@ -266,7 +283,7 @@ def _fetch_people() -> list[dict]:
                 logger.info("identity: psn_id for %s came from the portal link (%s), "
                             "no psn_id tag set", uid, psn_id)
 
-            people.append({
+            _row: dict = {
                 "zitadel_id": uid,
                 "display_name": (profile.get("displayName") or "").strip(),
                 "username": (u.get("userName") or "").strip(),
@@ -283,7 +300,9 @@ def _fetch_people() -> list[dict]:
                 "squad_name": tags.get("squad_name", "").strip(),
                 "founder": _truthy(tags.get("founder", "")),
                 "tags": tags,
-            })
+            }
+            _row["preferred_name"] = preferred_name(_row)
+            people.append(_row)
 
     logger.info("identity: loaded %d people, %d fully tagged",
                 len(people), sum(1 for p in people if p["wa_jid"] and p["psn_id"]))

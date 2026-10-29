@@ -35,7 +35,7 @@ def roster_aliases(people):
             continue
         out.append({
             "key": p.get("zitadel_id") or p.get("psn_id") or "",
-            "label": p.get("display_name") or p.get("psn_id") or "Squadmate",
+            "label": p.get("preferred_name") or p.get("squad_name") or (p.get("display_name") or "").split()[0] or p.get("psn_id") or "Squadmate",
             "psn_id": (p.get("psn_id") or "").casefold(),
             "aliases": sorted(aliases, key=len, reverse=True),
         })
