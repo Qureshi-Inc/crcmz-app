@@ -264,6 +264,10 @@ def wa_main_jid() -> str:
 # A group chat never does, even when a founder is the one asking: the answer is
 # posted where non-founders read it.
 _WA_FOUNDER_VIEW = contextvars.ContextVar("crcmz_wa_founder_view", default=False)
+# Who is asking, on the same private surfaces (Zitadel id), for tools that answer only
+# about the asker's own things (their trips). "" everywhere else: group chats, the
+# shared MCP token, service tokens.
+_VIEWER_SUB = contextvars.ContextVar("crcmz_viewer_sub", default="")
 
 
 @contextlib.contextmanager
@@ -280,9 +284,12 @@ def wa_viewer(sub_or_person: Any = None):
         except Exception as e:  # noqa: BLE001 - fail closed
             logger.warning("assistant: founder check failed, public view: %s", e)
     token = _WA_FOUNDER_VIEW.set(founder)
+    sub = sub_or_person.get("zitadel_id", "") if isinstance(sub_or_person, dict) else str(sub_or_person or "")
+    sub_token = _VIEWER_SUB.set(sub if sub.isdigit() else "")
     try:
         yield founder
     finally:
+        _VIEWER_SUB.reset(sub_token)
         _WA_FOUNDER_VIEW.reset(token)
 
 
@@ -290,9 +297,11 @@ def wa_viewer(sub_or_person: Any = None):
 def wa_public_view():
     """Force the public view, e.g. while answering inside a group chat."""
     token = _WA_FOUNDER_VIEW.set(False)
+    sub_token = _VIEWER_SUB.set("")
     try:
         yield
     finally:
+        _VIEWER_SUB.reset(sub_token)
         _WA_FOUNDER_VIEW.reset(token)
 
 
@@ -3714,6 +3723,20 @@ def _whatsapp_clip_reactions(clip_id: str = "") -> dict:
 def _tournament_list(status: str = "") -> list:
     import tourney as _tn
     return _tn.list_tournaments(status if status in ("draft", "active", "complete") else None)
+
+
+@tool(
+    "trip_summary",
+    "The asker's own trips (made in the app's Trips): name, place, dates, who's going, and for "
+    "each trip run in the app its Split in short: total spent, each person's balance (positive = "
+    "is owed, negative = owes, in the trip's currency) and who should pay whom to square up. "
+    "Trips are private to their invitees, so this only answers for someone signed in asking "
+    "from the app or their own MCP token; anywhere else it returns no trips. The trip.crcmz.me "
+    "trip's own money is in the trip tools, not here.",
+    {"type": "object", "properties": {}})
+def _trip_summary() -> dict:
+    import trips as _tr
+    return _tr.summary_for(_VIEWER_SUB.get())
 
 
 @tool(

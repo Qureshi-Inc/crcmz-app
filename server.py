@@ -58,6 +58,7 @@ import threading as _threading
 import time as _time
 
 import tourney as _tourney
+import trips as _trips
 import stream_analysis as _stream_analysis
 import webpush as _push  # init() runs with the other stores, below
 import fcm as _fcm  # Android app rings (Huddle / Watch Party); init() below too
@@ -8038,6 +8039,7 @@ import vip_invites as _vip
 import clip_store as _cstore
 from psn_messaging import ClipNotReady, ClipUnauthorized, ClipRateLimited, ClipError, ClipDownload
 _clips.init()
+_trips.init()
 _vip.init()
 _push.init()
 _fcm.init()
@@ -9577,6 +9579,198 @@ def tourney_start(request: Request, tid: str):
 def tourney_reset(request: Request, tid: str):
     _tourney_owner(request, tid)
     return _tourney_call(request, _tourney.reset, tid)
+
+
+# ── Trips ─────────────────────────────────────────────────────────────────────
+# A trip's Split and Moments for the people invited (trips.py). Every route checks the
+# session itself and trips.py checks the invite: a trip you aren't on is a 404.
+
+def _trip_sub(request: Request) -> tuple[str, dict]:
+    s = _get_session(request)
+    if not s or not s.get("sub"):
+        raise HTTPException(401, "sign in required")
+    return str(s["sub"]), {"sub": s["sub"], "name": s.get("name", ""),
+                           "preferred_username": s.get("preferred_username", ""), "email": s.get("email", "")}
+
+
+def _trip_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+
+async def _trip_form_files(request: Request, field: str, limit: int) -> tuple[dict, list[tuple[str, bytes, str]]]:
+    form = await request.form()
+    files = []
+    for f in form.getlist(field)[:limit]:
+        if hasattr(f, "read"):
+            data = await f.read()
+            if len(data) > _trips.MAX_IMAGE:
+                raise HTTPException(400, "That photo is too big (12 MB at most)")
+            files.append((getattr(f, "filename", "") or "photo.jpg", data, getattr(f, "content_type", "") or "image/jpeg"))
+    return {k: v for k, v in form.items() if isinstance(v, str)}, files
+
+
+@app.get("/api/trips")
+def trips_list(request: Request):
+    sub, _ = _trip_sub(request)
+    return _trip_call(_trips.list_for, sub)
+
+
+@app.get("/api/trips/people")
+def trips_people(request: Request):
+    _trip_sub(request)
+    return {"people": _trips.invitable()}
+
+
+@app.post("/api/trips", status_code=201)
+async def trips_create(request: Request):
+    sub, _ = _trip_sub(request)
+    b = await _tourney_body(request)
+    return _trip_call(_trips.create, sub, name=b.get("name"), place=b.get("place", ""), start=b.get("start", ""),
+                      end=b.get("end", ""), currency=b.get("currency") or "CAD",
+                      members=b.get("members") if isinstance(b.get("members"), list) else [], link=bool(b.get("link")))
+
+
+@app.patch("/api/trips/{tid}")
+async def trips_update(request: Request, tid: str):
+    sub, _ = _trip_sub(request)
+    b = await _tourney_body(request)
+    if "members" in b and not isinstance(b["members"], list):
+        raise HTTPException(400, "members must be a list")
+    return _trip_call(_trips.update, tid, sub, b)
+
+
+@app.delete("/api/trips/{tid}")
+def trips_delete(request: Request, tid: str):
+    sub, _ = _trip_sub(request)
+    _trip_call(_trips.delete, tid, sub)
+    return {"ok": True}
+
+
+@app.get("/api/trips/{tid}/split")
+async def trips_split(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    return await asyncio.to_thread(_trip_call, _trips.split, tid, sub, prof)
+
+
+@app.post("/api/trips/{tid}/expenses")
+async def trips_add_expense(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    b = await _tourney_body(request)
+    return await asyncio.to_thread(_trip_call, _trips.add_expense, tid, sub, prof, b)
+
+
+@app.delete("/api/trips/{tid}/expenses/{eid}")
+async def trips_delete_expense(request: Request, tid: str, eid: str):
+    sub, prof = _trip_sub(request)
+    await asyncio.to_thread(_trip_call, _trips.delete_expense, tid, sub, prof, eid)
+    return {"ok": True}
+
+
+@app.post("/api/trips/{tid}/settlements")
+async def trips_settle(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    b = await _tourney_body(request)
+    return await asyncio.to_thread(_trip_call, _trips.add_settlement, tid, sub, prof, b)
+
+
+@app.post("/api/trips/receipts/scan")
+async def trips_scan(request: Request):
+    _trip_sub(request)
+    _, files = await _trip_form_files(request, "receipt", 1)
+    if not files:
+        raise HTTPException(400, "No photo received")
+    try:
+        return await asyncio.to_thread(_trips.scan_receipt, files[0][1])
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.info("trips: receipt reader failed: %s", e)
+        raise HTTPException(502, "The receipt reader isn't answering. Type the amount in.")
+
+
+@app.post("/api/trips/inbox")
+async def trips_inbox_add(request: Request):
+    sub, _ = _trip_sub(request)
+    _, files = await _trip_form_files(request, "files", 30)
+    return _trip_call(_trips.inbox_add, sub, [d for _, d, _ in files])
+
+
+@app.get("/api/trips/inbox/{iid}")
+def trips_inbox_get(request: Request, iid: str):
+    sub, _ = _trip_sub(request)
+    return _trip_call(_trips.inbox_get, sub, iid)
+
+
+@app.get("/api/trips/inbox/{iid}/{n}")
+def trips_inbox_file(request: Request, iid: str, n: int):
+    sub, _ = _trip_sub(request)
+    data, mime = _trip_call(_trips.inbox_file, sub, iid, n)
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.post("/api/trips/{tid}/receipts")
+async def trips_add_receipt(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    _, files = await _trip_form_files(request, "receipt", 1)
+    if not files:
+        raise HTTPException(400, "No photo received")
+    return await asyncio.to_thread(_trip_call, _trips.add_receipt, tid, sub, prof, files[0][1])
+
+
+@app.get("/api/trips/{tid}/receipts/{name}")
+async def trips_receipt(request: Request, tid: str, name: str):
+    sub, prof = _trip_sub(request)
+    data, mime = await asyncio.to_thread(_trip_call, _trips.media, tid, sub, prof, name, "receipt")
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.get("/api/trips/{tid}/moments")
+async def trips_moments(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    return await asyncio.to_thread(_trip_call, _trips.moments, tid, sub, prof)
+
+
+@app.post("/api/trips/{tid}/moments")
+async def trips_add_moment(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    fields, files = await _trip_form_files(request, "photos", 10)
+    return await asyncio.to_thread(_trip_call, _trips.add_moment, tid, sub, prof, fields.get("text", ""), files)
+
+
+@app.post("/api/trips/{tid}/moments/{mid}/like")
+async def trips_like(request: Request, tid: str, mid: str):
+    sub, prof = _trip_sub(request)
+    return await asyncio.to_thread(_trip_call, _trips.like_moment, tid, sub, prof, mid)
+
+
+@app.delete("/api/trips/{tid}/moments/{mid}")
+async def trips_delete_moment(request: Request, tid: str, mid: str):
+    sub, prof = _trip_sub(request)
+    await asyncio.to_thread(_trip_call, _trips.delete_moment, tid, sub, prof, mid)
+    return {"ok": True}
+
+
+@app.get("/api/trips/{tid}/moments/photo/{name}")
+async def trips_moment_photo(request: Request, tid: str, name: str, full: int = 0):
+    sub, prof = _trip_sub(request)
+    data, mime = await asyncio.to_thread(_trip_call, _trips.media, tid, sub, prof, name, "full" if full else "photo")
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "private, max-age=604800"})
+
+
+@app.get("/api/trips/{tid}/moments/reel")
+async def trips_reel(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    data, mime = await asyncio.to_thread(_trip_call, _trips.reel, tid, sub, prof)
+    return Response(content=data, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.post("/api/tourney/tournaments/{tid}/end")
