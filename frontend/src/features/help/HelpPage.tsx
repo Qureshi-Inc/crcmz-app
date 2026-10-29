@@ -163,6 +163,18 @@ const SECTIONS: Section[] = [
     ),
   },
   {
+    id: 'trips', title: 'Trips', icon: 'trip', open: '/trips',
+    body: (
+      <ul>
+        <li><b>New trip:</b> a name, where and when, and who's going. Only the people you invite see it; whoever made it can change that or delete it.</li>
+        <li><b>Split:</b> add what you paid and who it's for, and it works out who owes whom. <b>Scan receipts</b> reads the total off a photo; pick several and it reads them all, then you check the amounts and add them in one go.</li>
+        <li><b>From your gallery:</b> select the receipts, Share, then CRCMZ. Pick the trip, check them, Add.</li>
+        <li><b>Moments:</b> post what happened, with photos. Everyone on the trip sees them and can like them.</li>
+        <li>The Calgary trip is the trip.crcmz.me one: its Split and Moments here are the same as on that site.</li>
+      </ul>
+    ),
+  },
+  {
     id: 'ask', title: 'Ask AI', icon: 'ask', open: '/ask',
     body: (
       <ul>

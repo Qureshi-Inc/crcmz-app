@@ -22,6 +22,8 @@ import { TourneyPage, TournamentPage } from '../features/tourney/TourneyPage'
 import { CreatePage as TourneyCreatePage } from '../features/tourney/Create'
 import { LeadersPage as TourneyLeadersPage } from '../features/tourney/Leaders'
 import { HelpPage } from '../features/help/HelpPage'
+import { TripsPage, TripPage } from '../features/trips/TripsPage'
+import { ReceiptsPage as TripReceiptsPage } from '../features/trips/ReceiptsPage'
 import { GetAppPage } from '../features/getapp/GetAppPage'
 import { MoviesHome } from '../features/watch/MoviesHome'
 import { NotificationsPage } from '../features/notifications/NotificationsPage'
@@ -73,6 +75,9 @@ export function App() {
               <Route path="tourney/new" element={<TourneyCreatePage />} />
               <Route path="tourney/leaders" element={<TourneyLeadersPage />} />
               <Route path="tourney/:id" element={<TournamentPage />} />
+              <Route path="trips" element={<TripsPage />} />
+              <Route path="trips/receipts" element={<TripReceiptsPage />} />
+              <Route path="trips/:id" element={<TripPage />} />
               <Route path="ask" element={<Suspense fallback={null}><AskPage /></Suspense>} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="settings/:tab" element={<SettingsPage />} />
