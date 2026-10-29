@@ -14,6 +14,8 @@ const PATHS: Record<string, ReactNode> = {
   slap: (<g {...S}><path d="M7 15V5l12-2v10" /><circle cx="4.5" cy="15" r="2.5" /><circle cx="16.5" cy="13" r="2.5" /></g>),
   chat: (<g {...S}><path d="M17 12a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2z" /></g>),
   tourney: (<g {...S}><path d="M6 2h8v6a4 4 0 0 1-8 0V2z" /><path d="M2 5h4M14 5h4M10 8v4M7 16h6" /><path d="M7 12a3 3 0 0 0 6 0" /><path d="M10 16v2" /></g>),
+  /** A suitcase: Trips. */
+  trip: (<g {...S}><rect x="2" y="6" width="16" height="11" rx="2" /><path d="M7 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M2 11h16M8 11v1.5M12 11v1.5" /></g>),
   giveaway: (<g {...S}><polyline points="17,9 17,19 3,19 3,9" /><rect x="1" y="5" width="18" height="4" /><line x1="10" y1="19" x2="10" y2="5" /><path d="M10 5H6.5a2 2 0 0 1 0-4C9 1 10 5 10 5z" /><path d="M10 5h3.5a2 2 0 0 0 0-4C11 1 10 5 10 5z" /></g>),
   /** Ask AI's tab orb: a chat bubble with a spark. */
   aiChat: (<g {...S}><path d="M10.5 3H4.5a2 2 0 0 0-2 2v8.5l3-2.5h8a2 2 0 0 0 2-2V8" /><path d="M15 1l.8 2 2 .8-2 .8L15 6.6l-.8-2-2-.8 2-.8z" fill="currentColor" /><path d="M6 7h4" /></g>),
