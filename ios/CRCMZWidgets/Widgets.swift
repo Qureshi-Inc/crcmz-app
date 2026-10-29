@@ -17,19 +17,23 @@ struct CRCMZWidgets: WidgetBundle {
 
 // MARK: - The Live Activity: lock screen, banner, Dynamic Island
 
+/// A Watch Party draws WatchLive.swift's views (light or dark on the lock screen); the
+/// other kinds keep their dark card.
 struct CRCMZLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: CRCMZLiveAttributes.self) { ctx in
-            LiveCard(kind: ctx.attributes.kind, state: ctx.state)
-                .activityBackgroundTint(Brand.ink)
-                .activitySystemActionForegroundColor(Brand.text)
+            let watch = ctx.attributes.kind == "watch"
+            LiveCard(kind: ctx.attributes.kind, key: ctx.attributes.key, state: ctx.state, stale: ctx.isStale)
+                .activityBackgroundTint(watch ? LivePalette.background : Brand.ink)
+                .activitySystemActionForegroundColor(watch ? LivePalette.text : Brand.text)
                 .widgetURL(AppLink.url(ctx.state.url))
         } dynamicIsland: { ctx in
-            DynamicIsland {
+            let party = PartyNow(ctx.state, key: ctx.attributes.key, stale: ctx.isStale)
+            let watch = ctx.attributes.kind == "watch"
+            return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    if ctx.attributes.kind == "watch", let img = LivePoster.image(for: ctx.state.poster) {
-                        Image(uiImage: img).resizable().aspectRatio(contentMode: .fill)
-                            .frame(width: 36, height: 54).clipShape(RoundedRectangle(cornerRadius: 6))
+                    if watch {
+                        WatchIslandLeading(party: party)
                     } else {
                         HStack(spacing: 6) {
                             Text(LiveKind.emoji(ctx.attributes.kind)).font(.title3)
@@ -40,8 +44,8 @@ struct CRCMZLiveActivity: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if ctx.attributes.kind == "watch" {
-                        LiveBadge(paused: ctx.state.paused)
+                    if watch {
+                        WatchIslandTrailing(party: party)
                     } else if ctx.state.paused {
                         Text("Paused").font(.caption.weight(.bold)).foregroundStyle(Brand.dim)
                     } else {
@@ -50,11 +54,15 @@ struct CRCMZLiveActivity: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(ctx.state.title).font(.headline).foregroundStyle(Brand.text).lineLimit(1)
+                    if watch {
+                        WatchIslandCenter(party: party)
+                    } else {
+                        Text(ctx.state.title).font(.headline).foregroundStyle(Brand.text).lineLimit(1)
+                    }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    if ctx.attributes.kind == "watch" {
-                        WatchIslandBottom(state: ctx.state)
+                    if watch {
+                        WatchIslandBottom(party: party)
                     } else {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(ctx.state.subtitle).font(.caption).foregroundStyle(Brand.dim).lineLimit(1)
@@ -68,11 +76,10 @@ struct CRCMZLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                Text(LiveKind.emoji(ctx.attributes.kind))
+                if watch { WatchCompactLeading(party: party) } else { Text(LiveKind.emoji(ctx.attributes.kind)) }
             } compactTrailing: {
-                if ctx.attributes.kind == "watch", let clock = FilmClock(ctx.state), clock.running {
-                    ProgressView(timerInterval: clock.start...clock.end, countsDown: false) { EmptyView() } currentValueLabel: { EmptyView() }
-                        .progressViewStyle(.circular).tint(Brand.magenta).frame(width: 20, height: 20)
+                if watch {
+                    WatchCompactTrailing(party: party)
                 } else if ctx.state.progress >= 0 {
                     ProgressView(value: min(1, max(0, ctx.state.progress)))
                         .progressViewStyle(.circular).tint(Brand.magenta).frame(width: 20, height: 20)
@@ -80,30 +87,10 @@ struct CRCMZLiveActivity: Widget {
                     Text("\(ctx.state.count)").font(.caption.weight(.bold)).foregroundStyle(Brand.cyan)
                 }
             } minimal: {
-                Text(LiveKind.emoji(ctx.attributes.kind))
+                if watch { WatchMinimal(party: party) } else { Text(LiveKind.emoji(ctx.attributes.kind)) }
             }
             .widgetURL(AppLink.url(ctx.state.url))
-            .keylineTint(Brand.magenta)
-        }
-    }
-}
-
-/// The Dynamic Island's bottom for a Watch Party: "3 watching · 1h 30m left", the bar,
-/// "Moiz, Noor +1 · 23:00 / 1:53:00".
-struct WatchIslandBottom: View {
-    let state: CRCMZLiveAttributes.ContentState
-    var body: some View {
-        let clock = FilmClock(state)
-        let names = watchNames(state)
-        VStack(alignment: .leading, spacing: 5) {
-            WatchLine(state: state, clock: clock).font(.caption).foregroundStyle(Brand.dim).lineLimit(1)
-            if let clock {
-                FilmBar(clock: clock)
-                (names.isEmpty ? clock.position : Text(names + " · ") + clock.position)
-                    .font(.caption2.monospacedDigit()).foregroundStyle(Brand.dim).lineLimit(1)
-            } else if !names.isEmpty {
-                Text(names).font(.caption2).foregroundStyle(Brand.dim).lineLimit(1)
-            }
+            .keylineTint(watch ? LivePalette.accent : Brand.magenta)
         }
     }
 }

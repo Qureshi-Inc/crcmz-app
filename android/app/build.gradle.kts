@@ -18,8 +18,8 @@ android {
         applicationId = "me.crcmz.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 24
-        versionName = "2.0.21"
+        versionCode = 25
+        versionName = "2.0.22"
         // Phones only: LiveKit's native libraries for emulator chips would double the APK.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }

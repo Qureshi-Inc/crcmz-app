@@ -15,20 +15,35 @@ enum LiveActivities {
 
     static func start() {
         guard #available(iOS 16.2, *) else { return }
+        #if DEBUG
+        // -crcmzLiveDemo <playing|paused|stale|ended|two>: sample activities started here (a
+        // simulator can't get the push). Nothing is sent to the server.
+        if let i = ProcessInfo.processInfo.arguments.firstIndex(of: "-crcmzLiveDemo") {
+            let args = ProcessInfo.processInfo.arguments
+            demo(i + 1 < args.count ? args[i + 1] : "playing")
+            return
+        }
+        #endif
         if #available(iOS 17.2, *) {
             Task {
                 for await data in Activity<CRCMZLiveAttributes>.pushToStartTokenUpdates {
-                    post(["start": hex(data)])
+                    let token = hex(data)
+                    UserDefaults.standard.set(token, forKey: startKey)
+                    post(["start": token, "enabled": ActivityAuthorizationInfo().areActivitiesEnabled])
                 }
             }
+        }
+        // Live Activities on or off for the app (Settings › CRCMZ): off, the server sends an
+        // ordinary notification instead of starting one. Told now and on every change.
+        let info = ActivityAuthorizationInfo()
+        post(enabledBody(info.areActivitiesEnabled))
+        Task {
+            for await on in info.activityEnablementUpdates { post(enabledBody(on)) }
         }
         Task {
             for await activity in Activity<CRCMZLiveAttributes>.activityUpdates { track(activity) }
         }
         for a in Activity<CRCMZLiveAttributes>.activities { track(a) }
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("-crcmzLiveDemo") { demo() }
-        #endif
     }
 
     /// After a page load (a sign-in, say): send anything that waited for the session.
@@ -54,7 +69,13 @@ enum LiveActivities {
         }
         Task {
             for await st in a.activityStateUpdates where st == .ended || st == .dismissed {
-                if let t = a.pushToken { post(["key": key, "token": hex(t), "ended": true]) }
+                // Swiped away: like Hide, so a push doesn't bring it back this session.
+                let session = a.content.state.session ?? ""
+                if let t = a.pushToken {
+                    post(["key": key, "token": hex(t), "ended": true, "dismissed": st == .dismissed, "session": session])
+                } else if st == .dismissed, !session.isEmpty {
+                    post(["hide": session])
+                }
                 break
             }
         }
@@ -88,17 +109,32 @@ enum LiveActivities {
 
     private static func hex(_ d: Data) -> String { d.map { String(format: "%02x", $0) }.joined() }
 
+    private static let startKey = "crcmz.live.startToken"
+
+    private static func enabledBody(_ on: Bool) -> [String: Any] {
+        var b: [String: Any] = ["enabled": on]
+        if let t = UserDefaults.standard.string(forKey: startKey) { b["start"] = t }
+        return b
+    }
+
     #if DEBUG
-    /// -crcmzLiveDemo: one sample activity, started here (a simulator can't get the push).
-    private static func demo() {
+    private static func demo(_ which: String) {
         guard #available(iOS 16.2, *) else { return }
-        let state = CRCMZLiveAttributes.ContentState(
-            title: "Dune: Part Two", subtitle: "4 watching · moiz, Moose, Noor +1", count: 4,
-            names: ["moiz", "Moose", "Noor", "Samad"], started: Date().timeIntervalSince1970 - 4200,
-            progress: 0.42, progressLabel: "70 of 166 min", paused: false, url: "/app/watch/party",
-            elapsed: 4200, duration: 9960, at: Date().timeIntervalSince1970)
-        _ = try? Activity.request(attributes: CRCMZLiveAttributes(key: "watch:crcmz", kind: "watch"),
-                                  content: .init(state: state, staleDate: nil), pushType: nil)
+        Task {
+            for a in Activity<CRCMZLiveAttributes>.activities { await a.end(nil, dismissalPolicy: .immediate) }
+            await LivePoster.cache(LiveSample.poster)
+            let state = LiveSample.state(which == "two" ? "playing" : which)
+            _ = try? Activity.request(attributes: CRCMZLiveAttributes(key: "watch:crcmz", kind: "watch"),
+                                      content: .init(state: state, staleDate: which == "stale" ? Date() : nil), pushType: nil)
+            if which == "two" {
+                // A second activity: the island shows one compact and one minimal.
+                let huddle = CRCMZLiveAttributes.ContentState(
+                    title: "Huddle", subtitle: "2 in the call · Samad, Noor", count: 2, names: ["Samad", "Noor"],
+                    started: Date().timeIntervalSince1970 - 600, progress: -1, progressLabel: "", paused: false, url: "/app/huddle")
+                _ = try? Activity.request(attributes: CRCMZLiveAttributes(key: "huddle:crcmz", kind: "huddle"),
+                                          content: .init(state: huddle, staleDate: nil), pushType: nil)
+            }
+        }
     }
     #endif
 }
@@ -133,7 +169,7 @@ struct WidgetGallery: View {
             VStack(spacing: 16) {
                 tile(SlapView(data: playing, small: false), w: 338, h: 158)
                 tile(SlapView(data: idle, small: false), w: 338, h: 158)
-                LiveCard(kind: "watch", state: state).background(Brand.ink).clipShape(RoundedRectangle(cornerRadius: 22))
+                LiveCard(kind: "watch", key: "watch:crcmz", state: state).background(LivePalette.background).clipShape(RoundedRectangle(cornerRadius: 22))
                 HStack(spacing: 16) {
                     tile(LiveNowView(data: data, large: false), w: 158, h: 158)
                     tile(SlapView(data: playing, small: true), w: 158, h: 158)

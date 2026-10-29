@@ -76,6 +76,8 @@ STORES: dict[str, list[str] | None] = {
     # Firebase service account that sends Android rings. A secret, never exposed.
     "/data/fcm_service_account.json": None,
     "/data/apns_key.p8": None,   # the APNs signing key (iOS pushes): a credential, never exposed
+    "/data/live.db": None,       # Live Activity push tokens, lock-screen choices, Hide per session:
+                                 # device tokens, never exposed; what's live is already the watch/huddle tools
     "/data/notifications.db":  ["notification_inbox"],
     # The VAPID private key that signs push requests. A secret, never exposed.
     "/data/vapid_private.pem": None,

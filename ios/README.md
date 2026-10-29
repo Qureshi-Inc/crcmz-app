@@ -36,4 +36,8 @@ builds reach testers is in the private operations handbook, not here.
 `-crcmzScreenshotSession` signs the web view in with a session cookie (mint a short-lived
 one on the server; never commit it) and skips push, ring and Live Activity tokens, so the
 simulator never registers against that account. `-crcmzWidgetDemo` lays the widgets out
-with sample data. The README's pictures are in `docs/screenshots/` (iPhone 17 Pro Max).
+with sample data. `-crcmzLiveGallery lock|dark|island|edge` draws the Watch Party Live
+Activity in every state (lock screen, Dynamic Island, long titles, privacy, large text);
+`-crcmzLiveDemo playing|paused|stale|ended|two` starts a real sample activity (nothing is
+sent to the server). The poster needs a signed build (it's kept in the shared keychain):
+`CODE_SIGN_IDENTITY=- PROVISIONING_PROFILE_SPECIFIER=` for the simulator. The README's pictures are in `docs/screenshots/` (iPhone 17 Pro Max).

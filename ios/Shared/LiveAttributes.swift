@@ -25,6 +25,17 @@ struct CRCMZLiveAttributes: ActivityAttributes {
         var at: Double? = nil
         /// The film's poster (a signed link). The app keeps a small copy (LivePoster).
         var poster: String? = nil
+        /// Build 20+: the rest of the shared state (live.py _state). One party is one
+        /// `session` (key@start); `status` is playing | paused | stale | ended; the film runs at
+        /// `rate`; a bigger `rev` is newer; `people` is "Moiz, Noor +1"; `joined`: you're in it
+        /// ("Open party"); `private`: no film or names (the server already left them out).
+        var session: String? = nil
+        var status: String? = nil
+        var rate: Double? = nil
+        var rev: Int? = nil
+        var people: String? = nil
+        var joined: Bool? = nil
+        var `private`: Bool? = nil
     }
 
     /// watch:<room>, huddle:<room>, slap:together, tourney:<id>

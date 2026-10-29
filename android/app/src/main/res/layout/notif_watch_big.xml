@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The Watch Party notification's expanded body where it can't be a Live Update
-     (LiveUpdates.watch, DecoratedCustomViewStyle): the system draws the header, icon and
-     actions around it; the text uses the system's notification styles, so it follows
-     light and dark. -->
+<!-- The Watch Party notification's expanded body where it isn't a Live Update
+     (LiveUpdates.watch, DecoratedCustomViewStyle). Custom only because a standard
+     template's progress bar replaces the collapsed line ("3 watching · 1h 30m left"):
+     collapsed stays the standard template, this adds the bar when expanded. The system
+     draws the header, icon and actions around it; the text uses the system's
+     notification styles, so it follows light and dark and the text size. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
     <TextView android:id="@+id/nw_title" android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -13,5 +15,9 @@
         android:textAppearance="@style/TextAppearance.Compat.Notification" android:maxLines="1" android:ellipsize="end" />
     <ProgressBar android:id="@+id/nw_bar" style="@android:style/Widget.ProgressBar.Horizontal"
         android:layout_width="match_parent" android:layout_height="4dp" android:layout_marginTop="10dp" android:max="1000"
+        android:importantForAccessibility="no"
         android:progressTint="@color/accent" android:progressBackgroundTint="@color/accent_track" />
+    <TextView android:id="@+id/nw_time" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="4dp" android:textAppearance="@style/TextAppearance.Compat.Notification.Info"
+        android:fontFeatureSettings="tnum" android:maxLines="1" android:ellipsize="end" />
 </LinearLayout>

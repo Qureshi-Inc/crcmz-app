@@ -1047,6 +1047,28 @@ def browse_tests():
         assert mv.now_playing("crcmz")["watching"] == 0
         assert mv.now_playing("nope")["video"] == ""
 
+    def a_party_whose_room_list_goes_quiet_is_reconnecting_then_over():
+        jf = "c" * 32
+        mv.set_rooms([{"roomId": "/crcmz", "video": mv.stream_url(jf), "paused": False, "participantCount": 2, "videoTS": 600}])
+        p = mv.party_now("crcmz")
+        assert p["watching"] == 2 and not p["stale"] and p["anchor_pos"] == 600, p
+        assert "crcmz" in mv.live_rooms()
+        mv._rooms_at -= 120; mv._rooms["crcmz"]["at"] -= 120          # the Watch Party server stopped answering
+        p = mv.party_now("crcmz")
+        assert p["watching"] == 2 and p["stale"], p                  # still on, but reconnecting, not live
+        assert "crcmz" in mv.live_rooms() and mv.now_playing("crcmz")["watching"] == 0   # everywhere else: as before
+        mv._rooms_at -= mv.STALE_KEEP_S; mv._rooms["crcmz"]["at"] -= mv.STALE_KEEP_S
+        assert mv.party_now("crcmz")["watching"] == 0 and "crcmz" not in mv.live_rooms()   # too long: it's over
+        mv.set_rooms([{"roomId": "/crcmz", "video": mv.stream_url(jf), "paused": False, "participantCount": 2, "videoTS": 600}])
+        mv._rooms["crcmz"]["at"] -= 120                              # the list is fine, the room's gone from it: over
+        assert mv.party_now("crcmz")["watching"] == 0 and "crcmz" not in mv.live_rooms()
+        mv.set_rooms([{"roomId": "/crcmz", "video": mv.stream_url(jf), "paused": False, "participantCount": 2, "videoTS": 600}])
+        anchor = mv.party_now("crcmz")["anchor_at"]
+        mv.set_rooms([{"roomId": "/crcmz", "video": mv.stream_url(jf), "paused": False, "participantCount": 2, "videoTS": 600}])
+        assert mv.party_now("crcmz")["anchor_at"] == anchor          # the same stamp: no seek
+        mv.set_rooms([{"roomId": "/crcmz", "video": mv.stream_url(jf), "paused": False, "participantCount": 2, "videoTS": 1800}])
+        assert mv.party_now("crcmz")["anchor_pos"] == 1800           # a new stamp: a seek
+
     def the_party_is_announced_when_something_plays_not_when_someone_opens_it():
         said: list[tuple] = []
         real, started = mv._in_background, mv._started
@@ -1087,7 +1109,7 @@ def browse_tests():
 
     for fn in (catalogues_build_cinemeta_paths_and_refuse_anything_else, a_party_starting_posts_to_the_channel_but_rings_nobody, the_party_is_announced_when_something_plays_not_when_someone_opens_it, highest_rated_is_in_rating_order_with_no_unrated_films,
                home_has_a_featured_film_rows_without_repeats_and_library_state, details_bring_trailers_cast_and_safe_images,
-               now_playing_names_the_film_and_forgets_a_quiet_room):
+               now_playing_names_the_film_and_forgets_a_quiet_room, a_party_whose_room_list_goes_quiet_is_reconnecting_then_over):
         check(fn.__name__, fn)
 
 

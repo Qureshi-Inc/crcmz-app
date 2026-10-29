@@ -7,7 +7,7 @@ import live
 live._DB_PATH = Path(tempfile.mkdtemp()) / "live.db"
 
 # ── prefs: off by default; on, then per kind ─────────────────────────────────
-assert live.get_prefs("a") == {"on": False, "watch": True, "huddle": True, "slap": True, "tourney": True}
+assert live.get_prefs("a") == {"on": False, "watch": True, "huddle": True, "slap": True, "tourney": True, "private": False}
 live.save_prefs("a", {"on": True, "huddle": False, "bogus": True})
 p = live.get_prefs("a")
 assert p["on"] and not p["huddle"] and p["watch"] and "bogus" not in p
@@ -111,4 +111,85 @@ assert apns_calls[-1][2] == 5                               # a progress-only up
 live._last.clear()
 live.register_ios_activity("a", "watch:gone", "dead")      # its session already ended: end it
 assert apns_calls[-1][0] == "dead" and apns_calls[-1][1]["aps"]["event"] == "end"
+
+# ── the shared state: sessions, revisions, seeks, heartbeats, ended ──────────
+sent.clear()
+captured = []
+live._deliver = lambda event, it, urgent=True: (sent.append((event, it["key"], urgent)), captured.append(it))
+live._last.clear(); live._sent_at.clear()
+party = {**w, "elapsed": 600, "duration": 6780, "pos_at": 5000.0, "anchor_pos": 0.0, "anchor_at": 4400.0,
+         "status": "playing", "rate": 1.0, "subs": ["a"], "poster": "https://x/p.jpg"}
+live.tick([party])
+first = captured[-1]
+assert first["session"].startswith("watch:crcmz@") and first["rev"] > 0, first
+live.tick([{**party, "elapsed": 620, "pos_at": 5020.0}])      # the clock moving on: phones run it themselves
+assert len(captured) == 1, sent
+live.tick([{**party, "elapsed": 3000, "anchor_pos": 3000.0, "anchor_at": 5040.0}])   # a seek: at once, urgent
+assert sent[-1] == ("update", "watch:crcmz", True) and captured[-1]["rev"] > first["rev"], sent
+assert captured[-1]["session"] == first["session"]           # same party, same session: an update, not a new one
+live.tick([{**party, "elapsed": 3000, "anchor_pos": 3000.0, "anchor_at": 5040.0, "status": "paused", "paused": True}])
+assert sent[-1] == ("update", "watch:crcmz", True), sent      # paused: at once
+n = len(captured)
+live._sent_at["watch:crcmz"] -= live.HEARTBEAT_S + 1          # nothing changed for a while: sent anyway, quietly
+live.tick([{**party, "elapsed": 3000, "anchor_pos": 3000.0, "anchor_at": 5040.0, "status": "paused", "paused": True}])
+assert len(captured) == n + 1 and sent[-1] == ("update", "watch:crcmz", False), sent
+live.tick([])
+assert sent[-1][0] == "end" and captured[-1]["status"] == "ended", captured[-1]
+
+# Per person: joined ("Open party"), private (no film, names or poster), and the old
+# builds' paused flag set when it's reconnecting or ended, so it never looks like it plays on.
+s = live._state({**party, "session": "watch:crcmz@1", "rev": 7}, "a")
+assert s["joined"] and not s["private"] and s["people"] == "a, b +1" and s["status"] == "playing" and s["rev"] == 7, s
+assert s["at"] == 5000.0 and s["elapsed"] == 600 and s["rate"] == 1.0
+assert not live._state(party, "b")["joined"]
+assert live._state({**party, "status": "stale"}, "a")["paused"] is True
+assert live._state({**party, "status": "ended"}, "a")["paused"] is True
+assert live._state({**party, "count": 0, "names": []}, "a")["people"] == ""
+assert live._state({**party, "count": 250, "names": ["a", "b"]}, "a")["people"] == "a, b +248"
+assert live._state({**party, "count": 1240, "names": ["a", "b"]}, "a")["people"] == "a, b +1.2K"
+assert live._state({**party, "count": 1002, "names": ["a", "b"]}, "a")["people"] == "a, b +1K"
+assert live._state({**party, "count": 25002, "names": ["a", "b"]}, "a")["people"] == "a, b +25K"
+live.save_prefs("a", {"private": True})
+s = live._state(party, "a")
+assert s["private"] and s["title"] == "Watch Party" and s["names"] == [] and s["people"] == "" and s["poster"] == "", s
+assert s["subtitle"] == "3 watching" and s["count"] == 3
+d = live._android_data("update", {**party, "session": "watch:crcmz@1"}, "a")
+assert d["private"] == "1" and d["title"] == "Watch Party" and d["names"] == "" and d["joined"] == "1" and d["status"] == "playing"
+assert all(isinstance(v, str) for v in d.values()), d
+live.save_prefs("a", {"private": False})
+assert live._android_data("end", {**party, "gone": True}, "a")["keep"] == "0"     # switched off: goes at once
+
+# ── iPhones: Hide, Live Activities off, and the ordinary-notification fallback ─
+alerts = []
+fake_apns.alert = lambda category, title, body="", url="/app", **kw: alerts.append((category, title, body, url, kw))
+apns_calls.clear()
+it = {**party, "session": "watch:crcmz@42", "rev": 1}
+live.register_ios_start("a", "aa11")
+live._ios("start", it, {"a", "b"})
+assert {c[0] for c in apns_calls} == {"AB12cd", "aa11"}, apns_calls          # a's iPhones start it
+assert [(x[1], x[2], x[4]["only"], x[4]["tag"]) for x in alerts] == [("Watch Party is live", "Dune · 3 watching", ["b"], "watch:crcmz@42")], alerts
+assert alerts[0][4]["quiet"] and alerts[0][3] == "/app"                      # b has no Live Activities: one quiet notification
+live.hide("a", "watch:crcmz@42")                                             # Hide on a's iPhone
+apns_calls.clear(); alerts.clear()
+live._ios("start", it, {"a"})
+assert apns_calls == [] and alerts == [], (apns_calls, alerts)               # not started again this session...
+live._ios("start", {**it, "session": "watch:crcmz@99"}, {"a"})
+assert len(apns_calls) == 2, apns_calls                                      # ...but the next party shows
+live._last["watch:crcmz"] = it
+live.register_ios_activity("a", "watch:crcmz", "cafe")                       # an activity of a hidden session: ended
+assert apns_calls[-1][0] == "cafe" and apns_calls[-1][1]["aps"]["event"] == "end"
+live._last.clear()
+live.set_ios_enabled("a", False)                                             # Live Activities off on a's iPhones
+apns_calls.clear(); alerts.clear()
+live._ios("start", {**it, "session": "watch:crcmz@100"}, {"a"})
+assert apns_calls == [] and [x[4]["only"] for x in alerts] == [["a"]], (apns_calls, alerts)
+live.set_ios_enabled("a", True, "aa11")
+apns_calls.clear()
+live._ios_send("aa11", "end", {**it, "status": "ended"}, sub="a")
+aps = apns_calls[-1][1]["aps"]
+assert aps["content-state"]["status"] == "ended" and aps["dismissal-date"] - aps["timestamp"] == live.ENDED_S
+live._ios_send("aa11", "end", {**it, "gone": True}, sub="a")
+aps = apns_calls[-1][1]["aps"]
+assert aps["dismissal-date"] - aps["timestamp"] == 5
+assert len(json.dumps(apns_calls[-1][1])) < 4096
 print("test_live: ok")

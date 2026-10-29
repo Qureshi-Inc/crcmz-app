@@ -25,36 +25,60 @@ import org.json.JSONArray
  * an ongoing notification with a bar, or a "live for" clock. "Hide" keeps it away until
  * that session ends.
  *
- * A Watch Party has its own layout (watch()): "CRCMZ · Watch party · LIVE", the film, "3
- * watching · 1h 30m left", the poster, a thin bar, "Moiz, Noor +1 · 23:00 / 1:53:00", Join
- * party and Hide. As a Live Update it's the system's ProgressStyle card (a custom layout
- * would stop it being one). Where it can't be (older Android, or Live Updates off), the
- * standard collapsed template and a decorated expanded body (notif_watch_big.xml).
- * Extra fields for it: elapsed, duration (seconds) and poster (a signed link).
+ * A Watch Party has its own layout (watch()). Its extra fields (live.py _state): session,
+ * status (playing | paused | stale | ended), elapsed / duration / rate as of at (ms), rev,
+ * people, joined, private, poster, stale and keep (seconds). Older messages without them
+ * still work: they're read as before.
  */
 object LiveUpdates {
     private const val CHANNEL = "live_v1"
     private const val HIDDEN = "live_hidden"
+    private const val REV = "live_rev:"
 
     fun handle(ctx: Context, d: Map<String, String>) {
         val key = d["key"] ?: return
         val nm = NotificationManagerCompat.from(ctx)
+        // Newer wins: FCM doesn't promise order, so a message older than one already shown is dropped.
+        val rev = d["rev"]?.toLongOrNull() ?: 0L
+        if (rev > 0) {
+            val p = Push.prefs(ctx)
+            if (rev < p.getLong(REV + key, 0L)) return
+            p.edit().putLong(REV + key, rev).apply()
+        }
+        // Hide is per session (one party), so the next party in the same room still shows.
+        val session = d["session"]?.takeIf { it.isNotBlank() } ?: key
         if (d["event"] == "end") {
-            nm.cancel(key, 0)
-            hidden(ctx).remove(key).also { save(ctx) }
+            val keep = d["keep"]?.toLongOrNull() ?: 0L
+            if (d["kind"] == "watch" && keep > 0 && session !in hidden(ctx) && showing(ctx, key)) {
+                channel(ctx)
+                post(ctx, key, watch(ctx, d + ("status" to "ended")))   // "ended" for a few minutes, then it goes
+            } else {
+                nm.cancel(key, 0)
+            }
+            hidden(ctx).remove(session)
+            save(ctx)
             return
         }
-        if (key in hidden(ctx)) return
+        if (session in hidden(ctx)) return
         channel(ctx)
         val n = when {
             d["kind"] == "watch" -> watch(ctx, d)
             Build.VERSION.SDK_INT >= 36 -> modern(ctx, d)
             else -> compat(ctx, d)
         }
+        post(ctx, key, n)
+    }
+
+    /** One notification per session key: an update replaces it, never adds another. */
+    private fun post(ctx: Context, key: String, n: Notification) {
         try {
-            nm.notify(key, 0, n)
+            NotificationManagerCompat.from(ctx).notify(key, 0, n)
         } catch (_: SecurityException) { /* notifications are off for the app */ }
     }
+
+    private fun showing(ctx: Context, key: String): Boolean = runCatching {
+        ctx.getSystemService(NotificationManager::class.java).activeNotifications.any { it.tag == key }
+    }.getOrDefault(false)
 
     private fun icon(kind: String?) = when (kind) {
         "watch" -> R.drawable.ic_watch
@@ -82,8 +106,8 @@ object LiveUpdates {
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-    private fun hide(ctx: Context, key: String): PendingIntent = PendingIntent.getBroadcast(
-        ctx, key.hashCode() + 1, Intent(ctx, HideReceiver::class.java).putExtra("key", key),
+    private fun hide(ctx: Context, key: String, session: String? = null): PendingIntent = PendingIntent.getBroadcast(
+        ctx, key.hashCode() + 1, Intent(ctx, HideReceiver::class.java).putExtra("key", key).putExtra("session", session ?: key),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     private fun body(d: Map<String, String>): String =
@@ -106,7 +130,7 @@ object LiveUpdates {
             .addExtras(android.os.Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
             .setShortCriticalText(chip(d))
             .setWhen(started)
-            .addAction(Notification.Action.Builder(null, ctx.getString(R.string.live_hide), hide(ctx, d["key"]!!)).build())
+            .addAction(Notification.Action.Builder(null, ctx.getString(R.string.live_hide), hide(ctx, d["key"]!!, d["session"])).build())
         val segs = runCatching { JSONArray(d["segments"] ?: "[]") }.getOrNull()
         if (segs != null && segs.length() > 0) {
             // A tournament: one segment per match, filled as they're played.
@@ -145,7 +169,7 @@ object LiveUpdates {
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setWhen(started)
-            .addAction(0, ctx.getString(R.string.live_hide), hide(ctx, d["key"]!!))
+            .addAction(0, ctx.getString(R.string.live_hide), hide(ctx, d["key"]!!, d["session"]))
         if (progress >= 0) b.setProgress(1000, (progress.coerceIn(0.0, 1.0) * 1000).toInt(), false)
         else b.setUsesChronometer(true).setShowWhen(true)
         return b.build()
@@ -155,35 +179,43 @@ object LiveUpdates {
 
     /** 1:53:00, or 23:00 under an hour. */
     private fun clock(sec: Long): String {
-        val h = sec / 3600; val m = (sec % 3600) / 60; val s = sec % 60
+        val s0 = maxOf(0L, sec)
+        val h = s0 / 3600; val m = (s0 % 3600) / 60; val s = s0 % 60
         return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
     }
 
-    /** 1h 30m left, 45m left, under a minute left. */
-    private fun left(sec: Long): String {
+    /** 1h 30m left, 45m left, Under a minute left. */
+    private fun left(ctx: Context, sec: Long): String {
         val h = sec / 3600; val m = (sec % 3600 + 59) / 60
         return when {
-            sec < 60 -> "Under a minute left"
-            h > 0 && m in 1..59 -> "${h}h ${m}m left"
-            h > 0 -> "${h}h left"
-            else -> "${m}m left"
+            sec < 60 -> ctx.getString(R.string.live_left_under)
+            h > 0 && m in 1..59 -> ctx.getString(R.string.live_left_hm, h, m)
+            h > 0 -> ctx.getString(R.string.live_left_h, h)
+            else -> ctx.getString(R.string.live_left_m, m)
         }
     }
 
-    /** "3 watching · Moiz, Noor +1": the count, up to two names, then how many more. */
-    private fun viewers(d: Map<String, String>): String {
+    /** "3 watching", "1.2K watching", or nobody yet. */
+    private fun watching(ctx: Context, count: Int): String =
+        if (count <= 0) ctx.getString(R.string.live_no_one) else ctx.getString(R.string.live_watching, compact(count))
+
+    /** 1238 -> 1.2K: a count that fits a notification line. */
+    private fun compact(n: Int): String = if (n < 1000) n.toString() else android.icu.text.CompactDecimalFormat.getInstance(
+        java.util.Locale.getDefault(), android.icu.text.CompactDecimalFormat.CompactStyle.SHORT).format(n)
+
+    /** "Moiz, Noor +1": the server's summary, or (older servers) up to two names, then how many more. */
+    private fun people(d: Map<String, String>): String {
+        d["people"]?.let { return it }
         val count = d["count"]?.toIntOrNull() ?: 0
-        val names = d["names"].orEmpty().split(", ").filter { it.isNotBlank() }
-        val shown = names.take(2)
+        val shown = d["names"].orEmpty().split(", ").filter { it.isNotBlank() }.take(2)
         val more = maxOf(0, count - shown.size)
-        val who = if (shown.isEmpty()) "" else " · " + shown.joinToString(", ") + if (more > 0) " +$more" else ""
-        return "$count watching$who"
+        return if (shown.isEmpty()) "" else shown.joinToString(", ") + if (more > 0) " +" + compact(more) else ""
     }
 
     private val posterCache = android.util.LruCache<String, android.graphics.Bitmap>(4)
 
-    /** The film's poster for the artwork, small; null when there's none or it won't load
-     *  (the notification just goes without). This runs on FCM's background thread. */
+    /** The film's poster for the artwork, small; null when there's none or it won't load.
+     *  This runs on FCM's background thread. */
     private fun poster(url: String?): android.graphics.Bitmap? {
         if (url.isNullOrBlank() || !url.startsWith("https://")) return null
         posterCache.get(url)?.let { return it }
@@ -200,83 +232,167 @@ object LiveUpdates {
         }.getOrNull()?.also { posterCache.put(url, it) }
     }
 
+    private var fallbackArt: android.graphics.Bitmap? = null
+
+    /** No poster (none yet, or it wouldn't load): the party's TV glyph on a faint accent tile. */
+    private fun fallback(ctx: Context): android.graphics.Bitmap = fallbackArt ?: run {
+        val px = (64 * ctx.resources.displayMetrics.density).toInt()
+        val bmp = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        val r = px * 0.2f
+        c.drawRoundRect(0f, 0f, px.toFloat(), px.toFloat(), r, r,
+            android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = ctx.getColor(R.color.accent_track) })
+        ctx.getDrawable(R.drawable.ic_watch)?.mutate()?.let {
+            it.setTint(ctx.getColor(R.color.accent))
+            val pad = (px * 0.25f).toInt()
+            it.setBounds(pad, pad, px - pad, px - pad)
+            it.draw(c)
+        }
+        bmp.also { fallbackArt = it }
+    }
+
     @SuppressLint("NewApi")
     private fun promotable(ctx: Context): Boolean = Build.VERSION.SDK_INT >= 36 &&
         runCatching { ctx.getSystemService(NotificationManager::class.java).canPostPromotedNotifications() }.getOrDefault(false)
 
-    @SuppressLint("NewApi")
-    private fun watch(ctx: Context, d: Map<String, String>): Notification {
-        val paused = d["paused"] == "1"
-        val elapsed = d["elapsed"]?.toLongOrNull() ?: 0
-        val total = d["duration"]?.toLongOrNull() ?: 0
-        val timed = total > 60
-        val status = if (paused) ctx.getString(R.string.live_paused) else ctx.getString(R.string.live_live)
-        val header = ctx.getString(R.string.live_watch_party) + " · " + status
+    /** This phone is in that party's call right now. */
+    private fun inParty(key: String): Boolean = runCatching {
+        NativeCall.room?.name == "watch-" + key.removePrefix("watch:")
+    }.getOrDefault(false)
+
+    /** The server's shared state, read the same way as the iPhone (ios/Shared/WidgetViews.swift FilmClock). */
+    private class Party(ctx: Context, d: Map<String, String>) {
+        val status = d["status"]?.takeIf { it in setOf("playing", "paused", "stale", "ended") }
+            ?: if (d["paused"] == "1") "paused" else "playing"
+        val ended = status == "ended"
+        val duration = d["duration"]?.toLongOrNull() ?: 0L
+        val timed = duration > 60 && !ended
+        /** Where the film is now: as of `at`, run on at `rate` while it plays (frozen when
+         *  paused, reconnecting or over). Older servers: elapsed as sent. */
+        val position: Long = run {
+            val elapsed = d["elapsed"]?.toLongOrNull() ?: 0L
+            val at = d["at"]?.toLongOrNull() ?: 0L
+            val rate = d["rate"]?.toDoubleOrNull() ?: 1.0
+            val run = if (status == "playing" && at > 0) ((System.currentTimeMillis() - at) / 1000.0 * rate).toLong() else 0L
+            (elapsed + maxOf(0L, run)).coerceIn(0L, if (duration > 0) duration else Long.MAX_VALUE)
+        }
+        val label = ctx.getString(when (status) {
+            "paused" -> R.string.live_paused
+            "stale" -> R.string.live_reconnecting
+            "ended" -> R.string.live_ended
+            else -> R.string.live_live
+        })
+        // "RECONNECTING" doesn't fit the header beside the app name: it leads the line instead.
+        val header = ctx.getString(R.string.live_watch_party) + if (status == "stale") "" else " · " + label
         val film = d["title"]?.takeIf { it.isNotBlank() } ?: ctx.getString(R.string.live_watch_party)
         val count = d["count"]?.toIntOrNull() ?: 0
-        // Collapsed: "3 watching · 1h 30m left". Expanded, a second line: "Moiz, Noor +1 · 23:00 / 1:53:00".
-        val short = "$count watching" + if (timed) " · " + left(total - elapsed) else ""
-        val names = viewers(d).substringAfter(" · ", "")
-        val second = listOf(names, if (timed) clock(elapsed) + " / " + clock(total) else "").filter { it.isNotBlank() }.joinToString(" · ")
-        val long = listOf(short, second).filter { it.isNotBlank() }.joinToString("\n")
-        val art = poster(d["poster"])
-        val join = open(ctx, d)
-        val hideIt = hide(ctx, d["key"]!!)
-        val accent = ctx.getColor(R.color.accent)
+        val joined = d["joined"] == "1" || inParty(d["key"].orEmpty())
+        val permil = if (timed) (position * 1000 / duration).toInt().coerceIn(0, 1000) else 0
+    }
 
-        // A Live Update (Android 16.1+, allowed for the app) is always shown expanded: the
-        // ProgressStyle card. Anywhere it can collapse, the classic template, which keeps a
-        // one-line collapsed text apart from the expanded one.
-        if (promotable(ctx)) {
+    /**
+     * The Watch Party: the system's own templates, so it keeps the system's header, sizes,
+     * dark and light, large text and screen readers (and One UI's look on Samsung). The one
+     * custom piece is the expanded body with the bar (notif_watch_big.xml says why).
+     *  Collapsed  header "Watch party · LIVE", the film, "3 watching · 1h 30m left", the poster
+     *  Expanded   + "Moiz, Noor +1 · 23:00 / 1:53:00", the bar, Join party (Open party when
+     *             you're in it) and Hide
+     *  Lock screen (when the phone hides sensitive content): "Watch party · LIVE", "3 watching"
+     * A Live Update (Android 16, ProgressStyle, status-bar chip) only for someone in the
+     * party: it's then their own ongoing activity, which is what Live Updates are for.
+     * Everyone else gets the ordinary notification. Nothing comes for a while (the server
+     * sends at least every 10 minutes): it times out rather than claim to be live.
+     */
+    @SuppressLint("NewApi")
+    private fun watch(ctx: Context, d: Map<String, String>): Notification {
+        val p = Party(ctx, d)
+        val key = d["key"]!!
+        val short = if (p.ended) ctx.getString(R.string.live_party_ended)
+            else listOf(if (p.status == "stale") ctx.getString(R.string.live_reconnecting_line) else "", watching(ctx, p.count),
+                        if (p.timed && p.status != "stale") left(ctx, p.duration - p.position) else "").filter { it.isNotBlank() }.joinToString(" · ")
+        val second = if (p.ended) "" else listOf(people(d), if (p.timed) clock(p.position) + " / " + clock(p.duration) else "")
+            .filter { it.isNotBlank() }.joinToString(" · ")
+        val long = listOf(short, second).filter { it.isNotBlank() }.joinToString("\n")
+        val art = poster(d["poster"]) ?: fallback(ctx)
+        val open = open(ctx, d)
+        val accent = ctx.getColor(R.color.accent)
+        val primary = ctx.getString(if (p.joined) R.string.live_open_party else R.string.live_join_party)
+        val staleMs = (d["stale"]?.toLongOrNull() ?: 900L) * 1000 + 60_000
+        val keepMs = (d["keep"]?.toLongOrNull() ?: 300L).coerceAtLeast(5L) * 1000
+        val public = NotificationCompat.Builder(ctx, CHANNEL)
+            .setSmallIcon(R.drawable.ic_watch).setColor(accent)
+            .setContentTitle(p.header)
+            .setContentText(if (p.ended) ctx.getString(R.string.live_party_ended) else watching(ctx, p.count))
+            .setOngoing(!p.ended).setSilent(true).setShowWhen(false)
+            .build()
+
+        if (!p.ended && p.joined && promotable(ctx)) {
             val b = Notification.Builder(ctx, CHANNEL)
                 .setSmallIcon(R.drawable.ic_watch)
                 .setColor(accent)
-                .setSubText(header)
-                .setContentTitle(film)
+                .setSubText(p.header)
+                .setContentTitle(p.film)
                 .setContentText(long)
+                .setLargeIcon(Icon.createWithBitmap(art))
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setShowWhen(false)
-                .setContentIntent(join)
+                .setContentIntent(open)
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
+                .setPublicVersion(public)
+                .setTimeoutAfter(staleMs)
                 .addExtras(android.os.Bundle().apply { putBoolean("android.requestPromotedOngoing", true) })
-                .setShortCriticalText(status)
-                .addAction(Notification.Action.Builder(null, ctx.getString(R.string.live_join_party), join).build())
-                .addAction(Notification.Action.Builder(null, ctx.getString(R.string.live_hide), hideIt).build())
-            art?.let { b.setLargeIcon(Icon.createWithBitmap(it)) }
-            if (timed) {
+                .setShortCriticalText(p.label)
+                .addAction(Notification.Action.Builder(null, primary, open).build())
+                .addAction(Notification.Action.Builder(null, ctx.getString(R.string.live_hide), hide(ctx, key, d["session"])).build())
+            if (p.timed) {
+                // A plain bar: no tracker icon riding along it.
                 b.setStyle(Notification.ProgressStyle()
                     .setProgressSegments(listOf(Notification.ProgressStyle.Segment(1000).setColor(accent)))
-                    .setProgress((elapsed * 1000 / total).toInt().coerceIn(0, 1000))
+                    .setProgress(p.permil)
                     .setStyledByProgress(true))
             }
             return b.build()
         }
-        val pct = if (timed) (elapsed * 1000 / total).toInt().coerceIn(0, 1000) else 0
-        val big = android.widget.RemoteViews(ctx.packageName, R.layout.notif_watch_big).apply {
-            setTextViewText(R.id.nw_title, film)
-            setTextViewText(R.id.nw_line1, short)
-            setTextViewText(R.id.nw_line2, second)
-            setViewVisibility(R.id.nw_line2, if (second.isBlank()) android.view.View.GONE else android.view.View.VISIBLE)
-            if (timed) setProgressBar(R.id.nw_bar, 1000, pct, false) else setViewVisibility(R.id.nw_bar, android.view.View.GONE)
-        }
         val b = NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_watch)
             .setColor(accent)
-            .setSubText(header)
-            .setContentTitle(film)
+            .setSubText(p.header)
+            .setContentTitle(p.film)
             .setContentText(short)
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-            .setCustomBigContentView(big)
             .setLargeIcon(art)
-            .setOngoing(true)
+            .setOngoing(!p.ended)
+            .setAutoCancel(p.ended)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setShowWhen(false)
-            .setContentIntent(join)
+            .setContentIntent(open)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .addAction(0, ctx.getString(R.string.live_join_party), join)
-            .addAction(0, ctx.getString(R.string.live_hide), hideIt)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(public)
+            .setTimeoutAfter(if (p.ended) keepMs else staleMs)
+        if (p.timed) {
+            // Collapsed: the standard template (its own bar would take the place of
+            // "3 watching · 1h 30m left"). Expanded: the same lines with the bar under them.
+            val big = android.widget.RemoteViews(ctx.packageName, R.layout.notif_watch_big).apply {
+                setTextViewText(R.id.nw_title, p.film)
+                setTextViewText(R.id.nw_line1, short)
+                // Beside the poster there's room for the names, not names and times: the
+                // times go under the bar.
+                val names = people(d)
+                setTextViewText(R.id.nw_line2, names)
+                setViewVisibility(R.id.nw_line2, if (names.isBlank()) android.view.View.GONE else android.view.View.VISIBLE)
+                setProgressBar(R.id.nw_bar, 1000, p.permil, false)
+                setTextViewText(R.id.nw_time, clock(p.position) + " / " + clock(p.duration))
+            }
+            b.setStyle(NotificationCompat.DecoratedCustomViewStyle()).setCustomBigContentView(big)
+        } else {
+            b.setStyle(NotificationCompat.BigTextStyle().bigText(long))
+        }
+        if (!p.ended) {
+            b.addAction(0, primary, open)
+            b.addAction(0, ctx.getString(R.string.live_hide), hide(ctx, key, d["session"]))
+        }
         return b.build()
     }
 
@@ -291,16 +407,23 @@ object LiveUpdates {
             })
     }
 
-    // Keys the person hid, until those sessions end.
+    // Sessions the person hid (key@start; just the key from servers before sessions), until
+    // each ends. Kept short: an end that never arrived doesn't pile them up.
     private var hiddenCache: MutableSet<String>? = null
     private fun hidden(ctx: Context): MutableSet<String> =
         hiddenCache ?: (Push.prefs(ctx).getStringSet(HIDDEN, emptySet())?.toMutableSet() ?: mutableSetOf()).also { hiddenCache = it }
-    private fun save(ctx: Context) = Push.prefs(ctx).edit().putStringSet(HIDDEN, hidden(ctx).toSet()).apply()
+    private fun save(ctx: Context) {
+        val h = hidden(ctx)
+        while (h.size > 40) h.remove(h.first())
+        Push.prefs(ctx).edit().putStringSet(HIDDEN, h.toSet()).apply()
+    }
 
+    /** Hide: this session's notification off this phone. The party, the playback and
+     *  everyone else are untouched; the next party shows again. */
     class HideReceiver : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             val key = intent.getStringExtra("key") ?: return
-            hidden(ctx).add(key)
+            hidden(ctx).add(intent.getStringExtra("session") ?: key)
             save(ctx)
             NotificationManagerCompat.from(ctx).cancel(key, 0)
         }

@@ -458,6 +458,7 @@ async def details(imdb: str) -> dict:
 # What the party is on right now, from the Watch Party server's room list (server.py's
 # chat poller hands it over every few seconds).
 _rooms: dict[str, dict] = {}
+_rooms_at = 0.0             # when the room list last came in at all
 
 
 PARTY_QUIET_S = 10 * 60     # a room that's been off this long is "starting" when it plays again: phones ring
@@ -469,7 +470,10 @@ _started = time.time()
 
 
 def set_rooms(rooms: list) -> None:
+    global _rooms_at
     now = time.time()
+    if isinstance(rooms, list):
+        _rooms_at = now
     for rm in rooms if isinstance(rooms, list) else []:
         rid = str((rm or {}).get("roomId") or "").strip("/")
         if not rid:
@@ -533,9 +537,9 @@ def party_rooms() -> list[str]:
     return [rid for rid, r in _rooms.items() if r.get("watching") and now - r["at"] <= 60]
 
 
-def now_playing(room: str) -> dict:
+def now_playing(room: str, max_age: float = 60) -> dict:
     r = _rooms.get(room) or {}
-    if not r or time.time() - r["at"] > 60:
+    if not r or time.time() - r["at"] > max_age:
         return {"room": room, "watching": 0, "video": "", "title": "", "poster": "", "id": None, "paused": True}
     url = r["video"]
     m = re.match(re.escape(STREAM_PREFIX) + r"([0-9a-f]{32})/", url)
@@ -550,6 +554,31 @@ def now_playing(room: str) -> dict:
     return {"room": room, "watching": r["watching"], "video": url, "paused": r["paused"],
             "title": info.get("title") or "", "poster": info.get("poster") or "", "id": m.group(1) if m else None,
             "position": round(pos, 1)}
+
+
+STALE_KEEP_S = 10 * 60      # the room list gone quiet: a party stays "reconnecting" this long, then ends
+
+
+def live_rooms() -> list[str]:
+    """Rooms for the lock screen: with a party on now, and, while the room list itself has
+    stopped coming (the Watch Party server unreachable), the ones that had a party then."""
+    now = time.time()
+    quiet = now - _rooms_at > 60
+    return [rid for rid, r in _rooms.items() if r.get("watching")
+            and (now - r["at"] <= 60 or (quiet and now - r["at"] <= STALE_KEEP_S))]
+
+
+def party_now(room: str) -> dict:
+    """now_playing() for the lock screen, plus the position's anchor (where the film was at
+    `anchor_at`; it runs on from there at normal speed while playing) and `stale` when the
+    room list has gone quiet, so phones stop showing it as live but don't end it yet."""
+    r = _rooms.get(room) or {}
+    now = time.time()
+    stale = bool(r) and now - _rooms_at > 60 and now - r["at"] > 60
+    n = now_playing(room, max_age=STALE_KEEP_S if stale else 60)
+    if not n.get("watching"):
+        return {**n, "stale": False, "anchor_pos": 0.0, "anchor_at": now}
+    return {**n, "stale": stale, "anchor_pos": float(r.get("ts") or 0), "anchor_at": float(r.get("ts_at") or now)}
 
 
 async def _torrentio(imdb: str) -> list[dict]:

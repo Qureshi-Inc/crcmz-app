@@ -33,6 +33,14 @@ A site deploy updates every page; rebuild only for changes in this folder.
   with `get_login_creds`.
 - Share → CRCMZ: a shared link opens `/app/share` (a song goes to Slap, a film to Movies, a video to the Watch Party); a video from Photos opens Clips' Send a video. Shortcuts
   (long-press the icon): Watch Party, Movies, Slap, Huddle, Clips.
+- Live updates (`LiveUpdates.kt`, server `live.py`): a Watch Party, Huddle, Listen
+  Together or tournament as an ongoing notification. The Watch Party uses the standard
+  template collapsed and a decorated body with the bar expanded; it's a promoted Live
+  Update (Android 16.1+) only for someone in that party. Hide is per party (session),
+  older messages (`rev`) are dropped, and it times out if the server goes quiet. Debug
+  builds take test messages: `adb shell am broadcast -a me.crcmz.app.DEBUG_LIVE -p
+  me.crcmz.app --es key watch:crcmz --es kind watch --es status playing …` (every extra is
+  a field of the FCM message).
 - Android Auto shows Slap's Now Playing. Sideloaded apps only appear there with Android
   Auto's developer setting "Unknown sources" on.
 

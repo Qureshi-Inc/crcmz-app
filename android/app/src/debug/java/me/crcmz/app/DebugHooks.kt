@@ -14,7 +14,7 @@ class DebugLiveReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         val d = intent.extras?.keySet()?.associateWith { intent.extras?.get(it)?.toString().orEmpty() } ?: return
         // --es hide <key>: what tapping the notification's Hide does.
-        d["hide"]?.let { LiveUpdates.HideReceiver().onReceive(ctx, Intent().putExtra("key", it)); return }
+        d["hide"]?.let { LiveUpdates.HideReceiver().onReceive(ctx, Intent().putExtra("key", it).putExtra("session", d["session"] ?: it)); return }
         // Off the main thread, as FCM delivers it (the artwork is fetched while building).
         val pending = goAsync()
         Thread { try { LiveUpdates.handle(ctx, d + ("type" to "live")) } finally { pending.finish() } }.start()

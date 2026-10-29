@@ -20,6 +20,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         if ProcessInfo.processInfo.arguments.contains("-crcmzWidgetDemo") {
             window?.rootViewController = UIHostingController(rootView: WidgetGallery())
         }
+        if let i = ProcessInfo.processInfo.arguments.firstIndex(of: "-crcmzLiveGallery") {
+            let args = ProcessInfo.processInfo.arguments
+            window?.rootViewController = UIHostingController(rootView: LiveGallery(page: i + 1 < args.count ? args[i + 1] : "lock"))
+        }
         #endif
         window?.makeKeyAndVisible()
         #if DEBUG

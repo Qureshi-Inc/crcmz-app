@@ -928,6 +928,11 @@ function LiveActivitiesCard() {
                 {k.label}
               </label>
             ))}
+            <p className="meta" style={{ margin: 'var(--space-3) 0 var(--space-2)' }}>Privacy</p>
+            <label className="check-row">
+              <input type="checkbox" checked={!!q.data.prefs.private} onChange={(e) => { void set('private', e.target.checked) }} />
+              Hide what's on and who's there (just "Watch Party · 3 watching")
+            </label>
           </fieldset>
         )}
     </section>

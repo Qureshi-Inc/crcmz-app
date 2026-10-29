@@ -189,13 +189,14 @@ def ring(category: str, title: str, body: str = "", url: str = "/app", *, exclud
 
 
 def alert(category: str, title: str, body: str = "", url: str = "/app", *, exclude: str = "",
-          only: list[str] | None = None, tag: str = "", skip: set[str] | None = None) -> dict:
-    """A normal iPhone notification for anyone with the app (``skip``: people already rung)."""
+          only: list[str] | None = None, tag: str = "", skip: set[str] | None = None, quiet: bool = False) -> dict:
+    """A normal iPhone notification for anyone with the app (``skip``: people already rung).
+    ``quiet``: no sound (live.py's stand-in for a Live Activity)."""
     if not configured():
         return {"recipients": 0, "delivered": 0, "gone": 0}
     rows = _targets("ios", category, exclude, only, skip or set())
-    payload = {"aps": {"alert": {"title": title[:120], "body": body[:300]}, "sound": "default",
-                       "thread-id": category},
+    payload = {"aps": {"alert": {"title": title[:120], "body": body[:300]}, "thread-id": category,
+                       **({} if quiet else {"sound": "default"})},
                "url": url if url.startswith("/app") else "/app", "category": category}
     out = _deliver(rows, payload, voip=False, collapse=tag or "", ttl=ALERT_TTL_S)
     out.pop("subs", None)
