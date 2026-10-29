@@ -58,6 +58,8 @@ export interface Tournament extends Labels {
   created_by: string; created_at: string; started_at: string | null; finished_at: string | null
   entrants: Entrant[]; matches: Match[]; tables: Record<string, TableRow[]>; lobbies: Lobby[]
   leaderboard: BoardRow[]; progress: { played: number; total: number; games?: number }; inbox: number; can_manage?: boolean
+  /** Ended before every result was in (End): the leader then is champion, a bracket may have none. */
+  ended_early?: boolean
 }
 export interface Person { key: string; display_name: string; psn_id: string; is_guest: boolean; player_id: string | null }
 
@@ -125,6 +127,7 @@ export const api = {
   autoTeams: (id: string, members: string[]) => send<Tournament>(`${T}/tournaments/${id}/auto-teams`, 'POST', { members }),
   start: (id: string) => send<Tournament>(`${T}/tournaments/${id}/start`, 'POST'),
   reset: (id: string) => send<Tournament>(`${T}/tournaments/${id}/reset`, 'POST'),
+  end: (id: string) => send<Tournament>(`${T}/tournaments/${id}/end`, 'POST'),
   addLobby: (id: string) => send<Tournament>(`${T}/tournaments/${id}/lobbies`, 'POST'),
   report: (mid: string, games: GameScore[], pens: (number | null)[] | null) => send<Tournament>(`${T}/matches/${mid}/result`, 'POST', { games, pens }),
   undo: (mid: string) => send<Tournament>(`${T}/matches/${mid}/result`, 'DELETE'),

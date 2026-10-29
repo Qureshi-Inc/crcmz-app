@@ -68,3 +68,37 @@ while t["status"]=="active":
     t = T.report_match(m["id"], [{"s1":1,"s2":2}]*2 if side2 else [{"s1":2,"s2":1}]*2, None, reporter="x")
 gf=[m for m in t["matches"] if m["stage"]=="GF"]
 print("reset:", [(m["code"], m["status"]) for m in gf], "champ", next(e["name"] for e in t["entrants"] if e["id"]==t["champion_id"]))
+# ending early: the leader is champion (none for an unfinished bracket), it stays ended, reset clears it
+t = mk("fc","1v1","league",4,None)
+first = next(m for m in t["matches"] if m["playable"])
+t = T.report_match(first["id"], [{"s1":3,"s2":0}], None, reporter="x")
+t = T.end(t["id"])
+assert t["status"] == "complete" and t["ended_early"] and t["champion_id"] == first["e1"], (t["status"], t["champion_id"])
+assert t["id"] not in [x["id"] for x in T.list_tournaments("active")]          # off the live lists and lock screens
+later = next(m for m in t["matches"] if m["playable"])
+t = T.report_match(later["id"], [{"s1":0,"s2":5}], None, reporter="x")          # a result after ending doesn't reopen it
+assert t["status"] == "complete" and t["champion_id"] == first["e1"], (t["status"], t["champion_id"])
+try: T.end(t["id"]); raise SystemExit("FAIL ended twice")
+except ValueError: pass
+t = T.reset(t["id"])
+assert t["status"] == "draft" and not t["ended_early"], t["status"]
+t = play_all(T.start(t["id"]))
+assert t["status"] == "complete" and t["champion_id"] and not t["ended_early"]  # played out after a reset: a normal finish
+k = mk("fc","1v1","knockout",4,None)
+k = T.end(k["id"])
+assert k["status"] == "complete" and k["champion_id"] is None and k["ended_early"], (k["status"], k["champion_id"])
+assert "won" not in T.end_message(k["id"])                                     # no champion: nothing to announce
+f = mk("cod","ffa","ffa",4,None)
+lob = next(l for l in f["lobbies"] if l["status"] == "pending")
+ids = [e["id"] for e in f["entrants"]]
+f = T.report_lobby(lob["id"], [{"entrant_id": e, "placement": i+1, "kills": 0} for i, e in enumerate(ids)], reporter="x")
+f = T.end(f["id"])
+assert f["status"] == "complete" and f["champion_id"] == ids[0], (f["status"], f["champion_id"])
+assert "(ended early)" in T.end_message(f["id"])
+g = mk("fc","1v1","groups",8,None)
+g = T.end(g["id"])
+assert g["status"] == "complete" and g["champion_id"] is None                   # nothing played yet: no leader
+d = T.create_tournament(name="draft", game="fc", mode="1v1", fmt="knockout", team_size=None, settings=None, created_by="1")
+try: T.end(d["id"]); raise SystemExit("FAIL ended a draft")
+except ValueError: pass
+print("OK end early")

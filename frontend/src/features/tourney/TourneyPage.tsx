@@ -108,7 +108,7 @@ export function TournamentPage() {
         <h1 className="page-h1" tabIndex={-1}>{t.name}</h1>
         <div className="tn-head-row">
           {t.status === 'active' && <span className="pill pill-live">Live</span>}
-          {t.status === 'complete' && <span className="pill pill-gold">Finished</span>}
+          {t.status === 'complete' && <span className="pill pill-gold">{t.ended_early ? 'Ended early' : 'Finished'}</span>}
           {t.status === 'draft' && <span className="pill">Setting up</span>}
           {t.status !== 'draft' && (
             <span className="tn-head-prog">
@@ -188,26 +188,41 @@ function RulesLine({ t }: { t: Tournament }) {
 function Owner({ t }: { t: Tournament }) {
   const qc = useQueryClient()
   const nav = useNavigate()
-  const [confirm, setConfirm] = useState<'' | 'reset' | 'delete'>('')
+  const [confirm, setConfirm] = useState<'' | 'reset' | 'delete' | 'end'>('')
   const [busy, setBusy] = useState(false)
   if (!t.can_manage) return null
+  // A bracket's champion is whoever wins the final; ended before that, there isn't one.
+  const bracket = t.format === 'knockout' || t.format === 'double_elim'
   const go = async () => {
     setBusy(true)
     try {
       if (confirm === 'delete') { await api.remove(t.id); qc.invalidateQueries({ queryKey: ['tourney', 'list'] }); nav('/tourney'); toast('Tournament deleted'); return }
+      if (confirm === 'end') {
+        const next = await api.end(t.id); qc.setQueryData(['tourney', 't', t.id], next); qc.invalidateQueries({ queryKey: ['tourney', 'list'] })
+        const champ = next.entrants.find((e) => e.id === next.champion_id)
+        toast(champ ? `Tournament ended. ${champ.name} ${t.team_size > 1 ? 'are' : 'is'} champion` : 'Tournament ended, no champion')
+        return
+      }
       const next = await api.reset(t.id); qc.setQueryData(['tourney', 't', t.id], next); qc.invalidateQueries({ queryKey: ['tourney', 'list'] }); toast('Back to setup, results cleared')
     } catch (e) { toast(errText(e), 'error') } finally { setBusy(false); setConfirm('') }
+  }
+  const ask = {
+    delete: 'Delete this tournament for everyone?',
+    reset: 'Clear every result and go back to the line-up?',
+    end: bracket ? "End it now? The final hasn't been played, so there'll be no champion."
+      : "End it now? Whoever's top right now is champion.",
   }
   return (
     <div className="tn-owner">
       {confirm ? (
         <>
-          <span className="meta">{confirm === 'delete' ? 'Delete this tournament for everyone?' : 'Clear every result and go back to the line-up?'}</span>
-          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void go()}>{confirm === 'delete' ? 'Delete' : 'Reset'}</button>
+          <span className="meta">{ask[confirm]}</span>
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void go()}>{{ delete: 'Delete', reset: 'Reset', end: 'End' }[confirm]}</button>
           <button type="button" className="btn btn-ghost" onClick={() => setConfirm('')}>Cancel</button>
         </>
       ) : (
         <>
+          {t.status === 'active' && <button type="button" className="btn btn-ghost" onClick={() => setConfirm('end')}><Icon name="close" className="btn-ico" />End</button>}
           {t.status !== 'draft' && <button type="button" className="btn btn-ghost" onClick={() => setConfirm('reset')}><Icon name="refresh" className="btn-ico" />Reset</button>}
           <button type="button" className="btn btn-ghost" onClick={() => setConfirm('delete')}><Icon name="trash" className="btn-ico" />Delete</button>
         </>

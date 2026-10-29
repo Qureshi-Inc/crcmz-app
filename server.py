@@ -9413,8 +9413,8 @@ def _squad_payload() -> dict:
 
 
 # ── Tournaments ────────────────────────────────────────────────────────────────
-# Any signed-in member can build, run and score a tournament; deleting or resetting
-# one is for its creator or a founder. The trip site reads /api/tourney/feed with
+# Any signed-in member can build, run and score a tournament; deleting, resetting or
+# ending one early is for its creator or a founder. The trip site reads /api/tourney/feed with
 # TOURNEY_FEED_TOKEN (it has no app session), which fails closed when unset.
 
 TOURNEY_FEED_TOKEN = os.environ.get("TOURNEY_FEED_TOKEN", "")
@@ -9577,6 +9577,13 @@ def tourney_start(request: Request, tid: str):
 def tourney_reset(request: Request, tid: str):
     _tourney_owner(request, tid)
     return _tourney_call(request, _tourney.reset, tid)
+
+
+@app.post("/api/tourney/tournaments/{tid}/end")
+def tourney_end(request: Request, tid: str):
+    """End it now: the leader (if it has one) is champion. Creator or founder only."""
+    _tourney_owner(request, tid)
+    return _tourney_call(request, _tourney.end, tid)
 
 
 @app.post("/api/tourney/tournaments/{tid}/lobbies")

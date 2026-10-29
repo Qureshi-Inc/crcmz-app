@@ -775,9 +775,44 @@ def start(tid: str) -> dict:
     return get_tournament(tid)
 
 
+def end(tid: str) -> dict:
+    """End a running tournament now, results in or not. A league, groups or free-for-all
+    crowns whoever leads once anything's been played; a knockout whose final hasn't been
+    played ends with no champion. It stays ended: a result entered later doesn't reopen
+    it (Reset does)."""
+    with _lock, _conn() as db:
+        t = _t_row(db, tid)
+        if t["status"] != "active":
+            raise ValueError("Only a tournament that's under way can be ended")
+        t["settings"]["_ended"] = True
+        t["settings"]["_ended_champ"] = _leader(db, t)
+        db.execute("UPDATE tournaments SET settings=? WHERE id=?", (json.dumps(t["settings"]), tid))
+        _rebuild(db, tid)
+    return get_tournament(tid)
+
+
+def _leader(db, t: dict) -> str | None:
+    """Who's top right now, for ending early: the table (league, the groups) or the
+    standings (free-for-all), once something's been played. A bracket has no leader."""
+    if t["format"] == "ffa":
+        board = _leaderboard(db, t)
+        return board[0]["entrant_id"] if board and board[0]["played"] else None
+    if t["format"] in ("league", "groups"):
+        stage = "R" if t["format"] == "league" else "G"
+        ms = [dict(r) for r in db.execute("SELECT * FROM matches WHERE tournament_id=? AND stage=?", (t["id"], stage))]
+        if not any(m["status"] == "played" for m in ms):
+            return None
+        ids = [r["id"] for r in db.execute("SELECT id FROM entrants WHERE tournament_id=?", (t["id"],))]
+        return _table(t, ids, ms)[0]["entrant_id"]
+    return None
+
+
 def reset(tid: str) -> dict:
     with _lock, _conn() as db:
-        _t_row(db, tid)
+        t = _t_row(db, tid)
+        if t["settings"].pop("_ended", None) is not None:
+            t["settings"].pop("_ended_champ", None)
+            db.execute("UPDATE tournaments SET settings=? WHERE id=?", (json.dumps(t["settings"]), tid))
         db.execute("DELETE FROM player_stats WHERE tournament_id=?", (tid,))
         db.execute("DELETE FROM matches WHERE tournament_id=?", (tid,))
         db.execute("DELETE FROM lobbies WHERE tournament_id=?", (tid,))
@@ -1000,10 +1035,15 @@ def _rebuild(db, tid: str) -> None:
                     # All slots played but no winner yet — add another lobby
                     n = db.execute("SELECT COALESCE(MAX(num),0) FROM lobbies WHERE tournament_id=?", (tid,)).fetchone()[0]
                     db.execute("INSERT INTO lobbies(id,tournament_id,num) VALUES(?,?,?)", (_id(), tid, n + 1))
-    if champ:
+    # Ended early (end()): finished with the leader it had then, unless the results
+    # themselves have since settled it.
+    ended = bool(t["settings"].get("_ended"))
+    if not champ and ended:
+        champ = t["settings"].get("_ended_champ") or None
+    if champ or ended:
         db.execute("UPDATE tournaments SET status='complete', champion_id=?, finished_at=COALESCE(finished_at, ?)"
                    " WHERE id=?", (champ, _now(), tid))
-        if t["settings"].get("whatsapp", True) and t["settings"].get("_wa_end") != champ:
+        if champ and t["settings"].get("whatsapp", True) and t["settings"].get("_wa_end") != champ:
             t["settings"]["_wa_end"] = champ
             db.execute("UPDATE tournaments SET settings=? WHERE id=?", (json.dumps(t["settings"]), tid))
             _announce("end", tid)
@@ -1331,7 +1371,8 @@ def end_message(tid: str) -> str:
     if not champ:
         return ""
     crew = " & ".join(p["display_name"] for p in champ["members"]) if len(champ["members"]) > 1 else ""
-    lines = [f"👑 *{champ['name']}* won *{t['name']}*!" + (f" ({crew})" if crew else ""), _fmt_line(t), ""]
+    early = " (ended early)" if t.get("ended_early") else ""
+    lines = [f"👑 *{champ['name']}* won *{t['name']}*!{early}" + (f" ({crew})" if crew else ""), _fmt_line(t), ""]
     if t["format"] == "ffa":
         lines.append("*Final standings:*")
         for r in t["leaderboard"][:5]:
@@ -1508,6 +1549,7 @@ def get_tournament(tid: str) -> dict:
                                                                    and m["status"] == "pending" and not m["e1"])])}
         t["inbox"] = db.execute("SELECT COUNT(*) FROM shots WHERE status='pending' AND"
                                 " (tournament_id=? OR tournament_id IS NULL)", (tid,)).fetchone()[0]
+        t["ended_early"] = bool(t["settings"].get("_ended"))
         return t
 
 
