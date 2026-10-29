@@ -96,6 +96,12 @@ assert tok == "AB12cd" and prio == 10
 assert aps["event"] == "start" and aps["attributes-type"] == "CRCMZLiveAttributes"
 assert aps["attributes"] == {"key": "watch:crcmz", "kind": "watch"} and aps["alert"]["title"] == "Watch Party is live"
 assert aps["content-state"]["title"] == "Dune" and aps["content-state"]["count"] == 3 and "stale-date" in aps
+cs = aps["content-state"]
+assert cs["elapsed"] == 0 and cs["duration"] == 0 and cs["poster"] == "" and cs["at"] > 0, cs   # absent: zero, never missing
+live._ios_send("tokP", "update", {**item, "elapsed": 1380.4, "duration": 6780, "poster": "https://app.crcmz.me/api/widgets/poster?id=a&t=b"})
+cs = apns_calls[-1][1]["aps"]["content-state"]
+assert cs["elapsed"] == 1380 and cs["duration"] == 6780 and cs["poster"].startswith("https://"), cs   # the iPhone's clock and poster
+assert len(json.dumps(apns_calls[-1][1])) < 4096, "a Live Activity push must stay under 4 KB"
 
 live._last.clear(); live._last["watch:crcmz"] = item
 live.register_ios_activity("a", "watch:crcmz", "beef")   # a fresh activity is brought up to date at once

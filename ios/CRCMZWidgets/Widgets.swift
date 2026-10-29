@@ -27,15 +27,22 @@ struct CRCMZLiveActivity: Widget {
         } dynamicIsland: { ctx in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
-                        Text(LiveKind.emoji(ctx.attributes.kind)).font(.title3)
-                        if ctx.state.count > 0 {
-                            Label("\(ctx.state.count)", systemImage: "person.2.fill").font(.caption.weight(.bold)).foregroundStyle(Brand.cyan)
+                    if ctx.attributes.kind == "watch", let img = LivePoster.image(for: ctx.state.poster) {
+                        Image(uiImage: img).resizable().aspectRatio(contentMode: .fill)
+                            .frame(width: 36, height: 54).clipShape(RoundedRectangle(cornerRadius: 6))
+                    } else {
+                        HStack(spacing: 6) {
+                            Text(LiveKind.emoji(ctx.attributes.kind)).font(.title3)
+                            if ctx.state.count > 0 {
+                                Label("\(ctx.state.count)", systemImage: "person.2.fill").font(.caption.weight(.bold)).foregroundStyle(Brand.cyan)
+                            }
                         }
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if ctx.state.paused {
+                    if ctx.attributes.kind == "watch" {
+                        LiveBadge(paused: ctx.state.paused)
+                    } else if ctx.state.paused {
                         Text("Paused").font(.caption.weight(.bold)).foregroundStyle(Brand.dim)
                     } else {
                         Elapsed(started: ctx.state.started).font(.caption.weight(.semibold)).foregroundStyle(Brand.text)
@@ -46,12 +53,16 @@ struct CRCMZLiveActivity: Widget {
                     Text(ctx.state.title).font(.headline).foregroundStyle(Brand.text).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(ctx.state.subtitle).font(.caption).foregroundStyle(Brand.dim).lineLimit(1)
-                        if ctx.state.progress >= 0 {
-                            ProgressView(value: min(1, max(0, ctx.state.progress))).tint(Brand.magenta)
-                            if !ctx.state.progressLabel.isEmpty {
-                                Text(ctx.state.progressLabel).font(.caption2.monospacedDigit()).foregroundStyle(Brand.dim)
+                    if ctx.attributes.kind == "watch" {
+                        WatchIslandBottom(state: ctx.state)
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(ctx.state.subtitle).font(.caption).foregroundStyle(Brand.dim).lineLimit(1)
+                            if ctx.state.progress >= 0 {
+                                ProgressView(value: min(1, max(0, ctx.state.progress))).tint(Brand.magenta)
+                                if !ctx.state.progressLabel.isEmpty {
+                                    Text(ctx.state.progressLabel).font(.caption2.monospacedDigit()).foregroundStyle(Brand.dim)
+                                }
                             }
                         }
                     }
@@ -59,7 +70,10 @@ struct CRCMZLiveActivity: Widget {
             } compactLeading: {
                 Text(LiveKind.emoji(ctx.attributes.kind))
             } compactTrailing: {
-                if ctx.state.progress >= 0 {
+                if ctx.attributes.kind == "watch", let clock = FilmClock(ctx.state), clock.running {
+                    ProgressView(timerInterval: clock.start...clock.end, countsDown: false) { EmptyView() } currentValueLabel: { EmptyView() }
+                        .progressViewStyle(.circular).tint(Brand.magenta).frame(width: 20, height: 20)
+                } else if ctx.state.progress >= 0 {
                     ProgressView(value: min(1, max(0, ctx.state.progress)))
                         .progressViewStyle(.circular).tint(Brand.magenta).frame(width: 20, height: 20)
                 } else {
@@ -70,6 +84,26 @@ struct CRCMZLiveActivity: Widget {
             }
             .widgetURL(AppLink.url(ctx.state.url))
             .keylineTint(Brand.magenta)
+        }
+    }
+}
+
+/// The Dynamic Island's bottom for a Watch Party: "3 watching · 1h 30m left", the bar,
+/// "Moiz, Noor +1 · 23:00 / 1:53:00".
+struct WatchIslandBottom: View {
+    let state: CRCMZLiveAttributes.ContentState
+    var body: some View {
+        let clock = FilmClock(state)
+        let names = watchNames(state)
+        VStack(alignment: .leading, spacing: 5) {
+            WatchLine(state: state, clock: clock).font(.caption).foregroundStyle(Brand.dim).lineLimit(1)
+            if let clock {
+                FilmBar(clock: clock)
+                (names.isEmpty ? clock.position : Text(names + " · ") + clock.position)
+                    .font(.caption2.monospacedDigit()).foregroundStyle(Brand.dim).lineLimit(1)
+            } else if !names.isEmpty {
+                Text(names).font(.caption2).foregroundStyle(Brand.dim).lineLimit(1)
+            }
         }
     }
 }
@@ -220,6 +254,8 @@ enum Fetch {
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if code == 401 { return WidgetData(signedOut: true) }
         guard code == 200, let s = try? JSONDecoder().decode(WidgetSummary.self, from: body) else { return WidgetData() }
+        // A Watch Party's poster, kept for its Live Activity (which can't load it itself).
+        await LivePoster.cache(s.live.first(where: { $0.kind == "watch" })?.poster)
         var out = WidgetData(summary: s)
         if posters { out.posters = await thumbs(Array(s.movieList.prefix(8))) }
         return out

@@ -47,12 +47,25 @@ enum LiveActivities {
         Task {
             for await t in a.pushTokenUpdates { post(["key": key, "token": hex(t)]) }
         }
+        // The film's poster: kept where the activity's view can read it, then redrawn with it.
+        Task {
+            await poster(a, a.content.state)
+            for await c in a.contentUpdates { await poster(a, c.state) }
+        }
         Task {
             for await st in a.activityStateUpdates where st == .ended || st == .dismissed {
                 if let t = a.pushToken { post(["key": key, "token": hex(t), "ended": true]) }
                 break
             }
         }
+    }
+
+    @available(iOS 16.2, *)
+    private static func poster(_ a: Activity<CRCMZLiveAttributes>, _ state: CRCMZLiveAttributes.ContentState) async {
+        guard let url = state.poster, !url.isEmpty, LivePoster.image(for: url) == nil else { return }
+        await LivePoster.cache(url)
+        guard LivePoster.image(for: url) != nil, a.activityState == .active else { return }
+        await a.update(a.content)
     }
 
     private static func post(_ body: [String: Any]) {
@@ -82,7 +95,8 @@ enum LiveActivities {
         let state = CRCMZLiveAttributes.ContentState(
             title: "Dune: Part Two", subtitle: "4 watching · moiz, Moose, Noor +1", count: 4,
             names: ["moiz", "Moose", "Noor", "Samad"], started: Date().timeIntervalSince1970 - 4200,
-            progress: 0.42, progressLabel: "70 of 166 min", paused: false, url: "/app/watch/party")
+            progress: 0.42, progressLabel: "70 of 166 min", paused: false, url: "/app/watch/party",
+            elapsed: 4200, duration: 9960, at: Date().timeIntervalSince1970)
         _ = try? Activity.request(attributes: CRCMZLiveAttributes(key: "watch:crcmz", kind: "watch"),
                                   content: .init(state: state, staleDate: nil), pushType: nil)
     }
@@ -110,8 +124,9 @@ struct WidgetGallery: View {
     let playing = WidgetData(slap: SlapNow(title: "Digits", artist: "Young Thug", art: "", playing: true, loaded: true))
     let idle = WidgetData(slap: SlapNow(title: "Money Trees", artist: "Kendrick Lamar", art: "", playing: false, loaded: false))
     let state = CRCMZLiveAttributes.ContentState(
-        title: "Dune: Part Two", subtitle: "4 watching · moiz, Moose, Noor +1", count: 4, names: [],
-        started: Date().timeIntervalSince1970 - 4200, progress: 0.42, progressLabel: "70 of 166 min", paused: false, url: "/app/watch/party")
+        title: "Dune: Part Two", subtitle: "4 watching · moiz, Moose, Noor +1", count: 4, names: ["moiz", "Moose", "Noor", "Samad"],
+        started: Date().timeIntervalSince1970 - 4200, progress: 0.42, progressLabel: "70 of 166 min", paused: false, url: "/app/watch/party",
+        elapsed: 4200, duration: 9960, at: Date().timeIntervalSince1970)
 
     var body: some View {
         ScrollView {

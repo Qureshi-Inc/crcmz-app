@@ -41,6 +41,7 @@ struct LiveItem: Decodable, Identifiable {
     var paused: Bool?
     var url: String
     var started: Double?
+    var poster: String? = nil
     var id: String { key }
 }
 
@@ -72,6 +73,10 @@ struct LiveCard: View {
     let state: CRCMZLiveAttributes.ContentState
 
     var body: some View {
+        if kind == "watch" { WatchCard(state: state) } else { general }
+    }
+
+    private var general: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(LiveKind.emoji(kind)).font(.title3)
@@ -98,6 +103,133 @@ struct LiveCard: View {
                     Elapsed(started: state.started)
                 }
                 .font(.caption.monospacedDigit()).foregroundStyle(Brand.dim)
+            }
+        }
+        .padding(14)
+    }
+}
+
+// MARK: - Watch Party (same layout as Android's, LiveUpdates.kt)
+
+/// Where the film is: its position and length (seconds) as of `at`. Playing, the clock and
+/// bar run from these by themselves; paused, they stand still. nil without a length.
+struct FilmClock {
+    let elapsed: Double
+    let duration: Double
+    let at: Double
+    let paused: Bool
+
+    init?(_ s: CRCMZLiveAttributes.ContentState) {
+        guard let d = s.duration, d > 60 else { return nil }
+        duration = d
+        elapsed = min(d, max(0, s.elapsed ?? 0))
+        at = s.at ?? Date().timeIntervalSince1970
+        paused = s.paused
+    }
+
+    /// When the film would have started, at normal speed, to be where it was at `at`.
+    var start: Date { Date(timeIntervalSince1970: at - elapsed) }
+    var end: Date { start.addingTimeInterval(duration) }
+    var running: Bool { !paused && Date() < end }
+    var fraction: Double { min(1, elapsed / duration) }
+
+    /// "23:00 / 1:53:00", counting by itself while it plays.
+    var position: Text {
+        running ? Text(timerInterval: start...end, countsDown: false) + Text(" / " + Self.clock(duration))
+                : Text(Self.clock(elapsed) + " / " + Self.clock(duration))
+    }
+
+    /// 1:53:00, or 23:00 under an hour.
+    static func clock(_ sec: Double) -> String {
+        let t = Int(max(0, sec)), h = t / 3600, m = t % 3600 / 60, s = t % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+
+    /// 1h 30m left, 45m left, Under a minute left.
+    static func left(_ sec: Double) -> String {
+        let t = Int(max(0, sec)), h = t / 3600, m = (t % 3600 + 59) / 60
+        if t < 60 { return "Under a minute left" }
+        if h > 0 && (1...59).contains(m) { return "\(h)h \(m)m left" }
+        return h > 0 ? "\(h)h left" : "\(m)m left"
+    }
+}
+
+/// "3 watching · 1h 30m left"
+struct WatchLine: View {
+    let state: CRCMZLiveAttributes.ContentState
+    let clock: FilmClock?
+    var body: some View {
+        let lead = Text("\(state.count) watching")
+        if let c = clock, c.running {
+            lead + Text(" · ") + Text(c.end, style: .relative) + Text(" left")
+        } else if let c = clock {
+            lead + Text(" · " + FilmClock.left(c.duration - c.elapsed))
+        } else {
+            lead
+        }
+    }
+}
+
+/// The thin bar: fills by itself while the film plays.
+struct FilmBar: View {
+    let clock: FilmClock
+    var body: some View {
+        Group {
+            if clock.running {
+                ProgressView(timerInterval: clock.start...clock.end, countsDown: false) { EmptyView() } currentValueLabel: { EmptyView() }
+            } else {
+                ProgressView(value: clock.fraction)
+            }
+        }
+        .tint(Brand.magenta)
+    }
+}
+
+/// "Moiz, Noor +1": up to two names, then how many more.
+func watchNames(_ s: CRCMZLiveAttributes.ContentState) -> String {
+    let shown = s.names.filter { !$0.isEmpty }.prefix(2)
+    guard !shown.isEmpty else { return "" }
+    let more = max(0, s.count - shown.count)
+    return shown.joined(separator: ", ") + (more > 0 ? " +\(more)" : "")
+}
+
+/// CRCMZ · Watch Party · LIVE, the film, "3 watching · 1h 30m left", the poster, a thin
+/// bar, "Moiz, Noor +1 · 23:00 / 1:53:00" and Join party.
+struct WatchCard: View {
+    let state: CRCMZLiveAttributes.ContentState
+
+    var body: some View {
+        let clock = FilmClock(state)
+        let names = watchNames(state)
+        HStack(alignment: .top, spacing: 12) {
+            if let img = LivePoster.image(for: state.poster) {
+                Image(uiImage: img).resizable().aspectRatio(contentMode: .fill)
+                    .frame(width: 64, height: 96).clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text("CRCMZ · WATCH PARTY").font(.caption2.weight(.heavy)).tracking(1).foregroundStyle(Brand.cyan).lineLimit(1)
+                    Spacer(minLength: 4)
+                    LiveBadge(paused: state.paused)
+                }
+                Text(state.title.isEmpty ? "Watch Party" : state.title)
+                    .font(.headline).foregroundStyle(Brand.text).lineLimit(1)
+                WatchLine(state: state, clock: clock).font(.subheadline).foregroundStyle(Brand.dim).lineLimit(1)
+                if let clock { FilmBar(clock: clock).padding(.top, 2) }
+                HStack(spacing: 8) {
+                    Group {
+                        if let clock, !names.isEmpty { Text(names + " · ") + clock.position }
+                        else if let clock { clock.position }
+                        else { Text(names) }
+                    }
+                    .font(.caption.monospacedDigit()).foregroundStyle(Brand.dim).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Link(destination: AppLink.url(state.url)) {
+                        Text("Join party").font(.caption.weight(.bold)).foregroundStyle(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(Capsule().fill(Brand.magenta))
+                    }
+                }
             }
         }
         .padding(14)

@@ -222,6 +222,10 @@ def _state(it: dict) -> dict:
         "started": float(it.get("started") or time.time()), "progress": float(it.get("progress", -1)),
         "progressLabel": str(it.get("progressLabel") or "")[:40], "paused": bool(it.get("paused")),
         "url": str(it.get("url") or "/app"),
+        # A Watch Party's own numbers (seconds) and when they were true (`at`), so the
+        # phone's clock and bar run by themselves between pushes; the poster is a signed link.
+        "elapsed": int(it.get("elapsed") or 0), "duration": int(it.get("duration") or 0),
+        "at": float(time.time()), "poster": str(it.get("poster") or "")[:400],
     }
 
 

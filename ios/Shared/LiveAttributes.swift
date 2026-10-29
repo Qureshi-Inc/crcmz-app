@@ -18,6 +18,13 @@ struct CRCMZLiveAttributes: ActivityAttributes {
         var paused: Bool
         /// The page it opens, e.g. /app/watch/party.
         var url: String
+        /// A Watch Party's film, in seconds, as of `at` (unix seconds): the clock and bar run
+        /// from these by themselves. Optional: older servers don't send them.
+        var elapsed: Double? = nil
+        var duration: Double? = nil
+        var at: Double? = nil
+        /// The film's poster (a signed link). The app keeps a small copy (LivePoster).
+        var poster: String? = nil
     }
 
     /// watch:<room>, huddle:<room>, slap:together, tourney:<id>

@@ -7013,7 +7013,7 @@ async def widgets_summary(request: Request):
     s = _get_session(request)
     if not s:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
-    live_now = [{k: it.get(k) for k in ("key", "kind", "title", "subtitle", "count", "progress", "progressLabel", "paused", "url", "started")}
+    live_now = [{k: it.get(k) for k in ("key", "kind", "title", "subtitle", "count", "progress", "progressLabel", "paused", "url", "started", "poster")}
                 for it in _live.current()]
     for it in live_now:
         it["subtitle"] = it.get("subtitle") or ""
