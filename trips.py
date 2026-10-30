@@ -484,6 +484,29 @@ def set_people(tid: str, sub: str, profile: dict, names) -> dict:
     return {"ok": True, "people": result.get("people", names)}
 
 
+def redistribute_expenses(tid: str, sub: str, profile: dict) -> dict:
+    """Recalculate shares for every equally-split expense so all current members are included."""
+    t = trip_for(tid, sub)
+    if not t["can_manage"]:
+        raise PermissionError("Only the trip creator or a founder can fix past expenses")
+    if t["source"] == "linked":
+        return _site_json("POST", "/api/expenses/redistribute", profile)
+    with _conn() as db:
+        keys = _members(db, tid)
+    if not keys:
+        return {"ok": True, "changed": 0, "total": 0}
+    with _lock, _conn() as db:
+        rows = db.execute("SELECT id, cents, shares FROM expenses WHERE trip_id=?", (tid,)).fetchall()
+        changed = 0
+        for row in rows:
+            new_shares = _equal(row["cents"], keys)
+            old_shares = json.loads(row["shares"])
+            if old_shares != new_shares:
+                db.execute("UPDATE expenses SET shares=? WHERE id=?", (json.dumps(new_shares), row["id"]))
+                changed += 1
+    return {"ok": True, "changed": changed, "total": len(rows), "people": keys}
+
+
 def delete_expense(tid: str, sub: str, profile: dict, eid: str) -> None:
     t = trip_for(tid, sub)
     if t["source"] == "linked":

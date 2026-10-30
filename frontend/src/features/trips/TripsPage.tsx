@@ -270,6 +270,7 @@ function TripPeoplePanel({ trip, onDone }: { trip: Trip; onDone: () => void }) {
   const [add, setAdd] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [redist, setRedist] = useState<{ changed: number; total: number } | null>(null)
 
   const people = pq.data?.people ?? []
   const canManage = pq.data?.can_manage ?? false
@@ -382,6 +383,28 @@ function TripPeoplePanel({ trip, onDone }: { trip: Trip; onDone: () => void }) {
             )}
           </div>
         </>
+      )}
+      {canManage && (
+        <div className="tr-redist-box">
+          <span className="field-label">Past expenses</span>
+          <p className="field-hint" style={{ marginTop: 0 }}>
+            {redist
+              ? `Done — updated ${redist.changed} of ${redist.total} expense${redist.total === 1 ? '' : 's'}.`
+              : 'If older expenses are missing some people, fix them all at once.'}
+          </p>
+          {!redist && (
+            <button type="button" className="btn btn-secondary tr-wide" disabled={busy} onClick={async () => {
+              setBusy(true); setErr('')
+              try {
+                const r = await tripsApi.redistribute(trip.id)
+                setRedist({ changed: r.changed, total: r.total })
+                await qc.invalidateQueries({ queryKey: ['trips', 'split', trip.id] })
+              } catch (e) { setErr(errText(e)) } finally { setBusy(false) }
+            }}>
+              <Icon name="refresh" className="btn-ico" />{busy ? 'Fixing…' : 'Fix past expenses'}
+            </button>
+          )}
+        </div>
       )}
       {err && <p className="field-err" role="alert">{err}</p>}
       <button type="button" className="btn btn-secondary tr-wide" onClick={onDone}>Done</button>

@@ -9682,6 +9682,12 @@ async def trips_settle(request: Request, tid: str):
     return await asyncio.to_thread(_trip_call, _trips.add_settlement, tid, sub, prof, b)
 
 
+@app.post("/api/trips/{tid}/expenses/redistribute")
+async def trips_redistribute(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    return await asyncio.to_thread(_trip_call, _trips.redistribute_expenses, tid, sub, prof)
+
+
 @app.post("/api/trips/receipts/scan")
 async def trips_scan(request: Request):
     _trip_sub(request)

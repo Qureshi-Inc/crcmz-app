@@ -88,6 +88,8 @@ export const tripsApi = {
   remove: (tid: string) => request<{ ok: boolean }>(`${T}/${id(tid)}`, { method: 'DELETE' }),
   setPeople: (tid: string, people: string[]) =>
     request<{ ok: boolean; people: string[] }>(`${T}/${id(tid)}/people`, { method: 'PUT', body: { people } }),
+  redistribute: (tid: string) =>
+    request<{ ok: boolean; changed: number; total: number; people: string[] }>(`${T}/${id(tid)}/expenses/redistribute`, { method: 'POST', body: {} }),
   addExpense: (tid: string, b: { payer: string; desc: string; currency: string; orig_cents: number; parts: string[]; receipt?: string }) =>
     request<{ ok: boolean; expense: Expense }>(`${T}/${id(tid)}/expenses`, { method: 'POST', body: b, timeoutMs: 30_000 }),
   removeExpense: (tid: string, eid: string) => request<{ ok: boolean }>(`${T}/${id(tid)}/expenses/${id(eid)}`, { method: 'DELETE' }),
