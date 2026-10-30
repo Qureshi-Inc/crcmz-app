@@ -606,6 +606,18 @@ export function shareMyQueue() {
   cmd('replace', { ids: state.queue.map((i) => i.id), start: Math.max(0, state.index) })
 }
 
+/** Start a Party Queue: you become the host; the squad can add songs without joining. */
+export function startParty() {
+  if (state.mode !== 'together') { toast('Join the room first to start a Party Queue', 'warning'); return }
+  cmd('party_start')
+}
+
+/** End the Party Queue. */
+export function stopParty() {
+  if (state.mode !== 'together') return
+  cmd('party_stop')
+}
+
 // ── Media Session (lock screen, headphone buttons) ──────────────────────────
 // Together mode needs nothing special: toggle/next/prev/seek already go to the room.
 const SKIP_S = 10

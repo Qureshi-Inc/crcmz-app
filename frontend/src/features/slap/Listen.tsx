@@ -9,8 +9,8 @@ import { toast } from '../../components/toast'
 import { ErrorStrip, SkeletonRows, SlowLoad } from '../../components/states'
 import { ApiError } from '../../lib/http'
 import {
-  deletePlaylist, editTrackInfo, fmtTime, removeFromPlaylist, setFavorite, shareSong,
-  useLibrary, usePlaylist, type Library, type Track,
+  deletePlaylist, editTrackInfo, fmtTime, partyAdd, removeFromPlaylist, setFavorite, shareSong,
+  useLibrary, usePartyStatus, usePlaylist, type Library, type Track,
 } from '../../lib/slap'
 import { ClipSheet, ConfirmDialog } from '../clips/ClipSheet'
 import { AddToPlaylist } from './AddToPlaylist'
@@ -197,11 +197,16 @@ function TrackMenu({ t, isAdmin, together, onRemove }: { t: Track; isAdmin: bool
   const qc = useQueryClient()
   const [addOpen, setAddOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const party = usePartyStatus(!together)
+  const partyActive = !together && (party.data?.party ?? false)
   function fav() {
     const on = !t.fav
     const flip = (v: boolean) => qc.setQueryData<Library>(['slap', 'library'], (d) => d && { ...d, tracks: d.tracks.map((x) => (x.id === t.id ? { ...x, fav: v } : x)) })
     flip(on)
     setFavorite(t.id, on).then(() => toast(on ? 'Added to favourites' : 'Removed from favourites', 'success')).catch((e) => { flip(!on); toast(errText(e, "Couldn't change that"), 'error') })
+  }
+  function addToParty() {
+    partyAdd([t.id]).then(() => toast('Added to Party Queue', 'success')).catch((e) => toast(errText(e, "Couldn't add to Party Queue"), 'error'))
   }
   return (
     <>
@@ -213,6 +218,7 @@ function TrackMenu({ t, isAdmin, together, onRemove }: { t: Track; isAdmin: bool
           <Menu.Content className="menu-content" sideOffset={4} align="end">
             <Menu.Item className="menu-item" onSelect={() => enqueue([t], true)}>{together ? 'Play next for everyone' : 'Play next'}</Menu.Item>
             <Menu.Item className="menu-item" onSelect={() => enqueue([t], false)}>{together ? 'Add to shared queue' : 'Add to queue'}</Menu.Item>
+            {partyActive && <Menu.Item className="menu-item" onSelect={addToParty}>Add to Party Queue</Menu.Item>}
             <Menu.Item className="menu-item" onSelect={() => setAddOpen(true)}>Add to playlist…</Menu.Item>
             <Menu.Item className="menu-item" onSelect={fav}>{t.fav ? 'Remove from favourites' : 'Add to favourites'}</Menu.Item>
             <Menu.Item className="menu-item" onSelect={() => shareSong(t)}>Share song</Menu.Item>

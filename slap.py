@@ -583,6 +583,9 @@ class Room:
         self.version = 0
         self.by = ""
         self.last = ""
+        self.party = False          # Party Queue mode: host plays, squad adds
+        self.host_sub = ""          # sub of the party host
+        self.host_name = ""         # display name of the host
         self.members: dict[str, dict] = {}   # sub → {name, conns, since}
         self._subs: set[asyncio.Queue] = set()
         # The room's chat: members only, in memory, gone when the last person leaves.
@@ -606,6 +609,7 @@ class Room:
             "queue": self.queue, "index": self.index, "playing": self.playing,
             "position": round(self.head(), 2), "at": _now_ms(), "version": self.version,
             "by": self.by, "last": self.last,
+            "party": self.party, "host_name": self.host_name if self.party else "",
             "members": sorted(({"name": m["name"], "since": m["since"]} for m in self.members.values()),
                               key=lambda m: m["since"]),
         }
@@ -700,11 +704,25 @@ class Room:
                     self.chat, self._said, self._last_said, self._pinged = [], {}, {}, {}
                 self.publish()
 
-    def apply(self, op: str, body: dict, tracks: list[dict], who: str) -> None:
+    def apply(self, op: str, body: dict, tracks: list[dict], who: str, sub: str = "") -> None:
         """Mutate the room. ``tracks`` are server-resolved library rows."""
+        # Party mode: only the host may control playback; anyone may add.
+        _host_only = {"play", "pause", "seek", "next", "prev", "jump", "remove", "move", "clear", "replace", "ended", "party_stop"}
+        if self.party and sub and sub != self.host_sub and op in _host_only:
+            raise HTTPException(403, "only the host can control playback during a Party Queue")
         n = len(self.queue)
         cur = self.queue[self.index]["qid"] if 0 <= self.index < n else None
-        if op == "play":
+        if op == "party_start":
+            self.party = True
+            self.host_sub = sub
+            self.host_name = who
+            desc = "started a Party Queue"
+        elif op == "party_stop":
+            self.party = False
+            self.host_sub = ""
+            self.host_name = ""
+            desc = "ended the Party Queue"
+        elif op == "play":
             if self.index < 0 and self.queue:
                 self._go(0)
             else:
@@ -799,7 +817,9 @@ def _int(v: object, default: int) -> int:
 
 ROOM = Room()
 _TOGETHER_OPS = {"play", "pause", "seek", "next", "prev", "ended", "jump", "add", "next_up",
-                 "replace", "remove", "move", "clear"}
+                 "replace", "remove", "move", "clear", "party_start", "party_stop"}
+# In party mode, guests (non-members) can add to the queue without joining the room.
+_PARTY_GUEST_OPS = {"add", "next_up"}
 _QUEUE_FIELDS = ("id", "title", "artist", "album", "album_id", "duration", "art")
 
 
@@ -1583,12 +1603,21 @@ def build_router(get_session, is_admin) -> APIRouter:
         op = _s(b.get("op"), 20)
         if op not in _TOGETHER_OPS:
             raise HTTPException(400, "unknown command")
-        if me["sub"] not in ROOM.members:
+        guest_add = ROOM.party and op in _PARTY_GUEST_OPS
+        if me["sub"] not in ROOM.members and not guest_add:
             raise HTTPException(409, "join Listen Together first")
         tracks = []
         if op in ("add", "next_up", "replace"):
             tracks = [{k: t[k] for k in _QUEUE_FIELDS} for t in await track_rows(me, b.get("ids"))]
-        ROOM.apply(op, b, tracks, me["name"])
+        ROOM.apply(op, b, tracks, me["name"], me["sub"])
+        # Notify the host when a guest adds to their Party Queue.
+        if guest_add and ROOM.host_sub and ROOM.host_sub != me["sub"] and tracks:
+            title = tracks[0]["title"]
+            suffix = f" +{len(tracks) - 1}" if len(tracks) > 1 else ""
+            notifications.route_in_background(
+                "together", f"{me['name']} added to your Party Queue",
+                f"{title}{suffix}", "/app/slap?join=together",
+                only=[ROOM.host_sub], tag="slap-party-add", dms=False)
         return ROOM.snapshot()
 
     @router.get("/together/chat")
@@ -1630,6 +1659,13 @@ def build_router(get_session, is_admin) -> APIRouter:
         me = await caller(request)
         ROOM.left_for_good(me["sub"])
         return {"ok": True}
+
+    @router.get("/party")
+    async def party_status(request: Request):
+        """Quick party status for non-members: is there a party, and who's hosting?"""
+        await caller(request)
+        return {"party": ROOM.party, "host_name": ROOM.host_name if ROOM.party else "",
+                "queue_length": len(ROOM.queue) if ROOM.party else 0}
 
     @router.post("/invite")
     async def invite_together(request: Request):

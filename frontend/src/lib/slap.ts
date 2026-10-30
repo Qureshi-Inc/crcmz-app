@@ -36,6 +36,8 @@ export type Room = {
   version: number
   by: string
   last: string
+  party: boolean
+  host_name: string
   members: { name: string; since: number }[]
 }
 
@@ -165,8 +167,20 @@ export const deletePlaylist = (pid: string) => request(`/api/slap/playlists/${pi
 export const editTrackInfo = (id: string, info: { title?: string; artist?: string; album?: string; genre?: string; year?: number | null }) =>
   request(`/api/slap/tracks/${id}/info`, { body: info })
 
-export type TogetherOp = 'play' | 'pause' | 'seek' | 'next' | 'prev' | 'ended' | 'jump' | 'add' | 'next_up' | 'replace' | 'remove' | 'move' | 'clear'
+export type TogetherOp = 'play' | 'pause' | 'seek' | 'next' | 'prev' | 'ended' | 'jump' | 'add' | 'next_up' | 'replace' | 'remove' | 'move' | 'clear' | 'party_start' | 'party_stop'
 export const together = (op: TogetherOp, extra: Record<string, unknown> = {}) => request<Room>('/api/slap/together', { body: { op, ...extra } })
+export type PartyStatus = { party: boolean; host_name: string; queue_length: number }
+export const getPartyStatus = (signal?: AbortSignal) => getJSON<PartyStatus>('/api/slap/party', signal)
+export const partyAdd = (ids: string[]) => request<Room>('/api/slap/together', { body: { op: 'add', ids } })
+export function usePartyStatus(enabled = true) {
+  return useQuery<PartyStatus>({
+    queryKey: ['slap', 'party'],
+    queryFn: ({ signal }) => getPartyStatus(signal),
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    enabled,
+  })
+}
 
 // ── Display ─────────────────────────────────────────────────────────────────
 /** SL-20: slaptastic usernames → the names the squad uses. Unknown names pass through. */

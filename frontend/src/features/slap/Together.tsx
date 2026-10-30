@@ -1,15 +1,17 @@
 // Listen Together: one room for the whole squad. Before joining you see who's in
 // and what's on; once in, the queue and controls are shared with everyone.
+// Party Queue mode: host enables sharing so the squad can add songs without joining.
 import { useQuery } from '@tanstack/react-query'
 import { Icon } from '../../components/Icon'
 import { ErrorStrip, SkeletonRows } from '../../components/states'
 import { getJSON } from '../../lib/http'
-import { fmtTime, shareTogether, type Room } from '../../lib/slap'
+import { fmtTime, shareTogether, useSlapMe, type Room } from '../../lib/slap'
 import { Art, QueueList, TogetherBanner } from './NowPlaying'
-import { joinTogether, setExpanded, shareMyQueue, usePlayer } from './player'
+import { joinTogether, setExpanded, shareMyQueue, startParty, stopParty, usePlayer } from './player'
 
 export function Together({ onBrowse }: { onBrowse: () => void }) {
   const s = usePlayer()
+  const { data: me } = useSlapMe()
   const joined = s.mode === 'together'
   const peek = useQuery({
     queryKey: ['slap', 'together'],
@@ -22,8 +24,15 @@ export function Together({ onBrowse }: { onBrowse: () => void }) {
     const r = peek.data
     const cur = r ? r.queue[r.index] : undefined
     const names = r?.members.map((m) => m.name) ?? []
+    const isParty = r?.party ?? false
     return (
       <section className="glass together-card" aria-labelledby="tg-h">
+        {isParty && (
+          <div className="party-banner" role="status">
+            <Icon name="megaphone" />
+            <span><b>Party Queue</b> · {r!.host_name} is hosting — add a song without joining</span>
+          </div>
+        )}
         <div className="together-intro">
           <Icon name="together" />
           <div>
@@ -51,21 +60,32 @@ export function Together({ onBrowse }: { onBrowse: () => void }) {
             </div>
           )}
         <div className="together-actions">
-          <button type="button" className="btn btn-primary" onClick={joinTogether}><Icon name="together" />{names.length ? 'Join them' : 'Start a room'}</button>
+          {isParty && (
+            <button type="button" className="btn btn-primary" onClick={onBrowse}><Icon name="queue" />Browse to add a song</button>
+          )}
+          <button type="button" className="btn btn-secondary" onClick={joinTogether}><Icon name="together" />{names.length ? 'Join them' : 'Start a room'}</button>
         </div>
-        <p className="meta">Your own queue is kept and comes back when you leave.</p>
+        {!isParty && <p className="meta">Your own queue is kept and comes back when you leave.</p>}
       </section>
     )
   }
 
   const r = s.room
   const cur = r ? r.queue[r.index] : undefined
+  const isParty = r?.party ?? false
+  const isPartyHost = isParty && r?.host_name === me?.name
   return (
     <div className="together-live">
       <TogetherBanner s={s} />
       {!r ? <div className="glass"><SkeletonRows n={3} /></div> : (
         <>
           <section className="glass together-card" aria-label="Playing in the room">
+            {isParty && (
+              <div className="party-banner" role="status">
+                <Icon name="megaphone" />
+                <span><b>Party Queue</b>{isPartyHost ? ' · You\'re hosting — the squad can add songs' : ` · ${r.host_name} is hosting`}</span>
+              </div>
+            )}
             {cur ? (
               <button type="button" className="together-now together-now-big" onClick={() => setExpanded(true)} aria-label={`Open player: ${cur.title} by ${cur.artist}`}>
                 <Art id={cur.art} size={300} className="slap-art together-art" />
@@ -86,6 +106,11 @@ export function Together({ onBrowse }: { onBrowse: () => void }) {
               <button type="button" className="btn btn-secondary" onClick={onBrowse}><Icon name="search" />Add from the library</button>
               <button type="button" className="btn btn-secondary" onClick={shareMyQueue} disabled={!s.queue.length}><Icon name="queue" />Start from my queue</button>
               <button type="button" className="btn btn-secondary" onClick={() => void shareTogether()}><Icon name="link" />Share a join link</button>
+              {isPartyHost ? (
+                <button type="button" className="btn btn-secondary" onClick={stopParty}><Icon name="megaphone" />End Party Queue</button>
+              ) : !isParty ? (
+                <button type="button" className="btn btn-secondary" onClick={startParty}><Icon name="megaphone" />Start Party Queue</button>
+              ) : null}
             </div>
           </section>
           {r.queue.length > 0 && <div className="glass together-queue"><QueueList queue={r.queue} index={r.index} together level={2} /></div>}

@@ -1493,6 +1493,13 @@ html[data-player] .toasts { bottom: calc(var(--c-tabbar-h) + var(--c-minibar-row
 .together-banner-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .together-banner-text b { color: var(--live-text); }
 .together-live { display: flex; flex-direction: column; gap: var(--space-4); }
+.party-banner {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-md);
+  border: 1px solid var(--border-control); border-left: 3px solid #f59e0b; background: rgba(245, 158, 11, .08);
+  font-size: var(--text-sm);
+}
+.party-banner .nav-icon { color: #f59e0b; flex: none; }
 .together-card { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
 .together-intro { display: flex; gap: var(--space-3); align-items: flex-start; }
 .together-intro > .nav-icon { display: grid;  color: var(--live-text); flex: none; margin-top: 2px; }
