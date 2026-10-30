@@ -455,6 +455,35 @@ def add_expense(tid: str, sub: str, profile: dict, body: dict) -> dict:
     return {"ok": True, "expense": {"id": eid, "cents": home}}
 
 
+def list_people(tid: str, sub: str, profile: dict) -> dict:
+    """Return the split people for a trip. For linked trips these are the Calgary site's
+    people list; for non-linked they are the CRCMZ app members."""
+    t = trip_for(tid, sub)
+    if t["source"] == "linked":
+        result = _site_json("GET", "/api/people", profile)
+        return {"linked": True, "people": result.get("people", []), "can_manage": t["can_manage"]}
+    with _conn() as db:
+        keys = _members(db, tid)
+    people_map = _people_map()
+    return {"linked": False, "people": [_name(k, people_map) for k in keys], "can_manage": t["can_manage"]}
+
+
+def set_people(tid: str, sub: str, profile: dict, names) -> dict:
+    """Replace the split people for a linked trip. Non-linked trips use Edit trip."""
+    t = trip_for(tid, sub)
+    if t["source"] != "linked":
+        raise ValueError("Non-linked trips: use Edit trip to change who's on it")
+    if not t["can_manage"]:
+        raise PermissionError("Only the trip creator or a founder can change the people")
+    if not isinstance(names, list) or not names:
+        raise ValueError("people must be a non-empty list of names")
+    names = [str(n).strip() for n in names if str(n).strip()]
+    if not names:
+        raise ValueError("At least one person required")
+    result = _site_json("PUT", "/api/people", profile, json_body={"people": names})
+    return {"ok": True, "people": result.get("people", names)}
+
+
 def delete_expense(tid: str, sub: str, profile: dict, eid: str) -> None:
     t = trip_for(tid, sub)
     if t["source"] == "linked":

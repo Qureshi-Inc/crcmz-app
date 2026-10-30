@@ -87,6 +87,13 @@
 .tr-card-foot { display: flex; align-items: center; gap: var(--space-2); }
 .tr-like[aria-pressed="true"] { color: var(--accent-text); border-color: var(--accent-solid); }
 
+/* Members panel */
+.tr-people-list { list-style: none; padding: 0; margin: var(--space-2) 0 0; display: flex; flex-direction: column; gap: 2px; }
+.tr-people-row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: rgba(255,255,255,.04); border-radius: var(--radius-md); }
+.tr-people-name { flex: 1; font-size: var(--text-sm); }
+.tr-add-person { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+.tr-add-person .input { flex: 1; }
+
 @media (max-width: 380px) {
   .tr-sum { grid-template-columns: 1fr; }
   .tr-two { grid-template-columns: 1fr; }

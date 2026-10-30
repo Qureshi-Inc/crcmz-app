@@ -9773,6 +9773,19 @@ async def trips_reel(request: Request, tid: str):
     return Response(content=data, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
 
 
+@app.get("/api/trips/{tid}/people")
+async def trips_people_list(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    return await asyncio.to_thread(_trip_call, _trips.list_people, tid, sub, prof)
+
+
+@app.put("/api/trips/{tid}/people")
+async def trips_people_set(request: Request, tid: str):
+    sub, prof = _trip_sub(request)
+    b = await _tourney_body(request)
+    return await asyncio.to_thread(_trip_call, _trips.set_people, tid, sub, prof, b.get("people"))
+
+
 @app.post("/api/tourney/tournaments/{tid}/end")
 def tourney_end(request: Request, tid: str):
     """End it now: the leader (if it has one) is champion. Creator or founder only."""

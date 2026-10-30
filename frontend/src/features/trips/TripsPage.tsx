@@ -9,7 +9,7 @@ import { Icon } from '../../components/Icon'
 import { ErrorStrip, SkeletonRows } from '../../components/states'
 import { toast } from '../../components/toast'
 import { ApiError } from '../../lib/http'
-import { initial, tripDates, tripsApi, useTripPeople, useTrips, type Trip, type TripMember } from '../../lib/trips'
+import { initial, tripDates, tripsApi, useTripPeople, useTripSplitPeople, useTrips, type Trip, type TripMember } from '../../lib/trips'
 import { Sheet, errText } from '../tourney/Report'
 import { SplitTab } from './SplitTab'
 import { MomentsTab } from './MomentsTab'
@@ -187,6 +187,7 @@ export function TripPage() {
   const [params, setParams] = useSearchParams()
   const tab: Tab = params.get('tab') === 'moments' ? 'moments' : 'split'
   const [managing, setManaging] = useState(false)
+  const [managingPeople, setManagingPeople] = useState(false)
   const nav = useNavigate()
   const qc = useQueryClient()
   const t = q.data?.trips.find((x) => x.id === id)
@@ -225,6 +226,7 @@ export function TripPage() {
         <div className="tn-head-row">
           <Faces members={t.members} />
           {t.linked && t.site_url && <a className="btn btn-ghost" href={t.site_url} target="_blank" rel="noreferrer">Also on trip.crcmz.me</a>}
+          {t.can_manage && <button type="button" className="btn btn-secondary" onClick={() => setManagingPeople(true)}><Icon name="together" className="btn-ico" />Members</button>}
           {t.can_manage && <button type="button" className="btn btn-secondary" onClick={() => setManaging(true)}><Icon name="edit" className="btn-ico" />Edit trip</button>}
         </div>
       </header>
@@ -249,10 +251,140 @@ export function TripPage() {
           </>
         )}
       </Sheet>
+      <Sheet open={managingPeople} onOpenChange={setManagingPeople} title="Members">
+        {managingPeople && <TripPeoplePanel trip={t} onDone={() => { setManagingPeople(false); void qc.invalidateQueries({ queryKey: ['trips', 'people', t.id] }) }} />}
+      </Sheet>
     </div>
   )
 }
 
 function BackLink() {
   return <Link to="/trips" className="btn btn-ghost tn-back"><Icon name="left" className="btn-ico" />Trips</Link>
+}
+
+/** Shows who's in the split; for linked trips lets admins add or remove people by name. */
+function TripPeoplePanel({ trip, onDone }: { trip: Trip; onDone: () => void }) {
+  const qc = useQueryClient()
+  const pq = useTripSplitPeople(trip.id)
+  const all = useTripPeople(!trip.linked)
+  const [add, setAdd] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  const people = pq.data?.people ?? []
+  const canManage = pq.data?.can_manage ?? false
+  const isLinked = pq.data?.linked ?? trip.linked
+
+  async function addPerson() {
+    const name = add.trim()
+    if (!name) return
+    const next = people.includes(name) ? people : [...people, name]
+    setBusy(true); setErr('')
+    try {
+      await tripsApi.setPeople(trip.id, next)
+      await qc.invalidateQueries({ queryKey: ['trips', 'people', trip.id] })
+      await qc.invalidateQueries({ queryKey: ['trips', 'split', trip.id] })
+      setAdd('')
+    } catch (e) { setErr(errText(e)) } finally { setBusy(false) }
+  }
+
+  async function removePerson(name: string) {
+    if (!window.confirm(`Remove ${name} from the split? Their past expenses stay.`)) return
+    const next = people.filter((p) => p !== name)
+    setBusy(true); setErr('')
+    try {
+      await tripsApi.setPeople(trip.id, next)
+      await qc.invalidateQueries({ queryKey: ['trips', 'people', trip.id] })
+      await qc.invalidateQueries({ queryKey: ['trips', 'split', trip.id] })
+    } catch (e) { setErr(errText(e)) } finally { setBusy(false) }
+  }
+
+  async function toggleMember(sub: string) {
+    const current = trip.members.map((m) => m.sub)
+    const next = current.includes(sub) ? current.filter((s) => s !== sub) : [...current, sub]
+    setBusy(true); setErr('')
+    try {
+      await tripsApi.update(trip.id, { members: next })
+      await qc.invalidateQueries({ queryKey: ['trips'] })
+    } catch (e) { setErr(errText(e)) } finally { setBusy(false) }
+  }
+
+  if (pq.isError) return <div className="sheet-body"><p className="field-err">Couldn't load members.</p><button className="btn btn-ghost" onClick={onDone}>Close</button></div>
+
+  return (
+    <div className="sheet-body tr-form">
+      {isLinked ? (
+        <>
+          <div>
+            <span className="field-label">People in the split</span>
+            <p className="field-hint" style={{ marginTop: 0 }}>These are the people who share expenses on this trip.</p>
+            {pq.isLoading ? <p className="dim">Loading…</p> : (
+              <ul className="tr-people-list">
+                {people.map((name) => (
+                  <li key={name} className="tr-people-row">
+                    <span className="tr-av" aria-hidden="true">{initial(name)}</span>
+                    <span className="tr-people-name">{name}</span>
+                    {canManage && people.length > 1 && (
+                      <button type="button" className="icon-btn" aria-label={`Remove ${name}`} disabled={busy} onClick={() => void removePerson(name)}>
+                        <Icon name="close" />
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {canManage && (
+              <div className="tr-add-person">
+                <input className="input" type="text" placeholder="Add a name (e.g. Mazino)" value={add}
+                  onChange={(e) => setAdd(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addPerson() } }} />
+                <button type="button" className="btn btn-primary" disabled={busy || !add.trim()} onClick={() => void addPerson()}>
+                  <Icon name="plus" className="btn-ico" />Add
+                </button>
+              </div>
+            )}
+          </div>
+          <div>
+            <span className="field-label">Who can see this trip in the app</span>
+            <p className="field-hint" style={{ marginTop: 0 }}>Separate from the split — these people have access to this trip in CRCMZ.</p>
+            <div className="tr-chips tr-chips-wrap" role="group" aria-label="App access">
+              {trip.members.map((m) => (
+                <span key={m.sub} className="chip tr-chip is-pressed">
+                  <span className="tr-av" aria-hidden="true">{initial(m.name)}</span>{m.name}
+                </span>
+              ))}
+            </div>
+            <p className="meta" style={{ marginTop: 'var(--space-2)' }}>Use "Edit trip" to change app access.</p>
+          </div>
+        </>
+      ) : (
+        <>
+          <div>
+            <span className="field-label">Who's on this trip</span>
+            <p className="field-hint" style={{ marginTop: 0 }}>Everyone here splits all expenses together.</p>
+            {all.isLoading && <p className="dim">Loading…</p>}
+            {all.isError && <p className="field-err">Couldn't load the squad.</p>}
+            <div className="tr-chips tr-chips-wrap" role="group" aria-label="Trip members">
+              {trip.members.map((m) => (
+                <button key={m.sub} type="button" className="chip tr-chip is-pressed" aria-pressed={true} disabled={busy || m.sub === trip.created_by} onClick={() => void toggleMember(m.sub)}>
+                  <span className="tr-av" aria-hidden="true">{initial(m.name)}</span>{m.name}
+                </button>
+              ))}
+            </div>
+            {canManage && all.data && (
+              <div className="tr-chips tr-chips-wrap" role="group" aria-label="Add to trip" style={{ marginTop: 'var(--space-3)' }}>
+                {all.data.people.filter((p) => !trip.members.some((m) => m.sub === p.sub)).map((p) => (
+                  <button key={p.sub} type="button" className="chip tr-chip" aria-pressed={false} disabled={busy} onClick={() => void toggleMember(p.sub)}>
+                    <span className="tr-av" aria-hidden="true">{initial(p.name)}</span>{p.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      {err && <p className="field-err" role="alert">{err}</p>}
+      <button type="button" className="btn btn-secondary tr-wide" onClick={onDone}>Done</button>
+    </div>
+  )
 }

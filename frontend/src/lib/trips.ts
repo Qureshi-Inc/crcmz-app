@@ -75,12 +75,19 @@ async function form<R>(url: string, fd: FormData, timeoutMs = 120_000): Promise<
 }
 
 const id = (s: string) => encodeURIComponent(s)
+export type TripPeople = { linked: boolean; people: string[]; can_manage: boolean }
+export const useTripSplitPeople = (tripId: string, enabled = true) => useQuery<TripPeople>({
+  queryKey: ['trips', 'people', tripId], enabled: Boolean(tripId) && enabled, staleTime: 30_000,
+  queryFn: ({ signal }) => getJSON<TripPeople>(`${T}/${encodeURIComponent(tripId)}/people`, signal),
+})
 export const tripsApi = {
   create: (b: { name: string; place?: string; start?: string; end?: string; currency?: string; members: string[]; link?: boolean }) =>
     request<Trip>(T, { method: 'POST', body: b }),
   update: (tid: string, b: Partial<{ name: string; place: string; start: string; end: string; members: string[] }>) =>
     request<Trip>(`${T}/${id(tid)}`, { method: 'PATCH', body: b }),
   remove: (tid: string) => request<{ ok: boolean }>(`${T}/${id(tid)}`, { method: 'DELETE' }),
+  setPeople: (tid: string, people: string[]) =>
+    request<{ ok: boolean; people: string[] }>(`${T}/${id(tid)}/people`, { method: 'PUT', body: { people } }),
   addExpense: (tid: string, b: { payer: string; desc: string; currency: string; orig_cents: number; parts: string[]; receipt?: string }) =>
     request<{ ok: boolean; expense: Expense }>(`${T}/${id(tid)}/expenses`, { method: 'POST', body: b, timeoutMs: 30_000 }),
   removeExpense: (tid: string, eid: string) => request<{ ok: boolean }>(`${T}/${id(tid)}/expenses/${id(eid)}`, { method: 'DELETE' }),
