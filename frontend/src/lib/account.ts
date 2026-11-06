@@ -113,6 +113,12 @@ export type McpTokenStatus = { token: string | null; exists: boolean }
 export const getMcpToken = (signal?: AbortSignal) => getJSON<McpTokenStatus>('/auth/settings/mcp/token', signal)
 export const generateMcpToken = () => request<McpTokenStatus>('/auth/settings/mcp/token', { method: 'POST' })
 export const revokeMcpToken = () => request<{ ok: boolean }>('/auth/settings/mcp/token', { method: 'DELETE' })
+export type WaBlock = { zitadel_id: string; name: string; blocked_by: string; created: number; whatsapp_ids: number }
+/** Admin → WhatsApp bot access: the bot ignores these members in WhatsApp. */
+export const blockWaBot = (id: string) =>
+  request<{ ok: boolean; block: WaBlock }>(`/api/admin/wa-blocks/${encodeURIComponent(id)}`, { method: 'POST' })
+export const unblockWaBot = (id: string) =>
+  request<{ ok: boolean }>(`/api/admin/wa-blocks/${encodeURIComponent(id)}`, { method: 'DELETE' })
 export const resetUserPassword = (id: string, newPassword: string) =>
   request<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/reset-password`, { body: { newPassword } })
 

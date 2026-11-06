@@ -11,7 +11,7 @@ import { ErrorStrip, SkeletonRows, StaleMarker, useStale } from '../../component
 import { toast } from '../../components/toast'
 import { ApiError, getJSON } from '../../lib/http'
 import {
-  fmtDate, inviteMember, resetUserPassword, type Invite, tokenState, type AdminUser, type OpsStatus, type PipelineHealth, type PsnAccount, type PsnStatus,
+  blockWaBot, fmtDate, inviteMember, resetUserPassword, unblockWaBot, type WaBlock, type Invite, tokenState, type AdminUser, type OpsStatus, type PipelineHealth, type PsnAccount, type PsnStatus,
   type VideoJobs,
 } from '../../lib/account'
 import { HelpLink } from '../../components/HelpLink'
@@ -40,6 +40,7 @@ export function AdminPage() {
       <div className="admin-lists">
         <PsnAccounts />
         <Users q={users} />
+        <WaBotAccess q={users} />
         <Invites />
       </div>
       <section className="glass admin-card" aria-labelledby="ad-sc">
@@ -228,6 +229,75 @@ function Users({ q }: { q: UseQueryResult<{ users: AdminUser[] }> }) {
           </ul>
         )}
       <ResetDialog user={who} onClose={() => setWho(null)} />
+    </section>
+  )
+}
+
+function WaBotAccess({ q }: { q: UseQueryResult<{ users: AdminUser[] }> }) {
+  const blocks = useQuery({
+    queryKey: ['admin', 'wa-blocks'],
+    queryFn: ({ signal }) => getJSON<{ blocks: WaBlock[] }>('/api/admin/wa-blocks', signal),
+  })
+  const [pick, setPick] = useState('')
+  const [busy, setBusy] = useState('')
+  const users = q.data?.users ?? []
+  const list = blocks.data?.blocks ?? []
+  const blocked = new Set(list.map((b) => b.zitadel_id))
+  const nameOf = (id: string) => { const u = users.find((x) => x.userId === id); return u ? u.displayName || u.userName : '' }
+  const choices = users.filter((u) => !blocked.has(u.userId))
+
+  async function run(id: string, fn: () => Promise<unknown>, done: string) {
+    setBusy(id)
+    try {
+      await fn()
+      toast(done, 'success')
+      setPick('')
+      await blocks.refetch()
+    } catch (e) {
+      toast(e instanceof ApiError && e.detail ? e.detail : "Couldn't change it. Try again.", 'error')
+    } finally { setBusy('') }
+  }
+
+  return (
+    <section className="glass admin-card" aria-labelledby="ad-wab">
+      <div className="settings-card-head">
+        <h2 className="section-h2" id="ad-wab">WhatsApp bot access{list.length ? <span className="meta num"> · {list.length} blocked</span> : null}</h2>
+      </div>
+      <p className="dim">Everyone in the group can talk to the bot except the people here. Their messages still count; the bot just doesn't answer them, and doesn't say why.</p>
+      <form className="step-actions" onSubmit={(e) => { e.preventDefault(); if (pick) run(pick, () => blockWaBot(pick), `The bot will ignore ${nameOf(pick) || 'them'} in WhatsApp`) }}>
+        <label className="sr-only" htmlFor="wab-pick">Member to block</label>
+        <select id="wab-pick" className="input" value={pick} onChange={(e) => setPick(e.target.value)} disabled={q.data === undefined}>
+          <option value="">{q.data === undefined ? 'Loading members…' : 'Choose a member'}</option>
+          {choices.map((u) => <option key={u.userId} value={u.userId}>{u.displayName || u.userName}</option>)}
+        </select>
+        <button type="submit" className="btn btn-secondary" disabled={!pick || busy !== ''}>{busy && busy === pick ? 'Blocking…' : 'Block from bot'}</button>
+      </form>
+      {blocks.data === undefined && blocks.isError ? <ErrorStrip text="Couldn't load the block list" onRetry={() => blocks.refetch()} />
+        : blocks.data === undefined ? <SkeletonRows n={1} height={40} />
+        : list.length === 0 ? <p className="meta">No one is blocked. The bot answers everyone.</p>
+        : (
+          <ul className="rows acct-rows">
+            {list.map((b) => {
+              const name = nameOf(b.zitadel_id) || b.name || 'Unknown member'
+              return (
+                <li key={b.zitadel_id} className="acct-row">
+                  <span className="acct-row-text">
+                    <span className="acct-row-title">{name}</span>
+                    <span className="meta">
+                      blocked {fmtDate(b.created)}{b.blocked_by && nameOf(b.blocked_by) ? ` by ${nameOf(b.blocked_by)}` : ''}
+                      {b.whatsapp_ids > 0 ? ` · ${b.whatsapp_ids} WhatsApp ${b.whatsapp_ids === 1 ? 'id' : 'ids'}` : ''}
+                    </span>
+                  </span>
+                  {b.whatsapp_ids === 0 && <span className="badge" data-tone="warn">No WhatsApp linked</span>}
+                  <button type="button" className="btn btn-ghost" disabled={busy !== ''} aria-label={`Unblock ${name}`}
+                    onClick={() => run(b.zitadel_id, () => unblockWaBot(b.zitadel_id), `${name} can use the bot again`)}>
+                    {busy === b.zitadel_id ? 'Unblocking…' : 'Unblock'}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        )}
     </section>
   )
 }

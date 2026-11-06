@@ -2081,6 +2081,46 @@ async def admin_reset_password(user_id: str, request: Request):
         return JSONResponse({"error": "service unavailable"}, status_code=503)
 
 
+async def _admin_sub(request: Request) -> tuple[str, JSONResponse | None]:
+    """(sub, None) for a signed-in IAM admin, else ("", the error response)."""
+    session = _get_session(request)
+    if not session:
+        return "", JSONResponse({"error": "not authenticated"}, status_code=401)
+    sub = session.get("sub", "")
+    if not await _is_iam_admin(sub):
+        return "", JSONResponse({"error": "forbidden"}, status_code=403)
+    return sub, None
+
+
+@app.get("/api/admin/wa-blocks")
+async def admin_wa_blocks(request: Request):
+    """Members the WhatsApp bot won't answer (Admin → WhatsApp bot access)."""
+    _, err = await _admin_sub(request)
+    if err:
+        return err
+    return JSONResponse({"blocks": await asyncio.to_thread(_wa_blocks.list_blocks)})
+
+
+@app.post("/api/admin/wa-blocks/{user_id}")
+async def admin_wa_block(user_id: str, request: Request):
+    sub, err = await _admin_sub(request)
+    if err:
+        return err
+    try:
+        entry = await asyncio.to_thread(_wa_blocks.block, user_id, sub)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"ok": True, "block": entry})
+
+
+@app.delete("/api/admin/wa-blocks/{user_id}")
+async def admin_wa_unblock(user_id: str, request: Request):
+    _, err = await _admin_sub(request)
+    if err:
+        return err
+    return JSONResponse({"ok": await asyncio.to_thread(_wa_blocks.unblock, user_id)})
+
+
 _admin_cache: dict[str, tuple[bool, float]] = {}  # user_id → (is_admin, expires_ts)
 
 
@@ -2395,6 +2435,12 @@ async def wa_ingest(request: Request):
                         msg.get("reply_to") or msg.get("quotedMessageId"),
                         msg.get("message_id", ""),
                         wa_ai._recent_sent_ids[-3:], prompt)
+            # Admin → WhatsApp bot access: a blocked member is stored like anyone
+            # else but never answered. Silent, so there's nothing to argue with.
+            if prompt and await asyncio.to_thread(
+                    _wa_blocks.is_blocked, msg.get("sender_jid") or "", wa_ai.sender_name(msg)):
+                logger.info("wa_ai: ignoring blocked sender %s", (msg.get("sender_jid") or "?")[:24])
+                prompt = None
             if prompt and not (_rate_ok("wa_ai", msg.get("sender_jid") or wa_ai.sender_name(msg))
                                and _rate_ok("wa_ai_all")):
                 logger.info("wa_ai: rate limited %s", (msg.get("sender_jid") or "?")[:24])
@@ -8156,6 +8202,7 @@ import facts as _facts
 import meeting_notes as _meet
 import share as _share
 import wa_link as _wa_link
+import wa_blocks as _wa_blocks
 import safe_fetch as _safe_fetch
 import chat_history as _chat
 import psn_ai
@@ -8199,6 +8246,7 @@ _month_montage.init()
 _vu.init()
 _vu.sweep_stale()
 _wa_react.init()
+_wa_blocks.init()
 _mcp_audit.init()
 _app_events.init()
 _watchparty_events.init()
