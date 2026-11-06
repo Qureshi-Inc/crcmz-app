@@ -9295,6 +9295,11 @@ async def api_clip_resend(message_uid: str, request: Request):
     if not session or not await _is_iam_admin(session.get("sub", "")):
         raise HTTPException(status_code=403, detail="admins only")
     logger.info("clip resend uid=%s by=%s", message_uid, session.get("sub"))
+    # A clip that failed before it was ever downloaded has nothing to re-send:
+    # run it through the pipeline again (download, archive, send) instead.
+    if _video_queue is not None and await asyncio.to_thread(_clips.retry, message_uid):
+        await _video_queue.put(message_uid)
+        return {"status": "queued"}
     return await asyncio.to_thread(_clip_resend, message_uid)
 
 

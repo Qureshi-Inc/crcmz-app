@@ -370,22 +370,36 @@ class PSNMessenger:
                     ugc_id, bool(direct), bool(hls))
 
         if direct and not direct.endswith(".m3u8"):
-            _validate_psn_url(direct)
-            logger.info("clip_download_started ugcId=%s method=direct", ugc_id)
-            with httpx.Client(timeout=120, follow_redirects=True) as client:
-                resp = client.get(direct)
-            if resp.status_code != 200:
-                raise ClipError(f"direct MP4 fetch failed: HTTP {resp.status_code}")
-            data = resp.content
-            if len(data) < 1024:
-                raise ClipNotReady(
-                    f"direct URL returned only {len(data)} bytes — likely not ready"
-                )
-            logger.info("clip_downloaded ugcId=%s size=%d method=direct", ugc_id, len(data))
-            return _package(data, ugc_id)
+            try:
+                return self._download_direct(direct, ugc_id)
+            except (ClipError, ClipNotReady) as exc:
+                # PSN sometimes hands out a signed MP4 link whose object is not
+                # there (CloudFront/S3 answers 403 AccessDenied) while the HLS
+                # stream for the same clip plays fine. Without this fallback
+                # every such clip failed after five tries and never reached
+                # WhatsApp (Nov 2026).
+                if not hls:
+                    raise
+                logger.warning("clip_direct_failed ugcId=%s error=%s; trying HLS",
+                               ugc_id, exc)
 
         _validate_psn_url(hls)
         return self._download_hls(hls, ugc_id)
+
+    def _download_direct(self, direct: str, ugc_id: str) -> ClipDownload:
+        _validate_psn_url(direct)
+        logger.info("clip_download_started ugcId=%s method=direct", ugc_id)
+        with httpx.Client(timeout=120, follow_redirects=True) as client:
+            resp = client.get(direct)
+        if resp.status_code != 200:
+            raise ClipError(f"direct MP4 fetch failed: HTTP {resp.status_code}")
+        data = resp.content
+        if len(data) < 1024:
+            raise ClipNotReady(
+                f"direct URL returned only {len(data)} bytes — likely not ready"
+            )
+        logger.info("clip_downloaded ugcId=%s size=%d method=direct", ugc_id, len(data))
+        return _package(data, ugc_id)
 
     def _download_hls(self, master_url: str, ugc_id: str) -> ClipDownload:
         """Download HLS stream and remux to MP4 via ffmpeg.

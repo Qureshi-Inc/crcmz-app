@@ -237,6 +237,48 @@ def test_resend_admin_reaches_the_handler():
         server._is_iam_admin = orig
 
 
+def test_resend_of_a_clip_that_never_downloaded_runs_it_again():
+    """A clip that failed before download (broken PSN MP4 link) has nothing archived
+    to re-send; the admin button puts it back through the pipeline instead."""
+    import asyncio
+    from urllib.parse import quote
+    from fastapi.testclient import TestClient
+    import server
+    import clips
+    clips.init()
+    uid = "29#test-never-downloaded"
+    clips.claim(uid, "psn-ugc", "g", "The Squad", "someone", 1793892989103)
+    for _ in range(4):
+        clips.mark(uid, clips.DISCOVERED, error="direct MP4 fetch failed: HTTP 403",
+                   next_attempt_at=0)
+    clips.mark(uid, clips.FAILED, error="max attempts: direct MP4 fetch failed: HTTP 403")
+    archived = "29#test-archived-failed"
+    clips.claim(archived, "psn-ugc2", "g", "The Squad", "someone", 1793892989103)
+    clips.set_archived(archived, "clips/original/2026/11/x.mp4")
+    clips.mark(archived, clips.FAILED, error="max attempts: WA bridge error 500")
+
+    orig_admin, orig_q = server._is_iam_admin, server._video_queue
+
+    async def always(_sub):
+        return True
+    server._is_iam_admin = always
+    server._video_queue = asyncio.Queue()
+    try:
+        c = TestClient(server.app, cookies=_session_cookie())
+        r = c.post("/api/clips/%s/resend" % quote(uid, safe=""))
+        assert r.status_code == 200 and r.json() == {"status": "queued"}, (r.status_code, r.text)
+        job = clips.get(uid)
+        assert job["status"] == clips.DISCOVERED and job["attempts"] == 0, job
+        assert job["last_error"] is None, job
+        assert server._video_queue.get_nowait() == uid
+        # An archived clip still takes the plain re-send path (no requeue).
+        c.post("/api/clips/%s/resend" % quote(archived, safe=""))
+        assert server._video_queue.empty(), "an archived clip must not be re-downloaded"
+        assert clips.get(archived)["status"] == clips.FAILED
+    finally:
+        server._is_iam_admin, server._video_queue = orig_admin, orig_q
+
+
 def test_media_endpoint_404s_unknown_clip_with_valid_bearer():
     from fastapi.testclient import TestClient
     import server
