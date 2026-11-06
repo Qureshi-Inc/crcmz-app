@@ -2121,6 +2121,14 @@ async def admin_wa_unneutered(user_id: str, request: Request):
     return JSONResponse({"ok": await asyncio.to_thread(_wa_neuter.unneutered, user_id)})
 
 
+@app.get("/api/wa-neuter/check/{uid}")
+async def wa_neuter_check(uid: str, request: Request):
+    """Is this Zitadel user in Neutered Mode? Used by Wristy voice (machine token)."""
+    if not _is_machine_token(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse({"neutered": await asyncio.to_thread(_wa_neuter.is_neutered_sub, uid)})
+
+
 _admin_cache: dict[str, tuple[bool, float]] = {}  # user_id → (is_admin, expires_ts)
 
 
