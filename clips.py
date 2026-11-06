@@ -246,6 +246,13 @@ def set_coaching_done(message_uid: str) -> None:
         db.commit()
 
 
+def set_kept_off_whatsapp(message_uid: str) -> None:
+    """Terminal state for a clip from someone who isn't a VIP/founder member:
+    archived (Discord, Clips page), deliberately not sent to WhatsApp. Same shape
+    as set_coaching_done: 'delivered' so it isn't requeued, no WhatsApp timestamp."""
+    set_coaching_done(message_uid)
+
+
 def set_message(message_uid: str, text: str,
                 source: str = "text_after_clip") -> bool:
     """Backfill a caption from a standalone trigger text.

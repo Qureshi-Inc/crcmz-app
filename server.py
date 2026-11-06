@@ -8395,10 +8395,35 @@ async def _forward_image(uid: str, image_url: str, sender: str, body: str, wm) -
         logger.error("image_forward_failed uid=%s: %s", uid, exc)
 
 
+def _wa_clip_allowed(psn_sender: str) -> bool:
+    """PSN clips go to WhatsApp only from a CRCMZ member who is a VIP or a founder.
+
+    Someone who's only in the PSN group (no account, e.g. Braden) still gets the
+    clip on Discord and the Clips page, just not WhatsApp; an admin's Re-send
+    to WhatsApp (_clip_resend) is the manual override. Looked up by the PSN id
+    the clip came from. Fails open: with the identity graph unreachable, clips
+    forward as they always did rather than all going quiet.
+    """
+    try:
+        if not crcmz_identity.people():
+            return True
+        person = crcmz_identity.by_psn_id().get((psn_sender or "").strip().casefold())
+        if not person:
+            return False
+        return bool((person.get("tags") or {}).get("vip")) or crcmz_identity.is_founder(person)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("clip vip check failed, forwarding: %s", e)
+        return True
+
+
 def _send_to_wa(message_uid: str, video_bytes: bytes, sender: str, body: str = "") -> str | None:
     """POST video bytes to slaptastic. Returns wa_message_id or None."""
     import base64
     import httpx as _httpx
+
+    if not _wa_clip_allowed(sender):
+        logger.info("clip_whatsapp_skipped uid=%s sender=%s reason=not_vip_member", message_uid, sender)
+        return None
 
     # Guard: verify the bridge has an active WA connection before sending.
     # The bridge returns {"status":"ok","whatsapp":true/false}. If whatsapp is
@@ -8965,6 +8990,8 @@ async def _start_squad_poller():
                             _clips.set_coaching_done(uid)
                         elif _wants_ig_post(body_str):
                             _clips.set_ig_done(uid)
+                        elif not wa_msg_id and not _wa_clip_allowed(job.get("sender_online_id") or ""):
+                            _clips.set_kept_off_whatsapp(uid)   # not a VIP: Discord + Clips only
                         else:
                             _clips.set_delivered(uid, wa_msg_id)
                             if wa_msg_id:
