@@ -189,6 +189,15 @@ def is_neutered(sender_jid: str, sender_name: str = "") -> bool:
         return False
 
 
+def is_neutered_sub(sub: str) -> bool:
+    """Is this Zitadel user ID in Neutered Mode? For the app's own AI chat."""
+    try:
+        return (sub or "") in _blocked_subs()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("wa_neuter: sub check failed, allowing: %s", e)
+        return False
+
+
 def _learn(wa_id: str, sub: str) -> None:
     with _lock, _conn() as db:
         if db.execute("INSERT OR IGNORE INTO block_ids (wa_id, sub) VALUES (?,?)", (wa_id, sub)).rowcount:

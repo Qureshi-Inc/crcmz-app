@@ -4892,9 +4892,14 @@ def _run_assistant_turn(user_sub: str, question: str, reply_id: int,
         except Exception as exc:  # noqa: BLE001 - an unknown asker beats no answer
             logger.info("assistant: couldn't look up who is asking: %s", exc)
             asker = {}
+        try:
+            _app_neutered = _wa_neuter.is_neutered_sub(user_sub)
+        except Exception:  # noqa: BLE001
+            _app_neutered = False
         result = assistant.ask(question, history,
                                image_b64=image_b64, image_type=image_type,
                                on_event=live.emit, asker=asker,
+                               neutered=_app_neutered,
                                # The Ask AI tab is the person's own: founders
                                # may see Professional Goopers stats here.
                                wa_viewer_sub=user_sub)
