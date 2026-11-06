@@ -1,6 +1,6 @@
 // PS-10 · Settings: sign-in methods, PSN status and connected apps. Each tab is a
 // sub-route (/app/settings/<tab>), so tabs deep-link and Back works.
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, useCallback } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import * as Tabs from '@radix-ui/react-tabs'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -17,6 +17,7 @@ import {
   addPasskey, changePassword, fmtDate, fmtDateTime, getMcpToken, generateMcpToken, revokeMcpToken, MCP_CONFIG, MCP_CLI_CMD,
   passkeysSupported, removePasskey, revokeMcp, tokenState,
   setPrimaryPlatform, setSquadName, unlinkMattermost, unlinkSteam,
+  getVoiceStatus, enrollVoice, deleteVoice,
   type McpStatus, type MmStatus, type Passkey, type PsnStatus, type SteamStatus, type ProfileStatus,
 } from '../../lib/account'
 import {
@@ -107,28 +108,157 @@ function ProfileTab() {
   }
 
   return (
-    <section className="glass settings-card" aria-labelledby="profile-h">
-      <h2 className="section-h2" id="profile-h">Squad name</h2>
+    <>
+      <section className="glass settings-card" aria-labelledby="profile-h">
+        <h2 className="section-h2" id="profile-h">Squad name</h2>
+        {q.isPending ? <SkeletonRows n={1} />
+          : q.isError ? <ErrorStrip text="Couldn't load your profile" onRetry={() => q.refetch()} />
+          : (
+            <form onSubmit={(e) => void save(e)} noValidate>
+              <label className="field-label" htmlFor="squad-name">Name shown on Squad and in Ranks</label>
+              <input
+                id="squad-name" className="input" value={value} maxLength={q.data.max} autoComplete="nickname"
+                placeholder={q.data.default_name || 'Your name'} aria-invalid={err ? true : undefined}
+                aria-describedby="squad-name-help" onChange={(e) => { setName(e.target.value); setErr(null) }}
+              />
+              <p className="meta" id="squad-name-help" style={{ marginTop: 'var(--space-1)' }}>
+                {q.data.min}-{q.data.max} characters. Leave it blank to show {q.data.default_name ? <b>{q.data.default_name}</b> : 'your PSN name'}. The bot knows you by it too.
+              </p>
+              {err && <p className="field-err" role="alert">{err}</p>}
+              <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
+                <button type="submit" className="btn btn-primary" disabled={busy || value.trim() === (q.data.squad_name ?? '')}>{busy ? 'Saving…' : 'Save'}</button>
+                {q.data.squad_name && <button type="button" className="btn btn-secondary" disabled={busy} onClick={(e) => void save(e, '')}>Use default</button>}
+              </div>
+            </form>
+          )}
+      </section>
+      <VoiceIdSection />
+    </>
+  )
+}
+
+// ── Voice ID ─────────────────────────────────────────────────────────────────
+const MAX_RECORD_S = 12
+
+function VoiceIdSection() {
+  const qc = useQueryClient()
+  const q = useQuery({ queryKey: ['voice', 'status'], queryFn: ({ signal }) => getVoiceStatus(signal) })
+  const [recording, setRecording] = useState(false)
+  const [seconds, setSeconds] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const recRef = useRef<MediaRecorder | null>(null)
+  const timerRef = useRef<number | null>(null)
+
+  const stopRecorder = useCallback(() => {
+    if (timerRef.current) { window.clearInterval(timerRef.current); timerRef.current = null }
+    recRef.current?.stop()
+    recRef.current = null
+    setRecording(false)
+    setSeconds(0)
+  }, [])
+
+  async function startRecord() {
+    setErr(null)
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      setErr("Couldn't access the microphone.")
+      return
+    }
+    const chunks: Blob[] = []
+    const rec = new MediaRecorder(stream)
+    recRef.current = rec
+    rec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop())
+      void submitBlob(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }))
+    }
+    rec.start()
+    setRecording(true)
+    setSeconds(0)
+    let s = 0
+    timerRef.current = window.setInterval(() => {
+      s += 1
+      setSeconds(s)
+      if (s >= MAX_RECORD_S) stopRecorder()
+    }, 1000)
+  }
+
+  async function submitBlob(blob: Blob) {
+    setBusy(true); setErr(null)
+    try {
+      await enrollVoice(blob)
+      toast('Voice enrolled — Hasaan will recognise you', 'success')
+      void qc.invalidateQueries({ queryKey: ['voice', 'status'] })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Couldn't enroll voice. Try again.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    setBusy(true); setErr(null)
+    try {
+      await deleteVoice()
+      toast('Voice print removed', 'success')
+      void qc.invalidateQueries({ queryKey: ['voice', 'status'] })
+    } catch {
+      setErr("Couldn't remove voice print. Try again.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const enrolled = q.data?.enrolled ?? false
+  const enrolledAt = q.data?.enrolled_at
+
+  return (
+    <section className="glass settings-card" aria-labelledby="voice-h" style={{ marginTop: 'var(--space-4)' }}>
+      <h2 className="section-h2" id="voice-h">Voice ID</h2>
+      <p className="meta" style={{ marginBottom: 'var(--space-3)' }}>
+        Record your voice so Hasaan can recognise who is speaking. Nothing is logged — it only identifies you live during a session.
+      </p>
       {q.isPending ? <SkeletonRows n={1} />
-        : q.isError ? <ErrorStrip text="Couldn't load your profile" onRetry={() => q.refetch()} />
-        : (
-          <form onSubmit={(e) => void save(e)} noValidate>
-            <label className="field-label" htmlFor="squad-name">Name shown on Squad and in Ranks</label>
-            <input
-              id="squad-name" className="input" value={value} maxLength={q.data.max} autoComplete="nickname"
-              placeholder={q.data.default_name || 'Your name'} aria-invalid={err ? true : undefined}
-              aria-describedby="squad-name-help" onChange={(e) => { setName(e.target.value); setErr(null) }}
-            />
-            <p className="meta" id="squad-name-help" style={{ marginTop: 'var(--space-1)' }}>
-              {q.data.min}-{q.data.max} characters. Leave it blank to show {q.data.default_name ? <b>{q.data.default_name}</b> : 'your PSN name'}. The bot knows you by it too.
+        : q.isError ? <ErrorStrip text="Couldn't load voice status" onRetry={() => q.refetch()} />
+        : enrolled ? (
+          <div>
+            <p className="meta" style={{ marginBottom: 'var(--space-3)' }}>
+              Voice enrolled{enrolledAt ? ` on ${fmtDate(enrolledAt)}` : ''}
             </p>
-            {err && <p className="field-err" role="alert">{err}</p>}
-            <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
-              <button type="submit" className="btn btn-primary" disabled={busy || value.trim() === (q.data.squad_name ?? '')}>{busy ? 'Saving…' : 'Save'}</button>
-              {q.data.squad_name && <button type="button" className="btn btn-secondary" disabled={busy} onClick={(e) => void save(e, '')}>Use default</button>}
+            <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+              <button className="btn btn-secondary" disabled={busy || recording} onClick={() => void startRecord()}>
+                {recording ? `Recording… ${seconds}s / ${MAX_RECORD_S}s` : 'Re-enroll'}
+              </button>
+              {recording && (
+                <button className="btn btn-primary" onClick={stopRecorder}>Stop & save</button>
+              )}
+              {!recording && (
+                <button className="btn btn-danger" disabled={busy} onClick={() => void remove()}>Remove</button>
+              )}
             </div>
-          </form>
+          </div>
+        ) : (
+          <div>
+            <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" disabled={busy || recording} onClick={() => void startRecord()}>
+                {recording ? `Recording… ${seconds}s / ${MAX_RECORD_S}s` : 'Record voice'}
+              </button>
+              {recording && (
+                <button className="btn btn-secondary" onClick={stopRecorder}>Stop & save</button>
+              )}
+            </div>
+            {!recording && !busy && (
+              <p className="meta" style={{ marginTop: 'var(--space-2)' }}>
+                Speak naturally for up to {MAX_RECORD_S} seconds, then stop.
+              </p>
+            )}
+          </div>
         )}
+      {busy && !recording && <p className="meta" style={{ marginTop: 'var(--space-2)' }}>Processing…</p>}
+      {err && <p className="field-err" role="alert" style={{ marginTop: 'var(--space-2)' }}>{err}</p>}
     </section>
   )
 }

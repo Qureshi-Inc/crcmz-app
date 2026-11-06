@@ -2129,6 +2129,57 @@ async def wa_neuter_check(uid: str, request: Request):
     return JSONResponse({"neutered": await asyncio.to_thread(_wa_neuter.is_neutered_sub, uid)})
 
 
+@app.get("/api/voice/status")
+async def voice_status(request: Request):
+    """Is the signed-in user enrolled for voice ID?"""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    sub = session.get("sub", "")
+    enrolled_at = await asyncio.to_thread(_voice_id.get_enrolled_at, sub)
+    return JSONResponse({"enrolled": enrolled_at is not None, "enrolled_at": enrolled_at})
+
+
+@app.post("/api/voice/enroll")
+async def voice_enroll(request: Request, audio: UploadFile = File(...)):
+    """Enroll or re-enroll the signed-in user's voice print."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    sub = session.get("sub", "")
+    display_name = (crcmz_identity.by_zitadel_id().get(sub) or {}).get("display_name") \
+        or session.get("name") or sub
+    audio_bytes = await audio.read()
+    try:
+        await asyncio.to_thread(_voice_id.enroll, sub, display_name, audio_bytes)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/voice/enroll")
+async def voice_delete(request: Request):
+    """Remove the signed-in user's voice print."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    sub = session.get("sub", "")
+    ok = await asyncio.to_thread(_voice_id.delete, sub)
+    return JSONResponse({"ok": ok})
+
+
+@app.post("/api/voice/identify")
+async def voice_identify(request: Request, audio: UploadFile = File(...)):
+    """Identify the speaker from audio. Machine token required (used by PSAudio)."""
+    if not _is_machine_token(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    audio_bytes = await audio.read()
+    result = await asyncio.to_thread(_voice_id.identify, audio_bytes)
+    if result:
+        return JSONResponse(result)
+    return JSONResponse({"sub": None, "name": None, "confidence": 0.0})
+
+
 _admin_cache: dict[str, tuple[bool, float]] = {}  # user_id → (is_admin, expires_ts)
 
 
@@ -8226,6 +8277,7 @@ import meeting_notes as _meet
 import share as _share
 import wa_link as _wa_link
 import wa_neuter as _wa_neuter
+import voice_id as _voice_id
 import safe_fetch as _safe_fetch
 import chat_history as _chat
 import psn_ai
@@ -8270,6 +8322,7 @@ _vu.init()
 _vu.sweep_stale()
 _wa_react.init()
 _wa_neuter.init()
+_voice_id.init()
 _mcp_audit.init()
 _app_events.init()
 _watchparty_events.init()

@@ -15,3 +15,5 @@ yt-dlp==2026.7.4
 sqlite-vec==0.1.9
 pywebpush==2.3.0
 h2==4.4.1
+# Speaker voice-print enrollment and identification
+resemblyzer==0.1.4

@@ -131,6 +131,19 @@ export type InviteResult = { ok: boolean; kind: string; zitadel_id: string; mm_u
 export const inviteMember = (body: { email: string; name: string; vip: boolean }) =>
   request<InviteResult>('/api/invites/vip', { body: { ...body, source: 'admin' }, timeoutMs: 45_000 })
 
+export type VoiceStatus = { enrolled: boolean; enrolled_at: number | null }
+export const getVoiceStatus = (signal?: AbortSignal) => getJSON<VoiceStatus>('/api/voice/status', signal)
+export async function enrollVoice(blob: Blob): Promise<void> {
+  const fd = new FormData()
+  fd.append('audio', blob, 'voice.webm')
+  const res = await fetch('/api/voice/enroll', { method: 'POST', credentials: 'same-origin', body: fd })
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({})) as Record<string, unknown>
+    throw new Error((j.error as string | undefined) || `enroll failed (${res.status})`)
+  }
+}
+export const deleteVoice = () => request<{ ok: boolean }>('/api/voice/enroll', { method: 'DELETE' })
+
 export const MCP_URL = 'https://app.crcmz.me/mcp'
 export const MCP_CONFIG = JSON.stringify({ mcpServers: { crcmz: { type: 'http', url: MCP_URL } } }, null, 2)
 export const MCP_CLI_CMD = `claude mcp add --transport http crcmz ${MCP_URL}`
