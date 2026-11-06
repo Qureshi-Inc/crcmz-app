@@ -353,6 +353,26 @@ def set_delivered(message_uid: str, wa_message_id: str | None = None) -> None:
         db.commit()
 
 
+def retry(message_uid: str) -> bool:
+    """Put a failed, never-archived clip back at the start of the pipeline.
+
+    For clips that died before download (e.g. a broken PSN MP4 link): the
+    worker gets a fresh five tries. Returns False if the clip isn't in that state.
+    """
+    now = time.time()
+    with _lock, _conn() as db:
+        cur = db.execute(
+            """UPDATE clips
+               SET status=?, attempts=0, last_error=NULL, next_attempt_at=0,
+                   updated_at=?
+               WHERE message_uid=? AND status=?
+                 AND COALESCE(storage_key_original, '') = ''""",
+            (DISCOVERED, now, message_uid, FAILED),
+        )
+        db.commit()
+        return cur.rowcount == 1
+
+
 def recoverable_jobs() -> list[dict]:
     """Non-terminal jobs past their next_attempt_at, ordered by discovery time."""
     now = time.time()

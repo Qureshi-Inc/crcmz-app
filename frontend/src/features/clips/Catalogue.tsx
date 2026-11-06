@@ -176,7 +176,11 @@ function Resend({ clip }: { clip: Clip }) {
   async function go() {
     setSt({ kind: 'sending' })
     const r = await sendOnce(`/api/clips/${encodeURIComponent(clip.message_uid)}/resend`, {}, 190_000)
-    if (r.kind === 'sent') { setSt({ kind: 'sent' }); toast('Re-sent to WhatsApp.', 'success'); return }
+    if (r.kind === 'sent') {
+      setSt({ kind: 'sent' })
+      toast(r.data?.status === 'queued' ? "Fetching it from PSN again. It goes to WhatsApp when it's ready." : 'Re-sent to WhatsApp.', 'success')
+      return
+    }
     if (r.kind === 'unknown') { setSt({ kind: 'unknown', text: UNKNOWN_INLINE }); return }
     if (r.kind === 'slow') { setSt({ kind: 'error', text: `Slow down — try again in ${r.seconds}s.` }); return }
     if (r.status === 403) { setSt({ kind: 'hidden' }); toast('Admins only.', 'error'); return }
