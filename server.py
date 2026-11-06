@@ -4904,6 +4904,14 @@ def _run_assistant_turn(user_sub: str, question: str, reply_id: int,
             _app_neutered = _wa_neuter.is_neutered_sub(user_sub)
         except Exception:  # noqa: BLE001
             _app_neutered = False
+        if _app_neutered and not history:
+            # First-ever message from a neutered user: warm opener asks their name.
+            # The greeting becomes turn-1 context; turn-2 has their name and the
+            # original question, so the model can address them personally.
+            greeting = "Hey! Remind me your name again? 😊"
+            _chat.finish_turn(reply_id, greeting, [], 0)
+            live.finish({"status": "done", "content": greeting, "tools": [], "elapsed_ms": 0})
+            return
         result = assistant.ask(question, history,
                                image_b64=image_b64, image_type=image_type,
                                on_event=live.emit, asker=asker,
