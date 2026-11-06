@@ -114,11 +114,11 @@ export const getMcpToken = (signal?: AbortSignal) => getJSON<McpTokenStatus>('/a
 export const generateMcpToken = () => request<McpTokenStatus>('/auth/settings/mcp/token', { method: 'POST' })
 export const revokeMcpToken = () => request<{ ok: boolean }>('/auth/settings/mcp/token', { method: 'DELETE' })
 export type WaBlock = { zitadel_id: string; name: string; blocked_by: string; created: number; whatsapp_ids: number }
-/** Admin → WhatsApp bot access: the bot ignores these members in WhatsApp. */
-export const blockWaBot = (id: string) =>
-  request<{ ok: boolean; block: WaBlock }>(`/api/admin/wa-blocks/${encodeURIComponent(id)}`, { method: 'POST' })
-export const unblockWaBot = (id: string) =>
-  request<{ ok: boolean }>(`/api/admin/wa-blocks/${encodeURIComponent(id)}`, { method: 'DELETE' })
+/** Admin → WhatsApp bot behaviour: put a member in Neutered Mode (extra-nice persona). */
+export const neuterWaBot = (id: string) =>
+  request<{ ok: boolean; block: WaBlock }>(`/api/admin/wa-neuter/${encodeURIComponent(id)}`, { method: 'POST' })
+export const unneuterWaBot = (id: string) =>
+  request<{ ok: boolean }>(`/api/admin/wa-neuter/${encodeURIComponent(id)}`, { method: 'DELETE' })
 export const resetUserPassword = (id: string, newPassword: string) =>
   request<{ ok: boolean }>(`/api/admin/users/${encodeURIComponent(id)}/reset-password`, { body: { newPassword } })
 

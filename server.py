@@ -2092,33 +2092,33 @@ async def _admin_sub(request: Request) -> tuple[str, JSONResponse | None]:
     return sub, None
 
 
-@app.get("/api/admin/wa-blocks")
-async def admin_wa_blocks(request: Request):
-    """Members the WhatsApp bot won't answer (Admin → WhatsApp bot access)."""
+@app.get("/api/admin/wa-neuter")
+async def admin_wa_neuter_list(request: Request):
+    """Members in Neutered Mode (Admin → WhatsApp bot behaviour)."""
     _, err = await _admin_sub(request)
     if err:
         return err
-    return JSONResponse({"blocks": await asyncio.to_thread(_wa_blocks.list_blocks)})
+    return JSONResponse({"blocks": await asyncio.to_thread(_wa_neuter.list_neutered)})
 
 
-@app.post("/api/admin/wa-blocks/{user_id}")
-async def admin_wa_block(user_id: str, request: Request):
+@app.post("/api/admin/wa-neuter/{user_id}")
+async def admin_wa_neuter(user_id: str, request: Request):
     sub, err = await _admin_sub(request)
     if err:
         return err
     try:
-        entry = await asyncio.to_thread(_wa_blocks.block, user_id, sub)
+        entry = await asyncio.to_thread(_wa_neuter.neuter, user_id, sub)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse({"ok": True, "block": entry})
 
 
-@app.delete("/api/admin/wa-blocks/{user_id}")
-async def admin_wa_unblock(user_id: str, request: Request):
+@app.delete("/api/admin/wa-neuter/{user_id}")
+async def admin_wa_unneutered(user_id: str, request: Request):
     _, err = await _admin_sub(request)
     if err:
         return err
-    return JSONResponse({"ok": await asyncio.to_thread(_wa_blocks.unblock, user_id)})
+    return JSONResponse({"ok": await asyncio.to_thread(_wa_neuter.unneutered, user_id)})
 
 
 _admin_cache: dict[str, tuple[bool, float]] = {}  # user_id → (is_admin, expires_ts)
@@ -2435,12 +2435,14 @@ async def wa_ingest(request: Request):
                         msg.get("reply_to") or msg.get("quotedMessageId"),
                         msg.get("message_id", ""),
                         wa_ai._recent_sent_ids[-3:], prompt)
-            # Admin → WhatsApp bot access: a blocked member is stored like anyone
-            # else but never answered. Silent, so there's nothing to argue with.
-            if prompt and await asyncio.to_thread(
-                    _wa_blocks.is_blocked, msg.get("sender_jid") or "", wa_ai.sender_name(msg)):
-                logger.info("wa_ai: ignoring blocked sender %s", (msg.get("sender_jid") or "?")[:24])
-                prompt = None
+            # Admin → WhatsApp bot behaviour: a neutered member still gets answered
+            # but with the warm supportive Counsellor Mode persona.
+            _neutered = False
+            if prompt:
+                _neutered = await asyncio.to_thread(
+                    _wa_neuter.is_neutered, msg.get("sender_jid") or "", wa_ai.sender_name(msg))
+                if _neutered:
+                    logger.info("wa_ai: neutered mode for sender %s", (msg.get("sender_jid") or "?")[:24])
             if prompt and not (_rate_ok("wa_ai", msg.get("sender_jid") or wa_ai.sender_name(msg))
                                and _rate_ok("wa_ai_all")):
                 logger.info("wa_ai: rate limited %s", (msg.get("sender_jid") or "?")[:24])
@@ -2451,7 +2453,7 @@ async def wa_ingest(request: Request):
                     args=(prompt, wa_ai.sender_name(msg),
                           msg.get("group_jid") or msg.get("groupJid") or WA_MAIN_JID,
                           msg.get("image_b64", ""), msg.get("image_type", "image/jpeg"),
-                          msg.get("message_id", ""), msg.get("sender_jid", "")),
+                          msg.get("message_id", ""), msg.get("sender_jid", ""), _neutered),
                     daemon=True).start()
     return JSONResponse({"inserted": inserted, "received": len(msgs)})
 
@@ -3423,7 +3425,7 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
 
 def _answer_whatsapp(prompt: str, author: str, group_jid: str,
                      image_b64: str = "", image_type: str = "image/jpeg",
-                     msg_id: str = "", sender_jid: str = "") -> None:
+                     msg_id: str = "", sender_jid: str = "", neutered: bool = False) -> None:
     """Answer one "ai ..." from WhatsApp and send it back to the group."""
     if not assistant.available():
         return
@@ -3504,7 +3506,7 @@ def _answer_whatsapp(prompt: str, author: str, group_jid: str,
         # also fire its own job and one request would build twice.
         with assistant.builds_deferred():
             result = assistant.ask(f"{author} asks: {prompt}", _chat.context(thread),
-                                   image_b64=image_b64, image_type=image_type)
+                                   image_b64=image_b64, image_type=image_type, neutered=neutered)
         answer = (result.get("answer") or "").strip()
     except Exception as e:  # noqa: BLE001
         logger.warning("wa_ai: answering failed: %s", e)
@@ -8202,7 +8204,7 @@ import facts as _facts
 import meeting_notes as _meet
 import share as _share
 import wa_link as _wa_link
-import wa_blocks as _wa_blocks
+import wa_neuter as _wa_neuter
 import safe_fetch as _safe_fetch
 import chat_history as _chat
 import psn_ai
@@ -8246,7 +8248,7 @@ _month_montage.init()
 _vu.init()
 _vu.sweep_stale()
 _wa_react.init()
-_wa_blocks.init()
+_wa_neuter.init()
 _mcp_audit.init()
 _app_events.init()
 _watchparty_events.init()

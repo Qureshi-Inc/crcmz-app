@@ -35,7 +35,7 @@ SKILL = ".claude/skills/crcmz-mcp-tool/SKILL.md"
 
 # store path -> the assistant tool(s) that expose it, or None with a reason.
 STORES: dict[str, list[str] | None] = {
-    "/data/wa_blocks.db": None,  # admin-only: who the WhatsApp bot ignores; a blocked member could ask who's blocked
+    "/data/wa_blocks.db": None,  # admin-only: Neutered Mode roster (wa_neuter.py); a neutered member could ask who's listed
     "/data/wa_link.db": None,   # one-time WhatsApp link codes; the link itself is the wa_names tag
     "/data/whatsapp.db": ["whatsapp_stats", "whatsapp_search", "whatsapp_members",
                           "whatsapp_activity", "whatsapp_words", "whatsapp_emojis",

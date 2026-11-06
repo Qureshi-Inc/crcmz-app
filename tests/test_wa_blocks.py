@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Admin → WhatsApp bot access (wa_blocks.py): the bot ignores a blocked member.
+"""Admin → WhatsApp bot behaviour (wa_neuter.py): neutered members get the supportive persona.
 
 Plain asserts, no pytest. Zitadel and the bot's reply path are stubbed: nothing
 here sends a WhatsApp message.
@@ -15,14 +15,14 @@ import time
 from pathlib import Path
 
 MAIN = "120363334247249772@g.us"
-TMP = Path(tempfile.mkdtemp(prefix="wa-blocks-"))
+TMP = Path(tempfile.mkdtemp(prefix="wa-neuter-"))
 os.environ.setdefault("SESSION_SECRET", "test-secret-for-wa-blocks")
 os.environ.setdefault("WA_INGEST_SECRET", "test-ingest-secret")
 os.environ.setdefault("NPSSO_TOKEN", "test-npsso")
 os.environ.setdefault("GROUP_ID", "test-group")
 os.environ.setdefault("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 os.environ["WA_MAIN_JID"] = MAIN
-os.environ["WA_BLOCKS_DB"] = str(TMP / "wa_blocks.db")
+os.environ["WA_NEUTER_DB"] = str(TMP / "wa_neuter.db")
 os.environ["WA_AI_DATA_DIR"] = str(TMP)
 os.environ.pop("WA_BRIDGE_URL", None)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -79,83 +79,83 @@ _store("999000111@lid", "Zubi")
 _store(MAIN, "AbdulSamad Bawany", from_me=1)             # a bot row: carries the group JID
 _store("555@lid", "Abdul Samad")                          # ...but not the bot's: still his name
 
-import wa_blocks  # noqa: E402
+import wa_neuter  # noqa: E402
 
-wa_blocks.init()
+wa_neuter.init()
 
-print("\nwa_blocks: who the bot ignores")
+print("\nwa_neuter: who gets the supportive persona")
 
 
-def t_nothing_blocked_never_touches_identity():
+def t_nothing_neutered_never_touches_identity():
     orig = crcmz_identity.identify_jid
     crcmz_identity.identify_jid = lambda *a, **k: (_ for _ in ()).throw(AssertionError("looked up"))
     try:
-        assert wa_blocks.is_blocked("212777109086321@lid", "AbdulSamad Bawany") is False
+        assert wa_neuter.is_neutered("212777109086321@lid", "AbdulSamad Bawany") is False
     finally:
         crcmz_identity.identify_jid = orig
 
 
-def t_block_collects_phone_and_history_lids():
-    e = wa_blocks.block(SAMAD, by="zid-admin")
+def t_neuter_collects_phone_and_history_lids():
+    e = wa_neuter.neuter(SAMAD, by="zid-admin")
     assert e["zitadel_id"] == SAMAD and e["name"] == "Samad" and e["blocked_by"] == "zid-admin", e
-    with sqlite3.connect(os.environ["WA_BLOCKS_DB"]) as db:
+    with sqlite3.connect(os.environ["WA_NEUTER_DB"]) as db:
         ids = {r[0] for r in db.execute("SELECT wa_id FROM block_ids WHERE sub=?", (SAMAD,))}
     assert ids == {"17865233277", "212777109086321", "555"}, ids
     assert "120363334247249772" not in ids, "never the group JID from a bot row"
     assert e["whatsapp_ids"] == 3
 
 
-def t_blocked_by_lid_and_by_phone():
-    assert wa_blocks.is_blocked("212777109086321@lid", "") is True
-    assert wa_blocks.is_blocked("17865233277:4@s.whatsapp.net", "whoever") is True
+def t_neutered_by_lid_and_by_phone():
+    assert wa_neuter.is_neutered("212777109086321@lid", "") is True
+    assert wa_neuter.is_neutered("17865233277:4@s.whatsapp.net", "whoever") is True
 
 
-def t_everyone_else_still_gets_the_bot():
-    assert wa_blocks.is_blocked("999000111@lid", "Zubi") is False
-    assert wa_blocks.is_blocked("424242@lid", "Someone New") is False
+def t_everyone_else_still_gets_normal_bot():
+    assert wa_neuter.is_neutered("999000111@lid", "Zubi") is False
+    assert wa_neuter.is_neutered("424242@lid", "Someone New") is False
 
 
 def t_new_id_under_his_name_is_learned_so_renaming_doesnt_help():
-    assert wa_blocks.is_blocked("777888@lid", "Abdul Samad") is True
-    assert wa_blocks.is_blocked("777888@lid", "Totally Not Samad") is True
+    assert wa_neuter.is_neutered("777888@lid", "Abdul Samad") is True
+    assert wa_neuter.is_neutered("777888@lid", "Totally Not Samad") is True
 
 
-def t_someone_else_taking_his_name_is_not_blocked():
+def t_someone_else_taking_his_name_is_not_neutered():
     # Zubi's id is Zubi's in the graph: the id wins over a lookalike name.
-    assert wa_blocks.is_blocked("999000111@lid", "Abdul Samad") is False
+    assert wa_neuter.is_neutered("999000111@lid", "Abdul Samad") is False
 
 
 def t_listing():
-    rows = wa_blocks.list_blocks()
+    rows = wa_neuter.list_neutered()
     assert [r["zitadel_id"] for r in rows] == [SAMAD], rows
     assert set(rows[0]) == {"zitadel_id", "name", "blocked_by", "created", "whatsapp_ids"}
 
 
-def t_bad_blocks_refused():
+def t_bad_neuters_refused():
     for sub, by in (("zid-nobody", "zid-admin"), ("zid-admin", "zid-admin")):
         try:
-            wa_blocks.block(sub, by=by)
+            wa_neuter.neuter(sub, by=by)
         except ValueError:
             continue
-        raise AssertionError(f"blocked {sub}")
+        raise AssertionError(f"neutered {sub}")
 
 
-def t_unblock_drops_every_id():
-    assert wa_blocks.unblock(SAMAD) is True
+def t_unneutered_drops_every_id():
+    assert wa_neuter.unneutered(SAMAD) is True
     for jid in ("212777109086321@lid", "17865233277@s.whatsapp.net", "777888@lid"):
-        assert wa_blocks.is_blocked(jid, "Abdul Samad") is False, jid
-    assert wa_blocks.unblock(SAMAD) is False
+        assert wa_neuter.is_neutered(jid, "Abdul Samad") is False, jid
+    assert wa_neuter.unneutered(SAMAD) is False
 
 
 def t_broken_store_fails_open():
-    wa_blocks.block(SAMAD, by="zid-admin")
-    orig = wa_blocks._blocked_subs
-    wa_blocks._blocked_subs = lambda: (_ for _ in ()).throw(sqlite3.OperationalError("disk"))
+    wa_neuter.neuter(SAMAD, by="zid-admin")
+    orig = wa_neuter._blocked_subs
+    wa_neuter._blocked_subs = lambda: (_ for _ in ()).throw(sqlite3.OperationalError("disk"))
     try:
-        assert wa_blocks.is_blocked("212777109086321@lid", "") is False
+        assert wa_neuter.is_neutered("212777109086321@lid", "") is False
     finally:
-        wa_blocks._blocked_subs = orig
-    wa_blocks.unblock(SAMAD)
+        wa_neuter._blocked_subs = orig
+    wa_neuter.unneutered(SAMAD)
 
 
 for name, fn in list(globals().items()):
@@ -169,7 +169,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import server  # noqa: E402
 
-assert server._wa_blocks is wa_blocks
+assert server._wa_neuter is wa_neuter
 ADMINS = {"zid-admin"}
 
 
@@ -196,10 +196,11 @@ HDR = {"x-ingest-secret": os.environ["WA_INGEST_SECRET"]}
 print("\nhttp: admin endpoints and the ingest gate")
 
 
-def _asked_for(msgs):
-    asked = []
+def _captured(msgs):
+    """Return list of (author, neutered) tuples for each _answer_whatsapp call."""
+    captured = []
     orig = server._answer_whatsapp
-    server._answer_whatsapp = lambda *a, **k: asked.append(a)
+    server._answer_whatsapp = lambda *a, **k: captured.append(a)
     try:
         for m in msgs:
             r = BRIDGE.post("/api/whatsapp/ingest", headers=HDR, json=m)
@@ -207,7 +208,7 @@ def _asked_for(msgs):
         time.sleep(0.5)
     finally:
         server._answer_whatsapp = orig
-    return [a[1] for a in asked]
+    return captured
 
 
 def _live(mid, jid, name, text):
@@ -216,33 +217,44 @@ def _live(mid, jid, name, text):
 
 
 def t_admin_endpoints_are_admin_only():
-    assert _client().get("/api/admin/wa-blocks").status_code == 401
-    assert MEMBER.get("/api/admin/wa-blocks").status_code == 403
-    assert MEMBER.post(f"/api/admin/wa-blocks/{SAMAD}").status_code == 403
-    assert MEMBER.delete(f"/api/admin/wa-blocks/{SAMAD}").status_code == 403
-    assert wa_blocks.list_blocks() == []
+    assert _client().get("/api/admin/wa-neuter").status_code == 401
+    assert MEMBER.get("/api/admin/wa-neuter").status_code == 403
+    assert MEMBER.post(f"/api/admin/wa-neuter/{SAMAD}").status_code == 403
+    assert MEMBER.delete(f"/api/admin/wa-neuter/{SAMAD}").status_code == 403
+    assert wa_neuter.list_neutered() == []
 
 
-def t_admin_blocks_and_the_bot_ignores_only_him():
-    r = ADMIN.post(f"/api/admin/wa-blocks/{SAMAD}")
+def t_admin_neuters_and_both_get_answered_but_samad_gets_nice_mode():
+    r = ADMIN.post(f"/api/admin/wa-neuter/{SAMAD}")
     assert r.status_code == 200 and r.json()["block"]["whatsapp_ids"] >= 2, r.text
-    assert [b["zitadel_id"] for b in ADMIN.get("/api/admin/wa-blocks").json()["blocks"]] == [SAMAD]
+    assert [b["zitadel_id"] for b in ADMIN.get("/api/admin/wa-neuter").json()["blocks"]] == [SAMAD]
     before = sqlite3.connect(wa._DB_PATH).execute("SELECT COUNT(*) FROM whatsapp_messages").fetchone()[0]
-    asked = _asked_for([_live("B-1", "212777109086321@lid", "AbdulSamad Bawany", "ai who's the goat"),
-                        _live("B-2", "999000111@lid", "Zubi", "ai who's the goat")])
-    assert asked == ["Zubi"], asked
+    caps = _captured([_live("B-1", "212777109086321@lid", "AbdulSamad Bawany", "ai who's the goat"),
+                      _live("B-2", "999000111@lid", "Zubi", "ai who's the goat")])
+    # Both are answered (neutered mode still replies, just with a nicer persona)
+    authors = [a[1] for a in caps]
+    assert "AbdulSamad Bawany" in authors, f"Samad should still get a reply: {authors}"
+    assert "Zubi" in authors, f"Zubi should still get a reply: {authors}"
+    # Samad's call has neutered=True (8th positional arg, index 7)
+    samad_cap = next(a for a in caps if a[1] == "AbdulSamad Bawany")
+    assert len(samad_cap) >= 8 and samad_cap[7] is True, f"Samad should be neutered: {samad_cap}"
+    zubi_cap = next(a for a in caps if a[1] == "Zubi")
+    assert len(zubi_cap) < 8 or zubi_cap[7] is False, f"Zubi should not be neutered: {zubi_cap}"
     after = sqlite3.connect(wa._DB_PATH).execute("SELECT COUNT(*) FROM whatsapp_messages").fetchone()[0]
-    assert after == before + 2, "his message is still stored"
+    assert after == before + 2, "both messages stored"
 
 
-def t_admin_unblocks_and_he_is_answered_again():
-    assert ADMIN.delete(f"/api/admin/wa-blocks/{SAMAD}").json() == {"ok": True}
-    assert _asked_for([_live("B-3", "212777109086321@lid", "AbdulSamad Bawany", "ai back?")]) == ["AbdulSamad Bawany"]
+def t_admin_unneutered_and_he_gets_normal_bot():
+    assert ADMIN.delete(f"/api/admin/wa-neuter/{SAMAD}").json() == {"ok": True}
+    caps = _captured([_live("B-3", "212777109086321@lid", "AbdulSamad Bawany", "ai back?")])
+    assert len(caps) == 1, f"should be answered: {caps}"
+    # After unneutered, neutered flag is False
+    assert len(caps[0]) < 8 or caps[0][7] is False, f"should not be neutered after removal: {caps[0]}"
 
 
 def t_admin_bad_requests():
-    assert ADMIN.post("/api/admin/wa-blocks/zid-nobody").status_code == 400
-    assert ADMIN.post("/api/admin/wa-blocks/zid-admin").status_code == 400
+    assert ADMIN.post("/api/admin/wa-neuter/zid-nobody").status_code == 400
+    assert ADMIN.post("/api/admin/wa-neuter/zid-admin").status_code == 400
 
 
 for name, fn in list(globals().items()):

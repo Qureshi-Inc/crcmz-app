@@ -223,7 +223,7 @@ const ACCT_BASE = {
 const ADMIN_READS = {
   'GET /api/pipeline-status': json(200, { services: { psn_messenger: { status: 'ok', ms: 0 }, psn_montage: { status: 'ok', ms: 12 }, wa_bridge: { status: 'down', ms: null } } }),
   'GET /status': json(200, { psn: 'connected', whatsapp: 'configured', clip_store: 's3', groups: 2, queue_depth: 0, clips_total: 1234, clips_delivered: 1200, clips_archived: 1100, clips_failed: 3, clips_active: 1 }),
-  'GET /api/admin/wa-blocks': json(200, { blocks: [] }),
+  'GET /api/admin/wa-neuter': json(200, { blocks: [] }),
   'GET /api/video-jobs': json(200, { stats: { total: 1234, delivered: 1200, failed: 3, archived: 1100, active: 1 }, queue_depth: 0 }),
   'GET /auth/settings/psn': json(200, { linked: true, online_id: 'Goopy', linked_at: NOW - 50 * 86400, token_ok: true, refresh_expires_at: NOW + 40 * 86400, admin: true, users: PSN_USERS }),
   'GET /api/admin/users': json(200, { users: [{ userId: 'u1', userName: 'goopy', displayName: 'Goopy', email: 'goopy@example.com', state: 'USER_STATE_ACTIVE' }, { userId: 'u2', userName: 'bizzle', displayName: 'Bizzle', email: 'bizzle@example.com', state: 'USER_STATE_LOCKED' }] }),
@@ -1744,9 +1744,9 @@ try {
         ...ACCT_BASE, ...ADMIN_READS,
         'GET /api/admin/check': json(200, { admin: true }),
         'POST /api/admin/users/u2/reset-password': (r) => { resets.push(r.request().postDataJSON()); return json(200, { ok: true })(r) },
-        'GET /api/admin/wa-blocks': (r) => json(200, { blocks: waBlocks })(r),
-        'POST /api/admin/wa-blocks/u2': (r) => { waCalls.push('block u2'); waBlocks = [{ zitadel_id: 'u2', name: 'Bizzle', blocked_by: 'u1', created: NOW, whatsapp_ids: 2 }]; return json(200, { ok: true, block: waBlocks[0] })(r) },
-        'DELETE /api/admin/wa-blocks/u2': (r) => { waCalls.push('unblock u2'); waBlocks = []; return json(200, { ok: true })(r) },
+        'GET /api/admin/wa-neuter': (r) => json(200, { blocks: waBlocks })(r),
+        'POST /api/admin/wa-neuter/u2': (r) => { waCalls.push('neuter u2'); waBlocks = [{ zitadel_id: 'u2', name: 'Bizzle', blocked_by: 'u1', created: NOW, whatsapp_ids: 2 }]; return json(200, { ok: true, block: waBlocks[0] })(r) },
+        'DELETE /api/admin/wa-neuter/u2': (r) => { waCalls.push('unneutered u2'); waBlocks = []; return json(200, { ok: true })(r) },
       },
     })
     await ready(page, '/app/admin')
@@ -1774,17 +1774,17 @@ try {
     check('reset posts once with the new password', resets.length === 1 && resets[0].newPassword === 'brand-new-pass')
     const wab = 'section[aria-labelledby=ad-wab]'
     await page.waitForSelector(`${wab} .meta`)
-    check('wa bot access: nobody blocked says the bot answers everyone', (await page.textContent(wab)).includes('The bot answers everyone'))
-    check('wa bot access: Block is off until a member is picked', await page.isDisabled(`${wab} button[type=submit]`))
+    check('wa bot behaviour: nobody neutered says the bot talks normally to everyone', (await page.textContent(wab)).includes('The bot talks normally to everyone'))
+    check('wa bot behaviour: Neuter is off until a member is picked', await page.isDisabled(`${wab} button[type=submit]`))
     await page.selectOption('#wab-pick', 'u2')
     await page.click(`${wab} button[type=submit]`)
-    await page.waitForSelector(`${wab} button[aria-label="Unblock Bizzle"]`)
-    check('wa bot access: blocking posts once and lists them by name', waCalls.join(',') === 'block u2' && (await page.textContent(`${wab} .acct-row`)).includes('by Goopy'), waCalls.join(','))
-    check('wa bot access: a blocked member leaves the picker', (await page.locator('#wab-pick option[value=u2]').count()) === 0)
-    await axe(page, 'Admin WhatsApp bot access', wab)
-    await page.click(`${wab} button[aria-label="Unblock Bizzle"]`)
-    await page.waitForSelector(`${wab} button[aria-label="Unblock Bizzle"]`, { state: 'detached' })
-    check('wa bot access: unblock deletes once and empties the list', waCalls.join(',') === 'block u2,unblock u2')
+    await page.waitForSelector(`${wab} button[aria-label="Unneutered Bizzle"]`)
+    check('wa bot behaviour: neutering posts once and lists them by name', waCalls.join(',') === 'neuter u2' && (await page.textContent(`${wab} .acct-row`)).includes('by Goopy'), waCalls.join(','))
+    check('wa bot behaviour: a neutered member leaves the picker', (await page.locator('#wab-pick option[value=u2]').count()) === 0)
+    await axe(page, 'Admin WhatsApp bot behaviour', wab)
+    await page.click(`${wab} button[aria-label="Unneutered Bizzle"]`)
+    await page.waitForSelector(`${wab} button[aria-label="Unneutered Bizzle"]`, { state: 'detached' })
+    check('wa bot behaviour: unneutered deletes once and empties the list', waCalls.join(',') === 'neuter u2,unneutered u2')
     check('no unmocked writes and no page errors (Admin)', page.violations.length === 0, page.violations.join(', '))
     await ctx.close()
   }

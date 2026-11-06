@@ -1,23 +1,23 @@
-"""Admin → WhatsApp bot access: people the bot won't answer in WhatsApp.
+"""Admin → WhatsApp bot mode: people the bot treats with extra care (Neutered Mode).
 
-A blocked member's messages are still stored (stats, memory, catch-ups) like anyone
-else's; the bot just never replies to them: no "ai ...", no @mention, no swipe-reply.
-Silent on purpose: a "you're blocked" reply is something to argue with.
+A neutered member's messages are still stored (stats, memory, catch-ups) like anyone
+else's; the bot just replies with a warm, supportive, never-roasts persona instead of
+its usual voice. Silent identity tracking so the mode is hard to game.
 
-Who is blocked is a CRCMZ account (Zitadel id), never a phone number. The group
+Who is neutered is a CRCMZ account (Zitadel id), never a phone number. The group
 does not send phone numbers: Baileys 7 hands over WhatsApp's `@lid` privacy id,
-which can't be derived from the number. So a block records every WhatsApp id
+which can't be derived from the number. So a neuter entry records every WhatsApp id
 known for that person:
 
   * `wa_jid` / `wa_phone` / `wa_lids` from the identity graph;
   * every `sender_jid` their linked WhatsApp names (`wa_names`) have posted from.
 
-And it keeps learning: a message from a blocked person's name, from an id
+And it keeps learning: a message from a neutered person's name, from an id
 nobody else owns, adds that id. Changing their WhatsApp name later doesn't get
-round it. Unblock drops the lot.
+round it. Unneutered drops the lot.
 
-DB: /data/wa_blocks.db. Admin-only moderation state; not an assistant/MCP tool
-(the person blocked could otherwise ask the bot who is blocked).
+DB: /data/wa_blocks.db (shared with the old blocks table — same schema, no migration).
+Admin-only moderation state; not an assistant/MCP tool.
 """
 
 from __future__ import annotations
@@ -33,7 +33,11 @@ import crcmz_identity
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = Path(os.environ.get("WA_BLOCKS_DB", "/data/wa_blocks.db"))
+_DB_PATH = Path(
+    os.environ.get("WA_NEUTER_DB")
+    or os.environ.get("WA_BLOCKS_DB")
+    or "/data/wa_blocks.db"
+)
 _lock = threading.Lock()
 
 
@@ -93,16 +97,16 @@ def _known_ids(person: dict) -> set[str]:
                     f"AND sender_jid NOT LIKE '%@g.us' AND lower(sender_name) IN ({q})",
                     [n.strip().lower() for n in names]).fetchall()
             ids.update(_norm(r[0]) for r in rows)
-        except Exception as e:  # noqa: BLE001 - the graph ids still block
-            logger.warning("wa_blocks: message-history ids unavailable: %s", e)
+        except Exception as e:  # noqa: BLE001 - the graph ids still neuter
+            logger.warning("wa_neuter: message-history ids unavailable: %s", e)
 
     # Never claim an id the graph says is someone else's.
     owners = crcmz_identity.by_wa_jid()
     return {i for i in ids if i and (owners.get(i) or {}).get("zitadel_id", sub) == sub}
 
 
-def block(sub: str, by: str = "") -> dict:
-    """Block a CRCMZ account from invoking the WhatsApp bot. Returns the entry."""
+def neuter(sub: str, by: str = "") -> dict:
+    """Put a CRCMZ account into Neutered Mode on the WhatsApp bot. Returns the entry."""
     sub = (sub or "").strip()
     person = crcmz_identity.by_zitadel_id(refresh=True).get(sub)
     if not person:
@@ -110,7 +114,7 @@ def block(sub: str, by: str = "") -> dict:
     if person.get("is_bot"):
         raise ValueError("that's the bot")
     if by and by == sub:
-        raise ValueError("you can't block yourself")
+        raise ValueError("you can't neuter yourself")
     ids = _known_ids(person)
     with _lock, _conn() as db:
         db.execute("INSERT INTO blocks (sub, name, blocked_by, created) VALUES (?,?,?,?) "
@@ -118,16 +122,16 @@ def block(sub: str, by: str = "") -> dict:
                    (sub, _person_name(person), by or "", time.time()))
         db.executemany("INSERT OR REPLACE INTO block_ids (wa_id, sub) VALUES (?,?)",
                        [(i, sub) for i in ids])
-    logger.info("wa_blocks: blocked %s (%d whatsapp ids) by %s", sub, len(ids), by or "?")
+    logger.info("wa_neuter: neutered %s (%d whatsapp ids) by %s", sub, len(ids), by or "?")
     return _entry(sub)
 
 
-def unblock(sub: str) -> bool:
+def unneutered(sub: str) -> bool:
     with _lock, _conn() as db:
         n = db.execute("DELETE FROM blocks WHERE sub=?", (sub,)).rowcount
         db.execute("DELETE FROM block_ids WHERE sub=?", (sub,))
     if n:
-        logger.info("wa_blocks: unblocked %s", sub)
+        logger.info("wa_neuter: unneutered %s", sub)
     return bool(n)
 
 
@@ -141,7 +145,7 @@ def _entry(sub: str) -> dict:
             "created": r["created"], "whatsapp_ids": n}
 
 
-def list_blocks() -> list[dict]:
+def list_neutered() -> list[dict]:
     with _conn() as db:
         subs = [r[0] for r in db.execute("SELECT sub FROM blocks ORDER BY created DESC")]
     return [_entry(s) for s in subs]
@@ -152,12 +156,12 @@ def _blocked_subs() -> set[str]:
         return {r[0] for r in db.execute("SELECT sub FROM blocks")}
 
 
-def is_blocked(sender_jid: str, sender_name: str = "") -> bool:
-    """Is this WhatsApp sender someone the bot must not answer?
+def is_neutered(sender_jid: str, sender_name: str = "") -> bool:
+    """Is this WhatsApp sender in Neutered Mode?
 
     By id first (the stored ids, then the identity graph), then by their linked
     WhatsApp name. A name match from an id nobody else owns is remembered.
-    Fails open: a broken block list must not silence the bot for everyone.
+    Fails open: a broken neuter list must not affect the bot for everyone.
     """
     try:
         subs = _blocked_subs()
@@ -181,11 +185,11 @@ def is_blocked(sender_jid: str, sender_name: str = "") -> bool:
             return True
         return False
     except Exception as e:  # noqa: BLE001
-        logger.warning("wa_blocks: check failed, allowing: %s", e)
+        logger.warning("wa_neuter: check failed, allowing: %s", e)
         return False
 
 
 def _learn(wa_id: str, sub: str) -> None:
     with _lock, _conn() as db:
         if db.execute("INSERT OR IGNORE INTO block_ids (wa_id, sub) VALUES (?,?)", (wa_id, sub)).rowcount:
-            logger.info("wa_blocks: learned another whatsapp id for blocked %s", sub)
+            logger.info("wa_neuter: learned another whatsapp id for neutered %s", sub)

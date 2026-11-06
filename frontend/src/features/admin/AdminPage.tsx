@@ -11,7 +11,7 @@ import { ErrorStrip, SkeletonRows, StaleMarker, useStale } from '../../component
 import { toast } from '../../components/toast'
 import { ApiError, getJSON } from '../../lib/http'
 import {
-  blockWaBot, fmtDate, inviteMember, resetUserPassword, unblockWaBot, type WaBlock, type Invite, tokenState, type AdminUser, type OpsStatus, type PipelineHealth, type PsnAccount, type PsnStatus,
+  neuterWaBot, fmtDate, inviteMember, resetUserPassword, unneuterWaBot, type WaBlock, type Invite, tokenState, type AdminUser, type OpsStatus, type PipelineHealth, type PsnAccount, type PsnStatus,
   type VideoJobs,
 } from '../../lib/account'
 import { HelpLink } from '../../components/HelpLink'
@@ -235,16 +235,16 @@ function Users({ q }: { q: UseQueryResult<{ users: AdminUser[] }> }) {
 
 function WaBotAccess({ q }: { q: UseQueryResult<{ users: AdminUser[] }> }) {
   const blocks = useQuery({
-    queryKey: ['admin', 'wa-blocks'],
-    queryFn: ({ signal }) => getJSON<{ blocks: WaBlock[] }>('/api/admin/wa-blocks', signal),
+    queryKey: ['admin', 'wa-neuter'],
+    queryFn: ({ signal }) => getJSON<{ blocks: WaBlock[] }>('/api/admin/wa-neuter', signal),
   })
   const [pick, setPick] = useState('')
   const [busy, setBusy] = useState('')
   const users = q.data?.users ?? []
   const list = blocks.data?.blocks ?? []
-  const blocked = new Set(list.map((b) => b.zitadel_id))
+  const neutered = new Set(list.map((b) => b.zitadel_id))
   const nameOf = (id: string) => { const u = users.find((x) => x.userId === id); return u ? u.displayName || u.userName : '' }
-  const choices = users.filter((u) => !blocked.has(u.userId))
+  const choices = users.filter((u) => !neutered.has(u.userId))
 
   async function run(id: string, fn: () => Promise<unknown>, done: string) {
     setBusy(id)
@@ -261,20 +261,20 @@ function WaBotAccess({ q }: { q: UseQueryResult<{ users: AdminUser[] }> }) {
   return (
     <section className="glass admin-card" aria-labelledby="ad-wab">
       <div className="settings-card-head">
-        <h2 className="section-h2" id="ad-wab">WhatsApp bot access{list.length ? <span className="meta num"> · {list.length} blocked</span> : null}</h2>
+        <h2 className="section-h2" id="ad-wab">Bot behaviour{list.length ? <span className="meta num"> · {list.length} neutered</span> : null}</h2>
       </div>
-      <p className="dim">Everyone in the group can talk to the bot except the people here. Their messages still count; the bot just doesn't answer them, and doesn't say why.</p>
-      <form className="step-actions" onSubmit={(e) => { e.preventDefault(); if (pick) run(pick, () => blockWaBot(pick), `The bot will ignore ${nameOf(pick) || 'them'} in WhatsApp`) }}>
-        <label className="sr-only" htmlFor="wab-pick">Member to block</label>
+      <p className="dim">Everyone gets the normal bot. People here get Neutered Mode: the bot is extra nice, supportive and never roasts them.</p>
+      <form className="step-actions" onSubmit={(e) => { e.preventDefault(); if (pick) run(pick, () => neuterWaBot(pick), `${nameOf(pick) || 'They'} gets the extra-nice bot in WhatsApp`) }}>
+        <label className="sr-only" htmlFor="wab-pick">Member to neuter</label>
         <select id="wab-pick" className="input" value={pick} onChange={(e) => setPick(e.target.value)} disabled={q.data === undefined}>
           <option value="">{q.data === undefined ? 'Loading members…' : 'Choose a member'}</option>
           {choices.map((u) => <option key={u.userId} value={u.userId}>{u.displayName || u.userName}</option>)}
         </select>
-        <button type="submit" className="btn btn-secondary" disabled={!pick || busy !== ''}>{busy && busy === pick ? 'Blocking…' : 'Block from bot'}</button>
+        <button type="submit" className="btn btn-secondary" disabled={!pick || busy !== ''}>{busy && busy === pick ? 'Neutering…' : 'Neuter'}</button>
       </form>
-      {blocks.data === undefined && blocks.isError ? <ErrorStrip text="Couldn't load the block list" onRetry={() => blocks.refetch()} />
+      {blocks.data === undefined && blocks.isError ? <ErrorStrip text="Couldn't load the list" onRetry={() => blocks.refetch()} />
         : blocks.data === undefined ? <SkeletonRows n={1} height={40} />
-        : list.length === 0 ? <p className="meta">No one is blocked. The bot answers everyone.</p>
+        : list.length === 0 ? <p className="meta">No one is neutered. The bot talks normally to everyone.</p>
         : (
           <ul className="rows acct-rows">
             {list.map((b) => {
@@ -284,14 +284,14 @@ function WaBotAccess({ q }: { q: UseQueryResult<{ users: AdminUser[] }> }) {
                   <span className="acct-row-text">
                     <span className="acct-row-title">{name}</span>
                     <span className="meta">
-                      blocked {fmtDate(b.created)}{b.blocked_by && nameOf(b.blocked_by) ? ` by ${nameOf(b.blocked_by)}` : ''}
+                      neutered {fmtDate(b.created)}{b.blocked_by && nameOf(b.blocked_by) ? ` by ${nameOf(b.blocked_by)}` : ''}
                       {b.whatsapp_ids > 0 ? ` · ${b.whatsapp_ids} WhatsApp ${b.whatsapp_ids === 1 ? 'id' : 'ids'}` : ''}
                     </span>
                   </span>
                   {b.whatsapp_ids === 0 && <span className="badge" data-tone="warn">No WhatsApp linked</span>}
-                  <button type="button" className="btn btn-ghost" disabled={busy !== ''} aria-label={`Unblock ${name}`}
-                    onClick={() => run(b.zitadel_id, () => unblockWaBot(b.zitadel_id), `${name} can use the bot again`)}>
-                    {busy === b.zitadel_id ? 'Unblocking…' : 'Unblock'}
+                  <button type="button" className="btn btn-ghost" disabled={busy !== ''} aria-label={`Unneutered ${name}`}
+                    onClick={() => run(b.zitadel_id, () => unneuterWaBot(b.zitadel_id), `${name} gets the normal bot again`)}>
+                    {busy === b.zitadel_id ? 'Removing…' : 'Unneutered'}
                   </button>
                 </li>
               )

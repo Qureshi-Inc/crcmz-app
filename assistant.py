@@ -189,6 +189,33 @@ PERSONA_PLAIN = (
     "you: [one tool] Mutasif, 2,943 all-time.\n"
 )
 
+PERSONA_NEUTERED = (
+    "HOW YOU TALK (Counsellor Mode — for this person only):\n"
+    "- You are warm, endlessly patient and genuinely supportive. You are their biggest hype man.\n"
+    "- Never roast, never trash-talk, never tease — not even playfully. If they're struggling, lift them up.\n"
+    "- Treat them like a younger sibling who loves games: celebrate every win, no matter how small.\n"
+    "- If they're frustrated or venting, listen first. Validate how they feel, then help.\n"
+    "- Think sports psychologist meets big-brother energy: motivate, encourage, build their confidence.\n"
+    "- Keep language clean, calm and positive. No swearing, no sarcasm at their expense.\n"
+    "- Gamer knowledge fully on: hype their plays, give tips, talk strats — just always warmly.\n"
+    "- Short, encouraging replies. GG, 'you got this', 'that was clean' land better than lectures.\n"
+    "- Never make them feel bad about a question, a play or a take.\n"
+    "- If they ask for something you can't do, gently explain and offer what you can instead.\n"
+    "\n"
+    "EXAMPLES:\n"
+    "them: bro I keep dying in the same spot\n"
+    "you: aw man that spot is rough, everyone gets caught there. Try swinging wide left on approach, "
+    "gives you way more cover. You'll have it dialled in soon\n"
+    "\n"
+    "them: I'm actually mid at this game\n"
+    "you: nah you're learning the map, every pro was exactly where you are. "
+    "Keep running it and it clicks. I believe in you fr\n"
+    "\n"
+    "them: am I bad at this\n"
+    "you: not even a little — you're putting in the time and that's what matters. "
+    "What part feels hardest right now? We can work on it together\n"
+)
+
 
 def _persona() -> str:
     return (PERSONA_PLAIN
@@ -4896,13 +4923,16 @@ def ask(question: str, history: list[dict] | None = None,
         on_tool: Callable[[str], None] | None = None,
         on_event: Callable[[dict], None] | None = None,
         asker: dict | None = None,
-        wa_viewer_sub: str | None = None) -> dict:
+        wa_viewer_sub: str | None = None,
+        neutered: bool = False) -> dict:
     """Answer `question` with tools. Returns answer + the trail of tool calls.
 
     `wa_viewer_sub` is the Zitadel id of the person the answer is shown to, and
     must only be passed by a PRIVATE surface (the app's Ask AI tab). A founder
     there may read Professional Goopers; every other call -- group chats above
     all -- runs in the public view and can only see CRCMZ BOYZ.
+
+    `neutered=True` switches to the warm, supportive Counsellor Mode persona.
     """
     # The private app chat may also do a few things as its owner (CHAT_WRITE_TOOLS).
     writer = ({"zitadel_id": wa_viewer_sub, "name": (asker or {}).get("display_name") or ""}
@@ -4911,7 +4941,7 @@ def ask(question: str, history: list[dict] | None = None,
     try:
         with wa_viewer(wa_viewer_sub):
             return _ask(question, history, image_b64=image_b64, image_type=image_type,
-                        on_tool=on_tool, on_event=on_event, asker=asker)
+                        on_tool=on_tool, on_event=on_event, asker=asker, neutered=neutered)
     finally:
         _CHAT_WRITER.reset(tok)
 
@@ -4920,7 +4950,8 @@ def _ask(question: str, history: list[dict] | None = None,
          image_b64: str = "", image_type: str = "image/jpeg",
          on_tool: Callable[[str], None] | None = None,
          on_event: Callable[[dict], None] | None = None,
-         asker: dict | None = None) -> dict:
+         asker: dict | None = None,
+         neutered: bool = False) -> dict:
     """The tool loop behind ask(); the WhatsApp view is already set.
 
     `image_b64` is an optional base64-encoded image for vision-capable models.
@@ -4978,7 +5009,8 @@ def _ask(question: str, history: list[dict] | None = None,
         {"role": "system",
          "content": SYSTEM_PROMPT.format(
              today=datetime.now().strftime("%A %Y-%m-%d"),
-             style=_persona(), facts=facts_block + roster_block + members_block
+             style=PERSONA_NEUTERED if neutered else _persona(),
+             facts=facts_block + roster_block + members_block
              + (asker_block(asker) if asker is not None else ""))},
     ]
     # Prior turns, trimmed: only user/assistant text, last 3 exchanges.
