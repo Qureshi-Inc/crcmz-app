@@ -106,6 +106,12 @@ def init() -> None:
         if "purged_at" not in cols:
             db.execute("ALTER TABLE clips ADD COLUMN purged_at REAL")
             db.commit()
+        if "sender_not_member" not in cols:
+            # 1 = kept off WhatsApp and the montage because the sender wasn't a
+            # VIP/founder member when it came in (montage_eligible=0 says it to
+            # psn-montage, this says why).
+            db.execute("ALTER TABLE clips ADD COLUMN sender_not_member INTEGER NOT NULL DEFAULT 0")
+            db.commit()
         # One-time backfill: clips inserted before message_source was added have a
         # non-null body but no source label. They all came from the poller's
         # _adjacent_caption window, so they are clip_caption.
@@ -248,9 +254,13 @@ def set_coaching_done(message_uid: str) -> None:
 
 def set_kept_off_whatsapp(message_uid: str) -> None:
     """Terminal state for a clip from someone who isn't a VIP/founder member:
-    archived (Discord, Clips page), deliberately not sent to WhatsApp. Same shape
-    as set_coaching_done: 'delivered' so it isn't requeued, no WhatsApp timestamp."""
-    set_coaching_done(message_uid)
+    archived (Discord, Clips page), deliberately not sent to WhatsApp and kept out
+    of the montage. 'delivered' so it isn't requeued (as set_coaching_done), no
+    WhatsApp timestamp, montage_eligible=0 for psn-montage, sender_not_member=1."""
+    with _lock, _conn() as db:
+        db.execute("UPDATE clips SET status='delivered', montage_eligible=0, sender_not_member=1,"
+                   " updated_at=? WHERE message_uid=?", (time.time(), message_uid))
+        db.commit()
 
 
 def set_message(message_uid: str, text: str,

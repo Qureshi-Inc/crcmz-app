@@ -14,7 +14,9 @@ import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -52,6 +54,9 @@ os.environ.setdefault("GROUP_ID", "test-group")
 os.environ.setdefault("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 os.environ["WA_BRIDGE_URL"] = f"http://127.0.0.1:{srv.server_port}"
 os.environ["WA_MAIN_JID"] = "120363334247249772@g.us"
+os.environ["IG_POSTS_DB"] = str(TMP / "ig_posts.db")
+os.environ["WA_REACTIONS_DB"] = str(TMP / "wa_reactions.db")
+os.environ["MONTAGE_RECORDS_DB"] = str(TMP / "montage_records.db")
 
 FAILED: list[str] = []
 PASSED = 0
@@ -136,6 +141,62 @@ def t_worker_uses_the_kept_off_state():
     assert "_clips.set_kept_off_whatsapp(uid)" in src
     i = src.index("_clips.set_kept_off_whatsapp(uid)")
     assert "_wa_clip_allowed(" in src[i - 200:i], "the worker decides with the same gate"
+
+
+print("\nmontage: non-members' clips stay out")
+import ig_posts  # noqa: E402
+import month_montage  # noqa: E402
+import wa_reactions  # noqa: E402
+
+ig_posts.init(); wa_reactions.init(); month_montage.init()
+WHEN = datetime(2026, 11, 3, 12, tzinfo=ZoneInfo("America/Los_Angeles")).timestamp()
+
+
+def _clip(cid, sender, body="", elig=1, not_member=0):
+    with sqlite3.connect(clips._DB_PATH) as db:
+        db.execute("INSERT INTO clips (message_uid, ugc_id, psn_group_id, sender_online_id, psn_created_at,"
+                   " discovered_at, status, archive_status, storage_key_original, sha256, body,"
+                   " montage_eligible, sender_not_member, created_at, updated_at)"
+                   " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (cid, "g-" + cid, "g", sender, WHEN, WHEN, "delivered", "archived", f"clips/{cid}.mp4",
+                    "sha-" + cid, body, elig, not_member, WHEN, WHEN))
+
+
+def _reasons():
+    got = month_montage.evaluate("2026-11", vetoes=set(), fetch=False)["clips"]
+    return {c["clip_id"]: {r["code"] for r in c["excluded_reasons"]} for c in got}
+
+
+def t_montage_excludes_non_members_and_keeps_members():
+    clips.init()
+    _clip("m-vip", "Kurokishi-Haruma")
+    _clip("m-founder", "mutasif")
+    _clip("m-braden", "IG_Juicy")                      # sent before the rule: flags never set
+    _clip("m-braden-new", "IG_Juicy", elig=0, not_member=1)
+    _clip("m-rev", "mutasif", body="rev pls", elig=0)
+    r = _reasons()
+    assert r["m-vip"] == set() and r["m-founder"] == set(), r
+    assert r["m-braden"] == {"not_member"}, r["m-braden"]
+    assert r["m-braden-new"] == {"not_member"}, "never mislabelled as coaching"
+    assert r["m-rev"] == {"rev_coaching"}, r["m-rev"]
+    assert "not_member" in month_montage.HARD_REASONS
+
+
+def t_kept_off_whatsapp_flags_it_for_psn_montage_too():
+    clips.claim("u-later", "ugc9", "g", "The Squad", "IG_Juicy", 0, "")
+    clips.set_kept_off_whatsapp("u-later")
+    row = clips.get("u-later")
+    assert row["montage_eligible"] == 0 and row["sender_not_member"] == 1, row
+
+
+def t_becoming_a_vip_lets_their_clips_back_into_the_montage():
+    PEOPLE.append(_p("braden", "IG_Juicy", {"vip": "2026-11-06"}))
+    try:
+        r = _reasons()
+        assert r["m-braden"] == set() and r["m-braden-new"] == set(), r
+        assert server._wa_clip_allowed("IG_Juicy") is True
+    finally:
+        PEOPLE.pop()
 
 
 for name, fn in list(globals().items()):

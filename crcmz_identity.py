@@ -580,6 +580,27 @@ def is_founder(sub_or_person: str | dict | None, *, refresh: bool = False) -> bo
     return bool(person.get("founder")) or _truthy((person.get("tags") or {}).get("founder", ""))
 
 
+def psn_member_ok(psn_id: str) -> bool:
+    """A PSN clip sender counts as a member: their account is a VIP or a founder.
+
+    The gate for clips reaching WhatsApp and the month-end montage. Someone who's
+    only in the PSN group (no CRCMZ account) or an account without the `vip` tag
+    who isn't a founder is not. Fails open: an empty or unreachable graph is True,
+    so clips keep flowing rather than all being dropped during a Zitadel blip.
+    """
+    try:
+        if not people():
+            return True
+        person = by_psn_id().get((psn_id or "").strip().casefold())
+        if not person:
+            return False
+        vip = str((person.get("tags") or {}).get("vip") or "").strip().lower()   # the date they joined
+        return vip not in ("", "false", "0", "no") or is_founder(person)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("identity: member check failed, allowing: %s", e)
+        return True
+
+
 def identify_jid(jid: str, *, refresh: bool = False) -> dict | None:
     """Person behind a raw WhatsApp JID, tolerating device suffixes and domains."""
     key = _normalise_jid(jid)

@@ -17,6 +17,9 @@ Hard exclusions, enforced here and again when a record is saved:
                    copy is the one kept), or as a clip already used in another
                    month's montage record.
   not_archived     no stored MP4, so there is nothing to cut from.
+  not_member       the sender isn't a VIP or founder member (someone who's only
+                   in the PSN group): checked live, so becoming a VIP lets their
+                   clips back in.
 
 The Reel Review veto list lives in reel-review, not here. If it cannot be
 fetched every clip is excluded with `veto_list_unavailable` and saving a record
@@ -43,6 +46,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import crcmz_identity
 import reel_pipeline
 
 logger = logging.getLogger(__name__)
@@ -62,7 +66,7 @@ _ROFL = "\U0001f923"
 # relative (it depends on which copy is kept) and is checked separately when a
 # selection is validated.
 HARD_REASONS = ("veto_list_unavailable", "vetoed", "rev_coaching", "not_archived",
-                "used_in_montage")
+                "used_in_montage", "not_member")
 
 
 # ── Month window ──────────────────────────────────────────────────────────────
@@ -173,8 +177,10 @@ def evaluate(month: str, tz_name: str = "", vetoes: set[str] | None = None,
             reasons.append({"code": "vetoed", "detail": "🛑 reaction in WhatsApp"})
         if reel_pipeline.wants_coaching(body):
             reasons.append({"code": "rev_coaching", "detail": "'rev' coaching clip"})
-        elif not r.get("montage_eligible", 1):
+        elif not r.get("montage_eligible", 1) and not r.get("sender_not_member"):
             reasons.append({"code": "rev_coaching", "detail": "marked coaching-only at ingest"})
+        if not crcmz_identity.psn_member_ok(r.get("sender_online_id") or ""):
+            reasons.append({"code": "not_member", "detail": "sender isn't a VIP or founder member"})
         if r.get("archive_status") != "archived" or not r.get("storage_key_original"):
             reasons.append({"code": "not_archived", "detail": "no stored MP4"})
         if cid in used_id:

@@ -8396,24 +8396,10 @@ async def _forward_image(uid: str, image_url: str, sender: str, body: str, wm) -
 
 
 def _wa_clip_allowed(psn_sender: str) -> bool:
-    """PSN clips go to WhatsApp only from a CRCMZ member who is a VIP or a founder.
-
-    Someone who's only in the PSN group (no account, e.g. Braden) still gets the
-    clip on Discord and the Clips page, just not WhatsApp; an admin's Re-send
-    to WhatsApp (_clip_resend) is the manual override. Looked up by the PSN id
-    the clip came from. Fails open: with the identity graph unreachable, clips
-    forward as they always did rather than all going quiet.
-    """
-    try:
-        if not crcmz_identity.people():
-            return True
-        person = crcmz_identity.by_psn_id().get((psn_sender or "").strip().casefold())
-        if not person:
-            return False
-        return bool((person.get("tags") or {}).get("vip")) or crcmz_identity.is_founder(person)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("clip vip check failed, forwarding: %s", e)
-        return True
+    """PSN clips go to WhatsApp only from a VIP or founder member
+    (crcmz_identity.psn_member_ok). Someone who's only in the PSN group still gets
+    Discord and the Clips page; an admin's Re-send to WhatsApp is the override."""
+    return crcmz_identity.psn_member_ok(psn_sender)
 
 
 def _send_to_wa(message_uid: str, video_bytes: bytes, sender: str, body: str = "") -> str | None:
