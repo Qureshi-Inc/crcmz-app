@@ -21,6 +21,54 @@ function machineToken() {
 const WHATSAPP_API_URLS = (process.env.WHATSAPP_API_URLS ||
   "http://100.123.228.75:3100,http://192.168.5.54:3100").split(",").map(s => s.trim()).filter(Boolean);
 
+// Voice changer state (polled from livevoice service via CRCMZ proxy)
+let vcCurrentVoice = { id: "off", name: "Original", emoji: "🎤" };
+let vcPollHandle = null;
+
+async function renderVoiceChanger(voice, state) {
+  const { img, ctx } = makeCanvas(W, H);
+  const colors = { off: "#1a1a2e", deep: "#0d1b2a", high: "#1a3a5c", "rvc-1": "#3a1a5c", "rvc-2": "#1a5c2e" };
+  const bg = colors[voice.id] || "#1a1a2e";
+  rect(ctx, 0, 0, W, H, bg);
+  if (state === "sending") {
+    text(ctx, "...", 63, 70, 14, "#FFC107", "center", "DeckBold");
+    return pngDataUri(img);
+  }
+  text(ctx, voice.emoji || "🎤", 63, 42, 22, "#ffffff", "center");
+  text(ctx, "VOICE", 63, 75, 9, "#888888", "center", "DeckBold");
+  const name = (voice.name || "Original").toUpperCase();
+  text(ctx, name.length > 8 ? name.slice(0, 8) : name, 63, 96, 10, "#ffffff", "center", "DeckBold");
+  return pngDataUri(img);
+}
+
+async function pollVoiceStatus(contexts) {
+  try {
+    const raw = await postOnce(PSN_API_URLS[0], "/api/livevoice/status", null).catch(() => null);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (data && data.voice) {
+      vcCurrentVoice = data.voice;
+      for (const ctx of contexts) {
+        sd.setImage(ctx, await renderVoiceChanger(vcCurrentVoice, "idle"));
+      }
+    }
+  } catch (e) { /* livevoice may not be running */ }
+}
+
+const vcContexts = new Set();
+
+async function startVcPoll() {
+  if (vcPollHandle) return;
+  vcPollHandle = setInterval(() => pollVoiceStatus([...vcContexts]), 5000);
+}
+
+function stopVcPoll() {
+  if (vcPollHandle && vcContexts.size === 0) {
+    clearInterval(vcPollHandle);
+    vcPollHandle = null;
+  }
+}
+
 const MESSAGES = {
   "com.psn.slapper.haveyouever": "Have you ever? 👉👌",
   "com.psn.slapper.icedcap": "🧊☕ Iced Cap STORRYYY! 📖✨",
@@ -283,6 +331,25 @@ async function handlePress(context) {
     return;
   }
 
+  if (action === "com.psn.slapper.voicechanger") {
+    sd.setImage(context, await renderVoiceChanger(vcCurrentVoice, "sending"));
+    try {
+      const raw = await callEndpoint("/api/livevoice/cycle");
+      const data = JSON.parse(raw || "{}");
+      if (data && data.voice) vcCurrentVoice = data.voice;
+      sd.setImage(context, await renderVoiceChanger(vcCurrentVoice, "idle"));
+    } catch (e) {
+      // livevoice service may be off — show error briefly then restore
+      const { img, ctx } = makeCanvas(W, H);
+      rect(ctx, 0, 0, W, H, "#b71c1c");
+      text(ctx, "🎤", 63, 42, 22, "#ffffff", "center");
+      text(ctx, "OFFLINE", 63, 96, 9, "#ffffff", "center", "DeckBold");
+      sd.setImage(context, pngDataUri(img));
+      setTimeout(async () => { sd.setImage(context, await renderVoiceChanger(vcCurrentVoice, "idle")); }, 2500);
+    }
+    return;
+  }
+
   // Regular message buttons
   const message = MESSAGES[action] || MESSAGES["com.psn.slapper.haveyouever"];
   sd.setImage(context, await renderSending());
@@ -304,12 +371,30 @@ async function handlePress(context) {
 
 sd.on("willAppear", async (msg) => {
   actionMap.set(msg.context, msg.action);
-  sd.setImage(msg.context, await getIdleImage(msg.action));
+  if (msg.action === "com.psn.slapper.voicechanger") {
+    vcContexts.add(msg.context);
+    startVcPoll();
+    sd.setImage(msg.context, await renderVoiceChanger(vcCurrentVoice, "idle"));
+    pollVoiceStatus([msg.context]); // fetch current state immediately
+  } else {
+    sd.setImage(msg.context, await getIdleImage(msg.action));
+  }
   sd.setTitle(msg.context, "");
 });
 
 sd.on("willDisappear", (msg) => {
   actionMap.delete(msg.context);
+  if (msg.action === "com.psn.slapper.voicechanger") {
+    vcContexts.delete(msg.context);
+    stopVcPoll();
+  }
+});
+
+// Encoder dial rotation = cycle voice
+sd.on("dialRotate", async (msg) => {
+  if (msg.action === "com.psn.slapper.voicechanger") {
+    handlePress(msg.context);
+  }
 });
 
 sd.on("keyDown", (msg) => {

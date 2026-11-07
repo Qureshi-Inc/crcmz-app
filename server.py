@@ -820,7 +820,8 @@ _PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 MACHINE_TOKEN = os.environ.get("CRCMZ_MACHINE_TOKEN", "")
 # What CRCMZ_MACHINE_TOKEN opens: the Stream Deck plugin's buttons (psn-slapper.sdPlugin).
 _MACHINE_PATHS = frozenset({"/v2/send", "/v2/squad", "/roast/start", "/roast/stop", "/roast/once",
-                             "/api/voice/identify", "/api/wa-neuter/check"})
+                             "/api/voice/identify", "/api/wa-neuter/check",
+                             "/api/livevoice/cycle", "/api/livevoice/status"})
 # Paths that must be reachable before authentication.
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # The status page's per-dependency checks (health_deps.py): ok / not ok
@@ -2186,6 +2187,38 @@ async def voice_delete(request: Request):
     sub = session.get("sub", "")
     ok = await asyncio.to_thread(_voice_id.delete, sub)
     return JSONResponse({"ok": ok})
+
+
+_LIVEVOICE_URL = os.environ.get("LIVEVOICE_URL", "http://192.168.5.151:7722")
+
+
+async def _livevoice_proxy(path: str, method: str = "GET") -> dict:
+    """Forward a request to the livevoice service on the Pi."""
+    import httpx as _hx
+    try:
+        async with _hx.AsyncClient(timeout=3) as c:
+            r = await c.request(method, f"{_LIVEVOICE_URL}{path}")
+            return r.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/livevoice/status")
+async def livevoice_status(request: Request):
+    """Proxy livevoice status — machine token required (stream deck)."""
+    if not _machine_authorised(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    data = await _livevoice_proxy("/status")
+    return JSONResponse(data)
+
+
+@app.post("/api/livevoice/cycle")
+async def livevoice_cycle(request: Request):
+    """Cycle to next voice — machine token required (stream deck button)."""
+    if not _machine_authorised(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    data = await _livevoice_proxy("/cycle", method="POST")
+    return JSONResponse(data)
 
 
 @app.post("/api/voice/identify")

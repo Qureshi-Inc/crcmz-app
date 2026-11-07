@@ -191,6 +191,32 @@
         }
       ],
       "SupportedInMultiActions": false
+    },
+    {
+      "UUID": "com.psn.slapper.voicechanger",
+      "Name": "Voice Changer",
+      "Tooltip": "Cycle through voice presets (Original → Deeper → Higher → RVC models)",
+      "Icon": "imgs/plugin",
+      "Controllers": [
+        "Keypad",
+        "Encoder"
+      ],
+      "States": [
+        {
+          "Image": "imgs/plugin",
+          "TitleAlignment": "bottom",
+          "FontSize": "9"
+        }
+      ],
+      "Encoder": {
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Cycle voices",
+          "Push": "Cycle voices",
+          "Touch": "Cycle voices"
+        }
+      },
+      "SupportedInMultiActions": false
     }
   ]
 }
