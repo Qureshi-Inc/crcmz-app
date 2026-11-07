@@ -46,12 +46,37 @@ def init() -> None:
         """)
 
 
+def _to_wav(audio_bytes: bytes) -> bytes:
+    """Convert any browser audio (WebM/Opus/MP4) to 16 kHz mono WAV via ffmpeg."""
+    import os, subprocess, tempfile
+    with tempfile.NamedTemporaryFile(suffix='.input', delete=False) as f:
+        f.write(audio_bytes)
+        in_path = f.name
+    out_path = in_path + '.wav'
+    try:
+        subprocess.run(
+            ['ffmpeg', '-y', '-i', in_path, '-ac', '1', '-ar', '16000', '-f', 'wav', out_path],
+            check=True, capture_output=True,
+        )
+        with open(out_path, 'rb') as f:
+            return f.read()
+    except subprocess.CalledProcessError as e:
+        raise ValueError(f"ffmpeg conversion failed: {e.stderr[-200:].decode(errors='replace')}") from e
+    finally:
+        os.unlink(in_path)
+        if os.path.exists(out_path):
+            os.unlink(out_path)
+
+
 def _embed(audio_bytes: bytes) -> list[float]:
-    """Extract a 40-dim mean MFCC vector from raw audio bytes (WAV/WebM/any format librosa handles)."""
+    """Extract a 40-dim mean MFCC vector from raw audio bytes (any format ffmpeg handles)."""
     import librosa
     import numpy as np
     try:
-        y, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
+        wav_bytes = _to_wav(audio_bytes)
+        y, sr = librosa.load(io.BytesIO(wav_bytes), sr=16000, mono=True)
+    except ValueError:
+        raise
     except Exception as e:
         raise ValueError(f"audio load failed: {e}") from e
     if len(y) < sr:  # < 1 second
