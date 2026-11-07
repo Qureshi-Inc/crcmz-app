@@ -2125,7 +2125,7 @@ async def admin_wa_unneutered(user_id: str, request: Request):
 @app.get("/api/wa-neuter/check/{uid}")
 async def wa_neuter_check(uid: str, request: Request):
     """Is this Zitadel user in Neutered Mode? Used by Wristy voice (machine token)."""
-    if not _is_machine_token(request):
+    if not _machine_authorised(request):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     return JSONResponse({"neutered": await asyncio.to_thread(_wa_neuter.is_neutered_sub, uid)})
 
@@ -2172,7 +2172,7 @@ async def voice_delete(request: Request):
 @app.post("/api/voice/identify")
 async def voice_identify(request: Request, audio: UploadFile = File(...)):
     """Identify the speaker from audio. Machine token required (used by PSAudio)."""
-    if not _is_machine_token(request):
+    if not _machine_authorised(request):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     audio_bytes = await audio.read()
     result = await asyncio.to_thread(_voice_id.identify, audio_bytes)
