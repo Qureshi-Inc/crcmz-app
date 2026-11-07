@@ -254,13 +254,13 @@ function VoiceIdSection() {
             </div>
             {!recording && !busy && (
               <p className="meta" style={{ marginTop: 'var(--space-2)' }}>
-                A script will appear — just read it out loud. Stops automatically after {MAX_RECORD_S}s.
+                Read the script below out loud. Stops automatically after {MAX_RECORD_S}s.
               </p>
             )}
           </div>
         )}
-      {recording && (
-        <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-3)', background: 'var(--surface-2)', borderRadius: 'var(--radius-2)', border: '1px solid var(--border)' }}>
+      {!busy && (
+        <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-3)', background: recording ? 'var(--surface-2)' : 'transparent', borderRadius: 'var(--radius-2)', border: `1px solid ${recording ? 'var(--border)' : 'var(--border-dim, var(--border))'}`, opacity: recording ? 1 : 0.7 }}>
           {VOICE_SCRIPT.split('\n').map((line, i) => (
             line === '' ? <br key={i} /> : <p key={i} style={{ margin: 0, lineHeight: 1.6, fontSize: '0.95rem' }}>{line}</p>
           ))}
