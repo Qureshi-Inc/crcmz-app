@@ -140,6 +140,8 @@ function ProfileTab() {
 // ── Voice ID ─────────────────────────────────────────────────────────────────
 const MAX_RECORD_S = 12
 
+const VOICE_SCRIPT = `Read this out loud while recording:\n\n"Okay so I've been gaming since before you could even spell WiFi. I peaked in 2011, I've been declining ever since, and I'm somehow still here. My aim is inconsistent, my decision-making is questionable, and yet I talk the most trash in every lobby. Some say I carry. Others say I get carried. The truth? I just talk until people believe me. And honestly, standing here today, I question myself — have I ever?"`
+
 function VoiceIdSection() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['voice', 'status'], queryFn: ({ signal }) => getVoiceStatus(signal) })
@@ -252,11 +254,18 @@ function VoiceIdSection() {
             </div>
             {!recording && !busy && (
               <p className="meta" style={{ marginTop: 'var(--space-2)' }}>
-                Speak naturally for up to {MAX_RECORD_S} seconds, then stop.
+                A script will appear — just read it out loud. Stops automatically after {MAX_RECORD_S}s.
               </p>
             )}
           </div>
         )}
+      {recording && (
+        <div style={{ marginTop: 'var(--space-3)', padding: 'var(--space-3)', background: 'var(--surface-2)', borderRadius: 'var(--radius-2)', border: '1px solid var(--border)' }}>
+          {VOICE_SCRIPT.split('\n').map((line, i) => (
+            line === '' ? <br key={i} /> : <p key={i} style={{ margin: 0, lineHeight: 1.6, fontSize: '0.95rem' }}>{line}</p>
+          ))}
+        </div>
+      )}
       {busy && !recording && <p className="meta" style={{ marginTop: 'var(--space-2)' }}>Processing…</p>}
       {err && <p className="field-err" role="alert" style={{ marginTop: 'var(--space-2)' }}>{err}</p>}
     </section>
