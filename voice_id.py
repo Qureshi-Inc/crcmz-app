@@ -1,8 +1,12 @@
-"""Speaker voice-print enrollment and identification using resemblyzer.
+"""Speaker voice-print enrollment and identification using librosa MFCC features.
 
-Users enroll a ~10s voice sample in the app. Any audio can then be matched
-against enrolled prints via identify(). Below-threshold matches return None
-so anonymous speakers stay anonymous.
+Lightweight alternative to neural speaker embeddings: extracts a 40-dim mean
+MFCC vector from the audio and uses cosine similarity for matching. No PyTorch,
+no compiler — just librosa + soundfile (libsndfile1 system dep).
+
+Accuracy is sufficient for a small closed-set squad (5-15 people) in a
+consistent recording environment. Below-threshold matches return None so
+anonymous speakers stay anonymous.
 """
 from __future__ import annotations
 
@@ -18,23 +22,9 @@ logger = logging.getLogger(__name__)
 
 _DB_PATH = Path("/data/voice_prints.db")
 _lock = threading.Lock()
-_encoder = None
-_encoder_lock = threading.Lock()
 
-THRESHOLD = 0.75   # cosine similarity floor for a confident match
-EMBED_DIM = 256    # resemblyzer GE2E embedding dimension
-
-
-def _get_encoder():
-    global _encoder
-    if _encoder is not None:
-        return _encoder
-    with _encoder_lock:
-        if _encoder is None:
-            from resemblyzer import VoiceEncoder
-            _encoder = VoiceEncoder()
-            logger.info("voice_id: VoiceEncoder loaded")
-        return _encoder
+THRESHOLD = 0.92   # cosine similarity floor (MFCC vectors cluster tighter than GE2E)
+EMBED_DIM = 40     # n_mfcc
 
 
 def _conn() -> sqlite3.Connection:
@@ -57,24 +47,24 @@ def init() -> None:
 
 
 def _embed(audio_bytes: bytes) -> list[float]:
-    """Embed raw audio bytes (any format resemblyzer can decode) into a 256-d vector."""
+    """Extract a 40-dim mean MFCC vector from raw audio bytes (WAV/WebM/any format librosa handles)."""
+    import librosa
     import numpy as np
-    from resemblyzer import preprocess_wav
     try:
-        wav = preprocess_wav(io.BytesIO(audio_bytes))
+        y, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
     except Exception as e:
-        raise ValueError(f"audio preprocessing failed: {e}") from e
-    if len(wav) < 16000:   # < 1 second
+        raise ValueError(f"audio load failed: {e}") from e
+    if len(y) < sr:  # < 1 second
         raise ValueError("audio too short for voice enrollment (need at least 1 second)")
-    enc = _get_encoder()
-    vec = enc.embed_utterance(wav)
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=EMBED_DIM)
+    vec = mfcc.mean(axis=1)  # (40,) — mean across time frames
     return vec.tolist()
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
     import numpy as np
     va, vb = np.array(a, dtype=np.float32), np.array(b, dtype=np.float32)
-    denom = (np.linalg.norm(va) * np.linalg.norm(vb))
+    denom = float(np.linalg.norm(va) * np.linalg.norm(vb))
     if denom == 0:
         return 0.0
     return float(np.dot(va, vb) / denom)
