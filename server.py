@@ -3444,9 +3444,15 @@ def _tts_and_send(text: str, group_jid: str) -> bool:
         return False
     try:
         import httpx as _hx
+        body: dict = {"input": text, "voice": "af_heart", "response_format": "opus"}
+        if WA_TTS_MODEL:
+            body["model"] = WA_TTS_MODEL
+        headers = {}
+        if WA_TTS_API_KEY:
+            headers["Authorization"] = f"Bearer {WA_TTS_API_KEY}"
         r = _hx.post(
             f"{WA_TTS_URL.rstrip('/')}/v1/audio/speech",
-            json={"input": text, "voice": "af_heart", "response_format": "opus"},
+            json=body, headers=headers,
             timeout=120,
         )
         r.raise_for_status()
@@ -8185,6 +8191,8 @@ def _check_arc_alert(squad: list[dict]) -> None:
 # === PSN → WhatsApp / Discord video forwarder ================================
 WA_BRIDGE_URL  = os.environ.get("WA_BRIDGE_URL", "")
 WA_TTS_URL     = os.environ.get("WA_TTS_URL", "")
+WA_TTS_MODEL   = os.environ.get("WA_TTS_MODEL", "")   # required by oMLX; leave blank for standalone Kokoro
+WA_TTS_API_KEY = os.environ.get("WA_TTS_API_KEY", "") # set when TTS endpoint requires auth (e.g. oMLX)
 WA_GOOPERS_JID = os.environ.get("WA_GOOPERS_JID", "")  # stats only (founders group)
 # Every bot interaction (clips, forwards, coaching, reactions, the AI bot,
 # typing, announcements) lives in CRCMZ BOYZ. Falls back to the old group so
