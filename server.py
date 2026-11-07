@@ -819,7 +819,8 @@ _PUBLIC_HOST = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
 # trusted"; set it and callers can authenticate from anywhere, over any Host.
 MACHINE_TOKEN = os.environ.get("CRCMZ_MACHINE_TOKEN", "")
 # What CRCMZ_MACHINE_TOKEN opens: the Stream Deck plugin's buttons (psn-slapper.sdPlugin).
-_MACHINE_PATHS = frozenset({"/v2/send", "/v2/squad", "/roast/start", "/roast/stop", "/roast/once"})
+_MACHINE_PATHS = frozenset({"/v2/send", "/v2/squad", "/roast/start", "/roast/stop", "/roast/once",
+                             "/api/voice/identify", "/api/wa-neuter/check"})
 # Paths that must be reachable before authentication.
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # The status page's per-dependency checks (health_deps.py): ok / not ok
@@ -1039,7 +1040,7 @@ async def _auth_gate(request: Request, call_next):
 
     # A machine with an explicit credential, on any Host, for just what it does
     # (the Stream Deck's buttons): the token is not a key to the whole app.
-    if path in _MACHINE_PATHS and _machine_authorised(request):
+    if (path in _MACHINE_PATHS or any(path.startswith(p + "/") for p in _MACHINE_PATHS)) and _machine_authorised(request):
         return await call_next(request)
 
     host = (request.headers.get("host") or "").split(":")[0]
