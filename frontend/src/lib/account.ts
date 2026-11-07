@@ -131,7 +131,7 @@ export type InviteResult = { ok: boolean; kind: string; zitadel_id: string; mm_u
 export const inviteMember = (body: { email: string; name: string; vip: boolean }) =>
   request<InviteResult>('/api/invites/vip', { body: { ...body, source: 'admin' }, timeoutMs: 45_000 })
 
-export type VoiceStatus = { enrolled: boolean; enrolled_at: number | null }
+export type VoiceStatus = { enrolled: boolean; enrolled_at: number | null; sample_count: number }
 export const getVoiceStatus = (signal?: AbortSignal) => getJSON<VoiceStatus>('/api/voice/status', signal)
 export async function enrollVoice(blob: Blob): Promise<void> {
   const fd = new FormData()
@@ -141,6 +141,17 @@ export async function enrollVoice(blob: Blob): Promise<void> {
     const j = await res.json().catch(() => ({})) as Record<string, unknown>
     throw new Error((j.error as string | undefined) || `enroll failed (${res.status})`)
   }
+}
+export async function addVoiceSample(blob: Blob): Promise<number> {
+  const fd = new FormData()
+  fd.append('audio', blob, 'voice.webm')
+  const res = await fetch('/api/voice/enroll/sample', { method: 'POST', credentials: 'same-origin', body: fd })
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({})) as Record<string, unknown>
+    throw new Error((j.error as string | undefined) || `add sample failed (${res.status})`)
+  }
+  const j = await res.json() as { sample_count: number }
+  return j.sample_count
 }
 export const deleteVoice = () => request<{ ok: boolean }>('/api/voice/enroll', { method: 'DELETE' })
 

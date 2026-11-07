@@ -17,7 +17,7 @@ import {
   addPasskey, changePassword, fmtDate, fmtDateTime, getMcpToken, generateMcpToken, revokeMcpToken, MCP_CONFIG, MCP_CLI_CMD,
   passkeysSupported, removePasskey, revokeMcp, tokenState,
   setPrimaryPlatform, setSquadName, unlinkMattermost, unlinkSteam,
-  getVoiceStatus, enrollVoice, deleteVoice,
+  getVoiceStatus, enrollVoice, addVoiceSample, deleteVoice,
   type McpStatus, type MmStatus, type Passkey, type PsnStatus, type SteamStatus, type ProfileStatus,
 } from '../../lib/account'
 import {
@@ -146,6 +146,7 @@ function VoiceIdSection() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ['voice', 'status'], queryFn: ({ signal }) => getVoiceStatus(signal) })
   const [recording, setRecording] = useState(false)
+  const [addMode, setAddMode] = useState(false) // true = adding sample, false = re-enrolling
   const [seconds, setSeconds] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -160,8 +161,9 @@ function VoiceIdSection() {
     setSeconds(0)
   }, [])
 
-  async function startRecord() {
+  async function startRecord(add: boolean) {
     setErr(null)
+    setAddMode(add)
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -175,7 +177,7 @@ function VoiceIdSection() {
     rec.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
     rec.onstop = () => {
       stream.getTracks().forEach((t) => t.stop())
-      void submitBlob(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }))
+      void submitBlob(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }), add)
     }
     rec.start()
     setRecording(true)
@@ -188,14 +190,19 @@ function VoiceIdSection() {
     }, 1000)
   }
 
-  async function submitBlob(blob: Blob) {
+  async function submitBlob(blob: Blob, add: boolean) {
     setBusy(true); setErr(null)
     try {
-      await enrollVoice(blob)
-      toast('Voice enrolled — Hasaan will recognise you', 'success')
+      if (add) {
+        const count = await addVoiceSample(blob)
+        toast(`Sample added — voice print now has ${count} recording${count === 1 ? '' : 's'}`, 'success')
+      } else {
+        await enrollVoice(blob)
+        toast('Voice enrolled — Hasaan will recognise you', 'success')
+      }
       void qc.invalidateQueries({ queryKey: ['voice', 'status'] })
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Couldn't enroll voice. Try again.")
+      setErr(e instanceof Error ? e.message : "Couldn't save voice. Try again.")
     } finally {
       setBusy(false)
     }
@@ -216,36 +223,43 @@ function VoiceIdSection() {
 
   const enrolled = q.data?.enrolled ?? false
   const enrolledAt = q.data?.enrolled_at
+  const sampleCount = q.data?.sample_count ?? 0
 
   return (
     <section className="glass settings-card" aria-labelledby="voice-h" style={{ marginTop: 'var(--space-4)' }}>
       <h2 className="section-h2" id="voice-h">Voice ID</h2>
       <p className="meta" style={{ marginBottom: 'var(--space-3)' }}>
-        Record your voice so Hasaan can recognise who is speaking. Nothing is logged — it only identifies you live during a session.
+        Record your voice so Hasaan can recognise who is speaking. More recordings = better accuracy.
       </p>
       {q.isPending ? <SkeletonRows n={1} />
         : q.isError ? <ErrorStrip text="Couldn't load voice status" onRetry={() => q.refetch()} />
         : enrolled ? (
           <div>
             <p className="meta" style={{ marginBottom: 'var(--space-3)' }}>
-              Voice enrolled{enrolledAt ? ` on ${fmtDate(enrolledAt)}` : ''}
+              Voice enrolled{enrolledAt ? ` on ${fmtDate(enrolledAt)}` : ''} · {sampleCount} {sampleCount === 1 ? 'recording' : 'recordings'}
+              {sampleCount < 3 && <span style={{ color: 'var(--accent-warn, #f59e0b)', marginLeft: '0.4em' }}>— add more to improve accuracy</span>}
             </p>
-            <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-              <button className="btn btn-secondary" disabled={busy || recording} onClick={() => void startRecord()}>
-                {recording ? `Recording… ${seconds}s / ${MAX_RECORD_S}s` : 'Re-enroll'}
-              </button>
-              {recording && (
+            {recording ? (
+              <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+                <span className="meta">Recording… {seconds}s / {MAX_RECORD_S}s ({addMode ? 'adding sample' : 're-enrolling'})</span>
                 <button className="btn btn-primary" onClick={stopRecorder}>Stop & save</button>
-              )}
-              {!recording && (
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                <button className="btn btn-secondary" disabled={busy} onClick={() => void startRecord(true)}>
+                  + Add sample
+                </button>
+                <button className="btn btn-secondary" disabled={busy} onClick={() => void startRecord(false)}>
+                  Re-enroll
+                </button>
                 <button className="btn btn-danger" disabled={busy} onClick={() => void remove()}>Remove</button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         ) : (
           <div>
             <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-              <button className="btn btn-primary" disabled={busy || recording} onClick={() => void startRecord()}>
+              <button className="btn btn-primary" disabled={busy || recording} onClick={() => void startRecord(false)}>
                 {recording ? `Recording… ${seconds}s / ${MAX_RECORD_S}s` : 'Record voice'}
               </button>
               {recording && (

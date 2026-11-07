@@ -41,9 +41,14 @@ def init() -> None:
                 zitadel_id   TEXT PRIMARY KEY,
                 display_name TEXT NOT NULL,
                 embedding    BLOB NOT NULL,
-                enrolled_at  INTEGER NOT NULL
+                enrolled_at  INTEGER NOT NULL,
+                sample_count INTEGER NOT NULL DEFAULT 1
             );
         """)
+        try:
+            db.execute("ALTER TABLE voice_prints ADD COLUMN sample_count INTEGER NOT NULL DEFAULT 1")
+        except Exception:
+            pass  # column already exists
 
 
 def _to_wav(audio_bytes: bytes) -> bytes:
@@ -105,17 +110,41 @@ def _unpack(blob: bytes) -> list[float]:
 
 
 def enroll(sub: str, name: str, audio_bytes: bytes) -> None:
-    """Embed audio and upsert the voice print for this user."""
+    """Embed audio and replace the voice print for this user (resets sample count to 1)."""
     vec = _embed(audio_bytes)
     blob = _pack(vec)
     now = int(time.time())
     with _lock, _conn() as db:
         db.execute(
-            "INSERT INTO voice_prints(zitadel_id, display_name, embedding, enrolled_at) "
-            "VALUES(?,?,?,?) ON CONFLICT(zitadel_id) DO UPDATE SET "
-            "display_name=excluded.display_name, embedding=excluded.embedding, enrolled_at=excluded.enrolled_at",
+            "INSERT INTO voice_prints(zitadel_id, display_name, embedding, enrolled_at, sample_count) "
+            "VALUES(?,?,?,?,1) ON CONFLICT(zitadel_id) DO UPDATE SET "
+            "display_name=excluded.display_name, embedding=excluded.embedding, "
+            "enrolled_at=excluded.enrolled_at, sample_count=1",
             (sub, name, blob, now),
         )
+
+
+def add_sample(sub: str, name: str, audio_bytes: bytes) -> int:
+    """Add another recording to the existing voice print via incremental mean. Returns new count."""
+    import numpy as np
+    new_vec = _embed(audio_bytes)
+    with _lock, _conn() as db:
+        row = db.execute(
+            "SELECT embedding, sample_count FROM voice_prints WHERE zitadel_id = ?", (sub,)
+        ).fetchone()
+        if row is None:
+            enroll(sub, name, audio_bytes)
+            return 1
+        old_vec = _unpack(row["embedding"])
+        n = row["sample_count"]
+        avg = ((np.array(old_vec, dtype=np.float32) * n + np.array(new_vec, dtype=np.float32)) / (n + 1)).tolist()
+        new_count = n + 1
+        db.execute(
+            "UPDATE voice_prints SET embedding=?, sample_count=?, display_name=? WHERE zitadel_id=?",
+            (_pack(avg), new_count, name, sub),
+        )
+        logger.debug("voice_id add_sample: %s now has %d samples", name, new_count)
+        return new_count
 
 
 def identify(audio_bytes: bytes) -> dict | None:
@@ -162,6 +191,14 @@ def get_enrolled_at(sub: str) -> int | None:
             "SELECT enrolled_at FROM voice_prints WHERE zitadel_id = ?", (sub,)
         ).fetchone()
         return row["enrolled_at"] if row else None
+
+
+def get_sample_count(sub: str) -> int:
+    with _lock, _conn() as db:
+        row = db.execute(
+            "SELECT sample_count FROM voice_prints WHERE zitadel_id = ?", (sub,)
+        ).fetchone()
+        return row["sample_count"] if row else 0
 
 
 def count() -> int:

@@ -2138,7 +2138,9 @@ async def voice_status(request: Request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     sub = session.get("sub", "")
     enrolled_at = await asyncio.to_thread(_voice_id.get_enrolled_at, sub)
-    return JSONResponse({"enrolled": enrolled_at is not None, "enrolled_at": enrolled_at})
+    sample_count = await asyncio.to_thread(_voice_id.get_sample_count, sub)
+    return JSONResponse({"enrolled": enrolled_at is not None, "enrolled_at": enrolled_at,
+                         "sample_count": sample_count})
 
 
 @app.post("/api/voice/enroll")
@@ -2156,6 +2158,23 @@ async def voice_enroll(request: Request, audio: UploadFile = File(...)):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return JSONResponse({"ok": True})
+
+
+@app.post("/api/voice/enroll/sample")
+async def voice_add_sample(request: Request, audio: UploadFile = File(...)):
+    """Add another voice recording to improve the existing print without replacing it."""
+    session = _get_session(request)
+    if not session:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    sub = session.get("sub", "")
+    display_name = (crcmz_identity.by_zitadel_id().get(sub) or {}).get("display_name") \
+        or session.get("name") or sub
+    audio_bytes = await audio.read()
+    try:
+        count = await asyncio.to_thread(_voice_id.add_sample, sub, display_name, audio_bytes)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse({"ok": True, "sample_count": count})
 
 
 @app.delete("/api/voice/enroll")
