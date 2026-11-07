@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 _DB_PATH = Path("/data/voice_prints.db")
 _lock = threading.Lock()
 
-THRESHOLD = 0.97   # cosine similarity floor — raised from 0.92; MFCC means can score high across different people in similar acoustic environments, so false positives at 0.92 were common
+THRESHOLD = 0.92   # cosine similarity floor (back to 0.92 — margin check below does the real work)
+MARGIN = 0.025     # winner must beat second-best by this much; prevents false positives when two voices score similarly
 EMBED_DIM = 40     # n_mfcc
 
 
@@ -160,13 +161,19 @@ def identify(audio_bytes: bytes) -> dict | None:
         ).fetchall()
     if not rows:
         return None
-    best_sub, best_name, best_score = None, None, -1.0
+    scores: list[tuple[float, str, str]] = []
     for row in rows:
         vec = _unpack(row["embedding"])
-        score = _cosine(query_vec, vec)
-        if score > best_score:
-            best_score, best_sub, best_name = score, row["zitadel_id"], row["display_name"]
+        scores.append((_cosine(query_vec, vec), row["zitadel_id"], row["display_name"]))
+    scores.sort(reverse=True)
+    best_score, best_sub, best_name = scores[0]
+    second_score = scores[1][0] if len(scores) > 1 else -1.0
     if best_score < THRESHOLD:
+        return None
+    if best_score - second_score < MARGIN:
+        logger.debug("voice_id: ambiguous — %s %.4f vs %s %.4f (margin %.4f < %.4f)",
+                     best_name, best_score, scores[1][2], second_score,
+                     best_score - second_score, MARGIN)
         return None
     return {"sub": best_sub, "name": best_name, "confidence": round(best_score, 4)}
 
