@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 _DB_PATH = Path("/data/voice_prints.db")
 _lock = threading.Lock()
 
-THRESHOLD = 0.92   # cosine similarity floor (MFCC vectors cluster tighter than GE2E)
+THRESHOLD = 0.97   # cosine similarity floor — raised from 0.92; MFCC means can score high across different people in similar acoustic environments, so false positives at 0.92 were common
 EMBED_DIM = 40     # n_mfcc
 
 
