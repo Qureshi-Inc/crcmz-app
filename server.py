@@ -821,7 +821,8 @@ MACHINE_TOKEN = os.environ.get("CRCMZ_MACHINE_TOKEN", "")
 # What CRCMZ_MACHINE_TOKEN opens: the Stream Deck plugin's buttons (psn-slapper.sdPlugin).
 _MACHINE_PATHS = frozenset({"/v2/send", "/v2/squad", "/roast/start", "/roast/stop", "/roast/once",
                              "/api/voice/identify", "/api/wa-neuter/check",
-                             "/api/livevoice/cycle", "/api/livevoice/status"})
+                             "/api/livevoice/cycle", "/api/livevoice/status",
+                             "/api/livevoice/pipeline/start", "/api/livevoice/pipeline/stop"})
 # Paths that must be reachable before authentication.
 _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # The status page's per-dependency checks (health_deps.py): ok / not ok
@@ -2218,6 +2219,24 @@ async def livevoice_cycle(request: Request):
     if not _machine_authorised(request):
         return JSONResponse({"error": "forbidden"}, status_code=403)
     data = await _livevoice_proxy("/cycle", method="POST")
+    return JSONResponse(data)
+
+
+@app.post("/api/livevoice/pipeline/start")
+async def livevoice_pipeline_start(request: Request):
+    """Start the voice-changer audio pipeline — machine token required."""
+    if not _machine_authorised(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    data = await _livevoice_proxy("/pipeline/start", method="POST")
+    return JSONResponse(data)
+
+
+@app.post("/api/livevoice/pipeline/stop")
+async def livevoice_pipeline_stop(request: Request):
+    """Stop the voice-changer audio pipeline — machine token required."""
+    if not _machine_authorised(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    data = await _livevoice_proxy("/pipeline/stop", method="POST")
     return JSONResponse(data)
 
 
