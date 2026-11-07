@@ -3498,9 +3498,6 @@ def _tts_and_send(text: str, group_jid: str) -> bool:
         return False
 
 
-_SUMMARY_MODEL = "gemma-4-26B-A4B-it-QAT-MLX-4bit"
-
-
 def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -> None:
     """Fetch missed messages and send a summary back to the group."""
     msgs = _messages_since_sender(sender_jid, group_jid)
@@ -3538,7 +3535,7 @@ def _summarize_chat(prompt: str, author: str, sender_jid: str, group_jid: str) -
         base, _m, key = assistant._config()
         r = _hx.post(f"{base}/chat/completions",
                      headers={"Authorization": f"Bearer {key}"} if key else {},
-                     json={"model": _SUMMARY_MODEL,
+                     json={"model": _m,
                            "messages": [
                                {"role": "system", "content": system},
                                {"role": "user", "content": user_msg},

@@ -180,7 +180,8 @@ def _local_llm(prompt: str, *, max_tokens: int = 120,
     if not base:
         return ""
     model = (os.environ.get("FLAVOR_MODEL", "").strip()
-             or os.environ.get("OLLAMA_MODEL", "").strip())
+             or os.environ.get("OLLAMA_MODEL", "").strip()
+             or os.environ.get("ASSISTANT_MODEL", "").strip())
     api_key = os.environ.get("OLLAMA_API_KEY", "").strip()
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     messages = [{"role": "user", "content": prompt}]
