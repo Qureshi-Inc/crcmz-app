@@ -3439,22 +3439,31 @@ def _format_messages_for_summary(msgs: list[dict]) -> str:
 
 
 def _tts_and_send(text: str, group_jid: str) -> bool:
-    """Convert summary text to voice note via Kokoro TTS and send. Returns True if sent."""
-    if not WA_TTS_URL:
+    """Convert summary text to voice note via TTS and send. Returns True if sent."""
+    if not WA_TTS_URL and not WA_TTS_SPEAK_URL:
         return False
     try:
         import httpx as _hx
-        body: dict = {"input": text, "voice": "af_heart", "response_format": "opus"}
-        if WA_TTS_MODEL:
-            body["model"] = WA_TTS_MODEL
         headers = {}
         if WA_TTS_API_KEY:
             headers["Authorization"] = f"Bearer {WA_TTS_API_KEY}"
-        r = _hx.post(
-            f"{WA_TTS_URL.rstrip('/')}/v1/audio/speech",
-            json=body, headers=headers,
-            timeout=120,
-        )
+        if WA_TTS_SPEAK_URL:
+            # hasaan-voice container: POST /speak {"text": "..."} → audio/wav
+            r = _hx.post(
+                f"{WA_TTS_SPEAK_URL.rstrip('/')}/speak",
+                json={"text": text},
+                headers=headers,
+                timeout=120,
+            )
+        else:
+            body: dict = {"input": text, "voice": "af_heart", "response_format": "opus"}
+            if WA_TTS_MODEL:
+                body["model"] = WA_TTS_MODEL
+            r = _hx.post(
+                f"{WA_TTS_URL.rstrip('/')}/v1/audio/speech",
+                json=body, headers=headers,
+                timeout=120,
+            )
         r.raise_for_status()
         raw_bytes = r.content
         if not raw_bytes:
@@ -8190,9 +8199,10 @@ def _check_arc_alert(squad: list[dict]) -> None:
 
 # === PSN → WhatsApp / Discord video forwarder ================================
 WA_BRIDGE_URL  = os.environ.get("WA_BRIDGE_URL", "")
-WA_TTS_URL     = os.environ.get("WA_TTS_URL", "")
-WA_TTS_MODEL   = os.environ.get("WA_TTS_MODEL", "")   # required by oMLX; leave blank for standalone Kokoro
-WA_TTS_API_KEY = os.environ.get("WA_TTS_API_KEY", "") # set when TTS endpoint requires auth (e.g. oMLX)
+WA_TTS_URL       = os.environ.get("WA_TTS_URL", "")
+WA_TTS_MODEL     = os.environ.get("WA_TTS_MODEL", "")     # required by oMLX; leave blank for standalone Kokoro
+WA_TTS_API_KEY   = os.environ.get("WA_TTS_API_KEY", "")   # set when TTS endpoint requires auth (e.g. oMLX)
+WA_TTS_SPEAK_URL = os.environ.get("WA_TTS_SPEAK_URL", "") # hasaan-voice /speak endpoint (returns audio/wav)
 WA_GOOPERS_JID = os.environ.get("WA_GOOPERS_JID", "")  # stats only (founders group)
 # Every bot interaction (clips, forwards, coaching, reactions, the AI bot,
 # typing, announcements) lives in CRCMZ BOYZ. Falls back to the old group so
