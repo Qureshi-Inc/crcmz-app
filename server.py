@@ -8277,6 +8277,8 @@ import reels as _reels
 app.include_router(_reels.build_router(_get_session, _is_iam_admin))
 import slap as _slap
 app.include_router(_slap.build_router(_get_session, _is_iam_admin))
+import deck as _deck
+app.include_router(_deck.build_router(_get_session))
 import activity as _activity
 
 
@@ -10767,6 +10769,12 @@ def _preview_page(og: str, dest: str) -> str:
     return (f'<!doctype html><html><head><meta charset="utf-8">{og}'
             f'<meta http-equiv="refresh" content="0;url={_html.escape(dest)}"></head>'
             f'<body><script>location.replace({_json.dumps(dest)})</script></body></html>')
+
+
+@app.get("/deck", include_in_schema=False)
+def deck_shortcut():
+    """app.crcmz.me/deck: the friend deck lives in the app."""
+    return RedirectResponse(url="/app/deck", status_code=302)
 
 
 @app.get("/app", include_in_schema=False)

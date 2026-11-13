@@ -5,7 +5,7 @@ import type { IconName } from '../components/Icon'
 export type DestId =
   | 'squad' | 'clips' | 'slap' | 'whatsapp' | 'giveaway' | 'watch' | 'huddle'
   | 'coach' | 'ask' | 'notifications' | 'portal' | 'settings' | 'help' | 'getapp' | 'admin' | 'tourney'
-  | 'sounds' | 'trips'
+  | 'sounds' | 'trips' | 'deck'
 
 export type Dest = {
   id: DestId
@@ -55,19 +55,23 @@ export const DESTS: Record<DestId, Dest> = {
     id: 'sounds', label: 'Soundboard', path: '/sounds', icon: 'megaphone', classicHref: '/dashboard',
     blurb: "The squad's shared clip board: add clips by upload, recording or link, and play them through the squad Pi.",
   },
+  deck: {
+    id: 'deck', label: 'Deck', path: '/deck', icon: 'grid', classicHref: '/app/deck',
+    blurb: "Moiz's stream deck, live: the sounds and Hasaan's talk, roast, session and stop keys.",
+  },
 }
 
 /**
  * Mobile tab bar (< 1024 px): three slots the user picks (app/tabs.ts), Ask AI
  * in the middle, then More. These are the pages a slot can hold, in sidebar order.
  */
-export const TAB_CHOICES: DestId[] = ['squad', 'sounds', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'tourney', 'trips']
+export const TAB_CHOICES: DestId[] = ['squad', 'sounds', 'deck', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'tourney', 'trips']
 export const DEFAULT_TABS: DestId[] = ['squad', 'slap', 'watch']
 /** More sheet, Squad group: every slot choice that isn't in the bar right now. */
 export const moreSquad = (tabs: DestId[]): DestId[] => TAB_CHOICES.filter((id) => !tabs.includes(id))
 export const MORE_ACCOUNT: DestId[] = ['notifications', 'settings', 'help', 'getapp', 'admin']
 /** Desktop sidebar (≥ 1024 px). */
-export const SIDEBAR_MAIN: DestId[] = ['squad', 'sounds', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'tourney', 'trips', 'ask']
+export const SIDEBAR_MAIN: DestId[] = ['squad', 'sounds', 'deck', 'clips', 'slap', 'whatsapp', 'giveaway', 'watch', 'huddle', 'coach', 'tourney', 'trips', 'ask']
 export const SIDEBAR_FOOT: DestId[] = ['notifications', 'settings', 'help', 'getapp', 'admin']
 
 /** The ⓘ beside a page title: that page's section on the Help page. */

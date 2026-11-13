@@ -1,0 +1,106 @@
+/* Friend deck (/app/deck): a fullscreen layer over the app shell, built to look like the deck. */
+.deck-root {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: max(12px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  background: radial-gradient(120% 80% at 50% 0%, #1b1530 0%, #0b0a12 60%, #060509 100%);
+  color: #f3f1fa;
+  overflow-y: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.deck-top { display: flex; align-items: center; gap: 8px; }
+.deck-title { font-weight: 700; font-size: 17px; letter-spacing: .02em; }
+.deck-sub { font-size: 12px; opacity: .6; text-transform: uppercase; letter-spacing: .08em; }
+.deck-spacer { flex: 1; }
+.deck-dot { width: 9px; height: 9px; border-radius: 50%; background: #6b6680; }
+.deck-dot.on { background: #3ddc84; box-shadow: 0 0 10px #3ddc84; }
+.deck-icon-btn {
+  display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .06); color: inherit;
+}
+.deck-icon-btn .nav-icon { width: 20px; height: 20px; }
+
+/* The "touch strip": Hasaan's state, what he heard, what he's saying. */
+.deck-strip {
+  border-radius: 16px;
+  padding: 12px 14px;
+  min-height: 108px;
+  max-height: 32vh;
+  overflow-y: auto;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(255, 255, 255, .1);
+  transition: border-color .2s, box-shadow .2s;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.deck-strip-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+.deck-pill {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  padding: 4px 10px; border-radius: 999px; background: rgba(255, 255, 255, .1);
+}
+.deck-profile { font-size: 12px; opacity: .55; }
+.deck-q { margin: 0 0 6px; font-size: 15px; opacity: .8; font-style: italic; }
+.deck-a { margin: 0; font-size: 17px; line-height: 1.35; }
+.deck-muted { opacity: .4; }
+.deck-err { margin: 0 0 6px; color: #ff8a8a; font-size: 13px; }
+
+.deck-root[data-hstate="listening"] .deck-strip { border-color: #3ddc84; box-shadow: 0 0 24px rgba(61, 220, 132, .25); }
+.deck-root[data-hstate="listening"] .deck-pill { background: #3ddc84; color: #04130a; }
+.deck-root[data-hstate="thinking"] .deck-strip { border-color: #f5b83d; box-shadow: 0 0 24px rgba(245, 184, 61, .25); }
+.deck-root[data-hstate="thinking"] .deck-pill { background: #f5b83d; color: #1d1302; animation: deck-pulse 1s ease-in-out infinite; }
+.deck-root[data-hstate="speaking"] .deck-strip { border-color: #a879ff; box-shadow: 0 0 28px rgba(168, 121, 255, .35); }
+.deck-root[data-hstate="speaking"] .deck-pill { background: #a879ff; color: #12062b; }
+.deck-root[data-hstate="offline"] .deck-pill,
+.deck-root[data-hstate="error"] .deck-pill { background: #5a2430; color: #ffb3bf; }
+@keyframes deck-pulse { 50% { opacity: .55; } }
+
+/* Keys */
+.deck-keys { display: flex; flex-direction: column; gap: 12px; margin: auto 0; }
+.deck-row { display: grid; gap: 12px; }
+.deck-row-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.deck-row-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.deck-key {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 0; border: 0; background: none; color: inherit;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+.deck-key img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  max-width: min(150px, 22vh);
+  object-fit: cover;
+  border-radius: 16px;
+  background: #000;
+  border: 2px solid rgba(255, 255, 255, .1);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(255, 255, 255, .04);
+  transition: transform .08s, border-color .15s, box-shadow .15s;
+  pointer-events: none;
+}
+.deck-key.down img { transform: scale(.92); border-color: #fff; box-shadow: 0 0 22px rgba(255, 255, 255, .35); }
+.deck-key[data-state="listening"] img { border-color: #3ddc84; }
+.deck-key[data-state="thinking"] img { border-color: #f5b83d; }
+.deck-key[data-state="speaking"] img { border-color: #a879ff; }
+.deck-key[data-state="on"] img { border-color: #3ddc84; }
+.deck-label { font-size: 12px; font-weight: 600; opacity: .8; text-align: center; line-height: 1.2; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-key.hold .deck-label::after { content: " · hold"; opacity: .5; font-weight: 400; }
+
+.deck-msg { margin: auto; text-align: center; display: grid; gap: 12px; justify-items: center; }
+
+/* Landscape phone: strip on the left, keys on the right. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .deck-root { display: grid; grid-template-columns: minmax(200px, 1fr) 1.4fr; grid-template-rows: auto 1fr; }
+  .deck-top { grid-column: 1 / -1; }
+  .deck-strip { max-height: none; }
+  .deck-key img { max-width: min(120px, 30vh); }
+}

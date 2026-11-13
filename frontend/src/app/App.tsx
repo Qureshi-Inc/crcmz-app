@@ -28,6 +28,7 @@ import { GetAppPage } from '../features/getapp/GetAppPage'
 import { MoviesHome } from '../features/watch/MoviesHome'
 import { NotificationsPage } from '../features/notifications/NotificationsPage'
 import { AudioSoundsPage } from '../features/audio-sounds/AudioSoundsPage'
+import { DeckPage } from '../features/deck/DeckPage'
 
 // assistant-ui and the markdown renderer are ~140 kB gzipped, so only Ask AI pays for them.
 const AskPage = lazy(() => import('../features/ask/AskPage').then((m) => ({ default: m.AskPage })))
@@ -87,6 +88,7 @@ export function App() {
               <Route path="admin" element={<AdminPage />} />
               <Route path="portal" element={<PortalPage />} />
               <Route path="sounds" element={<AudioSoundsPage />} />
+              <Route path="deck" element={<DeckPage />} />
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
