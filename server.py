@@ -8278,7 +8278,8 @@ app.include_router(_reels.build_router(_get_session, _is_iam_admin))
 import slap as _slap
 app.include_router(_slap.build_router(_get_session, _is_iam_admin))
 import deck as _deck
-app.include_router(_deck.build_router(_get_session))
+# _fetch_clip is defined further down; look it up when a link is added
+app.include_router(_deck.build_router(_get_session, fetch_clip=lambda url: _fetch_clip(url)))
 import activity as _activity
 
 
