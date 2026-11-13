@@ -14,7 +14,7 @@ import '../../styles/deck.css'
 
 type DeckKey = { key: string; label: string; group: 'sound' | 'ai'; state: string | null; hold: boolean }
 type Buddy = { state?: string | null; error?: string | null; profile?: string | null; session_on?: boolean | null; question?: string | null; reply?: string | null }
-type Live = { states: Record<string, string | null>; buddy: Buddy }
+type Live = { states: Record<string, string | null>; buddy: Buddy; volume?: number | null; volume_max?: number }
 type Layout = Live & { keys: DeckKey[] }
 
 const STATE_TEXT: Record<string, string> = {
@@ -89,6 +89,9 @@ export function DeckPage() {
         {buddy.reply && <p className="deck-a">{buddy.reply.trim()}</p>}
       </section>
 
+      <ModelStrip activeLabel={buddy.profile ?? null} />
+      <VolumeStrip live={now?.volume ?? null} max={now?.volume_max ?? 150} />
+
       {layout.isError ? (
         <div className="deck-msg">
           {layout.error instanceof ApiError && layout.error.status === 401
@@ -102,6 +105,82 @@ export function DeckPage() {
         </div>
       )}
     </div>
+  )
+}
+
+/** Soundboard volume (the deck's knob 0), 0-150 %. Over 100 the Pi boosts clips. */
+function VolumeStrip({ live, max }: { live: number | null; max: number }) {
+  const [draft, setDraft] = useState<number | null>(null)
+  const timer = useRef<number | undefined>(undefined)
+  const lastSent = useRef(0)
+  const value = draft ?? live ?? 100
+
+  const send = (pct: number) => {
+    lastSent.current = Date.now()
+    request('/api/deck/volume', { body: { pct } }).catch(() => toast("Couldn't set the volume", 'error'))
+  }
+  const change = (pct: number) => {
+    setDraft(pct)
+    window.clearTimeout(timer.current)
+    // while dragging: at most ~4 updates a second; the last one always goes out
+    if (Date.now() - lastSent.current > 250) send(pct)
+    else timer.current = window.setTimeout(() => send(pct), 250)
+  }
+  // once the live value catches up (or someone turns the real knob), follow it again
+  useEffect(() => { if (draft !== null && live === draft) setDraft(null) }, [live, draft])
+  useEffect(() => {
+    if (draft === null) return
+    const t = window.setTimeout(() => setDraft(null), 4000)
+    return () => window.clearTimeout(t)
+  }, [draft])
+
+  const boost = value > 100
+  return (
+    <section className={`deck-vol${boost ? ' boost' : ''}`} aria-label="Soundboard volume">
+      <span className="deck-models-label">Sounds</span>
+      <input type="range" min={0} max={max} step={5} value={value}
+        style={{ ['--fill' as string]: `${(value / max) * 100}%`, ['--mark' as string]: `${(100 / max) * 100}%` }}
+        onChange={(e) => change(Number(e.target.value))} aria-valuetext={`${value}%`} />
+      <span className="deck-vol-val">{value}%{boost && <em> boost</em>}</span>
+    </section>
+  )
+}
+
+type Model = { id: string; label: string; kind?: string | null }
+
+/** The deck's touch-strip "tap: next model" panel, as a picker: every voice model, live. */
+function ModelStrip({ activeLabel }: { activeLabel: string | null }) {
+  const models = useQuery({ queryKey: ['deck-models'], queryFn: ({ signal }) => getJSON<{ active: string | null; models: Model[] }>('/api/deck/models', signal), staleTime: 60_000, refetchInterval: 60_000 })
+  const [pending, setPending] = useState<string | null>(null)
+  const list = models.data?.models ?? []
+  // The live stream says which model is on (by label), so a switch from the real deck shows here too.
+  const active = list.find((m) => m.label === activeLabel)?.id ?? models.data?.active ?? null
+  useEffect(() => { if (pending && pending === active) setPending(null) }, [pending, active])
+  if (!list.length) return null
+
+  const pick = (m: Model) => {
+    if (m.id === active || pending) return
+    setPending(m.id)
+    navigator.vibrate?.(12)
+    request('/api/deck/model', { body: { id: m.id }, timeoutMs: 30_000 })
+      .then(() => toast(`Hasaan is now ${m.label.replace(/^Local · /, '')}`, 'success'))
+      .catch((err) => { setPending(null); toast(err instanceof ApiError ? err.detail || "Couldn't switch" : "Couldn't reach the deck", 'error') })
+      .finally(() => window.setTimeout(() => setPending((p) => (p === m.id ? null : p)), 8000))
+  }
+
+  return (
+    <section className="deck-models" aria-label="Voice model">
+      <span className="deck-models-label">Voice</span>
+      <div className="deck-models-list">
+        {list.map((m) => (
+          <button key={m.id} type="button" onClick={() => pick(m)}
+            className={`deck-model${m.id === active ? ' on' : ''}${m.id === pending ? ' pending' : ''}`}
+            data-kind={m.kind || undefined} aria-pressed={m.id === active}>
+            {m.label.replace(/^Local · /, '')}
+          </button>
+        ))}
+      </div>
+    </section>
   )
 }
 

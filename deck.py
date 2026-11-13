@@ -112,4 +112,47 @@ def build_router(get_session) -> APIRouter:
             raise HTTPException(r.status_code if r.status_code < 500 else 503, detail or "the deck didn't take that")
         return {"ok": True}
 
+    @router.post("/volume")
+    async def volume(request: Request):
+        session = caller(request)
+        try:
+            pct = int((await request.json()).get("pct"))
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(400, "volume is a number")
+        r = await call("POST", "/volume", json={"pct": max(0, min(150, pct)), "who": who(session)})
+        if r.status_code >= 400:
+            raise HTTPException(503, "couldn't set the volume")
+        return r.json()
+
+    @router.get("/models")
+    async def models(request: Request):
+        caller(request)
+        r = await call("GET", "/models")
+        if r.status_code != 200:
+            raise HTTPException(503, "Hasaan's Pi isn't answering")
+        return r.json()
+
+    @router.post("/model")
+    async def model(request: Request):
+        session = caller(request)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        mid = str(body.get("id", ""))[:32]
+        if not mid:
+            raise HTTPException(400, "which model?")
+        try:
+            async with httpx.AsyncClient(timeout=25) as c:
+                r = await c.post(f"{DECK_URL}/model", headers=_headers(), json={"id": mid, "who": who(session)})
+        except httpx.HTTPError:
+            raise HTTPException(503, "the deck is offline")
+        if r.status_code >= 400:
+            try:
+                detail = r.json().get("detail")
+            except ValueError:
+                detail = None
+            raise HTTPException(r.status_code if r.status_code < 500 else 503, detail or "couldn't switch the model")
+        return r.json()
+
     return router
