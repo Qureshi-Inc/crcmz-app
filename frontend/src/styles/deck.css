@@ -43,7 +43,7 @@
   position: relative;
   display: flex; flex-direction: column; align-items: center; gap: 5px;
   min-width: 0; padding: 0; border: 0; background: none; color: inherit;
-  touch-action: none;
+  touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   cursor: pointer;
 }
@@ -78,6 +78,7 @@
 .deck-key[data-state="on"] img { border-color: #3ddc84; }
 .deck-label { font-size: 12px; font-weight: 600; opacity: .8; text-align: center; line-height: 1.2; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deck-key.small .deck-label { font-size: 11px; }
+.deck-key.hold { touch-action: none; }
 .deck-key.hold .deck-label::after { content: " · hold"; opacity: .5; font-weight: 400; }
 
 /* The touch strip: the deck's own 704x124 picture, with the four panels as tap zones. */
@@ -114,43 +115,74 @@
 }
 .deck-vol-pop.boost { border-color: #ff453a; color: #ff453a; }
 
-/* Add / edit a sound */
-.deck-modal-scrim {
-  position: fixed; inset: 0; z-index: 70; display: grid; place-items: end center;
-  background: rgba(0, 0, 0, .6); -webkit-user-select: text; user-select: text;
+/* Toasts sit under the fullscreen deck by default; lift them while it's open. */
+body:has(.deck-root) .toasts { z-index: 90; bottom: calc(16px + env(safe-area-inset-bottom)); }
+
+/* Add / edit a sound: its own full page on phones (content at the top, so the iOS
+   keyboard never covers the button), a centred card on wide screens. */
+.deck-sheet {
+  position: fixed; inset: 0; z-index: 80; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  background: #0d0b15; color: #f3f1fa;
 }
-@media (min-width: 560px) { .deck-modal-scrim { place-items: center; } }
-.deck-modal {
-  width: min(520px, 100%); max-height: 92vh; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 14px;
-  padding: 18px 18px max(18px, env(safe-area-inset-bottom));
-  border-radius: 20px 20px 0 0; background: #15121f; border: 1px solid rgba(255, 255, 255, .1);
-  box-shadow: 0 -10px 40px rgba(0, 0, 0, .6);
-  color: #f3f1fa;
+.deck-sheet-body {
+  display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 520px; margin: 0 auto;
+  padding: max(14px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
 }
-@media (min-width: 560px) { .deck-modal { border-radius: 20px; } }
+@media (min-width: 640px) {
+  .deck-sheet { background: rgba(0, 0, 0, .65); display: grid; place-items: center; }
+  .deck-sheet-body { background: #15121f; border: 1px solid rgba(255, 255, 255, .1); border-radius: 20px; margin: 24px; padding: 20px; }
+}
 .deck-modal-head { display: flex; align-items: center; }
-.deck-modal-head h2 { flex: 1; margin: 0; font-size: 18px; }
+.deck-modal-head h2 { flex: 1; margin: 0; font-size: 20px; }
+.deck-step { display: flex; gap: 12px; }
+.deck-step-n {
+  flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: #f3f1fa; color: #0d0b15; font-weight: 800; font-size: 14px; margin-top: 1px;
+}
+.deck-step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.deck-step-body > strong { font-size: 16px; }
+.deck-step-body em { font-style: normal; font-weight: 500; font-size: 13px; }
+.deck-input {
+  width: 100%; min-width: 0; height: 48px; padding: 0 14px; border-radius: 12px; font-size: 16px; color: inherit;
+  background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .18);
+  -webkit-user-select: text; user-select: text;
+}
+.deck-input:focus { outline: none; border-color: #22d3ee; }
+.deck-paste-row { display: flex; gap: 8px; }
+.deck-paste { flex: none; height: 48px; padding: 0 16px; border: 0; border-radius: 12px; background: #22d3ee; color: #021316; font-weight: 800; font-size: 15px; }
+.deck-trim { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.deck-trim .deck-field:first-child { width: 96px; }
+.deck-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.deck-field > span { opacity: .65; text-transform: uppercase; letter-spacing: .06em; font-size: 11px; font-weight: 700; }
+.deck-chips { display: flex; gap: 6px; }
+.deck-chips button { height: 48px; min-width: 52px; padding: 0 10px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, .18); background: rgba(255, 255, 255, .06); color: inherit; font-weight: 700; font-size: 15px; }
+.deck-chips button.on { background: #f3f1fa; color: #0d0b15; border-color: #f3f1fa; }
+.deck-or { display: flex; align-items: center; gap: 10px; font-size: 12px; opacity: .5; text-transform: uppercase; letter-spacing: .1em; }
+.deck-or::before, .deck-or::after { content: ""; flex: 1; height: 1px; background: currentColor; opacity: .4; }
+.deck-wide-btn {
+  position: relative; display: flex; align-items: center; justify-content: center; min-height: 52px; padding: 0 14px;
+  border-radius: 12px; border: 1px dashed rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .04); color: inherit;
+  font-weight: 700; font-size: 15px; text-align: center; cursor: pointer; overflow: hidden;
+}
+.deck-wide-btn.on { border-style: solid; border-color: #34d399; color: #34d399; }
+/* real (not display:none) file inputs: iOS opens the picker reliably from a label */
+.deck-file { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 0; }
 .deck-modal-row { display: flex; gap: 12px; align-items: flex-start; }
-.deck-modal-row > .deck-field { flex: 1; }
 .deck-modal-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.deck-modal-foot { display: flex; gap: 10px; align-items: center; }
 .deck-pic {
-  flex: none; width: 96px; height: 96px; border-radius: 14px; overflow: hidden; cursor: pointer;
-  border: 2px dashed rgba(255, 255, 255, .25); background: rgba(255, 255, 255, .04);
+  position: relative; flex: none; width: 96px; height: 96px; border-radius: 14px; overflow: hidden; cursor: pointer;
+  border: 2px dashed rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .04);
 }
 .deck-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .deck-pic-empty { display: grid; place-items: center; align-content: center; gap: 2px; height: 100%; opacity: .7; }
 .deck-pic-empty .nav-icon { width: 24px; height: 24px; }
-.deck-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; min-width: 0; }
-.deck-field span { opacity: .65; text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
-.deck-field input:not([type="file"]) {
-  width: 100%; height: 42px; padding: 0 12px; border-radius: 10px; font-size: 16px; color: inherit;
-  background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .16);
-}
-.deck-field input[type="file"] { font-size: 14px; }
-.deck-seg { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(255, 255, 255, .06); }
-.deck-seg button { flex: 1; height: 36px; border: 0; border-radius: 9px; background: none; color: inherit; font-weight: 600; font-size: 13px; opacity: .7; }
-.deck-seg button.on { background: #f3f1fa; color: #0b0a12; opacity: 1; }
+.deck-status { display: flex; gap: 10px; align-items: center; margin: 0; padding: 12px 14px; border-radius: 12px; font-size: 15px; font-weight: 600; line-height: 1.35; }
+.deck-status.busy { background: rgba(34, 211, 238, .12); color: #a5f3fc; }
+.deck-status.error { background: rgba(255, 69, 58, .14); color: #ffb4ae; }
+.deck-spin { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: deck-rot .8s linear infinite; }
+@keyframes deck-rot { to { transform: rotate(360deg); } }
+.deck-go { height: 56px; border: 0; border-radius: 14px; background: #ff3fd8; color: #1a0016; font-weight: 800; font-size: 18px; }
+.deck-go:disabled { opacity: .6; }
 .deck-link { align-self: flex-start; padding: 0; border: 0; background: none; color: #22d3ee; font-size: 13px; text-decoration: underline; }
+.deck-remove { align-self: center; font-size: 15px; padding: 8px; }
 .deck-danger { color: #ff8a8a; }

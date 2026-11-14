@@ -40,7 +40,10 @@ WEB_DECK_MAX = 40
 IMAGE_MAX_BYTES = 10 * 1024 * 1024
 _web_lock = threading.Lock()
 _last_play: dict[str, float] = {}
-_YOUTUBE = re.compile(r"^https?://(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.I)
+# MyInstants pages and direct audio files go through server.py's fetcher; any other
+# link (YouTube, TikTok, Instagram, X, ...) goes through yt-dlp and can be trimmed.
+_DIRECT = re.compile(r"(^https?://([a-z0-9-]+\.)*myinstants\.com/)|(\.(mp3|wav|ogg|m4a|aac|opus|flac)(\?.*)?$)", re.I)
+_URL_IN_TEXT = re.compile(r"https?://\S+")
 
 
 def _load_web() -> list[dict]:
@@ -71,26 +74,38 @@ def _square_png(data: bytes) -> bytes:
         return open(out, "rb").read()
 
 
-def _youtube_clip(url: str, start: float, length: float) -> bytes:
-    """Download a YouTube video's audio and cut [start, start+length] to WAV."""
+def _video_clip(url: str, start: float, length: float) -> tuple[bytes, str]:
+    """Any yt-dlp link -> ([start, start+length] as WAV, the video's title)."""
     with tempfile.TemporaryDirectory() as tmp:
         r = subprocess.run(
-            ["yt-dlp", "--no-playlist", "-f", "bestaudio/best", "--max-filesize", "80M",
-             "--match-filter", "duration < 3600", "-o", f"{tmp}/in.%(ext)s", "--", url],
-            capture_output=True, timeout=180)
-        got = [f for f in os.listdir(tmp) if f.startswith("in.")]
+            ["yt-dlp", "--no-playlist", "-f", "bestaudio/best", "--max-filesize", "150M",
+             "--match-filter", "duration < 3600", "--print", "%(title)s", "--no-simulate",
+             "-o", f"{tmp}/in.%(ext)s", "--", url],
+            capture_output=True, timeout=240)
+        got = [f for f in os.listdir(tmp) if f.startswith("in.") and not f.endswith(".part")]
         if r.returncode != 0 or not got:
             err = (r.stderr or b"").decode(errors="replace")
-            if "Sign in" in err or "age" in err.lower():
-                raise HTTPException(400, "YouTube won't share that one (sign-in or age gate)")
-            raise HTTPException(400, "Couldn't get that YouTube video")
+            if "Sign in" in err or "login" in err.lower() or "age" in err.lower():
+                raise HTTPException(400, "That site wants a login for this one; try another link or upload it")
+            if "Unsupported URL" in err:
+                raise HTTPException(400, "That link has no video or sound we can grab")
+            raise HTTPException(400, "Couldn't get that video; check the link")
+        title = (r.stdout or b"").decode(errors="replace").strip().splitlines()
         out = f"{tmp}/out.wav"
         r = subprocess.run(["ffmpeg", "-nostdin", "-y", "-ss", str(start), "-i", f"{tmp}/{got[0]}", "-t", str(length),
                             "-vn", "-ar", "48000", "-ac", "1", "-sample_fmt", "s16", out],
                            capture_output=True, timeout=120)
         if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) < 1024:
-            raise HTTPException(400, "That part of the video has no sound")
-        return open(out, "rb").read()
+            raise HTTPException(400, "That part of the video has no sound; try another start time")
+        return open(out, "rb").read(), (title[0] if title else "")
+
+
+def _clean_title(title: str) -> str:
+    """'Bruh Sound Effect #2 (HD) | Free download' -> 'Bruh Sound Effect #2'."""
+    t = re.sub(r"[\(\[][^)\]]*[\)\]]", "", title or "")
+    t = re.split(r"\s[|·•]\s|\s-\s(?=[^-]*$)", t)[0]
+    t = re.sub(r"#\w+", "", t)
+    return re.sub(r"\s+", " ", t).strip(" -_|")[:40]
 
 
 def _seconds(raw: str, default: float) -> float:
@@ -235,17 +250,19 @@ def build_router(get_session, fetch_clip=None) -> APIRouter:
         if file is not None and file.filename:
             data = await file.read(20 * 1024 * 1024 + 1)
             if len(data) > 20 * 1024 * 1024:
-                raise HTTPException(400, "File too large (20 MB max)")
+                raise HTTPException(400, "That file is over 20 MB; trim it or paste a link instead")
             return data, (file.filename or "clip").rsplit(".", 1)[0], "upload"
-        url = (url or "").strip()
+        m = _URL_IN_TEXT.search(url or "")          # share sheets paste "Title https://..."
+        url = m.group(0).rstrip(").,") if m else ""
         if not url:
-            raise HTTPException(400, "Pick a file or paste a link")
-        if _YOUTUBE.match(url):
+            raise HTTPException(400, "Paste a link or pick a file")
+        if not _DIRECT.search(url):
             st = _seconds(start, 0.0)
-            ln = min(max(_seconds(length, 10.0), 0.5), float(audio_sounds.MAX_CLIP_SECONDS))
-            return await asyncio.to_thread(_youtube_clip, url, st, ln), "youtube", "youtube"
+            ln = min(max(_seconds(length, 8.0), 0.5), float(audio_sounds.MAX_CLIP_SECONDS))
+            data, title = await asyncio.to_thread(_video_clip, url, st, ln)
+            return data, _clean_title(title) or "clip", "video"
         if fetch_clip is None:
-            raise HTTPException(400, "Only YouTube links work here")
+            raise HTTPException(400, "Paste a video link")
         try:
             data, stem = await fetch_clip(url)
         except HTTPException:
@@ -293,13 +310,16 @@ def build_router(get_session, fetch_clip=None) -> APIRouter:
             if len(_load_web()) >= WEB_DECK_MAX:
                 raise HTTPException(400, f"The deck is full ({WEB_DECK_MAX} sounds); remove one first")
         data, stem, source = await clip_from(file, url, start, length)
+        if not label and source == "video":
+            label = stem                              # the video's title
         name = await add_clip(data, stem, label, source, session, url)
+        label = label or audio_sounds._pretty(name)
         await save_image(name, image)
         with _web_lock:
             items = _load_web()
             items.append({"name": name, "by": who(session), "at": int(time.time())})
             _save_web(items)
-        return {"ok": True, "name": name}
+        return {"ok": True, "name": name, "label": label}
 
     @router.post("/sounds/{name}")
     async def sound_edit(name: str, request: Request, label: str | None = Form(None),

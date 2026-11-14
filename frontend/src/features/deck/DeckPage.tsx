@@ -5,6 +5,7 @@
 // for the next voice model; tap LAST REPLY to read it all. MIC is Moiz's.
 // Allowlist + live state: Deck Manager `frienddeck.py` on opti3; /api/deck is a signed-in proxy.
 import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as RPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTitle } from '../../app/title'
@@ -239,17 +240,25 @@ function DeckButton({ k, state, small }: { k: DeckKey; state: string | null | un
     return () => { document.removeEventListener('visibilitychange', off); window.removeEventListener('pagehide', release); release() }
   }, [release])
 
-  const onDown = (e: RPointerEvent<HTMLButtonElement>) => {
-    if (e.button !== 0) return
-    e.currentTarget.setPointerCapture(e.pointerId)
-    held.current = true
-    setDown(true)
+  const fire = () => {
     navigator.vibrate?.(12)
     press(k.key, true).catch((err) => {
       if (err instanceof ApiError && err.status === 429) return
       toast(errText(err, "Couldn't reach the deck"), 'error')
     })
-    if (!k.hold) window.setTimeout(() => { held.current = false; setDown(false) }, 160)
+  }
+  const onDown = (e: RPointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0 || !k.hold) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    held.current = true
+    setDown(true)
+    fire()
+  }
+  const onTap = () => {
+    if (k.hold) return
+    setDown(true)
+    window.setTimeout(() => setDown(false), 160)
+    fire()
   }
 
   const src = `/api/deck/icon/${k.key}${state ? `?state=${encodeURIComponent(state)}` : ''}`
@@ -259,6 +268,7 @@ function DeckButton({ k, state, small }: { k: DeckKey; state: string | null | un
       className={`deck-key${small ? ' small' : ''}${down ? ' down' : ''}${k.hold ? ' hold' : ''}`}
       data-state={state || undefined}
       onPointerDown={onDown}
+      onClick={onTap}
       onPointerUp={release}
       onPointerCancel={release}
       onContextMenu={(e) => e.preventDefault()}
@@ -304,20 +314,30 @@ function CustomButton({ c, ver, editing, onEdit }: { c: Custom; ver: number; edi
 
 // ── add / edit a sound ────────────────────────────────────────────────────────
 
-const isYouTube = (u: string) => /^https?:\/\/(www\.|m\.|music\.)?(youtube\.com|youtu\.be)\//i.test(u.trim())
+// Paste / share-sheet text often wraps the link: "Look at this https://youtu.be/…".
+const linkIn = (t: string) => (t.match(/https?:\/\/\S+/)?.[0] ?? '').replace(/[).,]+$/, '')
+// MyInstants pages and plain audio files are fetched as-is; any other link is a video (trim it).
+const isVideo = (u: string) => !!u && !/myinstants\.com\/|\.(mp3|wav|ogg|m4a|aac|opus|flac)(\?.*)?$/i.test(u)
+const MAX_FILE = 20 * 1024 * 1024
+const LENGTHS = ['3', '5', '8', '15']
+
+type Status = { kind: 'busy' | 'error'; text: string } | null
 
 function SoundEditor({ sound, onClose, onSaved }: { sound: Custom | null; onClose: () => void; onSaved: () => void }) {
   const qc = useQueryClient()
   const [label, setLabel] = useState(sound?.label ?? '')
-  const [mode, setMode] = useState<'keep' | 'file' | 'link'>(sound ? 'keep' : 'link')
+  const [replace, setReplace] = useState(!sound)
+  const [text, setText] = useState('')
   const [file, setFile] = useState<File | null>(null)
-  const [url, setUrl] = useState('')
   const [start, setStart] = useState('')
   const [length, setLength] = useState('8')
   const [image, setImage] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [clearImage, setClearImage] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<Status>(null)
+  const busy = status?.kind === 'busy'
+  const url = linkIn(text)
+  const video = !file && isVideo(url)
 
   useEffect(() => {
     if (!image) { setPreview(null); return }
@@ -326,109 +346,161 @@ function SoundEditor({ sound, onClose, onSaved }: { sound: Custom | null; onClos
     return () => URL.revokeObjectURL(u)
   }, [image])
 
-  const current = sound && !clearImage ? `/api/deck/sounds/${encodeURIComponent(sound.name)}/icon` : null
+  // The sheet is its own page: stop the deck behind it from scrolling (iOS).
+  useEffect(() => {
+    const root = document.querySelector<HTMLElement>('.deck-root')
+    const was = root?.style.overflow
+    if (root) root.style.overflow = 'hidden'
+    return () => { if (root) root.style.overflow = was ?? '' }
+  }, [])
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!sound && mode === 'file' && !file) return toast('Pick a sound file', 'error')
-    if (!sound && mode === 'link' && !url.trim()) return toast('Paste a YouTube or sound link', 'error')
+  const paste = async () => {
+    try {
+      const t = await navigator.clipboard.readText()
+      if (!linkIn(t)) return setStatus({ kind: 'error', text: "There's no link on your clipboard. Copy one first (Share → Copy link)." })
+      setText(t); setFile(null); setStatus(null)
+    } catch {
+      setStatus({ kind: 'error', text: 'Long-press the box and tap Paste.' })
+    }
+  }
+
+  const pickFile = (f: File | null) => {
+    if (f && f.size > MAX_FILE) {
+      setStatus({ kind: 'error', text: `That file is ${(f.size / 1048576).toFixed(0)} MB; the limit is 20 MB. Trim it, or paste a link instead.` })
+      return
+    }
+    setFile(f); if (f) setText(''); setStatus(null)
+  }
+
+  const submit = async (e?: FormEvent) => {
+    e?.preventDefault()
+    if (busy) return
+    const changingSound = replace && (file || url)
+    if (!sound && !changingSound) {
+      return setStatus({ kind: 'error', text: text.trim() && !url ? "That doesn't look like a link. It should start with https://" : 'Paste a link or pick a file first.' })
+    }
     const fd = new FormData()
     fd.append('label', label.trim())
-    if (mode === 'file' && file) fd.append('file', file)
-    if (mode === 'link' && url.trim()) {
-      fd.append('url', url.trim())
-      if (isYouTube(url)) { fd.append('start', start); fd.append('length', length) }
+    if (replace && file) fd.append('file', file)
+    else if (replace && url) {
+      fd.append('url', url)
+      if (video) { fd.append('start', start); fd.append('length', length) }
     }
     if (image) fd.append('image', image)
     if (clearImage && !image) fd.append('clear_image', 'true')
-    setBusy(true)
+    setStatus({ kind: 'busy', text: changingSound && !file ? 'Grabbing the sound… this can take 10–20 seconds.' : changingSound ? 'Uploading…' : 'Saving…' })
     try {
+      const ctrl = new AbortController()
+      const timer = window.setTimeout(() => ctrl.abort(), 300_000)
       const res = await fetch(sound ? `/api/deck/sounds/${encodeURIComponent(sound.name)}` : '/api/deck/sounds',
-        { method: 'POST', body: fd, credentials: 'same-origin' })
-      const j = (await res.json().catch(() => ({}))) as { detail?: string }
-      if (!res.ok) throw new Error(j.detail || 'That didn’t save')
-      toast(sound ? 'Saved' : `Added ${label.trim() || 'your sound'}`, 'success')
+        { method: 'POST', body: fd, credentials: 'same-origin', signal: ctrl.signal })
+      window.clearTimeout(timer)
+      const j = (await res.json().catch(() => ({}))) as { detail?: string; label?: string }
+      if (!res.ok) {
+        throw new Error(res.status === 413 ? 'That file is too big to upload. Trim it, or paste a link instead.'
+          : res.status === 401 ? 'You got signed out. Reload the page and sign in.' : j.detail || `That didn't work (error ${res.status}).`)
+      }
+      toast(sound ? 'Saved' : `Added “${j.label || label.trim() || 'your sound'}”. Tap it to play!`, 'success')
       qc.invalidateQueries({ queryKey: ['audio-sounds'] })
       onSaved()
     } catch (err) {
-      toast((err as Error).message || 'That didn’t save', 'error')
-    } finally {
-      setBusy(false)
+      const m = (err as Error).name === 'AbortError' ? 'That took too long. Try a shorter video, or try again.'
+        : (err as Error).message === 'Load failed' || (err as Error).message === 'Failed to fetch' ? 'No connection to the server. Check your internet and try again.'
+          : (err as Error).message
+      setStatus({ kind: 'error', text: m || "That didn't work" })
     }
   }
 
   const remove = async () => {
     if (!sound || !window.confirm(`Take “${sound.label}” off the deck? It stays on the Soundboard page.`)) return
-    setBusy(true)
+    setStatus({ kind: 'busy', text: 'Removing…' })
     try {
       await request(`/api/deck/sounds/${encodeURIComponent(sound.name)}`, { method: 'DELETE' })
       onSaved()
     } catch (err) {
-      toast(errText(err, "Couldn't remove it"), 'error')
-      setBusy(false)
+      setStatus({ kind: 'error', text: errText(err, "Couldn't remove it") })
     }
   }
 
-  return (
-    <div className="deck-modal-scrim" onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose() }}>
-      <form className="deck-modal" onSubmit={submit}>
+  const current = sound && !clearImage ? `/api/deck/sounds/${encodeURIComponent(sound.name)}/icon` : null
+
+  return createPortal(
+    <div className="deck-sheet" role="dialog" aria-modal="true" aria-label={sound ? 'Edit sound' : 'Add a sound'}>
+      <form className="deck-sheet-body" onSubmit={submit}>
         <header className="deck-modal-head">
           <h2>{sound ? 'Edit sound' : 'Add a sound'}</h2>
           <button type="button" className="deck-icon-btn" onClick={onClose} disabled={busy} aria-label="Close"><Icon name="close" /></button>
         </header>
 
-        <div className="deck-modal-row">
-          <label className="deck-pic">
-            {preview || current
-              ? <img src={preview ?? current ?? ''} alt="" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden' }} />
-              : <span className="deck-pic-empty"><Icon name="plus" /><small>Picture</small></span>}
-            <input type="file" accept="image/*" onChange={(e) => { setImage(e.target.files?.[0] ?? null); setClearImage(false) }} hidden />
-          </label>
-          <div className="deck-modal-col">
-            <label className="deck-field">
-              <span>Name</span>
-              <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40} placeholder="Bruh" />
-            </label>
-            <small className="deck-muted">Tap the square to pick a picture.{!image && ' No picture? One gets made for you.'}</small>
-            {sound && (image || (sound.custom_image && !clearImage)) && (
-              <button type="button" className="deck-link" onClick={() => { setImage(null); setClearImage(true) }}>Use the made-for-you picture</button>
-            )}
-          </div>
-        </div>
+        {sound && !replace && (
+          <button type="button" className="deck-wide-btn" onClick={() => setReplace(true)}>Change the sound itself</button>
+        )}
 
-        <div className="deck-seg" role="tablist">
-          {sound && <button type="button" className={mode === 'keep' ? 'on' : ''} onClick={() => setMode('keep')}>Keep sound</button>}
-          <button type="button" className={mode === 'link' ? 'on' : ''} onClick={() => setMode('link')}>YouTube / link</button>
-          <button type="button" className={mode === 'file' ? 'on' : ''} onClick={() => setMode('file')}>Upload</button>
-        </div>
-
-        {mode === 'link' && (
-          <>
-            <label className="deck-field">
-              <span>Link</span>
-              <input value={url} onChange={(e) => setUrl(e.target.value)} inputMode="url" placeholder="https://youtu.be/… or a MyInstants page" />
-            </label>
-            {isYouTube(url) && (
-              <div className="deck-modal-row">
-                <label className="deck-field"><span>Start at</span><input value={start} onChange={(e) => setStart(e.target.value)} placeholder="0:00" inputMode="numeric" /></label>
-                <label className="deck-field"><span>Length (sec)</span><input value={length} onChange={(e) => setLength(e.target.value)} inputMode="decimal" /></label>
+        {replace && (
+          <section className="deck-step">
+            <span className="deck-step-n">1</span>
+            <div className="deck-step-body">
+              <strong>Where's the sound?</strong>
+              <div className="deck-paste-row">
+                <input className="deck-input" value={text} onChange={(e) => { setText(e.target.value); setFile(null); setStatus(null) }}
+                  inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+                  placeholder="Paste a YouTube, TikTok, Insta or MyInstants link" />
+                {'clipboard' in navigator && typeof navigator.clipboard?.readText === 'function' && (
+                  <button type="button" className="deck-paste" onClick={paste}>Paste</button>
+                )}
               </div>
-            )}
-          </>
-        )}
-        {mode === 'file' && (
-          <label className="deck-field">
-            <span>Sound or video file</span>
-            <input type="file" accept="audio/*,video/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-          </label>
+              {video && (
+                <div className="deck-trim">
+                  <label className="deck-field"><span>Start at</span>
+                    <input className="deck-input" value={start} onChange={(e) => setStart(e.target.value)} placeholder="0:00" inputMode="numeric" />
+                  </label>
+                  <div className="deck-field"><span>How long</span>
+                    <div className="deck-chips">
+                      {LENGTHS.map((l) => (
+                        <button key={l} type="button" className={length === l ? 'on' : ''} onClick={() => setLength(l)}>{l}s</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="deck-or"><span>or</span></div>
+              <label className={`deck-wide-btn${file ? ' on' : ''}`}>
+                {file ? `🎵 ${file.name.slice(0, 32)}` : 'Upload a sound or video from your phone'}
+                <input className="deck-file" type="file" accept="audio/*,video/*" onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
+              </label>
+            </div>
+          </section>
         )}
 
-        <footer className="deck-modal-foot">
-          {sound && <button type="button" className="btn btn-secondary deck-danger" onClick={remove} disabled={busy}>Remove</button>}
-          <span className="deck-spacer" />
-          <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? (mode === 'link' && isYouTube(url) ? 'Grabbing it…' : 'Saving…') : sound ? 'Save' : 'Add'}</button>
-        </footer>
+        <section className="deck-step">
+          <span className="deck-step-n">{replace ? 2 : 1}</span>
+          <div className="deck-step-body">
+            <strong>Name and picture <em className="deck-muted">(optional)</em></strong>
+            <div className="deck-modal-row">
+              <label className="deck-pic">
+                {preview || current
+                  ? <img src={preview ?? current ?? ''} alt="" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden' }} />
+                  : <span className="deck-pic-empty"><Icon name="plus" /><small>Picture</small></span>}
+                <input className="deck-file" type="file" accept="image/*" onChange={(e) => { setImage(e.target.files?.[0] ?? null); setClearImage(false) }} />
+              </label>
+              <div className="deck-modal-col">
+                <input className="deck-input" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40}
+                  placeholder={video ? 'Leave empty to use the video title' : 'Name it'} />
+                <small className="deck-muted">No picture? One gets made for you.</small>
+                {sound && (image || (sound.custom_image && !clearImage)) && (
+                  <button type="button" className="deck-link" onClick={() => { setImage(null); setClearImage(true) }}>Use the made-for-you picture</button>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {status && <p className={`deck-status ${status.kind}`} role={status.kind === 'error' ? 'alert' : 'status'}>{status.kind === 'busy' && <span className="deck-spin" />}{status.text}</p>}
+
+        <button type="submit" className="deck-go" disabled={busy}>{busy ? 'Working…' : sound ? 'Save' : 'Add sound'}</button>
+        {sound && <button type="button" className="deck-link deck-danger deck-remove" onClick={remove} disabled={busy}>Remove from the deck</button>}
       </form>
-    </div>
+    </div>,
+    document.body,
   )
 }
