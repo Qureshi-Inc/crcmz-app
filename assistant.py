@@ -1012,7 +1012,6 @@ def _clip_media(clip_id: str, row: dict | None) -> dict:
         "clip_id": clip_id,
         "url": "https://%s/api/clips/media?uid=%s" % (
             host, urllib.parse.quote(clip_id, safe="")),
-        "auth": "send the same Authorization: Bearer token used for MCP",
         "content_type": "video/mp4",
         "file_size": row.get("file_size"),
         "file_size_bytes": row.get("file_size"),
@@ -1051,7 +1050,6 @@ def _clip_media_urls(clip_ids: list | None = None) -> dict:
              for cid in ids]
     return {"clips": items, "count": len(items),
             "with_media": sum(1 for i in items if "url" in i),
-            "auth": "send the same Authorization: Bearer token used for MCP",
             "content_type": "video/mp4", "supports_range": False}
 
 

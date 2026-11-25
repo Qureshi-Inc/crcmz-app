@@ -8627,23 +8627,73 @@ def _messenger_for_group(group_id: str):
 
 
 async def _forward_screenshot(uid: str, ugc_id: str, sender: str, body: str, wm) -> None:
-    """Resolve a PSN screenshot ugcId and score it; do not forward to WhatsApp."""
+    """Resolve a PSN screenshot, store it, forward to WhatsApp, and score it."""
+    import base64
+    import httpx as _httpx
+    import time as _time
+
     try:
         logger.info("screenshot_forward_started uid=%s ugcId=%s sender=%s", uid, ugc_id, sender)
         image_bytes = await asyncio.to_thread(wm.resolve_and_download_screenshot, ugc_id)
+
+        # Store to disk
+        shot_dir = Path("/data/screenshots")
+        shot_dir.mkdir(parents=True, exist_ok=True)
+        safe_sender = "".join(c for c in sender if c.isalnum() or c in "-_")
+        shot_path = shot_dir / f"{uid}_{safe_sender}_{int(_time.time())}.jpg"
+        shot_path.write_bytes(image_bytes)
+        logger.info("screenshot_stored uid=%s path=%s", uid, shot_path)
+
+        # Forward to WhatsApp
+        if WA_BRIDGE_URL and WA_MAIN_JID:
+            caption = f"📸 {sender}" + (f": {body}" if body else "")
+            payload = {
+                "imageBase64": base64.b64encode(image_bytes).decode(),
+                "groupJid": WA_MAIN_JID,
+                "caption": caption,
+                "idempotencyKey": f"psn-shot:{uid}",
+            }
+            async with _httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(f"{WA_BRIDGE_URL}/send-image", json=payload)
+            logger.info("screenshot_wa_sent uid=%s status=%d", uid, resp.status_code)
+
         asyncio.create_task(_tourney_capture(image_bytes, sender))
-        logger.info("screenshot_forward_sent uid=%s status=%d", uid, 200)
     except Exception as exc:
         logger.error("screenshot_forward_failed uid=%s: %s", uid, exc)
 
 
 async def _forward_image(uid: str, image_url: str, sender: str, body: str, wm) -> None:
-    """Download a PSN image and score it; do not forward to WhatsApp."""
+    """Download a PSN image, store it, forward to WhatsApp, and score it."""
+    import base64
+    import httpx as _httpx
+    import time as _time
+
     try:
         logger.info("image_forward_started uid=%s sender=%s", uid, sender)
         image_bytes = await asyncio.to_thread(wm.download_image, image_url)
+
+        # Store to disk
+        shot_dir = Path("/data/screenshots")
+        shot_dir.mkdir(parents=True, exist_ok=True)
+        safe_sender = "".join(c for c in sender if c.isalnum() or c in "-_")
+        shot_path = shot_dir / f"{uid}_{safe_sender}_{int(_time.time())}.jpg"
+        shot_path.write_bytes(image_bytes)
+        logger.info("image_stored uid=%s path=%s", uid, shot_path)
+
+        # Forward to WhatsApp
+        if WA_BRIDGE_URL and WA_MAIN_JID:
+            caption = f"📸 {sender}" + (f": {body}" if body else "")
+            payload = {
+                "imageBase64": base64.b64encode(image_bytes).decode(),
+                "groupJid": WA_MAIN_JID,
+                "caption": caption,
+                "idempotencyKey": f"psn-img:{uid}",
+            }
+            async with _httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(f"{WA_BRIDGE_URL}/send-image", json=payload)
+            logger.info("image_wa_sent uid=%s status=%d", uid, resp.status_code)
+
         asyncio.create_task(_tourney_capture(image_bytes, sender))
-        logger.info("image_forward_sent uid=%s status=%d", uid, 200)
     except Exception as exc:
         logger.error("image_forward_failed uid=%s: %s", uid, exc)
 
