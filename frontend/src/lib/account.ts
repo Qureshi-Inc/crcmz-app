@@ -5,6 +5,26 @@ import { getJSON, request } from './http'
 export type Passkey = { id: string; name: string }
 
 export type PsnUnclaimed = { key: string; online_id: string | null; mm_username: string | null; linked_at: number | null }
+import { ApiError } from './http'
+
+export type BotPsnStatus = {
+  status: 'active' | 'expired'
+  online_id: string | null
+  refresh_expires_at: number | null
+  npsso_source: 'env' | 'admin'
+}
+
+export async function updateBotNpsso(npsso: string): Promise<BotPsnStatus> {
+  const r = await fetch('/api/admin/psn-bot-token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ npsso }),
+  })
+  const d = await r.json()
+  if (!r.ok) throw new ApiError(r.status, d.error || 'Failed', null)
+  return d as BotPsnStatus
+}
+
 export type PsnAccount = {
   key?: string
   zitadel_user_id: string | null

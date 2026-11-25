@@ -11,8 +11,9 @@ import { ErrorStrip, SkeletonRows, StaleMarker, useStale } from '../../component
 import { toast } from '../../components/toast'
 import { ApiError, getJSON } from '../../lib/http'
 import {
-  neuterWaBot, fmtDate, inviteMember, resetUserPassword, unneuterWaBot, type WaBlock, type Invite, tokenState, type AdminUser, type OpsStatus, type PipelineHealth, type PsnAccount, type PsnStatus,
-  type VideoJobs,
+  neuterWaBot, fmtDate, inviteMember, resetUserPassword, unneuterWaBot, updateBotNpsso,
+  type WaBlock, type Invite, tokenState, type AdminUser, type OpsStatus, type PipelineHealth,
+  type PsnAccount, type PsnStatus, type BotPsnStatus, type VideoJobs,
 } from '../../lib/account'
 import { HelpLink } from '../../components/HelpLink'
 
@@ -38,6 +39,7 @@ export function AdminPage() {
         <Jobs />
       </div>
       <div className="admin-lists">
+        <BotPsnToken />
         <PsnAccounts />
         <Users q={users} />
         <WaBotAccess q={users} />
@@ -153,6 +155,78 @@ function Jobs() {
           </>
         )}
       </Body>
+    </section>
+  )
+}
+
+function BotPsnToken() {
+  const q = useQuery({
+    queryKey: ['admin', 'bot-psn'],
+    queryFn: ({ signal }) => getJSON<BotPsnStatus>('/api/admin/psn-bot-token', signal),
+    refetchInterval: POLL_MS,
+  })
+  const [val, setVal] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [ok, setOk] = useState('')
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (!val.trim()) return
+    setBusy(true); setErr(''); setOk('')
+    try {
+      const d = await updateBotNpsso(val.trim())
+      const expiry = d.refresh_expires_at ? new Date(d.refresh_expires_at * 1000).toLocaleDateString() : null
+      setOk(`✅ Updated${d.online_id ? ` as ${d.online_id}` : ''}${expiry ? ` · expires ${expiry}` : ''}`)
+      setVal('')
+      q.refetch()
+    } catch (e2) {
+      setErr(e2 instanceof ApiError && e2.detail ? e2.detail : 'Sony rejected this token — try a fresh one')
+    } finally { setBusy(false) }
+  }
+
+  const d = q.data
+  const expiry = d?.refresh_expires_at ? new Date(d.refresh_expires_at * 1000) : null
+  const daysLeft = expiry ? Math.round((expiry.getTime() - Date.now()) / 86_400_000) : null
+  const expired = !expiry || expiry < new Date()
+  const tone = expired ? 'warn' : (daysLeft != null && daysLeft < 7 ? 'warn' : 'live')
+  const statusLabel = expired ? 'Expired' : daysLeft != null ? `Active · ${daysLeft}d left` : 'Active'
+
+  return (
+    <section className="glass admin-card" aria-labelledby="ad-bot">
+      <div className="settings-card-head">
+        <h2 className="section-h2" id="ad-bot">🎮 Bot PSN token</h2>
+        {d && <span className="badge" data-tone={tone}>{statusLabel}</span>}
+      </div>
+      {d && (
+        <dl className="meta-list" style={{ marginBottom: '1rem' }}>
+          <dt>Account</dt><dd>{d.online_id ?? '—'}</dd>
+          <dt>Source</dt><dd>{d.npsso_source === 'admin' ? 'Updated via admin panel' : 'Coolify env var'}</dd>
+          {expiry && <><dt>Expires</dt><dd>{expiry.toLocaleDateString()}</dd></>}
+        </dl>
+      )}
+      <p className="dim" style={{ marginBottom: '0.75rem' }}>
+        1.{' '}<a href="https://www.playstation.com" target="_blank" rel="noopener noreferrer" className="link">Sign in to PlayStation</a> as the bot account{' '}
+        2.{' '}<a href="https://ca.account.sony.com/api/v1/ssocookie" target="_blank" rel="noopener noreferrer" className="link">Open this page</a> and copy the npsso value{' '}
+        3. Paste below
+      </p>
+      <form className="form-stack" onSubmit={submit} noValidate>
+        <div>
+          <label className="field-label" htmlFor="bot-npsso">NPSSO token</label>
+          <input
+            id="bot-npsso" className="input" type="password" autoComplete="off"
+            placeholder='Paste 64-char token or {"npsso":"…"} blob'
+            value={val} onChange={(e) => setVal(e.target.value)}
+          />
+        </div>
+        {err && <p className="field-err" role="alert">{err}</p>}
+        {ok && <p className="field-hint" role="status" style={{ color: 'var(--green)' }}>{ok}</p>}
+        <div className="step-actions">
+          <button type="submit" className="btn btn-primary" disabled={busy || !val.trim()}>
+            {busy ? 'Updating…' : 'Update bot token'}
+          </button>
+        </div>
+      </form>
     </section>
   )
 }
