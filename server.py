@@ -855,6 +855,8 @@ _OPEN_PATHS = {"/health", "/v2/health", "/auth/login", "/auth/callback",
                # handler re-checks it; the clip id is a query param so this stays an
                # exact path rather than an open prefix.
                "/api/clips/media",
+               # Screenshot images for MCP clients (same bearer-token contract).
+               "/api/screenshots/media",
                # Same contract for member-uploaded videos (video_uploads.py).
                "/api/video-uploads/media",
                # OAuth Authorization Server for per-user MCP tokens.  All of
@@ -4317,6 +4319,43 @@ def api_clip_media(uid: str, request: Request):
         headers["Content-Length"] = str(int(size))
     return StreamingResponse(_cstore.stream(key), media_type="video/mp4",
                              headers=headers)
+
+
+@app.get("/api/screenshots/media")
+def api_screenshot_media(uid: str, request: Request):
+    """Serve a stored PSN screenshot by its file uid to MCP clients.
+
+    Same auth contract as /api/clips/media: bearer token (MCP or service) or
+    a valid session cookie. `uid` is the filename stem stored in /data/screenshots/.
+    """
+    from fastapi.responses import FileResponse
+
+    auth_header = request.headers.get("authorization", "")
+    caller = None
+    session = None if auth_header else _get_session(request)
+    if session and session.get("sub"):
+        caller = {"zitadel_id": session["sub"]}
+    elif not _mcp.authorised(auth_header):
+        caller = (_mcp.resolve_caller(auth_header)
+                  or _mcp.resolve_personal(auth_header)
+                  or _mcp.resolve_service(auth_header))
+        if caller is None:
+            return JSONResponse(
+                {"error": "invalid or missing bearer token"},
+                status_code=401,
+                headers={"WWW-Authenticate": 'Bearer realm="crcmz-mcp"'})
+
+    shot_dir = Path("/data/screenshots")
+    # uid may come in as the bare stem (no extension) or the full filename
+    safe_uid = uid.replace("/", "").replace("..", "")
+    path = shot_dir / safe_uid if safe_uid.endswith(".jpg") else shot_dir / (safe_uid + ".jpg")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="screenshot not found")
+
+    who = (caller or {}).get("zitadel_id", "shared-token")
+    logger.info("screenshot media served uid=%s caller=%s", uid, who)
+    return FileResponse(str(path), media_type="image/jpeg",
+                        headers={"Content-Disposition": f'attachment; filename="{path.name}"'})
 
 
 # ── Friend video uploads ─────────────────────────────────────────────────────

@@ -40,6 +40,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 import httpx
@@ -1051,6 +1052,73 @@ def _clip_media_urls(clip_ids: list | None = None) -> dict:
     return {"clips": items, "count": len(items),
             "with_media": sum(1 for i in items if "url" in i),
             "content_type": "video/mp4", "supports_range": False}
+
+
+@tool("recent_screenshots",
+      "Recently captured PSN screenshots forwarded to the group: who sent them, "
+      "when, and their file uid. Pass a uid to screenshot_media_url to get the "
+      "JPEG download URL. Newest first.",
+      {"type": "object",
+       "properties": {
+           "limit": {"type": "integer", "description": "1-25, default 20."},
+           "sender": {"type": "string", "description": "Filter by exact PSN online ID."},
+       },
+       "required": []})
+def _recent_screenshots(limit: int = 20, sender: str = "") -> dict:
+    from datetime import datetime, timezone
+    import re as _re
+    shot_dir = Path("/data/screenshots")
+    if not shot_dir.exists():
+        return {"screenshots": [], "total": 0}
+    limit = max(1, min(int(limit or 20), 25))
+    sender_filter = (sender or "").strip().lower()
+    files = sorted(shot_dir.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
+    out = []
+    for f in files:
+        # filename: <uid>_<sender>_<ts>.jpg
+        parts = f.stem.split("_", 2)
+        file_sender = parts[1] if len(parts) >= 2 else ""
+        if sender_filter and file_sender.lower() != sender_filter:
+            continue
+        ts = int(parts[2]) if len(parts) == 3 and parts[2].isdigit() else int(f.stat().st_mtime)
+        uid_part = parts[0] if parts else f.stem
+        out.append({
+            "uid": f.stem,
+            "sender": file_sender or None,
+            "when": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds"),
+            "file": f.name,
+        })
+        if len(out) >= limit:
+            break
+    return {"screenshots": out, "total": len(list(shot_dir.glob("*.jpg")))}
+
+
+@tool("screenshot_media_url",
+      "Given a uid from recent_screenshots, return the JPEG URL to download that "
+      "screenshot. The URL requires the same bearer token as this MCP connection. "
+      "No auth field is included — just pass your existing bearer token as "
+      "Authorization: Bearer <token> when you fetch the URL.",
+      {"type": "object",
+       "properties": {"uid": {"type": "string",
+                              "description": "uid from recent_screenshots."}},
+       "required": ["uid"]})
+def _screenshot_media_url(uid: str = "") -> dict:
+    uid = (uid or "").strip()
+    if not uid:
+        return {"error": "uid is required — take it from recent_screenshots."}
+    shot_dir = Path("/data/screenshots")
+    path = shot_dir / uid if uid.endswith(".jpg") else shot_dir / (uid + ".jpg")
+    if not path.exists():
+        return {"uid": uid, "error": "screenshot file not found"}
+    host = os.environ.get("PORTAL_PUBLIC_HOST", "app.crcmz.me")
+    import urllib.parse
+    return {
+        "uid": uid,
+        "url": "https://%s/api/screenshots/media?uid=%s" % (
+            host, urllib.parse.quote(uid, safe="")),
+        "content_type": "image/jpeg",
+        "file_size_bytes": path.stat().st_size,
+    }
 
 
 # ── Month-end montage ─────────────────────────────────────────────────────────
