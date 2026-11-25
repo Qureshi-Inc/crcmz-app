@@ -15,6 +15,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 TOKEN_FILE = Path("/data/psn_tokens.json")
+# Admin-updated NPSSO persisted here so it survives restarts without touching Coolify env vars
+BOT_NPSSO_FILE = Path("/data/bot_npsso.json")
 
 # PSN OAuth endpoints
 AUTH_URL = "https://ca.account.sony.com/api/authz/v3/oauth/authorize"
@@ -29,6 +31,33 @@ REDIRECT_URI = "com.scee.psxandroid.scecompcall://redirect"
 
 # Token refresh buffer (refresh 5 min before expiry)
 REFRESH_BUFFER_SECONDS = 300
+
+
+def load_bot_npsso(env_npsso: str) -> str:
+    """Return the best available NPSSO for the bot account.
+
+    Checks /data/bot_npsso.json first (written by the admin UI update flow),
+    falls back to the env-var value passed in.  This means an admin update
+    takes effect immediately on the next PSN call without restarting the
+    container.
+    """
+    try:
+        if BOT_NPSSO_FILE.exists():
+            data = json.loads(BOT_NPSSO_FILE.read_text())
+            token = data.get("npsso", "").strip()
+            if token and len(token) == 64:
+                logger.info("Using admin-updated NPSSO from %s", BOT_NPSSO_FILE)
+                return token
+    except Exception as e:
+        logger.warning("Failed to read bot NPSSO file: %s", e)
+    return env_npsso
+
+
+def save_bot_npsso(npsso: str) -> None:
+    """Persist a new admin-supplied NPSSO to disk."""
+    BOT_NPSSO_FILE.parent.mkdir(parents=True, exist_ok=True)
+    BOT_NPSSO_FILE.write_text(json.dumps({"npsso": npsso, "saved_at": time.time()}))
+    logger.info("Bot NPSSO saved to %s", BOT_NPSSO_FILE)
 
 
 class PSNAuth:
@@ -176,6 +205,21 @@ class PSNAuth:
             logger.info("Tokens saved to %s", TOKEN_FILE)
         except Exception as e:
             logger.warning("Failed to save tokens: %s", e)
+
+    def update_npsso(self, new_npsso: str) -> None:
+        """Hot-swap the NPSSO and force a fresh full auth on next access."""
+        self._npsso = new_npsso
+        self._access_token = None
+        self._refresh_token = None
+        self._expires_at = 0.0
+        self._refresh_expires_at = 0.0
+        # Clear the saved token file so the next restart also uses the new NPSSO
+        try:
+            TOKEN_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+        save_bot_npsso(new_npsso)
+        logger.info("NPSSO updated via admin; will re-authenticate on next PSN call")
 
     def _load_tokens(self) -> None:
         """Load persisted tokens from file."""

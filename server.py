@@ -21,7 +21,8 @@ class _NoHealthFilter(logging.Filter):
 for _uvicorn_logger in ("uvicorn.access", "uvicorn"):
     logging.getLogger(_uvicorn_logger).addFilter(_NoHealthFilter())
 
-NPSSO_TOKEN = os.environ.get("NPSSO_TOKEN")
+from psn_auth import load_bot_npsso as _load_bot_npsso
+NPSSO_TOKEN = _load_bot_npsso(os.environ.get("NPSSO_TOKEN") or "")
 GROUP_ID = os.environ.get("GROUP_ID")
 GROUP_NAME = os.environ.get("GROUP_NAME", "crcmz-mod")
 # Auto-Squad: a separate PSN group (everyone except wolfie/IG_Juicy) that the
@@ -30,7 +31,7 @@ SQUAD_GROUP_ID = os.environ.get("SQUAD_GROUP_ID", "213250d833ccce334b651e2ee15e3
 SQUAD_GROUP_NAME = os.environ.get("SQUAD_GROUP_NAME", "The Squad")
 
 if not NPSSO_TOKEN:
-    raise RuntimeError("NPSSO_TOKEN environment variable is required")
+    raise RuntimeError("NPSSO_TOKEN environment variable is required (or set via admin panel)")
 if not GROUP_ID:
     raise RuntimeError("GROUP_ID environment variable is required")
 
@@ -2093,6 +2094,87 @@ async def _admin_sub(request: Request) -> tuple[str, JSONResponse | None]:
     if not await _is_iam_admin(sub):
         return "", JSONResponse({"error": "forbidden"}, status_code=403)
     return sub, None
+
+
+@app.get("/api/admin/psn-bot-token")
+async def admin_psn_bot_token_status(request: Request):
+    """Return bot PSN token status (admin only)."""
+    _, err = await _admin_sub(request)
+    if err:
+        return err
+    import time as _time
+    status = "expired"
+    refresh_expires_at = None
+    online_id = None
+    npsso_source = "env"
+    from psn_auth import BOT_NPSSO_FILE as _BOT_NPSSO_FILE
+    if _BOT_NPSSO_FILE.exists():
+        npsso_source = "admin"
+    try:
+        rt = psn_auth._refresh_expires_at
+        refresh_expires_at = rt
+        if rt and _time.time() < rt:
+            status = "active"
+    except Exception:
+        pass
+    try:
+        from psnawp_api.psnawp import PSNAWP as _P
+        _c = _P(psn_auth._npsso).me()
+        online_id = _c.online_id
+    except Exception:
+        pass
+    return JSONResponse({
+        "status": status,
+        "online_id": online_id,
+        "refresh_expires_at": refresh_expires_at,
+        "npsso_source": npsso_source,
+    })
+
+
+@app.post("/api/admin/psn-bot-token")
+async def admin_update_psn_bot_token(request: Request):
+    """Update the bot's NPSSO token (admin only). Takes effect immediately."""
+    _, err = await _admin_sub(request)
+    if err:
+        return err
+    body = await request.json()
+    raw = (body.get("npsso") or "").strip()
+
+    # Accept full JSON blob {"npsso":"..."} or bare token
+    import re as _re
+    m = _re.search(r'"?npsso"?\s*:\s*"([^"]+)"', raw)
+    if m:
+        raw = m.group(1).strip()
+
+    if len(raw) != 64:
+        return JSONResponse({"error": "NPSSO must be 64 characters"}, status_code=400)
+
+    try:
+        # Validate it works before saving
+        from psn_auth import PSNAuth as _PSNAuth
+        _test = _PSNAuth.__new__(_PSNAuth)
+        _test._npsso = raw
+        _test._access_token = None
+        _test._refresh_token = None
+        _test._expires_at = 0.0
+        _test._refresh_expires_at = 0.0
+        _test._full_auth()  # raises if NPSSO is invalid
+        online_id = None
+        try:
+            from psnawp_api.psnawp import PSNAWP as _P
+            online_id = _P(raw).me().online_id
+        except Exception:
+            pass
+    except Exception as e:
+        logger.warning("admin psn-bot-token: validation failed: %s", e)
+        return JSONResponse({"error": f"Sony rejected this token: {e}"}, status_code=400)
+
+    # Hot-swap the live PSNAuth object
+    psn_auth.update_npsso(raw)
+    logger.info("admin psn-bot-token: NPSSO updated, online_id=%s", online_id)
+
+    return JSONResponse({"ok": True, "online_id": online_id,
+                         "refresh_expires_at": psn_auth._refresh_expires_at})
 
 
 @app.get("/api/admin/wa-neuter")
@@ -12830,6 +12912,22 @@ _DASHBOARD_TMPL = r"""<!doctype html>
 
     <div class="spanel" id="tab-users">
       <div class="smodal-sect">
+        <p class="smodal-sect-title">🎮 Bot PSN token</p>
+        <div id="adminBotPsnStatus"><span style="color:var(--dim)">Loading…</span></div>
+        <div style="margin-top:12px">
+          <p style="font-size:12px;color:var(--dim);margin:0 0 8px">
+            1. <a href="https://www.playstation.com/en-gb/sign-in/" target="_blank" rel="noopener" style="color:var(--cyan)">Sign in to PlayStation</a> as the bot account &nbsp;
+            2. <a href="https://ca.account.sony.com/api/v1/ssocookie" target="_blank" rel="noopener" style="color:var(--cyan)">Get the NPSSO token</a> &nbsp;
+            3. Paste below
+          </p>
+          <textarea id="adminBotNpssoInput" rows="2" style="width:100%;background:#111;color:#fff;border:1px solid #333;border-radius:8px;padding:8px;font-family:monospace;font-size:13px;resize:vertical" placeholder='Paste NPSSO token (64 chars) or the full {"npsso":"…"} blob'></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+            <button class="btn" onclick="adminUpdateBotNpsso()" id="adminBotNpssoBtn">🔗 Update bot token</button>
+            <span id="adminBotNpssoMsg" style="font-size:13px"></span>
+          </div>
+        </div>
+      </div>
+      <div class="smodal-sect">
         <p class="smodal-sect-title">User management</p>
         <div id="adminUsersList"><span style="color:var(--dim)">Loading…</span></div>
       </div>
@@ -16445,7 +16543,7 @@ function switchTab(name){
   if(name==='psn') loadPsnStatus();
   if(name==='mattermost') loadMattermostStatus();
   if(name==='mcp') loadMcpStatus();
-  if(name==='users') loadAdminUsers();
+  if(name==='users'){ loadAdminUsers(); loadAdminBotPsnStatus(); }
 }
 
 async function loadPsnStatus(){
@@ -16547,6 +16645,50 @@ function _adminUsersHtml(users){
 }
 
 // ── Admin: user management ────────────────────────────────────────────────────
+async function loadAdminBotPsnStatus(){
+  const el=$('adminBotPsnStatus');
+  if(!el) return;
+  try{
+    const r=await fetch('/api/admin/psn-bot-token');
+    if(!r.ok){ el.innerHTML='<span style="color:#ff7070">Not authorised.</span>'; return; }
+    const d=await r.json();
+    const expiry=d.refresh_expires_at?new Date(d.refresh_expires_at*1000):null;
+    const expired=!expiry||expiry<new Date();
+    const daysLeft=expiry?Math.round((expiry-new Date())/86400000):null;
+    const statusColor=expired?'#ff7070':(daysLeft!=null&&daysLeft<7?'#ffb347':'#4ade80');
+    const statusText=expired?'❌ Expired':(daysLeft!=null?`✅ Active · ${daysLeft}d left`:'✅ Active');
+    el.innerHTML=`<div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:22px">🎮</span>
+      <div>
+        <div style="font-weight:700;color:#fff">${esc(d.online_id||'(unknown)')}</div>
+        <div style="font-size:12px;color:${statusColor}">${statusText}</div>
+        ${d.npsso_source==='admin'?'<div style="font-size:11px;color:var(--dim)">Updated via admin panel</div>':''}
+      </div>
+    </div>`;
+  }catch(e){ el.innerHTML='<span style="color:#ff7070">Could not load status.</span>'; }
+}
+
+async function adminUpdateBotNpsso(){
+  const val=($('adminBotNpssoInput').value||'').trim();
+  if(!val){ return; }
+  const btn=$('adminBotNpssoBtn');
+  const msg=$('adminBotNpssoMsg');
+  btn.disabled=true; btn.textContent='Updating…'; msg.textContent='';
+  try{
+    const r=await fetch('/api/admin/psn-bot-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({npsso:val})});
+    const d=await r.json();
+    if(!r.ok){ msg.style.color='#ff7070'; msg.textContent='⚠️ '+(d.error||'Failed'); }
+    else{
+      msg.style.color='#4ade80';
+      const expiry=d.refresh_expires_at?new Date(d.refresh_expires_at*1000).toLocaleDateString():null;
+      msg.textContent='✅ Updated'+(d.online_id?' as '+d.online_id:'')+(expiry?' · expires '+expiry:'');
+      $('adminBotNpssoInput').value='';
+      await loadAdminBotPsnStatus();
+    }
+  }catch(e){ msg.style.color='#ff7070'; msg.textContent='⚠️ Network error'; }
+  finally{ btn.disabled=false; btn.textContent='🔗 Update bot token'; }
+}
+
 async function loadAdminUsers(){
   const el=$('adminUsersList');
   if(!el) return;
